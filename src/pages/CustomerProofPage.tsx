@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { useParams, useSearchParams } from 'react-router-dom'
-import { Send, Check, Layers, PoundSterling, DollarSign, Euro, BookOpen, Info, Eye, History, type LucideIcon } from 'lucide-react'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { ArrowLeft, ArrowRight, Send, Check, Layers, PoundSterling, DollarSign, Euro, BookOpen, Info, Eye, History, type LucideIcon } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { Pill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, StatusRule, Field, Input, Textarea, tokens, type PillColour } from '../design'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
@@ -24,6 +24,8 @@ import {
   thicknessSetForMaterial,
 } from '../lib/metalThicknessNotes'
 import { QrCodePanel, qrRowsForSlot } from '../components/QrCodePanel'
+import { BUNDLE_PARAM, BUNDLE_TOKEN_PARAM } from '../lib/customerProofUrl'
+import { setReviewPath } from '../lib/proofSets'
 import { ActionPanel } from '../components/ActionPanel'
 import { ShareWithTeamPanel } from '../components/ShareWithTeamPanel'
 import DeclineFeedbackPanel from '../components/DeclineFeedbackPanel'
@@ -64,6 +66,18 @@ export default function CustomerProofPage() {
   // team_sharing_enabled toggle so links keep working if the designer
   // later flips the panel off — the param changes presentation only.
   const [searchParams] = useSearchParams()
+
+  // Bundle context (bundle orders Slice 3): present only when the visitor
+  // arrived from the bundle review front door, whose card links carry the
+  // bundle id + bearer token (customerProofPathFromBundle — see there for
+  // the access posture). Drives the "Back to your bundle" bar under the
+  // masthead and the post-approve continue link. Presentation only; every
+  // other visitor sees the page unchanged.
+  const bundleParamId = searchParams.get(BUNDLE_PARAM)
+  const bundleParamToken = searchParams.get(BUNDLE_TOKEN_PARAM)
+  const bundleHref = bundleParamId && bundleParamToken
+    ? setReviewPath(bundleParamId, bundleParamToken)
+    : null
 
   const [proof, setProof] = useState<PublicProof | null>(null)
   const [versions, setVersions] = useState<PublicProofVersion[]>([])
@@ -1270,6 +1284,15 @@ export default function CustomerProofPage() {
               {successMessage}
             </p>
           )}
+          {approved && bundleHref && (
+            <Link
+              to={bundleHref}
+              className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-ink underline underline-offset-4 hover:opacity-80"
+            >
+              Back to your bundle
+              <ArrowRight size={14} aria-hidden="true" />
+            </Link>
+          )}
         </OutcomeCapCard>
       )
     }
@@ -2462,6 +2485,24 @@ export default function CustomerProofPage() {
           </div>
         )
       })()}
+
+      {/* Back to the bundle front door — only for visitors who arrived
+          via the bundle review page (see bundleHref above). Sits under
+          the masthead band like a quiet utility bar, same idiom as the
+          ?for= greeting strip. */}
+      {bundleHref && (
+        <div className="border-b border-line bg-canvas">
+          <div className="mx-auto max-w-[1280px] px-gutter py-2.5">
+            <Link
+              to={bundleHref}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-ink underline underline-offset-4 hover:opacity-80"
+            >
+              <ArrowLeft size={15} aria-hidden="true" />
+              Back to your bundle
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* V2 customer-page main — 2-column grid on lg+: a sticky
           left rail carrying the customer card, Specs, and Pricing;

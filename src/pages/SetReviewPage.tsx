@@ -25,7 +25,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowRight, CheckCircle2, Circle, PencilLine } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
-import { customerProofPath } from '../lib/customerProofUrl'
+import { customerProofPath, customerProofPathFromBundle } from '../lib/customerProofUrl'
 import { CustomerHeader } from '../components/CustomerHeader'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
 
@@ -212,6 +212,13 @@ export default function SetReviewPage() {
   const companyProminent = (payload.company_name ?? '').trim().length > 0
   const primaryName = companyProminent ? payload.company_name! : payload.contact_name ?? 'your team'
 
+  // Card links carry the bundle id + token so /p/:id can offer "Back to
+  // your bundle" (see customerProofPathFromBundle for the access posture).
+  // id/token are guaranteed non-null here — the loader bailed to notFound
+  // without them.
+  const cardHref = (proofId: string) =>
+    id && token ? customerProofPathFromBundle(proofId, id, token) : customerProofPath(proofId)
+
   return (
     <div className="min-h-dvh bg-canvas text-ink">
       <CustomerHeader innerClassName="max-w-5xl" />
@@ -250,6 +257,7 @@ export default function SetReviewPage() {
                 cardNumber={i + 1}
                 cardCount={active.length}
                 previewUrl={previews[m.id] ?? null}
+                href={cardHref(m.id)}
               />
             ))}
 
@@ -257,7 +265,7 @@ export default function SetReviewPage() {
               <div className="space-y-4 pt-2">
                 <p className="text-xs font-medium uppercase tracking-wide text-ink-mute">Set aside</p>
                 {asideCards.map((m) => (
-                  <SetCard key={m.id} member={m} previewUrl={previews[m.id] ?? null} />
+                  <SetCard key={m.id} member={m} previewUrl={previews[m.id] ?? null} href={cardHref(m.id)} />
                 ))}
               </div>
             )}
@@ -333,6 +341,7 @@ function SetCard({
   cardNumber,
   cardCount,
   previewUrl,
+  href,
 }: {
   member: MemberProof & { state: CardState }
   // Position among the active cards ("Card 1 of 2"). Absent on set-aside
@@ -340,6 +349,8 @@ function SetCard({
   cardNumber?: number
   cardCount?: number
   previewUrl: string | null
+  /** The card's /p/:id link, carrying the bundle back-link params. */
+  href: string
 }) {
   const title = cardTitle(member)
   const subtitle = cardSubtitle(member)
@@ -385,7 +396,7 @@ function SetCard({
           {(member.state === 'review' || member.state === 'approved') && (
             <div className="mt-3">
               <Link
-                to={customerProofPath(member.id)}
+                to={href}
                 className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink underline underline-offset-4 hover:opacity-80"
               >
                 {member.state === 'approved' ? 'View this card' : 'Review this card'}
