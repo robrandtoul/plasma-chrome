@@ -224,8 +224,13 @@ export default function VersionPreviewGate({
     onConfirm()
   }
 
-  const handleEdit = () => {
-    void logAudit({
+  const handleEdit = async () => {
+    // Awaited, unlike the confirm path's fire-and-forget: onEdit may
+    // reload the document (EditVersionPage does, to re-sync the form
+    // with the just-saved DB state), which would cancel an in-flight
+    // audit write. logAudit never rejects, so this costs at most one
+    // quiet round-trip before the form re-appears.
+    await logAudit({
       action: 'version.preview_edit_return',
       targetType: 'proof_version',
       targetId: versionId,
