@@ -28,7 +28,6 @@ import { useAuth } from '../lib/auth'
 import { customerProofPath } from '../lib/customerProofUrl'
 import { CustomerHeader } from '../components/CustomerHeader'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
-import DeclineFeedbackPanel from '../components/DeclineFeedbackPanel'
 
 // ── Payload shapes (public_get_proof_set, migration 000311) ─────────────────
 
@@ -59,9 +58,10 @@ interface SetPayload {
   proofs: MemberProof[]
 }
 
-// A member card's place in the review journey. "aside" covers both a
-// customer discard (set_discarded_at) and a designer abandon — either way
-// the card is out of the active checklist, quietly and without drama.
+// A member card's place in the review journey. "aside" means the card is
+// out of the active checklist, quietly and without drama — a designer
+// abandon (how a dropped card is handled since the self-serve discard was
+// removed, 10 Jul) or a legacy set_discarded_at stamp.
 type CardState = 'approved' | 'review' | 'designing' | 'aside'
 
 function cardState(p: MemberProof): CardState {
@@ -106,9 +106,6 @@ export default function SetReviewPage() {
   const [payload, setPayload] = useState<SetPayload | null>(null)
   // Preview image per member proof id (signed URL from customer-proof-images).
   const [previews, setPreviews] = useState<Record<string, string>>({})
-  // Cards the customer set aside in THIS visit — merged over the server
-  // state so the page reflects a discard instantly, without a refetch.
-  const [asideNow, setAsideNow] = useState<Record<string, true>>({})
 
   useEffect(() => {
     if (!id || !token) {
@@ -179,11 +176,8 @@ export default function SetReviewPage() {
 
   const members = useMemo(() => {
     if (!payload) return []
-    return payload.proofs.map((p) => ({
-      ...p,
-      state: asideNow[p.id] ? ('aside' as CardState) : cardState(p),
-    }))
-  }, [payload, asideNow])
+    return payload.proofs.map((p) => ({ ...p, state: cardState(p) }))
+  }, [payload])
 
   const active = members.filter((m) => m.state !== 'aside')
   const approvedCount = active.filter((m) => m.state === 'approved').length
@@ -256,7 +250,6 @@ export default function SetReviewPage() {
                 cardNumber={i + 1}
                 cardCount={active.length}
                 previewUrl={previews[m.id] ?? null}
-                onDiscarded={() => setAsideNow((prev) => ({ ...prev, [m.id]: true }))}
               />
             ))}
 
@@ -340,7 +333,6 @@ function SetCard({
   cardNumber,
   cardCount,
   previewUrl,
-  onDiscarded,
 }: {
   member: MemberProof & { state: CardState }
   // Position among the active cards ("Card 1 of 2"). Absent on set-aside
@@ -348,7 +340,6 @@ function SetCard({
   cardNumber?: number
   cardCount?: number
   previewUrl: string | null
-  onDiscarded?: () => void
 }) {
   const title = cardTitle(member)
   const subtitle = cardSubtitle(member)
@@ -408,17 +399,13 @@ function SetCard({
             </p>
           )}
 
-          {/* Decide against this card — reuses the proof page's decline panel
-              in set-discard mode (a reason, no pricing). Never offered on an
-              approved card: nothing approved is lost. */}
-          {member.state === 'review' && member.current_version_id && onDiscarded && (
-            <DeclineFeedbackPanel
-              proofId={member.id}
-              proofVersionId={member.current_version_id}
-              setDiscard
-              onSubmitted={onDiscarded}
-            />
-          )}
+          {/* No self-serve "decide against this card" here (removed 10 Jul,
+              Rob's call): it read too much like "reject this version" and
+              invited misuse for design feedback, which belongs in the card's
+              change-request flow. A genuinely dropped card is handled by the
+              designer abandoning that project — this page then shows it as
+              set aside via cardState. proof-feedback's set_discard mode and
+              the workspace Restore stay dormant behind this. */}
         </div>
       </div>
     </section>
