@@ -3568,13 +3568,6 @@ export default function CustomerProofPage() {
             )
           })()}
 
-          {/* "Not ready to approve?" — face-saving decline capture + price
-              recovery. Once per proof, only while it's still open on the current
-              version. See the proof-feedback edge function + migration 000279. */}
-          {activeVersion.is_current && !proofIsApproved && activeVersion.approvals_enabled && (
-            <DeclineFeedbackPanel proofId={id ?? ''} proofVersionId={activeVersion.id} />
-          )}
-
           {/* ───── QR codes (migrations 000168 / 000169) ─────
               Renders a dedicated verification panel for any QR
               codes on the active version. Sits between the proof
@@ -3905,6 +3898,25 @@ export default function CustomerProofPage() {
                   )}
               </PanelShell>
             </section>
+          )}
+
+          {/* "Not ready to approve?" — face-saving decline capture + price
+              recovery. Once per proof, only while it's still open on the current
+              version. See the proof-feedback edge function + migration 000279.
+              Deliberately the LAST thing on the page (order-11 sorts it after
+              About-this-proof on mobile; DOM position does the same on lg+):
+              it's an escape hatch for someone who has reviewed everything —
+              artwork, spec, pricing — and still isn't ready, so it belongs at
+              the point where they run out of page, not up where it plants
+              doubt before they've even seen the design. It shipped without a
+              mobile order-* class, which let it default to slot zero and
+              render above the customer card on phones. */}
+          {activeVersion.is_current && !proofIsApproved && activeVersion.approvals_enabled && (
+            <DeclineFeedbackPanel
+              proofId={id ?? ''}
+              proofVersionId={activeVersion.id}
+              className="order-11 lg:order-none"
+            />
           )}
 
           </div>
