@@ -59,18 +59,25 @@ A bundle is **one destination, one payer, one currency** (see §7). Split-delive
 
 ## 4. Customer experience
 
-Approving the artwork and building the order are **two different jobs**, kept apart:
+The customer's journey splits into two clearly separate moments — **review** (the design phase) and **pay** (afterwards). Keeping them apart is deliberate: the design phase must not presume the sale.
 
-1. **One link → an overview.** Lists each card with a preview, price, and status; a progress strip ("1 of 2 approved").
-2. **Approve each design.** Artwork sign-off only — the provable record. No commitment to quantity/spec yet. (For finishes that change appearance, all offered finishes are proofed, so the approval covers whichever is later chosen.)
-3. **Build the order in the basket.** Each card expands **in place** into its own quantity/thickness/finish chooser (the *existing* `OrderPayPage` "Confirm your card" flow — see §9). One card open at a time, so the page stays a clean basket, not a wall. Price updates live so the customer can build to a budget.
-4. **Open specs force an explicit choice.** Where the designer left thickness/finish/quantity **open**, nothing is pre-selected and the customer must actively pick before continuing; the "Most popular" badge guides but does not choose. Where the designer **locked** a spec at order-creation, it shows as a fixed value with no chooser. (This already matches the shipped pay page — `OrderPayPage.tsx:1682` "Explicit tap required — no pre-selection".)
-5. **Discard.** A card the customer decides against is removed with a reason (reuse the existing decline panel), the basket reprices, and the dropped card becomes an ordinary abandoned proof. Nothing approved is lost.
-6. **Pay once.** When every card is terminal (kept or dropped) and ≥1 is kept, a single checkout covers the lot — one payment, one receipt.
+### Review & approve — the "front door" (Slice 3)
 
-**Gate:** pay opens when no card is pending/in-revision and ≥1 is kept. If one card lags in revision, the **designer can release a ready card early** for its own payment (see §7).
+One link opens a **design-review overview** of the whole set. It is a pure review surface: **no pricing, and no "order / payment / delivery" language** — nothing is committed at this stage (pricing lives on each card's own proof page, via its price matrix).
 
-Reference mock (visual only, not wired): the customer overview and the forced-choice chooser were prototyped during design — see the "real components" screenshot Rob has, and the archived artifacts. The build should use the real components, not those prototypes.
+1. **One link → the set.** Each card is listed with a preview, recipient and approval status; a **"Your progress" card** tracks *X of N approved* with a per-card checklist and a warm completion state.
+2. **Review & approve each design.** Each card opens its **existing `/p/:id` proof page** — the real review, the price matrix and the approve action all already live there. The front door is an overview/hub that links into each card and reflects the aggregate status; it does not re-implement the proof page.
+3. **Discard.** A card the customer decides against is removed with a reason (reuse the decline panel). Nothing approved is lost.
+4. **It ends at approval.** When every card is approved, a warm confirmation — *"all approved, we'll follow up shortly."* **No pay button here;** the combined pay link comes later, separately.
+
+### Build & pay — the combined checkout (Slice 2)
+
+*After* approval the customer gets **one combined pay link** (Slice 2's group pay page). This is where the money lives:
+
+- **Open specs are chosen here.** Where the designer left thickness/finish/quantity **open**, the pay page runs each card's guided chooser (the *existing* `OrderPayPage` "Confirm your card" flow — `FinishChoiceCard`, thickness cards), forced-choice / no pre-selection, price updating live so the customer can build to a budget. Locked specs render as fixed lines. (`OrderPayPage.tsx:1682` — "Explicit tap required — no pre-selection".)
+- **One payment.** The combined total + one combined shipping, one Stripe payment, one itemised invoice (§6). If one card lags, the designer can **release a ready card early** for its own payment (§7).
+
+Reference mocks (visual only, real components): the review front door (with its progress card) and the designer set workspace were prototyped during design — see the screenshots Rob has. Build with the real components.
 
 ---
 
@@ -147,7 +154,7 @@ Existing order/payment plumbing to extend (Slice 2), **all single-product today*
 
 - **Slice 1 — Guardrails** *(frontend only, no schema).* Stop the version-abuse at the moment it happens and surface existing stranded approvals. **Highest value first, lowest risk.** Detailed in §12.
 - **Slice 2 — The order-group money engine** *(schema + edge functions + the checkout/grouping surfaces).* Introduce `order_groups`, combined checkout, one-invoice-per-payment, per-card paid-flip and fulfilment, early release — **plus the designer action to group existing orders and the group-aware pay page.** Its headline capability: a designer bundles **any N already-approved separate projects** for one customer into a single payment (no shared authoring required). **The group pay page MUST let the customer choose any open specs (quantity/thickness/finish) per card** — reusing the single-order chooser; a locked-specs-only build is not shippable (§13). Delivers the payment fix (one link, one invoice) without needing Slice 3. Detailed in §13.
-- **Slice 3 — Unified customer & designer surfaces.** The single customer overview link (composing the §9 per-card chooser) + designer set-authoring (the two entry points in §5). Turns "combined payment" into the seamless one-link experience.
+- **Slice 3 — Unified proofing surfaces.** The customer **review front door** (one link to review & approve the whole set — no pricing, no order/payment; it ends at approval) + the designer **set workspace** (author a set; the two entry points in §5). Introduces a `proof_sets` layer, distinct from Slice 2's `order_groups`. Reuses each card's existing `/p/:id` proof page; all payment stays Slice 2. Detailed in §14.
 
 ---
 
@@ -212,4 +219,54 @@ Existing order/payment plumbing to extend (Slice 2), **all single-product today*
 
 ---
 
-*Prepared 8 Jul 2026 from the Novion design conversation (Slice 2 scope note added 8 Jul; in-bundle customer spec choice pulled into Slice 2 after the #438 review, 8 Jul). Decisions in §7 are settled; §8 are open. Naming is a placeholder throughout.*
+## 14. Slice 3 — detailed spec (the unified proofing surfaces)
+
+Slice 3 is the **proofing** layer — one link to review and approve a whole set, and one place for the designer to author it. It sits *beside* Slice 2, not on top of it: Slice 2's `order_groups` link **orders** at payment time; Slice 3's `proof_sets` link **proofs** at proof time. They are independent — a set can exist before any order does, and a group can bundle projects that were never a set (§13). **All payment stays in Slice 2** — Slice 3 adds no pay button, no chooser, no money.
+
+### 14.1 The `proof_sets` layer (schema)
+- A new table `proofs.proof_sets` — a thin container holding the **shared context entered once**: company/contact, Help Scout conversation, currency, and a bearer `token` for the customer link. Mirror the grant matrix of a sibling table exactly (the `proofs` schema has **no default privileges** — state service_role + authenticated + the anon revoke, §11).
+- One new nullable column `proofs.proofs.proof_set_id` (FK → `proof_sets`, `ON DELETE SET NULL`). A standalone proof has it empty and behaves exactly as today. Membership **locks once the set is sent** to the customer (a later card starts a fresh link, §5).
+- Pick the migration number by `ls supabase/migrations/0003*`, author schema-qualified, verify live state read-only first, **Rob applies** (§11). Distinct from Slice 2's `000309` — do not reuse or extend `order_groups`.
+
+### 14.2 Customer review front door
+- **Route:** a set-scoped link (e.g. `/set/:id?token=…`) backed by a new anon **SECURITY DEFINER** RPC `public_get_proof_set(p_set_id, p_token)` — same house pattern as `public_get_customer_proof` / `public_get_order_group`: token-gated, token stripped from the payload, returns the set + each member proof's summary (preview image, recipient, approval status) for the overview. Anon reads flow **only** through the RPC.
+- **It is a hub, not a re-implementation.** The page is an **overview** that lists each card and links into that card's **existing `/p/:id` proof page** — the real review, price matrix and approve action already live there and are reused untouched. The front door never re-draws the proof page.
+- **No pricing, no order/payment/delivery language** anywhere on the front door (§4). Pricing lives on each card's proof page; payment is Slice 2, later and separate.
+- **"Your progress" card:** *X of N approved*, a per-card checklist, and a warm completion state when all are approved — *"all approved, we'll follow up shortly."* **No pay button.**
+- **Discard:** a card the customer decides against is removed with a reason — **reuse the existing decline panel** (`DeclineFeedbackPanel` / the `proof-feedback` edge function); designer notified; nothing approved is lost (§7.4).
+- Reference mock (visual only, real components): the review front door + progress card prototyped during design — screenshots with Rob. Build with the real design-kit components (`PanelShell`, `ProofStatusPill`, `Pill`, `CurrencyAmount` *not* used here since there's no price, `Eyebrow`, `PlasmaWordmark`).
+
+### 14.3 Designer set workspace
+- **Route:** a set-scoped designer page (e.g. `/sets/:id`) — a shared-context header (company/contact/HS/currency entered once) over the list of member cards, each with its own status, plus **[+ Add a card]**, **Preview customer view**, and **Send set to customer**.
+- Each card is authored with the **same proof builder as today** (`NewVersionPage` / the wizard) — the only new idea is that customer context is inherited from the set, not re-entered per card.
+- **Send** posts the one review link on the Help Scout thread and **locks membership**; further cards start a fresh link (§5).
+- Compose the existing `src/design/` kit + `ProofDetailPage` patterns; don't hand-roll new chrome.
+
+### 14.4 The two entry points (§5)
+- **Entry A — known up front:** the proof-type wizard's "different materials" fork (today the terminal split-guard in `ProofShapeWizard.tsx`) becomes the **entrance to a set** — "this is a set — build the cards one at a time" — creating the `proof_set` and landing on the workspace (§14.3).
+- **Entry B — discovered later:** an **"Add another material to this order"** action on an existing `ProofDetailPage` spins up a sibling card in the same set, inheriting customer/HS/currency. This is the honest version of the Novion move — a second card *alongside* the first, never a version that replaces it (§1).
+
+### 14.5 Out of scope for Slice 3 (it all lives in Slice 2)
+- **No payment, no pricing, no spec choosers, no order rows.** The combined pay link, the open-spec in-basket choosers, the one invoice and the reconciliation are **entirely Slice 2** (§13). Slice 3 ends at *approval*; Slice 2 begins at *pay*.
+- A set and a group are **not** wired together in this slice — Slice 2 already groups orders directly. Any convenience like "group all of a set's orders in one click" is a later polish, not a Slice 3 requirement.
+
+### 14.6 Reuse map (Slice 3)
+| Existing asset | Role in Slice 3 |
+|---|---|
+| `src/pages/CustomerProofPage.tsx` (`/p/:id`) + `public_get_customer_proof` | The real per-card review + approve — linked into from the front door, **untouched** |
+| `DeclineFeedbackPanel` + `proof-feedback` edge fn | Per-card discard-with-reason |
+| `src/pages/ProofDetailPage.tsx` | Pattern for the designer set workspace; host of Entry B |
+| `src/components/ProofShapeWizard.tsx` | Entry A (the split-guard fork becomes the set entrance) |
+| `src/pages/NewVersionPage.tsx` / the proof builder | Author each card, as today |
+| `src/design/` kit | Front-door + workspace chrome |
+| `public_get_order_group` (000309) | House pattern to copy for `public_get_proof_set` |
+
+### Slice 3 acceptance
+- One customer link opens a review overview of all cards in a set, each linking to its existing `/p/:id` page; the progress card tracks *X of N approved* and shows the warm completion state. **No pricing, no order/payment language, no pay button** anywhere on the front door.
+- A customer can discard a card with a reason (reused decline panel); the designer is notified; approved cards are untouched.
+- The designer can author a set from both entry points (A: wizard fork; B: "add another material" on an existing proof), enter customer context once, add cards, preview, and send one link that locks membership.
+- No payment/pricing/order code is added in this slice (all Slice 2). New table + RPC follow §11 (schema-qualified, full grants, Rob applies). `pnpm build` clean. Draft PR opened.
+
+---
+
+*Prepared 8 Jul 2026 from the Novion design conversation (Slice 2 scope note added 8 Jul; in-bundle customer spec choice pulled into Slice 2 after the #438 review, 8 Jul; Slice 3 detailed spec + front-door/workspace rewrite added 9 Jul). Decisions in §7 are settled; §8 are open. Naming is a placeholder throughout.*
