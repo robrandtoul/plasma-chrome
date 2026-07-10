@@ -566,6 +566,23 @@ function CopyAskButton() {
   )
 }
 
+// The set-entrance action rendered inside the different-materials guard
+// terminals when the host page supplies onStartSet (bundle orders Slice 3,
+// Entry A). One primary button; the terminals keep their existing
+// split-into-separate-projects guidance as the secondary route.
+function StartSetButton({ onClick, busy }: { onClick: () => void; busy: boolean }) {
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={onClick}
+      className="rounded border border-ink bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-60"
+    >
+      {busy ? 'Setting up the set…' : 'Build as a set of cards'}
+    </button>
+  )
+}
+
 type Option<V extends string> = { value: V; label: string; sub?: string; scenario: string }
 
 function QuestionBlock<V extends string>({
@@ -684,6 +701,8 @@ export function ProofShapeWizard({
   materialChosen,
   materialSupportsPersonalisation,
   disabled = false,
+  onStartSet,
+  startSetBusy = false,
 }: {
   answers: WizardAnswers
   onChange: (next: WizardAnswers) => void
@@ -699,6 +718,14 @@ export function ProofShapeWizard({
   // On the edit page the shape is locked at creation, so the wizard
   // renders read-only (collapsed rows, no Change controls).
   disabled?: boolean
+  // Bundle orders Slice 3 (Entry A): when provided, the different-materials
+  // guard terminals offer "build as a set of cards" as the primary route —
+  // the host page creates the proof_set (this proof becomes its first card)
+  // and lands on the set workspace. The old split-into-separate-projects
+  // guidance stays as the secondary option. Absent (e.g. the read-only edit
+  // view), the terminals render exactly as before.
+  onStartSet?: () => void
+  startSetBusy?: boolean
 }) {
   const summaryId = useId()
   const shape = resolveShape(answers, { materialChosen, materialSupportsPersonalisation })
@@ -892,17 +919,39 @@ export function ProofShapeWizard({
               )
             )}
 
-            {/* Split guard — terminal guidance, no saveable shape */}
+            {/* Split guard — terminal guidance, no saveable shape. With
+                onStartSet (Entry A) the primary route is a proof SET: one
+                card per material, each proofed and priced on its own page,
+                one link for the customer to review them all. */}
             {splitChosen && (
               <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                Create each material as its own project from the new-project screen, so each one
-                prices and proofs correctly. This proof can't continue as a single set.
-                {!disabled && (
-                  <div className="mt-2">
-                    <Link to="/proofs/new" className="font-semibold underline underline-offset-4 hover:opacity-80">
-                      Start the first project
-                    </Link>
-                  </div>
+                {onStartSet ? (
+                  <>
+                    Different materials can't share one proof — but they can be a <strong>set of
+                    cards</strong>: each material becomes its own card, proofed and priced on its own
+                    page, and the customer gets one link to review the whole set. This proof becomes
+                    the first card.
+                    {!disabled && (
+                      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+                        <StartSetButton onClick={onStartSet} busy={startSetBusy} />
+                        <Link to="/proofs/new" className="font-semibold underline underline-offset-4 hover:opacity-80">
+                          Or start fully separate projects
+                        </Link>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    Create each material as its own project from the new-project screen, so each one
+                    prices and proofs correctly. This proof can't continue as a single set.
+                    {!disabled && (
+                      <div className="mt-2">
+                        <Link to="/proofs/new" className="font-semibold underline underline-offset-4 hover:opacity-80">
+                          Start the first project
+                        </Link>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}
@@ -1023,32 +1072,67 @@ export function ProofShapeWizard({
               )
             )}
 
-            {/* Intent guard terminals — guidance only, no saveable shape */}
+            {/* Intent guard terminals — guidance only, no saveable shape.
+                With onStartSet (Entry A) both terminals offer the set route:
+                a card per material behind ONE review link, each card's own
+                page showing its own price — which is exactly what "asked
+                for a price on each" needs, and covers "might order both"
+                (they approve the cards they want, set aside the rest). */}
             {answers.selectionMaterial === 'different' && answers.selectionIntent === 'prices' && (
               <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                Create a project per material from the new-project screen and send the customer
-                both links together, so each material shows its own price. This proof can't
-                continue as a single selection.
-                {!disabled && (
-                  <div className="mt-2">
-                    <Link to="/proofs/new" className="font-semibold underline underline-offset-4 hover:opacity-80">
-                      Start the first project
-                    </Link>
-                  </div>
+                {onStartSet ? (
+                  <>
+                    Build this as a <strong>set of cards</strong>: each material becomes its own card
+                    with its own price on its own page, and the customer gets one link covering both.
+                    This proof becomes the first card.
+                    {!disabled && (
+                      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+                        <StartSetButton onClick={onStartSet} busy={startSetBusy} />
+                        <Link to="/proofs/new" className="font-semibold underline underline-offset-4 hover:opacity-80">
+                          Or start fully separate projects
+                        </Link>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    Create a project per material from the new-project screen and send the customer
+                    both links together, so each material shows its own price. This proof can't
+                    continue as a single selection.
+                    {!disabled && (
+                      <div className="mt-2">
+                        <Link to="/proofs/new" className="font-semibold underline underline-offset-4 hover:opacity-80">
+                          Start the first project
+                        </Link>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}
             {answers.selectionMaterial === 'different' && answers.selectionIntent === 'unsure' && (
               <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                Two projects are right whichever way it goes: if they pick one, abandon the other;
-                if they order both, each is already priced. The quickest way to be sure, though,
-                is to ask, for example:
+                {onStartSet ? (
+                  <>
+                    A <strong>set of cards</strong> is right whichever way it goes: each material is
+                    its own card behind one review link — they approve what they want and set aside
+                    the rest, with every card priced on its own page. The quickest way to be sure,
+                    though, is to ask, for example:
+                  </>
+                ) : (
+                  <>
+                    Two projects are right whichever way it goes: if they pick one, abandon the other;
+                    if they order both, each is already priced. The quickest way to be sure, though,
+                    is to ask, for example:
+                  </>
+                )}
                 <p className="mt-2 italic">“{ASK_CUSTOMER_QUESTION}”</p>
                 {!disabled && (
-                  <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1">
+                  <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2">
+                    {onStartSet && <StartSetButton onClick={onStartSet} busy={startSetBusy} />}
                     <CopyAskButton />
                     <Link to="/proofs/new" className="font-semibold underline underline-offset-4 hover:opacity-80">
-                      Start the first project
+                      {onStartSet ? 'Or start fully separate projects' : 'Start the first project'}
                     </Link>
                   </div>
                 )}

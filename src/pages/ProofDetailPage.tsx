@@ -26,6 +26,7 @@ import type {
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { deriveSharedApprovalState, type SharedApprovalState } from '../lib/sharedApproval'
 import { findStrandedMaterialApprovals } from '../lib/strandedApprovals'
+import { addCardToSet, createSetFromProof } from '../lib/proofSets'
 import { useLiveProofViews } from '../lib/useLiveProofViews'
 import { downloadBlob } from '../lib/downloadFile'
 import { customerProofPath, openDesignerPreview } from '../lib/customerProofUrl'
@@ -75,6 +76,12 @@ interface Proof {
   // it visible post-approval so designers can see when the ack
   // actually happened during a dispute.
   disclaimer_acknowledged_at: string | null
+  // The proof set this proof belongs to (bundle orders Slice 3,
+  // migration 000311); null = standalone. Drives the "Part of a set"
+  // facts row and how "Add another material" behaves (add to the
+  // existing set vs start one).
+  proof_set_id: string | null
+  set_discarded_at: string | null
   contacts: {
     full_name: string
     email: string
@@ -279,6 +286,47 @@ export default function ProofDetailPage() {
   const watcherId = session?.user.id ?? null
   const [watched, setWatched] = useState(false)
   const [watchBusy, setWatchBusy] = useState(false)
+  // ── "Add another material" (bundle orders Slice 3, Entry B) ──
+  // Spins up a sibling card in this proof's set (creating the set first if
+  // there isn't one), inheriting customer/Help Scout/currency. The honest
+  // version of the Novion move: a second card ALONGSIDE this one, never a
+  // version that replaces it. If the existing set has already been sent,
+  // membership is locked, so the new card starts a fresh set (spec §5).
+  const [addMaterialDialog, setAddMaterialDialog] = useState(false)
+  const [addMaterialBusy, setAddMaterialBusy] = useState(false)
+  const [addMaterialError, setAddMaterialError] = useState<string | null>(null)
+  async function handleAddAnotherMaterial() {
+    if (!proof || !session?.user.id || addMaterialBusy) return
+    setAddMaterialBusy(true)
+    setAddMaterialError(null)
+    try {
+      const userId = session.user.id
+      let setId: string | null = proof.proof_set_id
+      if (setId) {
+        const { data: existing } = await supabase
+          .from('proof_sets')
+          .select('id, sent_at')
+          .eq('id', setId)
+          .maybeSingle()
+        if (!existing) {
+          setId = null // stale pointer — the set was deleted
+        } else if (existing.sent_at) {
+          // Locked set: the new card starts a fresh set with the same context.
+          const fresh = await createSetFromProof(proof.id, userId, { attachSource: false })
+          setId = fresh.setId
+        }
+      }
+      if (!setId) {
+        const created = await createSetFromProof(proof.id, userId)
+        setId = created.setId
+      }
+      await addCardToSet(setId, userId)
+      navigate(`/sets/${setId}`)
+    } catch (e) {
+      setAddMaterialError((e as Error).message)
+      setAddMaterialBusy(false)
+    }
+  }
   useEffect(() => {
     if (!id || !watcherId) return
     let cancelled = false
@@ -607,7 +655,7 @@ export default function ProofDetailPage() {
     const [proofResult, versionsResult] = await Promise.all([
       supabase
         .from('proofs')
-        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, disclaimer_acknowledged_at, contacts(full_name, email, companies(name))')
+        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, disclaimer_acknowledged_at, proof_set_id, set_discarded_at, contacts(full_name, email, companies(name))')
         .eq('id', proofId)
         .single(),
       supabase
@@ -2322,6 +2370,24 @@ export default function ProofDetailPage() {
             </button>
           </dd>
         </div>
+        {/* Set membership (bundle orders Slice 3) — this proof is one card
+            of a reviewed-together set; the workspace is the set's home. */}
+        {proof.proof_set_id && (
+          <div className="min-w-0">
+            <dt className="eyebrow text-ink-mute">Part of a set</dt>
+            <dd className="mt-1 text-[13px]">
+              <Link
+                to={`/sets/${proof.proof_set_id}`}
+                className="inline-flex items-center gap-1 text-ink-soft hover:text-ink"
+              >
+                <Layers size={11} aria-hidden="true" /> Open set workspace
+              </Link>
+              {proof.set_discarded_at && (
+                <span className="ml-2 text-xs text-amber-700">Customer set this card aside</span>
+              )}
+            </dd>
+          </div>
+        )}
         <div className="min-w-0">
           <dt className="eyebrow text-ink-mute">Created</dt>
           <dd className="mt-1 text-[13px] text-ink-soft">{formatLongDate(proof.created_at)}</dd>
@@ -2744,6 +2810,11 @@ export default function ProofDetailPage() {
                     isLocked
                       ? [
                           { label: 'Reopen project', onClick: () => { setReopenJobCancelled(false); setStatusDialog('reopen') } },
+                          // Entry B of the set flow (Slice 3): a second material
+                          // for the same customer is a sibling CARD, not a new
+                          // version — offered on approved proofs too, which is
+                          // exactly where the Novion-style ask lands.
+                          { label: 'Add another material', onClick: () => { setAddMaterialError(null); setAddMaterialDialog(true) } },
                           ...(isApproved && orderingEnabled === true && hasOpenOrder
                             ? [{
                                 label: 'Create another order',
@@ -2756,6 +2827,7 @@ export default function ProofDetailPage() {
                             : []),
                         ]
                       : [
+                          { label: 'Add another material', onClick: () => { setAddMaterialError(null); setAddMaterialDialog(true) } },
                           { label: 'Mark as approved', tone: 'approve', onClick: () => setStatusDialog('approve') },
                           { label: 'Abandon project', tone: 'danger', onClick: () => setStatusDialog('abandon') },
                         ]
@@ -3927,6 +3999,23 @@ export default function ProofDetailPage() {
           />
         )
       })()}
+
+      {/* Add-another-material confirm (bundle orders Slice 3, Entry B) */}
+      {addMaterialDialog && (
+        <ConfirmDialog
+          message={
+            proof.proof_set_id
+              ? 'This adds another card to this project’s set — a separate design on its own material, reviewed alongside this one through the set’s single review link. (If the set has already been sent, the new card starts a fresh set instead.)'
+              : 'This starts a set: this card plus a new card on another material, side by side. The customer, Help Scout conversation and currency carry over, and the customer gets one link to review the whole set. This card’s own versions and approvals are untouched.'
+          }
+          confirmLabel="Add the card"
+          confirmClass="bg-ink hover:opacity-90 text-on-ink"
+          working={addMaterialBusy}
+          errorMsg={addMaterialError}
+          onConfirm={() => void handleAddAnotherMaterial()}
+          onCancel={() => { setAddMaterialDialog(false); setAddMaterialError(null) }}
+        />
+      )}
 
       {/* Toast */}
       {toast && (
