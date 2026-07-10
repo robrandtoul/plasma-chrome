@@ -23,6 +23,22 @@ export function customerProofPath(proofId: string): string {
   return `/p/${proofId}`
 }
 
+// Bundle-context variant (bundle orders Slice 3). The bundle review front
+// door links each card with the bundle id + its bearer token appended, so
+// the card page can offer "Back to your bundle". Purely presentational and
+// deliberately NOT server-derived: exposing the bundle token through the
+// card's public payload would let anyone holding a single card's /p/ link
+// reach the whole bundle. Carried in the URL instead, the back link exists
+// only for visitors who came through the front door — who by definition
+// already hold the token — and every other visitor (standalone customers,
+// team-share recipients, old links) sees the page unchanged.
+export const BUNDLE_PARAM = 'bundle'
+export const BUNDLE_TOKEN_PARAM = 'bundle_token'
+
+export function customerProofPathFromBundle(proofId: string, setId: string, setToken: string): string {
+  return `${customerProofPath(proofId)}?${BUNDLE_PARAM}=${encodeURIComponent(setId)}&${BUNDLE_TOKEN_PARAM}=${encodeURIComponent(setToken)}`
+}
+
 export function designerPreviewPath(proofId: string): string {
   return `${customerProofPath(proofId)}?preview=1`
 }
