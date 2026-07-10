@@ -1730,10 +1730,13 @@ export default function EditVersionPage() {
     }
 
     // Standard-version save success: show the preview gate. The
-    // gate's "Looks good" returns to /proofs/:id (same target as
-    // the old immediate navigate); "Go back and edit" clears the
-    // gate and the form re-renders with the still-in-state values
-    // for further editing.
+    // gate's confirm continues to the MessageSendPanel; "Go back
+    // and edit" reloads this route so the form remounts against
+    // the just-saved DB state (see the gate's onEdit below).
+    // submitting must be reset here — the variant-round and
+    // set-collection paths above do the same — or the re-shown
+    // form's Save button sticks on "Saving…" forever.
+    setSubmitting(false)
     setSavedVersionForPreview({ currency })
   }
 
@@ -1747,14 +1750,23 @@ export default function EditVersionPage() {
 
   // Post-save preview gate. Replaces the form (and the rest of the
   // page chrome — the gate uses fixed inset-0) until the designer
-  // confirms what the customer will see. "Go back and edit" clears
-  // the gate so the form re-appears with state intact. "Looks
-  // good, send proofs to customer" flips previewApproved and the
-  // MessageSendPanel branch below renders, matching the new-
-  // version flow so the designer can fire a Help Scout reply
-  // with the proof URL straight from here. See VersionPreviewGate
-  // for the gate rationale; see NewVersionPage for the original
-  // MessageSendPanel pattern this mirrors.
+  // confirms what the customer will see. The confirm stays disabled
+  // until they've scrolled the proof and viewed every option tab;
+  // confirming flips previewApproved and the MessageSendPanel branch
+  // below renders, matching the new-version flow so the designer can
+  // fire a Help Scout reply with the proof URL straight from here.
+  //
+  // "Go back and edit" reloads the route rather than just clearing
+  // savedVersionForPreview. The save that opened this gate already
+  // applied its surgical diff to the DB, but the form state is still
+  // pre-save — fresh uploads are still flagged "new", so re-showing
+  // the form as-is and saving again would upload and insert them a
+  // second time (duplicate images). A reload remounts the form
+  // against exactly what was saved — nothing can be lost, because
+  // reaching the gate means everything in the form is in the DB —
+  // and matches what the new-version flow's "Go back and edit"
+  // (a navigate to this route) has always done. See VersionPreviewGate
+  // for the gate rationale.
   if (savedVersionForPreview && !previewApproved && proofId && versionId) {
     return (
       <VersionPreviewGate
@@ -1762,9 +1774,9 @@ export default function EditVersionPage() {
         versionId={versionId}
         versionNumber={versionNumber}
         currency={savedVersionForPreview.currency}
-        confirmLabel="Looks good, send proofs to customer"
+        confirmLabel="I've checked it — continue to send"
         onConfirm={() => setPreviewApproved(true)}
-        onEdit={() => setSavedVersionForPreview(null)}
+        onEdit={() => navigate(0)}
       />
     )
   }
