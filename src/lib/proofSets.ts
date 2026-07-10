@@ -30,10 +30,11 @@ export interface ProofSetRow {
   created_at: string
 }
 
-// The customer review link. Mirrors the /order/group/:id?token=… posture:
-// the id routes, the bearer token gates the RPC read.
+// The customer review link (UI vocabulary: bundle; code/DB keep proof_sets).
+// Mirrors the /order/group/:id?token=… posture: the id routes, the bearer
+// token gates the RPC read.
 export function setReviewPath(setId: string, token: string, opts?: { preview?: boolean }): string {
-  return `/set/${setId}?token=${encodeURIComponent(token)}${opts?.preview ? '&preview=1' : ''}`
+  return `/bundle/${setId}?token=${encodeURIComponent(token)}${opts?.preview ? '&preview=1' : ''}`
 }
 
 // 48 hex chars from the browser CSPRNG — same bearer-token posture as
@@ -76,7 +77,7 @@ export async function createSetFromProof(
       .select('id, token')
       .eq('id', proof.proof_set_id)
       .single()
-    if (exErr) throw new Error(`Couldn't load the existing set: ${exErr.message}`)
+    if (exErr) throw new Error(`Couldn't load the existing bundle: ${exErr.message}`)
     return { setId: existing.id, token: existing.token, alreadyExisted: true }
   }
 
@@ -107,7 +108,7 @@ export async function createSetFromProof(
     })
     .select('id, token')
     .single()
-  if (setErr) throw new Error(`Couldn't create the set: ${setErr.message}`)
+  if (setErr) throw new Error(`Couldn't create the bundle: ${setErr.message}`)
 
   const contactName = (proof as { contacts?: { full_name?: string } | null }).contacts?.full_name ?? ''
 
@@ -116,7 +117,7 @@ export async function createSetFromProof(
       .from('proofs')
       .update({ proof_set_id: set.id })
       .eq('id', proofId)
-    if (linkErr) throw new Error(`Created the set but couldn't attach this proof: ${linkErr.message}`)
+    if (linkErr) throw new Error(`Created the bundle but couldn't attach this proof: ${linkErr.message}`)
   }
 
   void logAudit({
@@ -194,9 +195,9 @@ export async function attachProofToSet(setId: string, proofId: string): Promise<
     .select('id, contact_id, sent_at')
     .eq('id', setId)
     .single()
-  if (setErr) throw new Error(`Couldn't load the set: ${setErr.message}`)
+  if (setErr) throw new Error(`Couldn't load the bundle: ${setErr.message}`)
   if (set.sent_at) {
-    throw new Error('This set has been sent to the customer, so its cards are locked. A new card starts a fresh set.')
+    throw new Error('This bundle has been sent to the customer, so its cards are locked. A new card starts a fresh bundle.')
   }
 
   const { data: proof, error: proofErr } = await supabase
@@ -205,17 +206,17 @@ export async function attachProofToSet(setId: string, proofId: string): Promise<
     .eq('id', proofId)
     .single()
   if (proofErr) throw new Error(`Couldn't load that project: ${proofErr.message}`)
-  if (proof.proof_set_id) throw new Error('That project is already part of a set.')
+  if (proof.proof_set_id) throw new Error('That project is already part of a bundle.')
   if (proof.status === 'abandoned') throw new Error('That project has been abandoned — reopen it first.')
   if (proof.contact_id !== set.contact_id) {
-    throw new Error('That project belongs to a different contact, so it can’t join this set.')
+    throw new Error('That project belongs to a different contact, so it can’t join this bundle.')
   }
 
   const { error: linkErr } = await supabase
     .from('proofs')
     .update({ proof_set_id: setId, set_discarded_at: null })
     .eq('id', proofId)
-  if (linkErr) throw new Error(`Couldn't add the project to the set: ${linkErr.message}`)
+  if (linkErr) throw new Error(`Couldn't add the project to the bundle: ${linkErr.message}`)
 
   void logAudit({
     action: 'proof_set.card_added',
@@ -236,9 +237,9 @@ export async function addCardToSet(setId: string, userId: string): Promise<{ pro
     .select('id, contact_id, helpscout_conversation_id, helpscout_conversation_url, sent_at, contacts(full_name)')
     .eq('id', setId)
     .single()
-  if (setErr) throw new Error(`Couldn't load the set: ${setErr.message}`)
+  if (setErr) throw new Error(`Couldn't load the bundle: ${setErr.message}`)
   if (set.sent_at) {
-    throw new Error('This set has been sent to the customer, so its cards are locked. A new card starts a fresh set.')
+    throw new Error('This bundle has been sent to the customer, so its cards are locked. A new card starts a fresh bundle.')
   }
 
   const { data: proof, error: proofErr } = await supabase

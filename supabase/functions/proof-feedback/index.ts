@@ -249,10 +249,10 @@ async function handle(req: Request): Promise<Response> {
           const link = base ? `\nProof: ${base}/proofs/${proofId}` : ''
           const who = actorName ? ` from ${actorName}` : ''
           const noteText = setDiscard
-            ? `🔔 Set review${who} — a card was set aside.\n` +
+            ? `🔔 Bundle review${who} — a card was set aside.\n` +
               `Reason: ${REASON_LABELS[reasonCode]}.` +
               (note ? `\n“${note}”` : '') +
-              `\n\nThe rest of the set is unaffected — the card can be restored from the set workspace.` +
+              `\n\nThe rest of the bundle is unaffected — the card can be restored from the bundle workspace.` +
               (reasonCode === 'going_elsewhere' ? '\nAutomated reminders for this card have been stopped.' : '') +
               link
             : `🔔 Customer feedback${who} — not ready to approve.\n` +

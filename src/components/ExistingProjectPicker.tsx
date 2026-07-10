@@ -82,7 +82,7 @@ export default function ExistingProjectPicker({
       <div>
         <p className="py-4 text-sm text-ink-soft">
           This customer has no other standalone projects to bring in — every other project is either
-          already in a set or abandoned. Use “Start a new card” instead.
+          already in a bundle or abandoned. Use “Start a new card” instead.
         </p>
         <div className="mt-2 flex justify-end">
           <ButtonGhost onClick={onBack}>{backLabel}</ButtonGhost>
@@ -133,7 +133,7 @@ export default function ExistingProjectPicker({
           {backLabel}
         </ButtonGhost>
         <ButtonCoral onClick={() => picked && onAttach(picked)} disabled={!picked} busy={attachBusy}>
-          Add to the set
+          Add to the bundle
         </ButtonCoral>
       </div>
     </div>

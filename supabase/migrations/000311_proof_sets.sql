@@ -228,11 +228,11 @@ grant execute on function proofs.record_proof_set_opened(uuid, text) to anon, au
 insert into proofs.reply_templates (id, display_name, description, body)
 values (
   'set_review_link',
-  'Set review link',
-  'Sent from the set workspace when a set of cards goes to the customer for review. {url} is the one set review link.',
+  'Bundle review link',
+  'Sent from the bundle workspace when a bundle of cards goes to the customer for review. {url} is the one bundle review link.',
   'Hi {first_name},
 
-Here are the proofs of your cards{? company} for {company}{/?}. There''s a design for each card in the set — you can look through and approve each one here:
+Here are the proofs of your cards{? company} for {company}{/?}. There''s a design for each card in the bundle — you can look through and approve each one here:
 
 {url}'
 )

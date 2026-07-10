@@ -158,7 +158,7 @@ export default function DeclineFeedbackPanel({
           </p>
           <p className="mt-0.5 text-xs text-gray-500">
             {setDiscard
-              ? 'This sets the card aside — nothing is deleted, and the rest of the set isn’t affected.'
+              ? 'This sets the card aside — nothing is deleted, and the other cards aren’t affected.'
               : 'This just helps us help you — choosing a reason won’t approve or change your proof on its own.'}
           </p>
           <div className="mt-3 space-y-1.5">

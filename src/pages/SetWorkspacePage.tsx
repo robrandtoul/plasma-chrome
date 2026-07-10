@@ -4,7 +4,7 @@
 // One place to author a set of cards: a shared-context header (customer,
 // Help Scout conversation, currency — entered once), the list of member
 // cards each with its own status, plus [+ Add a card], Preview customer
-// view, and Send set to customer.
+// view, and Send bundle to customer.
 //
 // Each card is authored with the SAME proof builder as today — a member is
 // an ordinary proof, and "+ Add a card" simply creates the proof shell with
@@ -125,7 +125,7 @@ export default function SetWorkspacePage() {
       .eq('id', id)
       .maybeSingle()
     if (setErr || !setRow) {
-      setLoadError(setErr?.message ?? 'This set doesn’t exist (it may have been deleted).')
+      setLoadError(setErr?.message ?? 'This bundle doesn’t exist (it may have been deleted).')
       setLoading(false)
       return
     }
@@ -271,7 +271,7 @@ export default function SetWorkspacePage() {
     if (!set || sendBusy) return
     const anchor = activeMembers.find((m) => m.currentVersion)
     if (!anchor?.currentVersion) {
-      setSendError('Every card needs artwork before the set can be sent.')
+      setSendError('Every card needs artwork before the bundle can be sent.')
       return
     }
     if (!sendBody.trim()) {
@@ -326,7 +326,7 @@ export default function SetWorkspacePage() {
         .eq('id', set.id)
       if (lockErr) {
         throw new Error(
-          `The link was posted on Help Scout, but the set couldn’t be marked as sent: ${lockErr.message}. Press Send again to finish up — the message won’t be posted twice.`,
+          `The link was posted on Help Scout, but the bundle couldn’t be marked as sent: ${lockErr.message}. Press Send again to finish up — the message won’t be posted twice.`,
         )
       }
 
@@ -421,7 +421,7 @@ export default function SetWorkspacePage() {
     setActionError(null)
     const { error } = await supabase.from('proof_sets').delete().eq('id', set.id)
     if (error) {
-      setActionError(`Couldn’t delete the set: ${error.message}`)
+      setActionError(`Couldn’t delete the bundle: ${error.message}`)
       setBusyAction(null)
       setDeleteOpen(false)
       return
@@ -462,7 +462,7 @@ export default function SetWorkspacePage() {
       <DesignerChrome active="proofs">
         <div className="mx-auto max-w-2xl px-4 py-16">
           <div className="rounded-2xl bg-surface p-8 text-center shadow-sm ring-1 ring-line">
-            <h1 className="text-lg font-semibold text-ink">Set not found</h1>
+            <h1 className="text-lg font-semibold text-ink">Bundle not found</h1>
             <p className="mt-2 text-sm text-ink-soft">{loadError}</p>
             <Link to="/" className="mt-4 inline-block text-sm font-semibold text-ink underline underline-offset-4">
               Back to the dashboard
@@ -483,14 +483,14 @@ export default function SetWorkspacePage() {
             <span className="mx-1.5">/</span>
             <span className="text-ink-soft">{customerLabel}</span>
             <span className="mx-1.5">/</span>
-            <span className="text-ink-soft">Set</span>
+            <span className="text-ink-soft">Bundle</span>
           </nav>
 
           {/* ── Shared-context header — entered once, inherited by every card ── */}
           <header className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line sm:p-8">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0">
-                <Eyebrow>Proof set</Eyebrow>
+                <Eyebrow>Bundle</Eyebrow>
                 <h1 className="mt-2 text-2xl font-bold text-ink">{customerLabel}</h1>
                 {companyName && contact && (
                   <p className="mt-0.5 text-sm text-ink-soft">{contact.full_name}</p>
@@ -505,7 +505,7 @@ export default function SetWorkspacePage() {
                       {' '}· {approvedCount} of {activeMembers.length} approved
                     </>
                   ) : (
-                    <>Draft — not yet sent. Add each card, then send the customer one link to review the whole set.</>
+                    <>Draft — not yet sent. Add each card, then send the customer one link to review the whole bundle.</>
                   )}
                 </p>
               </div>
@@ -519,7 +519,7 @@ export default function SetWorkspacePage() {
                   </ButtonGhost>
                 ) : (
                   <ButtonCoral icon={Send} onClick={() => void openSendModal()} disabled={sendBlocker != null} title={sendBlocker ?? undefined}>
-                    Send set to customer
+                    Send bundle to customer
                   </ButtonCoral>
                 )}
               </div>
@@ -582,7 +582,7 @@ export default function SetWorkspacePage() {
           {/* ── The cards ─────────────────────────────────────────────────── */}
           <div className="mt-6">
             <PanelShell
-              eyebrow="The set"
+              eyebrow="The bundle"
               title="Cards"
               count={members.length}
               icon={Layers}
@@ -673,7 +673,7 @@ export default function SetWorkspacePage() {
               )}
               {isSent && (
                 <p className="mt-4 border-t border-line pt-3 text-xs text-ink-mute">
-                  This set has been sent, so its cards are locked — a later addition starts a fresh set
+                  This bundle has been sent, so its cards are locked — a later addition starts a fresh bundle
                   with a fresh link. Each card still takes revisions as normal on its own page.
                 </p>
               )}
@@ -688,7 +688,7 @@ export default function SetWorkspacePage() {
                 onClick={() => setDeleteOpen(true)}
                 className="text-xs text-ink-mute underline underline-offset-4 hover:text-rose-700"
               >
-                Delete this set
+                Delete this bundle
               </button>
               <span className="ml-2 text-xs text-ink-mute">
                 The cards themselves aren’t deleted — they go back to being standalone projects.
@@ -703,8 +703,8 @@ export default function SetWorkspacePage() {
         <Modal label="Bring in an existing project" onClose={() => !attachBusy && setAttachOpen(false)}>
           <h2 className="text-lg font-semibold text-ink">Bring in an existing project</h2>
           <p className="mt-1 text-sm text-ink-soft">
-            Adds one of {customerLabel}’s other standalone projects to this set as another card. It
-            keeps its own artwork, versions and approval state — the set just reviews them together.
+            Adds one of {customerLabel}’s other standalone projects to this bundle as another card. It
+            keeps its own artwork, versions and approval state — the bundle just reviews them together.
           </p>
           <div className="mt-4">
             <ExistingProjectPicker
@@ -720,12 +720,12 @@ export default function SetWorkspacePage() {
 
       {/* ── Send modal ─────────────────────────────────────────────────────── */}
       {sendOpen && (
-        <Modal label="Send set to customer" onClose={() => !sendBusy && setSendOpen(false)}>
-          <h2 className="text-lg font-semibold text-ink">Send set to customer</h2>
+        <Modal label="Send bundle to customer" onClose={() => !sendBusy && setSendOpen(false)}>
+          <h2 className="text-lg font-semibold text-ink">Send bundle to customer</h2>
           <p className="mt-1 text-sm text-ink-soft">
             Posts one review link on the Help Scout conversation, covering all{' '}
             {activeMembers.length === 1 ? 'the card' : `${activeMembers.length} cards`}. Once sent, the
-            set’s cards are locked — a later card starts a fresh set.
+            bundle’s cards are locked — a later card starts a fresh bundle.
           </p>
           <textarea
             value={sendBody}
@@ -747,11 +747,11 @@ export default function SetWorkspacePage() {
 
       {/* ── Remove-card confirm ────────────────────────────────────────────── */}
       {removeTarget && (
-        <Modal label="Remove this card from the set" onClose={() => setRemoveTarget(null)}>
-          <h2 className="text-lg font-semibold text-ink">Remove this card from the set?</h2>
+        <Modal label="Remove this card from the bundle" onClose={() => setRemoveTarget(null)}>
+          <h2 className="text-lg font-semibold text-ink">Remove this card from the bundle?</h2>
           <p className="mt-2 text-sm text-ink-soft">
             The card isn’t deleted — it goes back to being a standalone project with its own page and
-            customer link. You can’t re-add it to this set once removed (you’d start a fresh set).
+            customer link. You can’t re-add it to this bundle once removed (you’d start a fresh bundle).
           </p>
           <div className="mt-4 flex items-center justify-end gap-2">
             <ButtonGhost onClick={() => setRemoveTarget(null)}>Cancel</ButtonGhost>
@@ -764,10 +764,10 @@ export default function SetWorkspacePage() {
 
       {/* ── Delete-set confirm ─────────────────────────────────────────────── */}
       {deleteOpen && (
-        <Modal label="Delete this set" onClose={() => setDeleteOpen(false)}>
-          <h2 className="text-lg font-semibold text-ink">Delete this set?</h2>
+        <Modal label="Delete this bundle" onClose={() => setDeleteOpen(false)}>
+          <h2 className="text-lg font-semibold text-ink">Delete this bundle?</h2>
           <p className="mt-2 text-sm text-ink-soft">
-            Only the set container is deleted — every card in it survives as a standalone project. The
+            Only the bundle container is deleted — every card in it survives as a standalone project. The
             customer review link stops working.
           </p>
           <div className="mt-4 flex items-center justify-end gap-2">

@@ -578,7 +578,7 @@ function StartSetButton({ onClick, busy }: { onClick: () => void; busy: boolean 
       onClick={onClick}
       className="rounded border border-ink bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-60"
     >
-      {busy ? 'Setting up the set…' : 'Build as a set of cards'}
+      {busy ? 'Setting up the bundle…' : 'Build as a bundle of cards'}
     </button>
   )
 }
@@ -927,9 +927,9 @@ export function ProofShapeWizard({
               <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                 {onStartSet ? (
                   <>
-                    Different materials can't share one proof — but they can be a <strong>set of
+                    Different materials can't share one proof — but they can be a <strong>bundle of
                     cards</strong>: each material becomes its own card, proofed and priced on its own
-                    page, and the customer gets one link to review the whole set. This proof becomes
+                    page, and the customer gets one link to review the whole bundle. This proof becomes
                     the first card.
                     {!disabled && (
                       <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
@@ -1082,7 +1082,7 @@ export function ProofShapeWizard({
               <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                 {onStartSet ? (
                   <>
-                    Build this as a <strong>set of cards</strong>: each material becomes its own card
+                    Build this as a <strong>bundle of cards</strong>: each material becomes its own card
                     with its own price on its own page, and the customer gets one link covering both.
                     This proof becomes the first card.
                     {!disabled && (
@@ -1114,7 +1114,7 @@ export function ProofShapeWizard({
               <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                 {onStartSet ? (
                   <>
-                    A <strong>set of cards</strong> is right whichever way it goes: each material is
+                    A <strong>bundle of cards</strong> is right whichever way it goes: each material is
                     its own card behind one review link — they approve what they want and set aside
                     the rest, with every card priced on its own page. The quickest way to be sure,
                     though, is to ask, for example:

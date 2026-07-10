@@ -195,12 +195,13 @@ export const DEFAULT_BODIES: Record<string, string> = {
     `Hi {first_name},\n\nHere's the first proof of your cards{? company} for {company}{/?}. Have a look and let us know what you think.\n\n{url}`,
   revision:
     `Hi {first_name},\n\nHere's v{version_number} of your cards{? company} for {company}{/?} with the changes you asked for. Take another look when you have a moment.\n\n{url}`,
-  // Set review link — sent from the set workspace when a proof set goes to
-  // the customer (bundle orders Slice 3; seeded in 000311). {url} is the one
-  // /set/:id review link covering every card. No order/payment language —
-  // this is the design phase.
+  // Bundle review link — sent from the bundle workspace when a bundle of
+  // cards goes to the customer (bundle orders Slice 3; seeded in 000311,
+  // id kept as set_review_link — the internal key predates the naming
+  // decision). {url} is the one /bundle/:id review link covering every
+  // card. No order/payment language — this is the design phase.
   set_review_link:
-    `Hi {first_name},\n\nHere are the proofs of your cards{? company} for {company}{/?}. There's a design for each card in the set — you can look through and approve each one here:\n\n{url}`,
+    `Hi {first_name},\n\nHere are the proofs of your cards{? company} for {company}{/?}. There's a design for each card in the bundle — you can look through and approve each one here:\n\n{url}`,
   // Post-action confirmations
   proof_approval_confirmation:
     `Thanks for approving {version_label}. We'll be in touch shortly about next steps.`,

@@ -240,8 +240,8 @@ export default function SetReviewPage() {
           )}
           <p className="body-soft mt-4 max-w-xl">
             {active.length === 1
-              ? 'There is one card design in this set.'
-              : `There are ${active.length} card designs in this set.`}{' '}
+              ? 'There is one card design in this bundle.'
+              : `There are ${active.length} card designs in this bundle.`}{' '}
             Open each one to review it in full and approve it — this page keeps track as you go.
           </p>
         </header>
@@ -282,7 +282,7 @@ export default function SetReviewPage() {
                     <p className="text-lg font-semibold text-ink">All approved — thank you</p>
                   </div>
                   <p className="mt-3 text-sm text-ink-soft">
-                    Every card in this set is approved. We'll follow up shortly to take it from here —
+                    Every card in this bundle is approved. We'll follow up shortly to take it from here —
                     nothing more is needed from you right now.
                   </p>
                 </div>

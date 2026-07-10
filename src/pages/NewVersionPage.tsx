@@ -308,7 +308,7 @@ export default function NewVersionPage() {
       const userId = userData.user?.id
       if (!userId) throw new Error('Not signed in.')
       const { setId } = await createSetFromProof(proofId!, userId, { currency })
-      navigate(`/sets/${setId}`)
+      navigate(`/bundles/${setId}`)
     } catch (e) {
       setStartSetError((e as Error).message)
       setStartSetBusy(false)

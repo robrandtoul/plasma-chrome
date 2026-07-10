@@ -380,7 +380,7 @@ export default function ProofDetailPage() {
         setId = created.setId
       }
       await attachProofToSet(setId, otherProofId)
-      navigate(`/sets/${setId}`)
+      navigate(`/bundles/${setId}`)
     } catch (e) {
       setAddMaterialError((e as Error).message)
       setAddMaterialBusy(false)
@@ -412,7 +412,7 @@ export default function ProofDetailPage() {
         setId = created.setId
       }
       await addCardToSet(setId, userId)
-      navigate(`/sets/${setId}`)
+      navigate(`/bundles/${setId}`)
     } catch (e) {
       setAddMaterialError((e as Error).message)
       setAddMaterialBusy(false)
@@ -2465,13 +2465,13 @@ export default function ProofDetailPage() {
             of a reviewed-together set; the workspace is the set's home. */}
         {proof.proof_set_id && (
           <div className="min-w-0">
-            <dt className="eyebrow text-ink-mute">Part of a set</dt>
+            <dt className="eyebrow text-ink-mute">Part of a bundle</dt>
             <dd className="mt-1 text-[13px]">
               <Link
-                to={`/sets/${proof.proof_set_id}`}
+                to={`/bundles/${proof.proof_set_id}`}
                 className="inline-flex items-center gap-1 text-ink-soft hover:text-ink"
               >
-                <Layers size={11} aria-hidden="true" /> Open set workspace
+                <Layers size={11} aria-hidden="true" /> Open bundle workspace
               </Link>
               {proof.set_discarded_at && (
                 <span className="ml-2 text-xs text-amber-700">Customer set this card aside</span>
@@ -2944,7 +2944,7 @@ export default function ProofDetailPage() {
                 <Layers size={15} className="mt-0.5 shrink-0 text-ink-mute" aria-hidden="true" />
                 <span>
                   <span className="font-semibold text-ink">
-                    One of {setSummary.memberCount} cards in a set
+                    One of {setSummary.memberCount} cards in a bundle
                   </span>
                   {' — '}
                   {setSummary.sent_at
@@ -2953,15 +2953,15 @@ export default function ProofDetailPage() {
                 </span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <Link to={`/sets/${setSummary.id}`}>
-                  <ButtonGhost size="sm" icon={Layers}>Open set workspace</ButtonGhost>
+                <Link to={`/bundles/${setSummary.id}`}>
+                  <ButtonGhost size="sm" icon={Layers}>Open bundle workspace</ButtonGhost>
                 </Link>
                 <ButtonGhost
                   size="sm"
                   icon={Eye}
                   onClick={() => window.open(setReviewPath(setSummary.id, setSummary.token, { preview: true }), '_blank')}
                 >
-                  Customer view of the set
+                  Customer view of the bundle
                 </ButtonGhost>
               </div>
             </div>
@@ -4157,7 +4157,7 @@ export default function ProofDetailPage() {
                     They want this card AND another one
                   </span>
                   <span className="mt-0.5 block text-xs text-ink-mute">
-                    Builds a set — the cards sit side by side behind one review link.
+                    Builds a bundle — the cards sit side by side behind one review link.
                   </span>
                 </button>
                 <button
@@ -4169,7 +4169,7 @@ export default function ProofDetailPage() {
                     They want a different material INSTEAD of this design
                   </span>
                   <span className="mt-0.5 block text-xs text-ink-mute">
-                    That’s a revision of this same card — done with a new version, not a set.
+                    That’s a revision of this same card — done with a new version, not a bundle.
                   </span>
                 </button>
               </div>
@@ -4223,9 +4223,9 @@ export default function ProofDetailPage() {
               <p className="mt-2 text-sm text-ink-soft">
                 {proof.proof_set_id
                   ? addMaterialSetSent
-                    ? 'This project’s set has already been sent, so its cards are locked — a new card starts a fresh set with a fresh review link (customer, conversation and currency carry over).'
-                    : 'This adds another card to this project’s set — a separate design on its own material, reviewed alongside this one through the set’s single review link.'
-                  : 'This makes a set: this card plus a second card on another material, side by side. The customer gets one link to review the whole set, and this card’s own versions and approvals are untouched.'}
+                    ? 'This project’s bundle has already been sent, so its cards are locked — a new card starts a fresh bundle with a fresh review link (customer, conversation and currency carry over).'
+                    : 'This adds another card to this project’s bundle — a separate design on its own material, reviewed alongside this one through the bundle’s single review link.'
+                  : 'This makes a bundle: this card plus a second card on another material, side by side. The customer gets one link to review the whole bundle, and this card’s own versions and approvals are untouched.'}
               </p>
               <div className="mt-4 space-y-2">
                 <ButtonCoral block busy={addMaterialBusy} onClick={() => void handleAddAnotherMaterial()}>
@@ -4252,8 +4252,8 @@ export default function ProofDetailPage() {
           ) : (
             <>
               <p className="mt-2 text-sm text-ink-soft">
-                Pick one of this customer’s other projects to join the set as another card. It keeps
-                its own artwork, versions and approval state — the set just reviews them together.
+                Pick one of this customer’s other projects to join the bundle as another card. It keeps
+                its own artwork, versions and approval state — the bundle just reviews them together.
               </p>
               {addMaterialError && <p className="mt-3 text-sm text-rose-700">{addMaterialError}</p>}
               <div className="mt-4">
