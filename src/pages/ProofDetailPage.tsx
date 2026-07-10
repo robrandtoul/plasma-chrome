@@ -26,7 +26,7 @@ import type {
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { deriveSharedApprovalState, type SharedApprovalState } from '../lib/sharedApproval'
 import { findStrandedMaterialApprovals } from '../lib/strandedApprovals'
-import { addCardToSet, attachProofToSet, createSetFromProof } from '../lib/proofSets'
+import { addCardToSet, attachProofToSet, createSetFromProof, setReviewPath } from '../lib/proofSets'
 import ExistingProjectPicker from '../components/ExistingProjectPicker'
 import { useLiveProofViews } from '../lib/useLiveProofViews'
 import { downloadBlob } from '../lib/downloadFile'
@@ -305,6 +305,40 @@ export default function ProofDetailPage() {
   // this one, never a version that replaces it. If the existing set has
   // already been sent, membership is locked, so a fresh card starts a
   // fresh set (spec §5) and attaching is not offered.
+  // Summary of this proof's set for the header strip — the always-visible
+  // way back to the set workspace and the customer front door (the facts-
+  // rail row alone proved too easy to miss). Null = standalone proof.
+  const [setSummary, setSetSummary] = useState<{
+    id: string
+    token: string
+    sent_at: string | null
+    memberCount: number
+  } | null>(null)
+  useEffect(() => {
+    const setId = proof?.proof_set_id
+    if (!setId) {
+      setSetSummary(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const [setRes, countRes] = await Promise.all([
+        supabase.from('proof_sets').select('id, token, sent_at').eq('id', setId).maybeSingle(),
+        supabase.from('proofs').select('id', { count: 'exact', head: true }).eq('proof_set_id', setId),
+      ])
+      if (cancelled || !setRes.data) return
+      setSetSummary({
+        id: setRes.data.id,
+        token: setRes.data.token,
+        sent_at: setRes.data.sent_at,
+        memberCount: countRes.count ?? 0,
+      })
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [proof?.proof_set_id])
+
   const [addMaterialDialog, setAddMaterialDialog] = useState(false)
   const [addMaterialMode, setAddMaterialMode] = useState<'intent' | 'choose' | 'picker' | 'revision'>('intent')
   const [addMaterialSetSent, setAddMaterialSetSent] = useState(false)
@@ -2898,6 +2932,41 @@ export default function ProofDetailPage() {
           {/* Hidden input for clipboard fallback. */}
           <input ref={fallbackInputRef} className="sr-only" readOnly aria-hidden="true" />
         </section>
+
+        {/* Set-membership strip (bundle orders Slice 3) — the obvious way
+            back to the set workspace and the customer front door from any
+            member card. The quieter facts-rail row remains, but this is
+            the one you can't miss. */}
+        {setSummary && (
+          <section className="mb-8 rounded-2xl border border-line bg-surface p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-start gap-2 text-[13px] text-ink-soft">
+                <Layers size={15} className="mt-0.5 shrink-0 text-ink-mute" aria-hidden="true" />
+                <span>
+                  <span className="font-semibold text-ink">
+                    One of {setSummary.memberCount} cards in a set
+                  </span>
+                  {' — '}
+                  {setSummary.sent_at
+                    ? 'the customer reviews them together through one link.'
+                    : 'not yet sent to the customer.'}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Link to={`/sets/${setSummary.id}`}>
+                  <ButtonGhost size="sm" icon={Layers}>Open set workspace</ButtonGhost>
+                </Link>
+                <ButtonGhost
+                  size="sm"
+                  icon={Eye}
+                  onClick={() => window.open(setReviewPath(setSummary.id, setSummary.token, { preview: true }), '_blank')}
+                >
+                  Customer view of the set
+                </ButtonGhost>
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* "Going elsewhere" banner — the customer self-reported they're not
             proceeding (decline feedback, 000279). Surfaced prominently with a
