@@ -26,6 +26,7 @@ import { usePersonalisationPricing } from '../lib/quote/usePersonalisationPricin
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { computeQrArtworkChangedSlots, isQrSlotFlagged, resolveQrEffectiveKeep } from '../lib/qrCarryForward'
 import { rostersAreDisjoint } from '../lib/strandedApprovals'
+import { createSetFromProof } from '../lib/proofSets'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { LAYER_COLOUR_MATERIAL_CODES } from '../lib/letterpress'
 import {
@@ -291,6 +292,28 @@ export default function NewVersionPage() {
   const [selectedVariantIds, setSelectedVariantIds] = useState<string[]>([])
   const [currency, setCurrency] = useState<Currency | null>(null)
   const [variantTiers, setVariantTiers] = useState<Record<string, PriceTierRow[]>>({})
+  // Entry A of the bundle-orders set flow (Slice 3): the wizard's
+  // different-materials guard terminals offer "build as a set of cards",
+  // which creates the proof_set (this proof becomes its first card) and
+  // lands on the set workspace. The form's live currency pick (if any)
+  // seeds the set's shared currency context.
+  const [startSetBusy, setStartSetBusy] = useState(false)
+  const [startSetError, setStartSetError] = useState<string | null>(null)
+  async function handleStartSet() {
+    if (startSetBusy) return
+    setStartSetBusy(true)
+    setStartSetError(null)
+    try {
+      const { data: userData } = await supabase.auth.getUser()
+      const userId = userData.user?.id
+      if (!userId) throw new Error('Not signed in.')
+      const { setId } = await createSetFromProof(proofId!, userId, { currency })
+      navigate(`/bundles/${setId}`)
+    } catch (e) {
+      setStartSetError((e as Error).message)
+      setStartSetBusy(false)
+    }
+  }
   // Inheritance tracking. On v2+ creation we snapshot every inherited
   // value into inheritedSnapshot once the prior version loads. From
   // there each field derives its own isCarried/isEdited live by
@@ -5119,7 +5142,14 @@ export default function NewVersionPage() {
             materialChosen={!!selectedMaterialId}
             materialSupportsPersonalisation={!!selectedMaterial?.supports_personalisation}
             personalisationHelper={personalisationHelperText(currency, personalisationPricing)}
+            onStartSet={() => void handleStartSet()}
+            startSetBusy={startSetBusy}
           />
+          {startSetError && (
+            <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-rose-200">
+              {startSetError}
+            </p>
+          )}
 
           {/* Pricing display — required choice between standard grid and custom quote */}
           {/* Commercial — pricing display + currency. The two

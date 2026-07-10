@@ -19,6 +19,8 @@ import SetNewPasswordPage from './pages/SetNewPasswordPage'
 // (the shared react/router/supabase vendor chunks stay cached — see
 // vite.config.ts manualChunks).
 const CustomerProofPage = lazyWithRetry(() => import('./pages/CustomerProofPage'), 'CustomerProofPage')
+const SetReviewPage = lazyWithRetry(() => import('./pages/SetReviewPage'), 'SetReviewPage')
+const SetWorkspacePage = lazyWithRetry(() => import('./pages/SetWorkspacePage'), 'SetWorkspacePage')
 const OrderPayPage = lazyWithRetry(() => import('./pages/OrderPayPage'), 'OrderPayPage')
 const OrderGroupPayPage = lazyWithRetry(() => import('./pages/OrderGroupPayPage'), 'OrderGroupPayPage')
 const DashboardPage = lazyWithRetry(() => import('./pages/DashboardPage'), 'DashboardPage')
@@ -96,6 +98,11 @@ function AppShell() {
       <Routes>
         {/* Public */}
         <Route path="/p/:id" element={<CustomerProofPage />} />
+        {/* The bundle review front door (bundle orders Slice 3) — token-gated
+            via public_get_proof_set, links into each card's /p/:id page.
+            /set/:id is a legacy alias from the pre-rename preview links. */}
+        <Route path="/bundle/:id" element={<SetReviewPage />} />
+        <Route path="/set/:id" element={<SetReviewPage />} />
         {/* The static /order/group segment outranks /order/:id in React
             Router's matching, so group links never fall into the single-order
             page. */}
@@ -120,6 +127,11 @@ function AppShell() {
         <Route path="/settings/notifications" element={<RequireAuth><NotificationSettingsPage /></RequireAuth>} />
         <Route path="/proofs/new" element={<RequireAuth><NewProofPage /></RequireAuth>} />
         <Route path="/proofs/:id" element={<RequireAuth><ProofDetailPage /></RequireAuth>} />
+        {/* The designer bundle workspace (bundle orders Slice 3) — author a
+            bundle of cards over one shared customer context. /sets/:id is a
+            legacy alias from the pre-rename preview links. */}
+        <Route path="/bundles/:id" element={<RequireAuth><SetWorkspacePage /></RequireAuth>} />
+        <Route path="/sets/:id" element={<RequireAuth><SetWorkspacePage /></RequireAuth>} />
         <Route path="/proofs/:id/versions/new" element={<RequireAuth><NewVersionPage /></RequireAuth>} />
         <Route path="/proofs/:id/versions/:versionId/edit" element={<RequireAuth><EditVersionPage /></RequireAuth>} />
         {/* Legacy redirect: Customers moved into the Admin shell as a

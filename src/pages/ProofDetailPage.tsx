@@ -26,6 +26,8 @@ import type {
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { deriveSharedApprovalState, type SharedApprovalState } from '../lib/sharedApproval'
 import { findStrandedMaterialApprovals } from '../lib/strandedApprovals'
+import { addCardToSet, attachProofToSet, createSetFromProof, setReviewPath } from '../lib/proofSets'
+import ExistingProjectPicker from '../components/ExistingProjectPicker'
 import { useLiveProofViews } from '../lib/useLiveProofViews'
 import { downloadBlob } from '../lib/downloadFile'
 import { customerProofPath, openDesignerPreview } from '../lib/customerProofUrl'
@@ -75,6 +77,15 @@ interface Proof {
   // it visible post-approval so designers can see when the ack
   // actually happened during a dispute.
   disclaimer_acknowledged_at: string | null
+  // The proof set this proof belongs to (bundle orders Slice 3,
+  // migration 000311); null = standalone. Drives the "Part of a set"
+  // facts row and how "Add another material" behaves (add to the
+  // existing set vs start one).
+  proof_set_id: string | null
+  set_discarded_at: string | null
+  // Needed by the "bring in an existing project" picker — candidates are
+  // this contact's other standalone projects.
+  contact_id: string
   contacts: {
     full_name: string
     email: string
@@ -279,6 +290,131 @@ export default function ProofDetailPage() {
   const watcherId = session?.user.id ?? null
   const [watched, setWatched] = useState(false)
   const [watchBusy, setWatchBusy] = useState(false)
+  // ── "Add another material" (bundle orders Slice 3, Entry B) ──
+  // The dialog opens on an INTENT question first — "an extra card, or a
+  // change of direction?" — because both situations make a designer reach
+  // for the same words ("another material"). Wanting a different material
+  // INSTEAD of this design is a revision (a new version), not a set; the
+  // dialog catches that instinct and redirects it, mirroring the wizard's
+  // "will they pick one, or might they order both?" guard.
+  //
+  // The bundle path then offers two routes: spin up a FRESH sibling card
+  // in this proof's bundle (creating it first if there isn't one), or BRING
+  // IN one of the customer's existing standalone projects as the second
+  // card. The honest version of the Novion move: a second card ALONGSIDE
+  // this one, never a version that replaces it. A card added to an
+  // already-SENT bundle joins the same link; the workspace's "Send update"
+  // step announces it to the customer.
+  // Summary of this proof's set for the header strip — the always-visible
+  // way back to the set workspace and the customer front door (the facts-
+  // rail row alone proved too easy to miss). Null = standalone proof.
+  const [setSummary, setSetSummary] = useState<{
+    id: string
+    token: string
+    sent_at: string | null
+    memberCount: number
+  } | null>(null)
+  useEffect(() => {
+    const setId = proof?.proof_set_id
+    if (!setId) {
+      setSetSummary(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const [setRes, countRes] = await Promise.all([
+        supabase.from('proof_sets').select('id, token, sent_at').eq('id', setId).maybeSingle(),
+        supabase.from('proofs').select('id', { count: 'exact', head: true }).eq('proof_set_id', setId),
+      ])
+      if (cancelled || !setRes.data) return
+      setSetSummary({
+        id: setRes.data.id,
+        token: setRes.data.token,
+        sent_at: setRes.data.sent_at,
+        memberCount: countRes.count ?? 0,
+      })
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [proof?.proof_set_id])
+
+  const [addMaterialDialog, setAddMaterialDialog] = useState(false)
+  const [addMaterialMode, setAddMaterialMode] = useState<'intent' | 'choose' | 'picker' | 'revision'>('intent')
+  const [addMaterialSetSent, setAddMaterialSetSent] = useState(false)
+  const [addMaterialBusy, setAddMaterialBusy] = useState(false)
+  const [addMaterialError, setAddMaterialError] = useState<string | null>(null)
+  async function openAddMaterialDialog() {
+    setAddMaterialError(null)
+    setAddMaterialMode('intent')
+    // Is this proof's set already sent? Drives the copy and hides the
+    // attach option (a sent set's membership is locked).
+    let sent = false
+    if (proof?.proof_set_id) {
+      const { data } = await supabase
+        .from('proof_sets')
+        .select('sent_at')
+        .eq('id', proof.proof_set_id)
+        .maybeSingle()
+      sent = !!data?.sent_at
+    }
+    setAddMaterialSetSent(sent)
+    setAddMaterialDialog(true)
+  }
+  function closeAddMaterialDialog() {
+    if (addMaterialBusy) return
+    setAddMaterialDialog(false)
+    setAddMaterialError(null)
+    setAddMaterialMode('intent')
+  }
+  // Bring an existing standalone project of this customer into the set
+  // (creating the set around this proof first if there isn't one).
+  async function handleAttachExisting(otherProofId: string) {
+    if (!proof || !session?.user.id || addMaterialBusy) return
+    setAddMaterialBusy(true)
+    setAddMaterialError(null)
+    try {
+      let setId = proof.proof_set_id
+      if (!setId) {
+        const created = await createSetFromProof(proof.id, session.user.id)
+        setId = created.setId
+      }
+      await attachProofToSet(setId, otherProofId)
+      navigate(`/bundles/${setId}`)
+    } catch (e) {
+      setAddMaterialError((e as Error).message)
+      setAddMaterialBusy(false)
+    }
+  }
+  async function handleAddAnotherMaterial() {
+    if (!proof || !session?.user.id || addMaterialBusy) return
+    setAddMaterialBusy(true)
+    setAddMaterialError(null)
+    try {
+      const userId = session.user.id
+      // One bundle per project, reused whether or not it's been sent — a
+      // post-send addition joins the same link and the workspace's "Send
+      // update" step announces it (10 Jul decision).
+      let setId: string | null = proof.proof_set_id
+      if (setId) {
+        const { data: existing } = await supabase
+          .from('proof_sets')
+          .select('id')
+          .eq('id', setId)
+          .maybeSingle()
+        if (!existing) setId = null // stale pointer — the bundle was deleted
+      }
+      if (!setId) {
+        const created = await createSetFromProof(proof.id, userId)
+        setId = created.setId
+      }
+      await addCardToSet(setId, userId)
+      navigate(`/bundles/${setId}`)
+    } catch (e) {
+      setAddMaterialError((e as Error).message)
+      setAddMaterialBusy(false)
+    }
+  }
   useEffect(() => {
     if (!id || !watcherId) return
     let cancelled = false
@@ -607,7 +743,7 @@ export default function ProofDetailPage() {
     const [proofResult, versionsResult] = await Promise.all([
       supabase
         .from('proofs')
-        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, disclaimer_acknowledged_at, contacts(full_name, email, companies(name))')
+        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, disclaimer_acknowledged_at, proof_set_id, set_discarded_at, contact_id, contacts(full_name, email, companies(name))')
         .eq('id', proofId)
         .single(),
       supabase
@@ -2322,6 +2458,24 @@ export default function ProofDetailPage() {
             </button>
           </dd>
         </div>
+        {/* Set membership (bundle orders Slice 3) — this proof is one card
+            of a reviewed-together set; the workspace is the set's home. */}
+        {proof.proof_set_id && (
+          <div className="min-w-0">
+            <dt className="eyebrow text-ink-mute">Part of a bundle</dt>
+            <dd className="mt-1 text-[13px]">
+              <Link
+                to={`/bundles/${proof.proof_set_id}`}
+                className="inline-flex items-center gap-1 text-ink-soft hover:text-ink"
+              >
+                <Layers size={11} aria-hidden="true" /> Open bundle workspace
+              </Link>
+              {proof.set_discarded_at && (
+                <span className="ml-2 text-xs text-amber-700">Customer set this card aside</span>
+              )}
+            </dd>
+          </div>
+        )}
         <div className="min-w-0">
           <dt className="eyebrow text-ink-mute">Created</dt>
           <dd className="mt-1 text-[13px] text-ink-soft">{formatLongDate(proof.created_at)}</dd>
@@ -2744,6 +2898,11 @@ export default function ProofDetailPage() {
                     isLocked
                       ? [
                           { label: 'Reopen project', onClick: () => { setReopenJobCancelled(false); setStatusDialog('reopen') } },
+                          // Entry B of the set flow (Slice 3): a second material
+                          // for the same customer is a sibling CARD, not a new
+                          // version — offered on approved proofs too, which is
+                          // exactly where the Novion-style ask lands.
+                          { label: 'Add another material', onClick: () => void openAddMaterialDialog() },
                           ...(isApproved && orderingEnabled === true && hasOpenOrder
                             ? [{
                                 label: 'Create another order',
@@ -2756,6 +2915,7 @@ export default function ProofDetailPage() {
                             : []),
                         ]
                       : [
+                          { label: 'Add another material', onClick: () => void openAddMaterialDialog() },
                           { label: 'Mark as approved', tone: 'approve', onClick: () => setStatusDialog('approve') },
                           { label: 'Abandon project', tone: 'danger', onClick: () => setStatusDialog('abandon') },
                         ]
@@ -2769,6 +2929,41 @@ export default function ProofDetailPage() {
           {/* Hidden input for clipboard fallback. */}
           <input ref={fallbackInputRef} className="sr-only" readOnly aria-hidden="true" />
         </section>
+
+        {/* Set-membership strip (bundle orders Slice 3) — the obvious way
+            back to the set workspace and the customer front door from any
+            member card. The quieter facts-rail row remains, but this is
+            the one you can't miss. */}
+        {setSummary && (
+          <section className="mb-8 rounded-2xl border border-line bg-surface p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-start gap-2 text-[13px] text-ink-soft">
+                <Layers size={15} className="mt-0.5 shrink-0 text-ink-mute" aria-hidden="true" />
+                <span>
+                  <span className="font-semibold text-ink">
+                    One of {setSummary.memberCount} cards in a bundle
+                  </span>
+                  {' — '}
+                  {setSummary.sent_at
+                    ? 'the customer reviews them together through one link.'
+                    : 'not yet sent to the customer.'}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Link to={`/bundles/${setSummary.id}`}>
+                  <ButtonGhost size="sm" icon={Layers}>Open bundle workspace</ButtonGhost>
+                </Link>
+                <ButtonGhost
+                  size="sm"
+                  icon={Eye}
+                  onClick={() => window.open(setReviewPath(setSummary.id, setSummary.token, { preview: true }), '_blank')}
+                >
+                  Customer view of the bundle
+                </ButtonGhost>
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* "Going elsewhere" banner — the customer self-reported they're not
             proceeding (decline feedback, 000279). Surfaced prominently with a
@@ -3927,6 +4122,148 @@ export default function ProofDetailPage() {
           />
         )
       })()}
+
+      {/* Add-another-material dialog (bundle orders Slice 3, Entry B).
+          Two paths: a fresh sibling card, or bringing in one of the
+          customer's existing standalone projects — either way ending on
+          the set workspace with one review link over all the cards. */}
+      {addMaterialDialog && (
+        <Modal
+          open
+          onClose={closeAddMaterialDialog}
+          preventClose={addMaterialBusy}
+          ariaLabel="Add another material"
+          panelClassName="w-full max-w-lg rounded-2xl bg-surface p-6 shadow-xl"
+        >
+          <h2 className="text-lg font-semibold text-ink">Add another material</h2>
+          {addMaterialMode === 'intent' ? (
+            <>
+              {/* The disambiguating question — an extra card builds a set;
+                  a different material INSTEAD is a revision (new version).
+                  Same intent vocabulary as the wizard's QS2 guard. */}
+              <p className="mt-2 text-sm font-medium text-ink">
+                Is this an extra card, or a change of direction?
+              </p>
+              <div className="mt-4 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setAddMaterialMode('choose')}
+                  className="block w-full rounded-lg border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-ink/40"
+                >
+                  <span className="block text-sm font-semibold text-ink">
+                    They want this card AND another one
+                  </span>
+                  <span className="mt-0.5 block text-xs text-ink-mute">
+                    Builds a bundle — the cards sit side by side behind one review link.
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAddMaterialMode('revision')}
+                  className="block w-full rounded-lg border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-ink/40"
+                >
+                  <span className="block text-sm font-semibold text-ink">
+                    They want a different material INSTEAD of this design
+                  </span>
+                  <span className="mt-0.5 block text-xs text-ink-mute">
+                    That’s a revision of this same card — done with a new version, not a bundle.
+                  </span>
+                </button>
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={closeAddMaterialDialog}
+                  className="text-sm text-ink-mute underline underline-offset-4 hover:text-ink"
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : addMaterialMode === 'revision' ? (
+            <>
+              <p className="mt-2 text-sm text-ink-soft">
+                {isLocked
+                  ? 'A change of direction is a revision of this same card. This project is closed, so reopen it first — then add a new version and pick the new material there. The customer keeps their existing link and the old version stays in the history.'
+                  : 'A change of direction is a revision of this same card: add a new version and pick the new material there. The customer keeps their existing link, the old version stays in the history, and their page shows the new material when you save.'}
+              </p>
+              <div className="mt-4 space-y-2">
+                {isLocked ? (
+                  <ButtonCoral
+                    block
+                    onClick={() => {
+                      closeAddMaterialDialog()
+                      setReopenJobCancelled(false)
+                      setStatusDialog('reopen')
+                    }}
+                  >
+                    Reopen project…
+                  </ButtonCoral>
+                ) : (
+                  <ButtonCoral block onClick={() => navigate(`/proofs/${proof.id}/versions/new`)}>
+                    Add a new version
+                  </ButtonCoral>
+                )}
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setAddMaterialMode('intent')}
+                  className="text-sm text-ink-mute underline underline-offset-4 hover:text-ink"
+                >
+                  ← Back
+                </button>
+              </div>
+            </>
+          ) : addMaterialMode === 'choose' ? (
+            <>
+              <p className="mt-2 text-sm text-ink-soft">
+                {proof.proof_set_id
+                  ? addMaterialSetSent
+                    ? 'This adds another card to this project’s bundle. The bundle has already been sent, so the customer keeps the same link — once the new card is built, you’ll send them a quick update from the bundle workspace.'
+                    : 'This adds another card to this project’s bundle — a separate design on its own material, reviewed alongside this one through the bundle’s single review link.'
+                  : 'This makes a bundle: this card plus a second card on another material, side by side. The customer gets one link to review the whole bundle, and this card’s own versions and approvals are untouched.'}
+              </p>
+              <div className="mt-4 space-y-2">
+                <ButtonCoral block busy={addMaterialBusy} onClick={() => void handleAddAnotherMaterial()}>
+                  Start a new card from scratch
+                </ButtonCoral>
+                <ButtonGhost block disabled={addMaterialBusy} onClick={() => setAddMaterialMode('picker')}>
+                  Bring in an existing project
+                </ButtonGhost>
+              </div>
+              {addMaterialError && <p className="mt-3 text-sm text-rose-700">{addMaterialError}</p>}
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  disabled={addMaterialBusy}
+                  onClick={() => { setAddMaterialError(null); setAddMaterialMode('intent') }}
+                  className="text-sm text-ink-mute underline underline-offset-4 hover:text-ink disabled:opacity-60"
+                >
+                  ← Back
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="mt-2 text-sm text-ink-soft">
+                Pick one of this customer’s other projects to join the bundle as another card. It keeps
+                its own artwork, versions and approval state — the bundle just reviews them together.
+              </p>
+              {addMaterialError && <p className="mt-3 text-sm text-rose-700">{addMaterialError}</p>}
+              <div className="mt-4">
+                <ExistingProjectPicker
+                  contactId={proof.contact_id}
+                  excludeProofId={proof.id}
+                  attachBusy={addMaterialBusy}
+                  onAttach={(id) => void handleAttachExisting(id)}
+                  onBack={() => { setAddMaterialError(null); setAddMaterialMode('choose') }}
+                />
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
 
       {/* Toast */}
       {toast && (
