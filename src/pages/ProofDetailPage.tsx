@@ -291,21 +291,28 @@ export default function ProofDetailPage() {
   const [watched, setWatched] = useState(false)
   const [watchBusy, setWatchBusy] = useState(false)
   // ── "Add another material" (bundle orders Slice 3, Entry B) ──
-  // Two paths from one dialog: spin up a FRESH sibling card in this proof's
-  // set (creating the set first if there isn't one), or BRING IN one of the
-  // customer's existing standalone projects as the second card — both
-  // inheriting/keeping their own context. The honest version of the Novion
-  // move: a second card ALONGSIDE this one, never a version that replaces
-  // it. If the existing set has already been sent, membership is locked, so
-  // a fresh card starts a fresh set (spec §5) and attaching is not offered.
+  // The dialog opens on an INTENT question first — "an extra card, or a
+  // change of direction?" — because both situations make a designer reach
+  // for the same words ("another material"). Wanting a different material
+  // INSTEAD of this design is a revision (a new version), not a set; the
+  // dialog catches that instinct and redirects it, mirroring the wizard's
+  // "will they pick one, or might they order both?" guard.
+  //
+  // The set path then offers two routes: spin up a FRESH sibling card in
+  // this proof's set (creating the set first if there isn't one), or BRING
+  // IN one of the customer's existing standalone projects as the second
+  // card. The honest version of the Novion move: a second card ALONGSIDE
+  // this one, never a version that replaces it. If the existing set has
+  // already been sent, membership is locked, so a fresh card starts a
+  // fresh set (spec §5) and attaching is not offered.
   const [addMaterialDialog, setAddMaterialDialog] = useState(false)
-  const [addMaterialMode, setAddMaterialMode] = useState<'choose' | 'picker'>('choose')
+  const [addMaterialMode, setAddMaterialMode] = useState<'intent' | 'choose' | 'picker' | 'revision'>('intent')
   const [addMaterialSetSent, setAddMaterialSetSent] = useState(false)
   const [addMaterialBusy, setAddMaterialBusy] = useState(false)
   const [addMaterialError, setAddMaterialError] = useState<string | null>(null)
   async function openAddMaterialDialog() {
     setAddMaterialError(null)
-    setAddMaterialMode('choose')
+    setAddMaterialMode('intent')
     // Is this proof's set already sent? Drives the copy and hides the
     // attach option (a sent set's membership is locked).
     let sent = false
@@ -324,7 +331,7 @@ export default function ProofDetailPage() {
     if (addMaterialBusy) return
     setAddMaterialDialog(false)
     setAddMaterialError(null)
-    setAddMaterialMode('choose')
+    setAddMaterialMode('intent')
   }
   // Bring an existing standalone project of this customer into the set
   // (creating the set around this proof first if there isn't one).
@@ -4063,7 +4070,86 @@ export default function ProofDetailPage() {
           panelClassName="w-full max-w-lg rounded-2xl bg-surface p-6 shadow-xl"
         >
           <h2 className="text-lg font-semibold text-ink">Add another material</h2>
-          {addMaterialMode === 'choose' ? (
+          {addMaterialMode === 'intent' ? (
+            <>
+              {/* The disambiguating question — an extra card builds a set;
+                  a different material INSTEAD is a revision (new version).
+                  Same intent vocabulary as the wizard's QS2 guard. */}
+              <p className="mt-2 text-sm font-medium text-ink">
+                Is this an extra card, or a change of direction?
+              </p>
+              <div className="mt-4 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setAddMaterialMode('choose')}
+                  className="block w-full rounded-lg border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-ink/40"
+                >
+                  <span className="block text-sm font-semibold text-ink">
+                    They want this card AND another one
+                  </span>
+                  <span className="mt-0.5 block text-xs text-ink-mute">
+                    Builds a set — the cards sit side by side behind one review link.
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAddMaterialMode('revision')}
+                  className="block w-full rounded-lg border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-ink/40"
+                >
+                  <span className="block text-sm font-semibold text-ink">
+                    They want a different material INSTEAD of this design
+                  </span>
+                  <span className="mt-0.5 block text-xs text-ink-mute">
+                    That’s a revision of this same card — done with a new version, not a set.
+                  </span>
+                </button>
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={closeAddMaterialDialog}
+                  className="text-sm text-ink-mute underline underline-offset-4 hover:text-ink"
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : addMaterialMode === 'revision' ? (
+            <>
+              <p className="mt-2 text-sm text-ink-soft">
+                {isLocked
+                  ? 'A change of direction is a revision of this same card. This project is closed, so reopen it first — then add a new version and pick the new material there. The customer keeps their existing link and the old version stays in the history.'
+                  : 'A change of direction is a revision of this same card: add a new version and pick the new material there. The customer keeps their existing link, the old version stays in the history, and their page shows the new material when you save.'}
+              </p>
+              <div className="mt-4 space-y-2">
+                {isLocked ? (
+                  <ButtonCoral
+                    block
+                    onClick={() => {
+                      closeAddMaterialDialog()
+                      setReopenJobCancelled(false)
+                      setStatusDialog('reopen')
+                    }}
+                  >
+                    Reopen project…
+                  </ButtonCoral>
+                ) : (
+                  <ButtonCoral block onClick={() => navigate(`/proofs/${proof.id}/versions/new`)}>
+                    Add a new version
+                  </ButtonCoral>
+                )}
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setAddMaterialMode('intent')}
+                  className="text-sm text-ink-mute underline underline-offset-4 hover:text-ink"
+                >
+                  ← Back
+                </button>
+              </div>
+            </>
+          ) : addMaterialMode === 'choose' ? (
             <>
               <p className="mt-2 text-sm text-ink-soft">
                 {proof.proof_set_id
@@ -4086,10 +4172,11 @@ export default function ProofDetailPage() {
               <div className="mt-4 flex justify-end">
                 <button
                   type="button"
-                  onClick={closeAddMaterialDialog}
-                  className="text-sm text-ink-mute underline underline-offset-4 hover:text-ink"
+                  disabled={addMaterialBusy}
+                  onClick={() => { setAddMaterialError(null); setAddMaterialMode('intent') }}
+                  className="text-sm text-ink-mute underline underline-offset-4 hover:text-ink disabled:opacity-60"
                 >
-                  Cancel
+                  ← Back
                 </button>
               </div>
             </>
