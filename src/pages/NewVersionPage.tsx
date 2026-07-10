@@ -4859,17 +4859,18 @@ export default function NewVersionPage() {
         {savedVersion && !previewApproved && (
           // Post-save preview gate. The designer sees the customer
           // page rendered in an iframe with a banner of action
-          // buttons; only after they tick "Looks good" does the
-          // MessageSendPanel below take over. "Go back and edit"
-          // hops them to the edit-version route for this just-
-          // saved version. See VersionPreviewGate.tsx for the
-          // wider rationale.
+          // buttons; the confirm stays disabled until they've
+          // scrolled the proof and viewed every option tab, and only
+          // after confirming does the MessageSendPanel below take
+          // over. "Go back and edit" hops them to the edit-version
+          // route for this just-saved version. See
+          // VersionPreviewGate.tsx for the wider rationale.
           <VersionPreviewGate
             proofId={proofId!}
             versionId={savedVersion.id}
             versionNumber={savedVersion.number}
             currency={currency}
-            confirmLabel="Looks good, send proofs to customer"
+            confirmLabel="I've checked it — continue to send"
             onConfirm={() => setPreviewApproved(true)}
             onEdit={() => navigate(`/proofs/${proofId}/versions/${savedVersion.id}/edit`)}
           />

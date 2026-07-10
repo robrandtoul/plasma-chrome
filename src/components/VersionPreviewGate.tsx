@@ -6,47 +6,103 @@
 // was "create the version, click Send, move on" — and the first
 // person to spot a layout error was the customer.
 //
-// Shape: a sticky banner at the top with version label, currency,
-// and the two action buttons (Looks good → onConfirm; Go back and
-// edit → onEdit), plus an iframe filling the rest of the viewport
-// that points at /p/:id?preview=1&v=:versionId.
+// The original gate was one always-enabled click, and the habit
+// simply moved up a level: designers clicked "Looks good" without
+// scrolling, and a badly-cropped upload reached a customer anyway.
+// The confirm button is now earned, not given:
 //
-// Rendering the customer page inside an iframe (rather than
-// importing the components directly) means the preview cannot
-// drift from reality — it's the same route, the same data path
-// (public_get_customer_proof RPC), the same lightbox behaviour the
-// customer will see. The ?preview=1 flag suppresses view-recording
-// on the customer side (see lib/customerProofUrl.ts and
-// CustomerProofPage's record_proof_view bypass). The ?v= param
-// pins the iframe to the specific just-saved version, important
-// because designers can edit non-current versions (Set as current
-// in VersionDetailModal) and the customer page defaults to
-// whichever version carries is_current.
+// - Scroll: the button stays disabled until the designer has reached
+//   the end of the proof at least once. The iframe is same-origin, so
+//   the gate reads the preview's scroll position directly — no
+//   customer-page cooperation needed.
+// - Option tabs: when the version renders finish/species tabs, each
+//   tab must have been on screen once. The customer page reports tab
+//   activity over the postMessage bridge (lib/previewBridge.ts), and
+//   the banner shows one chip per tab that ticks off as it's viewed.
+//   Chips are also buttons — clicking one switches the preview to
+//   that tab and scrolls to the artwork, so the checklist is the
+//   fastest way to flick through the options rather than an obstacle.
+//
+// Deliberately NOT here: minimum-dwell timers (they punish fast-but-
+// genuine reviews and get alt-tabbed around) and anything that
+// re-locks once earned (requirements only ratchet — see
+// lib/previewReview.ts, which owns the state rules and their tests).
+// Everything fails open: if the bridge context never arrives (cached
+// older customer-page bundle) the gate times out to scroll-only, and
+// if scroll tracking throws, the scroll requirement is waived. A
+// broken gate must never stop proofs going out.
+//
+// Confirm and edit-return both write an audit entry (preview seconds,
+// scroll depth, tabs viewed) so a click-through habit is visible on
+// Admin → Activity long before a customer catches the next mistake.
+//
+// Shape: a banner at the top with version label, currency, the two
+// action buttons (confirm → onConfirm; Go back and edit → onEdit) and
+// the checklist strip, plus an iframe filling the rest of the
+// viewport pointing at /p/:id?preview=1&v=:versionId.
+//
+// Rendering the customer page inside an iframe (rather than importing
+// the components directly) means the preview cannot drift from
+// reality — same route, same data path (public_get_customer_proof
+// RPC), same lightbox behaviour. The ?preview=1 flag suppresses
+// view-recording on the customer side (see lib/customerProofUrl.ts)
+// and, together with being framed, switches the page's preview-bridge
+// reporting on. The ?v= param pins the iframe to the specific
+// just-saved version, important because designers can edit
+// non-current versions and the customer page defaults to whichever
+// version carries is_current.
 //
 // State is deliberately ephemeral (callbacks only, no preview-
-// approved column on proof_versions). This is a flow step that
-// slows the designer down by one deliberate click, not an
-// internal QA state worth modelling — persisting would muddy the
-// meaning when edits, reopens, or carry-forwards happen later.
+// approved column on proof_versions) — persisting would muddy the
+// meaning when edits, reopens, or carry-forwards happen later. The
+// audit ledger carries the durable record instead.
 
+import { useEffect, useRef, useState } from 'react'
+import { ArrowDown, Check, Eye } from 'lucide-react'
+import { logAudit } from '../lib/audit'
 import { customerProofPath } from '../lib/customerProofUrl'
+import { asPreviewPageMessage, postShowTab } from '../lib/previewBridge'
+import {
+  initialProgress,
+  outstandingTabs,
+  previewAuditMetadata,
+  reviewComplete,
+  scrollSatisfied,
+  withBridgeTimeout,
+  withContext,
+  withScrollSample,
+  withScrollTrackingFailed,
+  withTabViewed,
+} from '../lib/previewReview'
 import type { Currency } from '../lib/types'
+
+// How long to wait for the customer page's context message before
+// falling back to a scroll-only gate. Generous on purpose: the page
+// posts context once its RPC returns, which on a slow connection can
+// take a few seconds — and a late message still upgrades the gate to
+// the full checklist.
+const CONTEXT_TIMEOUT_MS = 6000
+// Scroll measurements ride the iframe's scroll/resize events, with
+// this poll as a backstop for what events miss: the page growing as
+// images stream in, and a proof short enough to need no scrolling.
+const SCROLL_POLL_MS = 500
+// "The end" is within this many pixels of the true bottom, so the
+// footer hairline never demands a pixel-perfect landing.
+const BOTTOM_MARGIN_PX = 96
 
 export interface VersionPreviewGateProps {
   proofId: string
   versionId: string
   versionNumber: number
   currency: Currency | null
-  // Confirm advances to the next step in the parent flow. On
-  // NewVersionPage that's the MessageSendPanel; on EditVersionPage
-  // it's a navigate back to the project detail.
+  // Confirm advances to the next step in the parent flow. On both
+  // NewVersionPage and EditVersionPage that's the MessageSendPanel.
   onConfirm: () => void
   // Edit returns the designer to the edit-version form for the
   // just-saved version so they can fix what they spotted.
   onEdit: () => void
-  // Label for the confirm button — copy differs by flow.
-  // NewVersionPage: "Looks good, continue to send"
-  // EditVersionPage: "Looks good, return to project"
+  // Label for the confirm button once it unlocks — copy lives at the
+  // call sites so the two flows can diverge again if they need to.
   confirmLabel: string
 }
 
@@ -59,25 +115,152 @@ export default function VersionPreviewGate({
   onEdit,
   confirmLabel,
 }: VersionPreviewGateProps) {
+  const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  // Wall-clock start for the audit entry's preview_seconds.
+  const openedAtRef = useRef(Date.now())
+  const [progress, setProgress] = useState(initialProgress)
+
   // Build the iframe URL. ?preview=1 keeps the designer's hits out
   // of the customer-view audit ledger; ?v= pins to the specific
   // version the designer just saved.
   const previewSrc = `${customerProofPath(proofId)}?preview=1&v=${versionId}`
 
+  // Bridge listener + context timeout. Messages are filtered to this
+  // exact version — the designer can wander to older versions inside
+  // the preview, and those pings must not tick anything off.
+  useEffect(() => {
+    const onMessage = (ev: MessageEvent) => {
+      if (ev.origin !== window.location.origin) return
+      const msg = asPreviewPageMessage(ev.data)
+      if (!msg || msg.versionId !== versionId) return
+      if (msg.kind === 'context') {
+        setProgress((p) => withContext(p, msg.tabs))
+      } else {
+        setProgress((p) => withTabViewed(p, msg.code))
+      }
+    }
+    window.addEventListener('message', onMessage)
+    const timeout = window.setTimeout(
+      () => setProgress((p) => withBridgeTimeout(p)),
+      CONTEXT_TIMEOUT_MS,
+    )
+    return () => {
+      window.removeEventListener('message', onMessage)
+      window.clearTimeout(timeout)
+    }
+  }, [versionId])
+
+  // Scroll tracking against the same-origin iframe. Samples taken
+  // before the bridge goes ready are discarded inside
+  // withScrollSample — the pre-data page is a viewport-height spinner
+  // that would otherwise count as "already at the end".
+  useEffect(() => {
+    const iframe = iframeRef.current
+    if (!iframe) return
+    let attachedWindow: Window | null = null
+
+    const measure = () => {
+      try {
+        const win = iframe.contentWindow
+        const doc = win?.document?.documentElement
+        if (!win || !doc) return
+        const scrollHeight = doc.scrollHeight
+        const viewport = win.innerHeight
+        if (scrollHeight <= 0 || viewport <= 0) return
+        const shortPage = scrollHeight <= viewport + BOTTOM_MARGIN_PX
+        const seen = win.scrollY + viewport
+        const pct = shortPage ? 100 : (seen / scrollHeight) * 100
+        const atEnd = shortPage || seen >= scrollHeight - BOTTOM_MARGIN_PX
+        setProgress((p) => withScrollSample(p, pct, atEnd))
+      } catch {
+        // Same-origin access failed — the iframe navigated somewhere
+        // unexpected. Waive the requirement rather than lock the
+        // designer out; the audit entry records the degraded mode.
+        setProgress((p) => withScrollTrackingFailed(p))
+      }
+    }
+
+    const attach = () => {
+      try {
+        const win = iframe.contentWindow
+        if (!win) return
+        attachedWindow = win
+        win.addEventListener('scroll', measure, { passive: true })
+        win.addEventListener('resize', measure)
+        measure()
+      } catch {
+        setProgress((p) => withScrollTrackingFailed(p))
+      }
+    }
+
+    iframe.addEventListener('load', attach)
+    const poll = window.setInterval(measure, SCROLL_POLL_MS)
+    return () => {
+      iframe.removeEventListener('load', attach)
+      window.clearInterval(poll)
+      try {
+        attachedWindow?.removeEventListener('scroll', measure)
+        attachedWindow?.removeEventListener('resize', measure)
+      } catch {
+        // The iframe window may already be gone — nothing to detach.
+      }
+    }
+  }, [])
+
+  const complete = reviewComplete(progress)
+  const scrollDone = scrollSatisfied(progress)
+  const pendingTabs = outstandingTabs(progress)
+
+  const auditMetadata = () => previewAuditMetadata(progress, openedAtRef.current, Date.now())
+
+  const handleConfirm = () => {
+    void logAudit({
+      action: 'version.preview_confirmed',
+      targetType: 'proof_version',
+      targetId: versionId,
+      targetLabel: `v${versionNumber}`,
+      metadata: auditMetadata(),
+    })
+    onConfirm()
+  }
+
+  const handleEdit = async () => {
+    // Awaited, unlike the confirm path's fire-and-forget: onEdit may
+    // reload the document (EditVersionPage does, to re-sync the form
+    // with the just-saved DB state), which would cancel an in-flight
+    // audit write. logAudit never rejects, so this costs at most one
+    // quiet round-trip before the form re-appears.
+    await logAudit({
+      action: 'version.preview_edit_return',
+      targetType: 'proof_version',
+      targetId: versionId,
+      targetLabel: `v${versionNumber}`,
+      metadata: auditMetadata(),
+    })
+    onEdit()
+  }
+
+  // Clicking a tab chip drives the preview: the customer page switches
+  // to that tab and scrolls its plate grid into view.
+  const jumpToTab = (code: string) => {
+    postShowTab(iframeRef.current?.contentWindow, versionId, code)
+  }
+
+  const chipBase =
+    'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 ring-ink'
+
   return (
     <div className="fixed inset-0 z-40 flex flex-col bg-surface">
-      {/* Sticky banner — gray-900 so it's unambiguously app chrome,
-          not part of the customer page rendered below. Two-row
-          layout on narrow viewports collapses cleanly. */}
+      {/* Banner — gray-900 so it's unambiguously app chrome, not part
+          of the customer page rendered below. Row 1: label + actions;
+          row 2: the review checklist. Collapses cleanly on narrow
+          viewports. */}
       <div className="border-b border-ink bg-ink px-4 py-3 text-on-ink sm:px-6">
         <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <div className="flex items-center gap-2">
-              <svg className="h-4 w-4 text-low" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
-                <circle cx="8" cy="8" r="6.5" />
-                <path strokeLinecap="round" d="M8 5v3.5l2 1.5" />
-              </svg>
-              <span className="text-sm font-semibold">Preview, what the customer will see</span>
+              <Eye size={16} className="text-ink-dim" aria-hidden="true" />
+              <span className="text-sm font-semibold">Preview — what the customer will see</span>
             </div>
             <div className="flex items-center gap-3 text-xs text-ink-dim">
               <span>Version v{versionNumber}</span>
@@ -92,19 +275,80 @@ export default function VersionPreviewGate({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={onEdit}
+              onClick={handleEdit}
               className="rounded px-3 py-2 text-sm font-medium text-ink-dim ring-1 ring-ink hover:bg-ink hover:text-on-ink"
             >
               Go back and edit
             </button>
             <button
               type="button"
-              onClick={onConfirm}
-              className="rounded bg-in-stock px-4 py-2 text-sm font-semibold text-on-ink shadow-sm hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-in-stock"
+              onClick={handleConfirm}
+              disabled={!complete}
+              title={
+                complete
+                  ? undefined
+                  : progress.bridge === 'waiting'
+                    ? 'Loading preview…'
+                    : 'Finish the checks below first'
+              }
+              className="rounded bg-in-stock px-4 py-2 text-sm font-semibold text-on-ink shadow-sm hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-in-stock disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50"
             >
               {confirmLabel}
             </button>
           </div>
+        </div>
+
+        {/* Review checklist. The chips ARE the explanation for the
+            disabled button, so they sit directly under it. aria-live
+            lets screen readers hear items ticking off. */}
+        <div
+          aria-live="polite"
+          className="mx-auto mt-2.5 flex max-w-6xl flex-wrap items-center gap-2"
+        >
+          {progress.bridge === 'waiting' ? (
+            <span className="text-xs text-ink-dim">Loading preview…</span>
+          ) : (
+            <>
+              {progress.scrollTracking === 'ok' && (
+                <span
+                  className={`${chipBase} ${scrollDone ? 'text-ink-dim' : 'text-on-ink'}`}
+                >
+                  {scrollDone ? (
+                    <Check size={12} className="text-in-stock" aria-hidden="true" />
+                  ) : (
+                    <ArrowDown size={12} aria-hidden="true" />
+                  )}
+                  {scrollDone
+                    ? 'Scrolled to the end'
+                    : `Scroll to the end${progress.maxScrollPct > 0 ? ` · ${progress.maxScrollPct}%` : ''}`}
+                </span>
+              )}
+              {progress.tabs.map((tab) => {
+                // Stable order (chips never jump as they tick off);
+                // viewed state changes the icon and dims the text.
+                const viewed = progress.viewedTabCodes.includes(tab.code)
+                return (
+                  <button
+                    key={tab.code}
+                    type="button"
+                    onClick={() => jumpToTab(tab.code)}
+                    className={`${chipBase} ${viewed ? 'text-ink-dim hover:text-on-ink' : 'text-on-ink hover:bg-ink'}`}
+                  >
+                    {viewed ? (
+                      <Check size={12} className="text-in-stock" aria-hidden="true" />
+                    ) : (
+                      <Eye size={12} aria-hidden="true" />
+                    )}
+                    {tab.label}
+                  </button>
+                )
+              })}
+              {pendingTabs.length > 0 && (
+                <span className="text-xs text-ink-dim">Click an option to view it</span>
+              )}
+              {complete && <span className="text-xs text-ink-dim">All checked — over to you</span>}
+            </>
+          )}
         </div>
       </div>
 
@@ -112,11 +356,12 @@ export default function VersionPreviewGate({
           it fill the remaining viewport height; the parent uses
           fixed-inset so the iframe always has a fixed sizing
           context regardless of how tall the underlying page is.
-          title is required for a11y; sandbox is deliberately wide
-          (same-origin needed for the customer page's Supabase
-          calls to use the existing anon session and for its
-          lightbox/scroll behaviour to work). */}
+          title is required for a11y; no sandbox attribute is
+          deliberate (same-origin needed for the customer page's
+          Supabase calls, its lightbox/scroll behaviour, and the
+          preview bridge + scroll tracking above). */}
       <iframe
+        ref={iframeRef}
         src={previewSrc}
         title={`Preview of version v${versionNumber} as the customer will see it`}
         className="flex-1 w-full border-0 bg-surface"

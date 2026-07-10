@@ -29,6 +29,13 @@ import { ShareWithTeamPanel } from '../components/ShareWithTeamPanel'
 import DeclineFeedbackPanel from '../components/DeclineFeedbackPanel'
 import { ProofDetailView } from '../components/ProofDetailView'
 import { firstName } from '../lib/firstName'
+import {
+  asPreviewHostMessage,
+  isEmbeddedPreview,
+  postPreviewContext,
+  postPreviewTabViewed,
+  previewTabsForVersion,
+} from '../lib/previewBridge'
 import { BRAND_ORDER } from '../lib/theme'
 import { getPublicSettings, ABOUT_PROOF_COPY_DEFAULT, type PublicSettings } from '../lib/publicSettings'
 import type { PricingSnapshot, PricingVariant, Currency } from '../lib/types'
@@ -316,6 +323,56 @@ export default function CustomerProofPage() {
     if (!activeVersion) return
     setActiveOptionCode(activeVersion.material_options[0] ?? null)
   }, [activeVersion?.id])
+
+  // ── Designer preview bridge (VersionPreviewGate iframe) ──────────────────
+  // When this page is the gate's embedded preview, report which option
+  // tabs the viewed version renders and which one is on screen, and
+  // accept "show this tab" jumps from the gate's checklist chips. All
+  // three effects no-op entirely for customers and for the full-tab
+  // "Preview as customer" path — isEmbeddedPreview needs both the
+  // ?preview=1 flag and a parent frame. Protocol + security notes live
+  // in lib/previewBridge.ts.
+  const optionTabsRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!isEmbeddedPreview() || !activeVersion) return
+    postPreviewContext(activeVersion.id, previewTabsForVersion(activeVersion, materialOptions))
+  }, [activeVersion, materialOptions])
+
+  useEffect(() => {
+    if (!isEmbeddedPreview() || !activeVersion) return
+    const codes = activeVersion.material_options ?? []
+    // Mirror the effectiveOptionCode fallback used at render time so
+    // the default tab counts as viewed the moment it's on screen.
+    const effective =
+      activeOptionCode && codes.includes(activeOptionCode) ? activeOptionCode : codes[0] ?? null
+    if (effective) postPreviewTabViewed(activeVersion.id, effective)
+  }, [activeVersion, activeOptionCode])
+
+  useEffect(() => {
+    if (!isEmbeddedPreview()) return
+    const onMessage = (ev: MessageEvent) => {
+      if (ev.origin !== window.location.origin) return
+      const msg = asPreviewHostMessage(ev.data)
+      if (!msg) return
+      // The gate always targets the version it pinned via ?v=; hop
+      // back to it if the designer has wandered to an older version
+      // inside the preview.
+      if (msg.versionId !== activeVersion?.id) {
+        const target = versions.find((v) => v.id === msg.versionId)
+        if (target) setActiveVersion(target)
+      }
+      setActiveOptionCode(msg.code)
+      // Let the option switch re-render, then bring the switcher (and
+      // the plate grid right under it) into view so the designer sees
+      // the artwork they asked for.
+      window.setTimeout(() => {
+        optionTabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 80)
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [versions, activeVersion])
 
   // Fire a one-shot proof_version_views insert ~2.5s after the
   // initial version becomes available. The delay filters out
@@ -3199,7 +3256,7 @@ export default function CustomerProofPage() {
                     reads as a deliberate step. Only renders when the
                     version offers 2+ material options. */}
                 {showOptionSwitcher && (
-                  <div className="mb-5">
+                  <div className="mb-5" ref={optionTabsRef}>
                     <MaterialOptionTabs
                       label={optionLabelSingular}
                       // Inside the !is_per_direction_pricing gate; null
