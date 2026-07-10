@@ -33,7 +33,9 @@ import {
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { logAudit } from '../lib/audit'
-import { addCardToSet, setReviewPath, type ProofSetRow } from '../lib/proofSets'
+import BaseModal from '../components/Modal'
+import ExistingProjectPicker from '../components/ExistingProjectPicker'
+import { addCardToSet, attachProofToSet, setReviewPath, type ProofSetRow } from '../lib/proofSets'
 import { renderTemplate, DEFAULT_BODIES } from '../lib/replyTemplates'
 import {
   ButtonCoral,
@@ -108,6 +110,11 @@ export default function SetWorkspacePage() {
   // Remove/delete confirms.
   const [removeTarget, setRemoveTarget] = useState<MemberProof | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
+
+  // "Bring in an existing project" — attach one of the customer's other
+  // standalone projects to this set as another card.
+  const [attachOpen, setAttachOpen] = useState(false)
+  const [attachBusy, setAttachBusy] = useState(false)
 
   const load = useCallback(async () => {
     if (!id) return
@@ -354,6 +361,21 @@ export default function SetWorkspacePage() {
     }
   }
 
+  async function handleAttachExisting(proofId: string) {
+    if (!set || attachBusy) return
+    setAttachBusy(true)
+    setActionError(null)
+    try {
+      await attachProofToSet(set.id, proofId)
+      setAttachOpen(false)
+      await load()
+    } catch (e) {
+      setActionError((e as Error).message)
+    } finally {
+      setAttachBusy(false)
+    }
+  }
+
   async function handleRemove(member: MemberProof) {
     if (!set || busyAction) return
     setBusyAction(`remove-${member.id}`)
@@ -566,9 +588,14 @@ export default function SetWorkspacePage() {
               icon={Layers}
               action={
                 !isSent ? (
-                  <ButtonCoral size="sm" icon={Plus} onClick={handleAddCard} busy={busyAction === 'add'}>
-                    Add a card
-                  </ButtonCoral>
+                  <div className="flex items-center gap-2">
+                    <ButtonGhost size="sm" onClick={() => setAttachOpen(true)}>
+                      Add existing project
+                    </ButtonGhost>
+                    <ButtonCoral size="sm" icon={Plus} onClick={handleAddCard} busy={busyAction === 'add'}>
+                      Add a card
+                    </ButtonCoral>
+                  </div>
                 ) : undefined
               }
             >
@@ -671,9 +698,29 @@ export default function SetWorkspacePage() {
         </div>
       </div>
 
+      {/* ── Bring in an existing project ───────────────────────────────────── */}
+      {attachOpen && set && (
+        <Modal label="Bring in an existing project" onClose={() => !attachBusy && setAttachOpen(false)}>
+          <h2 className="text-lg font-semibold text-ink">Bring in an existing project</h2>
+          <p className="mt-1 text-sm text-ink-soft">
+            Adds one of {customerLabel}’s other standalone projects to this set as another card. It
+            keeps its own artwork, versions and approval state — the set just reviews them together.
+          </p>
+          <div className="mt-4">
+            <ExistingProjectPicker
+              contactId={set.contact_id}
+              attachBusy={attachBusy}
+              onAttach={(id) => void handleAttachExisting(id)}
+              onBack={() => setAttachOpen(false)}
+              backLabel="Cancel"
+            />
+          </div>
+        </Modal>
+      )}
+
       {/* ── Send modal ─────────────────────────────────────────────────────── */}
       {sendOpen && (
-        <Modal onClose={() => !sendBusy && setSendOpen(false)}>
+        <Modal label="Send set to customer" onClose={() => !sendBusy && setSendOpen(false)}>
           <h2 className="text-lg font-semibold text-ink">Send set to customer</h2>
           <p className="mt-1 text-sm text-ink-soft">
             Posts one review link on the Help Scout conversation, covering all{' '}
@@ -700,7 +747,7 @@ export default function SetWorkspacePage() {
 
       {/* ── Remove-card confirm ────────────────────────────────────────────── */}
       {removeTarget && (
-        <Modal onClose={() => setRemoveTarget(null)}>
+        <Modal label="Remove this card from the set" onClose={() => setRemoveTarget(null)}>
           <h2 className="text-lg font-semibold text-ink">Remove this card from the set?</h2>
           <p className="mt-2 text-sm text-ink-soft">
             The card isn’t deleted — it goes back to being a standalone project with its own page and
@@ -717,7 +764,7 @@ export default function SetWorkspacePage() {
 
       {/* ── Delete-set confirm ─────────────────────────────────────────────── */}
       {deleteOpen && (
-        <Modal onClose={() => setDeleteOpen(false)}>
+        <Modal label="Delete this set" onClose={() => setDeleteOpen(false)}>
           <h2 className="text-lg font-semibold text-ink">Delete this set?</h2>
           <p className="mt-2 text-sm text-ink-soft">
             Only the set container is deleted — every card in it survives as a standalone project. The
@@ -735,16 +782,25 @@ export default function SetWorkspacePage() {
   )
 }
 
-// Minimal centred modal matching the app's overlay idiom.
-function Modal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+// Thin wrapper over the shared Modal primitive (Esc, focus trap, scroll
+// lock) with this page's panel chrome baked in.
+function Modal({
+  children,
+  onClose,
+  label,
+}: {
+  children: React.ReactNode
+  onClose: () => void
+  label: string
+}) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-lg rounded-2xl bg-surface p-6 shadow-xl ring-1 ring-line"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {children}
-      </div>
-    </div>
+    <BaseModal
+      open
+      onClose={onClose}
+      ariaLabel={label}
+      panelClassName="w-full max-w-lg rounded-2xl bg-surface p-6 shadow-xl ring-1 ring-line"
+    >
+      {children}
+    </BaseModal>
   )
 }

@@ -130,6 +130,102 @@ export async function createSetFromProof(
   return { setId: set.id, token: set.token, alreadyExisted: false }
 }
 
+// A standalone project of the same customer that could be brought into a
+// set, with enough of its current version to label it in a picker.
+export interface AttachableProof {
+  id: string
+  status: string
+  created_at: string
+  version_number: number | null
+  material_display: string | null
+  names: string[]
+}
+
+// The customer's other standalone projects — candidates for "bring in an
+// existing project". Same contact, not already in a set, not abandoned.
+export async function listAttachableProofs(
+  contactId: string,
+  excludeProofId?: string,
+): Promise<AttachableProof[]> {
+  let query = supabase
+    .from('proofs')
+    .select('id, status, created_at')
+    .eq('contact_id', contactId)
+    .is('proof_set_id', null)
+    .neq('status', 'abandoned')
+    .order('created_at', { ascending: false })
+  if (excludeProofId) query = query.neq('id', excludeProofId)
+  const { data: proofs, error } = await query
+  if (error) throw new Error(`Couldn't load this customer's other projects: ${error.message}`)
+  const rows = proofs ?? []
+  if (rows.length === 0) return []
+
+  const { data: versions } = await supabase
+    .from('proof_versions')
+    .select('proof_id, version_number, material_display, names')
+    .in('proof_id', rows.map((p) => p.id))
+    .eq('is_current', true)
+  const byProof = new Map(
+    ((versions ?? []) as Array<{ proof_id: string; version_number: number; material_display: string; names: string[] }>).map(
+      (v) => [v.proof_id, v],
+    ),
+  )
+  return rows.map((p) => {
+    const v = byProof.get(p.id)
+    return {
+      id: p.id,
+      status: p.status as string,
+      created_at: p.created_at as string,
+      version_number: v?.version_number ?? null,
+      material_display: v?.material_display ?? null,
+      names: v?.names ?? [],
+    }
+  })
+}
+
+// Bring an EXISTING standalone project into an unsent set as another card.
+// The complement of addCardToSet for work that's already been started —
+// "combine two separate projects into one review link". The proof keeps its
+// own versions, approvals and Help Scout link; only its set membership
+// changes (and the send anchors on the set's conversation).
+export async function attachProofToSet(setId: string, proofId: string): Promise<void> {
+  const { data: set, error: setErr } = await supabase
+    .from('proof_sets')
+    .select('id, contact_id, sent_at')
+    .eq('id', setId)
+    .single()
+  if (setErr) throw new Error(`Couldn't load the set: ${setErr.message}`)
+  if (set.sent_at) {
+    throw new Error('This set has been sent to the customer, so its cards are locked. A new card starts a fresh set.')
+  }
+
+  const { data: proof, error: proofErr } = await supabase
+    .from('proofs')
+    .select('id, contact_id, proof_set_id, status, contacts(full_name)')
+    .eq('id', proofId)
+    .single()
+  if (proofErr) throw new Error(`Couldn't load that project: ${proofErr.message}`)
+  if (proof.proof_set_id) throw new Error('That project is already part of a set.')
+  if (proof.status === 'abandoned') throw new Error('That project has been abandoned — reopen it first.')
+  if (proof.contact_id !== set.contact_id) {
+    throw new Error('That project belongs to a different contact, so it can’t join this set.')
+  }
+
+  const { error: linkErr } = await supabase
+    .from('proofs')
+    .update({ proof_set_id: setId, set_discarded_at: null })
+    .eq('id', proofId)
+  if (linkErr) throw new Error(`Couldn't add the project to the set: ${linkErr.message}`)
+
+  void logAudit({
+    action: 'proof_set.card_added',
+    targetType: 'proof_set',
+    targetId: setId,
+    targetLabel: (proof as { contacts?: { full_name?: string } | null }).contacts?.full_name ?? '',
+    metadata: { proof_id: proofId, attached_existing: true },
+  })
+}
+
 // Add a fresh card (a proof shell, exactly what the new-project form
 // creates) to an unsent set, inheriting the set's customer + Help Scout
 // context. Returns the new proof's id — the caller sends the designer to

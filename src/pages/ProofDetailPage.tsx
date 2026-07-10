@@ -26,7 +26,8 @@ import type {
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { deriveSharedApprovalState, type SharedApprovalState } from '../lib/sharedApproval'
 import { findStrandedMaterialApprovals } from '../lib/strandedApprovals'
-import { addCardToSet, createSetFromProof } from '../lib/proofSets'
+import { addCardToSet, attachProofToSet, createSetFromProof } from '../lib/proofSets'
+import ExistingProjectPicker from '../components/ExistingProjectPicker'
 import { useLiveProofViews } from '../lib/useLiveProofViews'
 import { downloadBlob } from '../lib/downloadFile'
 import { customerProofPath, openDesignerPreview } from '../lib/customerProofUrl'
@@ -82,6 +83,9 @@ interface Proof {
   // existing set vs start one).
   proof_set_id: string | null
   set_discarded_at: string | null
+  // Needed by the "bring in an existing project" picker — candidates are
+  // this contact's other standalone projects.
+  contact_id: string
   contacts: {
     full_name: string
     email: string
@@ -287,14 +291,60 @@ export default function ProofDetailPage() {
   const [watched, setWatched] = useState(false)
   const [watchBusy, setWatchBusy] = useState(false)
   // ── "Add another material" (bundle orders Slice 3, Entry B) ──
-  // Spins up a sibling card in this proof's set (creating the set first if
-  // there isn't one), inheriting customer/Help Scout/currency. The honest
-  // version of the Novion move: a second card ALONGSIDE this one, never a
-  // version that replaces it. If the existing set has already been sent,
-  // membership is locked, so the new card starts a fresh set (spec §5).
+  // Two paths from one dialog: spin up a FRESH sibling card in this proof's
+  // set (creating the set first if there isn't one), or BRING IN one of the
+  // customer's existing standalone projects as the second card — both
+  // inheriting/keeping their own context. The honest version of the Novion
+  // move: a second card ALONGSIDE this one, never a version that replaces
+  // it. If the existing set has already been sent, membership is locked, so
+  // a fresh card starts a fresh set (spec §5) and attaching is not offered.
   const [addMaterialDialog, setAddMaterialDialog] = useState(false)
+  const [addMaterialMode, setAddMaterialMode] = useState<'choose' | 'picker'>('choose')
+  const [addMaterialSetSent, setAddMaterialSetSent] = useState(false)
   const [addMaterialBusy, setAddMaterialBusy] = useState(false)
   const [addMaterialError, setAddMaterialError] = useState<string | null>(null)
+  async function openAddMaterialDialog() {
+    setAddMaterialError(null)
+    setAddMaterialMode('choose')
+    // Is this proof's set already sent? Drives the copy and hides the
+    // attach option (a sent set's membership is locked).
+    let sent = false
+    if (proof?.proof_set_id) {
+      const { data } = await supabase
+        .from('proof_sets')
+        .select('sent_at')
+        .eq('id', proof.proof_set_id)
+        .maybeSingle()
+      sent = !!data?.sent_at
+    }
+    setAddMaterialSetSent(sent)
+    setAddMaterialDialog(true)
+  }
+  function closeAddMaterialDialog() {
+    if (addMaterialBusy) return
+    setAddMaterialDialog(false)
+    setAddMaterialError(null)
+    setAddMaterialMode('choose')
+  }
+  // Bring an existing standalone project of this customer into the set
+  // (creating the set around this proof first if there isn't one).
+  async function handleAttachExisting(otherProofId: string) {
+    if (!proof || !session?.user.id || addMaterialBusy) return
+    setAddMaterialBusy(true)
+    setAddMaterialError(null)
+    try {
+      let setId = proof.proof_set_id
+      if (!setId) {
+        const created = await createSetFromProof(proof.id, session.user.id)
+        setId = created.setId
+      }
+      await attachProofToSet(setId, otherProofId)
+      navigate(`/sets/${setId}`)
+    } catch (e) {
+      setAddMaterialError((e as Error).message)
+      setAddMaterialBusy(false)
+    }
+  }
   async function handleAddAnotherMaterial() {
     if (!proof || !session?.user.id || addMaterialBusy) return
     setAddMaterialBusy(true)
@@ -655,7 +705,7 @@ export default function ProofDetailPage() {
     const [proofResult, versionsResult] = await Promise.all([
       supabase
         .from('proofs')
-        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, disclaimer_acknowledged_at, proof_set_id, set_discarded_at, contacts(full_name, email, companies(name))')
+        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, disclaimer_acknowledged_at, proof_set_id, set_discarded_at, contact_id, contacts(full_name, email, companies(name))')
         .eq('id', proofId)
         .single(),
       supabase
@@ -2814,7 +2864,7 @@ export default function ProofDetailPage() {
                           // for the same customer is a sibling CARD, not a new
                           // version — offered on approved proofs too, which is
                           // exactly where the Novion-style ask lands.
-                          { label: 'Add another material', onClick: () => { setAddMaterialError(null); setAddMaterialDialog(true) } },
+                          { label: 'Add another material', onClick: () => void openAddMaterialDialog() },
                           ...(isApproved && orderingEnabled === true && hasOpenOrder
                             ? [{
                                 label: 'Create another order',
@@ -2827,7 +2877,7 @@ export default function ProofDetailPage() {
                             : []),
                         ]
                       : [
-                          { label: 'Add another material', onClick: () => { setAddMaterialError(null); setAddMaterialDialog(true) } },
+                          { label: 'Add another material', onClick: () => void openAddMaterialDialog() },
                           { label: 'Mark as approved', tone: 'approve', onClick: () => setStatusDialog('approve') },
                           { label: 'Abandon project', tone: 'danger', onClick: () => setStatusDialog('abandon') },
                         ]
@@ -4000,21 +4050,68 @@ export default function ProofDetailPage() {
         )
       })()}
 
-      {/* Add-another-material confirm (bundle orders Slice 3, Entry B) */}
+      {/* Add-another-material dialog (bundle orders Slice 3, Entry B).
+          Two paths: a fresh sibling card, or bringing in one of the
+          customer's existing standalone projects — either way ending on
+          the set workspace with one review link over all the cards. */}
       {addMaterialDialog && (
-        <ConfirmDialog
-          message={
-            proof.proof_set_id
-              ? 'This adds another card to this project’s set — a separate design on its own material, reviewed alongside this one through the set’s single review link. (If the set has already been sent, the new card starts a fresh set instead.)'
-              : 'This starts a set: this card plus a new card on another material, side by side. The customer, Help Scout conversation and currency carry over, and the customer gets one link to review the whole set. This card’s own versions and approvals are untouched.'
-          }
-          confirmLabel="Add the card"
-          confirmClass="bg-ink hover:opacity-90 text-on-ink"
-          working={addMaterialBusy}
-          errorMsg={addMaterialError}
-          onConfirm={() => void handleAddAnotherMaterial()}
-          onCancel={() => { setAddMaterialDialog(false); setAddMaterialError(null) }}
-        />
+        <Modal
+          open
+          onClose={closeAddMaterialDialog}
+          preventClose={addMaterialBusy}
+          ariaLabel="Add another material"
+          panelClassName="w-full max-w-lg rounded-2xl bg-surface p-6 shadow-xl"
+        >
+          <h2 className="text-lg font-semibold text-ink">Add another material</h2>
+          {addMaterialMode === 'choose' ? (
+            <>
+              <p className="mt-2 text-sm text-ink-soft">
+                {proof.proof_set_id
+                  ? addMaterialSetSent
+                    ? 'This project’s set has already been sent, so its cards are locked — a new card starts a fresh set with a fresh review link (customer, conversation and currency carry over).'
+                    : 'This adds another card to this project’s set — a separate design on its own material, reviewed alongside this one through the set’s single review link.'
+                  : 'This makes a set: this card plus a second card on another material, side by side. The customer gets one link to review the whole set, and this card’s own versions and approvals are untouched.'}
+              </p>
+              <div className="mt-4 space-y-2">
+                <ButtonCoral block busy={addMaterialBusy} onClick={() => void handleAddAnotherMaterial()}>
+                  Start a new card from scratch
+                </ButtonCoral>
+                {!(proof.proof_set_id && addMaterialSetSent) && (
+                  <ButtonGhost block disabled={addMaterialBusy} onClick={() => setAddMaterialMode('picker')}>
+                    Bring in an existing project
+                  </ButtonGhost>
+                )}
+              </div>
+              {addMaterialError && <p className="mt-3 text-sm text-rose-700">{addMaterialError}</p>}
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={closeAddMaterialDialog}
+                  className="text-sm text-ink-mute underline underline-offset-4 hover:text-ink"
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="mt-2 text-sm text-ink-soft">
+                Pick one of this customer’s other projects to join the set as another card. It keeps
+                its own artwork, versions and approval state — the set just reviews them together.
+              </p>
+              {addMaterialError && <p className="mt-3 text-sm text-rose-700">{addMaterialError}</p>}
+              <div className="mt-4">
+                <ExistingProjectPicker
+                  contactId={proof.contact_id}
+                  excludeProofId={proof.id}
+                  attachBusy={addMaterialBusy}
+                  onAttach={(id) => void handleAttachExisting(id)}
+                  onBack={() => { setAddMaterialError(null); setAddMaterialMode('choose') }}
+                />
+              </div>
+            </>
+          )}
+        </Modal>
       )}
 
       {/* Toast */}
