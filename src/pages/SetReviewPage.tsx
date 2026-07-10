@@ -71,16 +71,26 @@ function cardState(p: MemberProof): CardState {
   return 'review'
 }
 
+// Every card shares one anatomy so the overview scans consistently:
+// eyebrow (Card N of M) · TITLE = the material (a set is one card per
+// material, so it's the natural axis) · SUBTITLE = who or what it's for.
+// Before this, a recipients card led with people and a shared-design card
+// led with its material — two different grammars side by side.
 function cardTitle(p: MemberProof): string {
+  if (p.material_display?.trim()) return p.material_display
   const names = (p.names ?? []).filter((n) => n.trim().length > 0)
   if (names.length > 0) return names.join(' & ')
-  return p.material_display?.trim() || 'Card design'
+  return 'New card design'
 }
 
-// The material as a sub-line, only when it isn't already the title.
 function cardSubtitle(p: MemberProof): string | null {
   const names = (p.names ?? []).filter((n) => n.trim().length > 0)
-  if (names.length > 0 && p.material_display?.trim()) return p.material_display
+  if (names.length > 0) {
+    // Names double as the title when there's no material yet.
+    return p.material_display?.trim() ? names.join(' & ') : null
+  }
+  if (p.shape === 'set_single') return 'One shared design'
+  if (p.shape === 'set_collection') return 'A collection of designs'
   return null
 }
 
@@ -239,10 +249,12 @@ export default function SetReviewPage() {
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
           {/* ── The cards ─────────────────────────────────────────────── */}
           <div className="space-y-4">
-            {active.map((m) => (
+            {active.map((m, i) => (
               <SetCard
                 key={m.id}
                 member={m}
+                cardNumber={i + 1}
+                cardCount={active.length}
                 previewUrl={previews[m.id] ?? null}
                 onDiscarded={() => setAsideNow((prev) => ({ ...prev, [m.id]: true }))}
               />
@@ -325,10 +337,16 @@ export default function SetReviewPage() {
 
 function SetCard({
   member,
+  cardNumber,
+  cardCount,
   previewUrl,
   onDiscarded,
 }: {
   member: MemberProof & { state: CardState }
+  // Position among the active cards ("Card 1 of 2"). Absent on set-aside
+  // cards — their group heading already labels them.
+  cardNumber?: number
+  cardCount?: number
   previewUrl: string | null
   onDiscarded?: () => void
 }) {
@@ -341,21 +359,30 @@ function SetCard({
       className={`rounded-2xl bg-surface p-4 shadow-sm ring-1 ring-line sm:p-5 ${aside ? 'opacity-60' : ''}`}
     >
       <div className="flex gap-4">
-        {/* Artwork preview — fills in as the signed URL arrives. */}
+        {/* Artwork preview — fills in as the signed URL arrives. Contained,
+            not cropped, so a business card is never beheaded. */}
         <div className="h-20 w-28 shrink-0 overflow-hidden rounded-lg bg-canvas ring-1 ring-line sm:h-24 sm:w-36">
           {previewUrl ? (
-            <img src={previewUrl} alt={`Preview of ${title}`} className="h-full w-full object-cover" />
+            <img src={previewUrl} alt={`Preview of ${title}`} className="h-full w-full object-contain p-1" />
           ) : (
-            <div className="flex h-full w-full items-center justify-center text-[10px] uppercase tracking-wide text-ink-mute">
-              {member.state === 'designing' ? 'In design' : 'Preview'}
+            <div className="flex h-full w-full items-center justify-center px-2 text-center text-[10px] uppercase tracking-wide text-ink-mute">
+              {member.state === 'designing' ? 'In design' : 'No preview yet'}
             </div>
           )}
         </div>
 
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-start justify-between gap-2">
+          {/* One anatomy for every card: eyebrow · title · subtitle, with
+              the status pill PINNED top-right (no wrap — a long title must
+              never push it to a different place on a sibling card). */}
+          <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h2 className={`truncate text-base font-semibold text-ink ${aside ? 'line-through' : ''}`}>
+              {cardNumber != null && cardCount != null && (
+                <p className="eyebrow text-ink-mute">
+                  Card {cardNumber} of {cardCount}
+                </p>
+              )}
+              <h2 className={`mt-0.5 text-base font-semibold text-ink ${aside ? 'line-through' : ''}`}>
                 {title}
               </h2>
               {subtitle && <p className="mt-0.5 text-sm text-ink-soft">{subtitle}</p>}
