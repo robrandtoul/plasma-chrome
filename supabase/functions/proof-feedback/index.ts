@@ -6,6 +6,14 @@
 // and the customer can still approve later. See migration 000279 +
 // docs/conversion analysis.
 //
+// set_discard mode (bundle orders Slice 3, migration 000311): the set review
+// page (/set/:id) reuses this function for "decide against this card". Same
+// feedback row and reasons, plus body.set_discard = true, which additionally
+// stamps proofs.set_discarded_at so the card drops out of the set's active
+// checklist. The Help Scout note is reworded, and the conversation is NOT
+// moved to Customer Support — the customer is still actively reviewing the
+// rest of the set, so it stays with Graphics.
+//
 // Deliberately separate from proof-action (the critical approve / request-changes
 // path) to keep that function untouched. Anon (verify_jwt = false) — the customer
 // page is unauthenticated, same trust model as proof-action: anyone with the
@@ -123,6 +131,8 @@ async function handle(req: Request): Promise<Response> {
   const note = typeof body.note === 'string' ? body.note.trim().slice(0, 2000) : null
   const actorName = typeof body.actor_name === 'string' ? body.actor_name.trim().slice(0, 200) : null
   const recoveryOffer = (body.recovery_offer as RecoveryOffer | undefined) ?? null
+  // Set review page's "decide against this card" (Slice 3) — see header.
+  const setDiscard = body.set_discard === true
 
   if (!UUID_RE.test(proofId)) return json({ error: 'invalid proof_id' }, 400)
   if (proofVersionId && !UUID_RE.test(proofVersionId)) return json({ error: 'invalid proof_version_id' }, 400)
@@ -141,11 +151,22 @@ async function handle(req: Request): Promise<Response> {
   // version currency. A bad proof_id is rejected so we don't store orphan rows.
   const { data: proof, error: proofErr } = await admin
     .from('proofs')
-    .select('id, helpscout_conversation_id')
+    .select('id, helpscout_conversation_id, proof_set_id, status')
     .eq('id', proofId)
     .maybeSingle()
   if (proofErr) return json({ error: 'lookup failed', detail: proofErr.message }, 500)
   if (!proof) return json({ error: 'proof not found' }, 404)
+
+  // A set discard only makes sense for a card that IS in a set and is not
+  // already approved (nothing approved is lost — spec §7.4). Reject early so
+  // the feedback row and the stamp can't disagree.
+  const proofSetId = (proof as { proof_set_id: string | null }).proof_set_id
+  if (setDiscard) {
+    if (!proofSetId) return json({ error: 'proof is not part of a set' }, 400)
+    if ((proof as { status: string }).status === 'approved') {
+      return json({ error: 'approved cards cannot be set aside' }, 400)
+    }
+  }
 
   let currency: string | null = null
   if (proofVersionId) {
@@ -176,6 +197,19 @@ async function handle(req: Request): Promise<Response> {
     .select('id')
     .single()
   if (insErr) return json({ error: 'insert failed', detail: insErr.message }, 500)
+
+  // Set discard: stamp the card as set aside so the review page's checklist
+  // drops it. NOT best-effort — the front door's "removed" state depends on
+  // it, so a failure surfaces to the customer as a retryable error (the extra
+  // feedback row a retry leaves behind is harmless append-only history).
+  if (setDiscard) {
+    const { error: discardErr } = await admin
+      .from('proofs')
+      .update({ set_discarded_at: new Date().toISOString() })
+      .eq('id', proofId)
+      .is('set_discarded_at', null)
+    if (discardErr) return json({ error: 'discard failed', detail: discardErr.message }, 500)
+  }
 
   // Terminal reason → stop automated follow-up nudges for this proof. Reuses the
   // existing per-proof opt-out the nudge pipeline already honours
@@ -214,12 +248,18 @@ async function handle(req: Request): Promise<Response> {
           const base = (Deno.env.get('PROOF_VIEWER_BASE_URL') ?? '').replace(/\/$/, '')
           const link = base ? `\nProof: ${base}/proofs/${proofId}` : ''
           const who = actorName ? ` from ${actorName}` : ''
-          const noteText =
-            `🔔 Customer feedback${who} — not ready to approve.\n` +
-            `Reason: ${REASON_LABELS[reasonCode]}.` +
-            (note ? `\n“${note}”` : '') +
-            offerSummary(recoveryOffer, currency) +
-            `\n\n${reasonCode === 'going_elsewhere' ? 'Automated reminders for this proof have been stopped.' : 'Worth a personal follow-up.'}${link}`
+          const noteText = setDiscard
+            ? `🔔 Set review${who} — a card was set aside.\n` +
+              `Reason: ${REASON_LABELS[reasonCode]}.` +
+              (note ? `\n“${note}”` : '') +
+              `\n\nThe rest of the set is unaffected — the card can be restored from the set workspace.` +
+              (reasonCode === 'going_elsewhere' ? '\nAutomated reminders for this card have been stopped.' : '') +
+              link
+            : `🔔 Customer feedback${who} — not ready to approve.\n` +
+              `Reason: ${REASON_LABELS[reasonCode]}.` +
+              (note ? `\n“${note}”` : '') +
+              offerSummary(recoveryOffer, currency) +
+              `\n\n${reasonCode === 'going_elsewhere' ? 'Automated reminders for this proof have been stopped.' : 'Worth a personal follow-up.'}${link}`
           await createNote(token, conversationId, userId, noteText)
         } catch (err) {
           console.error('[proof-feedback] HS note failed:', (err as Error).message)
@@ -232,8 +272,10 @@ async function handle(req: Request): Promise<Response> {
         console.error('[proof-feedback] HS set-active failed:', (err as Error).message)
       }
       // 3. Commercial feedback → Customer Support; 'different_direction' stays in
-      //    Graphics as a design revision.
-      if (COMMERCIAL_REASONS.has(reasonCode)) {
+      //    Graphics as a design revision. Set discards NEVER move the
+      //    conversation — the customer is still actively reviewing the rest
+      //    of the set, so it stays with Graphics whatever the reason.
+      if (COMMERCIAL_REASONS.has(reasonCode) && !setDiscard) {
         try {
           await moveConversation(token, conversationId, CUSTOMER_SUPPORT_MAILBOX_ID)
         } catch (err) {
