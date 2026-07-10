@@ -53,6 +53,8 @@ interface OrderLogRow {
   proof_id: string | null
   ship_to_name: string | null
   ship_to_email: string | null
+  // Recipient contact number from checkout — needed on the courier paperwork.
+  ship_to_phone: string | null
   ship_to_address: {
     line1?: string | null
     line2?: string | null
@@ -587,6 +589,7 @@ function OrderDetailModal({ order: o, onClose }: { order: OrderLogRow; onClose: 
             <Section title="Deliver to">
               {addrLines.map((line, i) => <p key={i} className="text-sm text-ink-soft">{line}</p>)}
               {o.ship_to_email && <p className="mt-1 text-xs text-ink-dim">{o.ship_to_email}</p>}
+              {o.ship_to_phone && <p className="text-xs text-ink-dim">{o.ship_to_phone}</p>}
             </Section>
           )}
 

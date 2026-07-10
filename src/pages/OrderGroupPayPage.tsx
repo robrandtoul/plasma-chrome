@@ -614,7 +614,16 @@ export default function OrderGroupPayPage() {
         const linkAuth = elements.create('linkAuthentication')
         linkAuth.on?.('change', (e) => { emailRef.current = e?.value?.email ?? '' })
         linkAuth.mount('#link-auth')
-        elements.create('address', { mode: 'shipping' }).mount('#address-element')
+        // Phone is required — same as the single pay page: the courier needs a
+        // recipient contact number, persisted by the webhook as ship_to_phone
+        // on the group and every member order.
+        elements
+          .create('address', {
+            mode: 'shipping',
+            fields: { phone: 'always' },
+            validation: { phone: { required: 'always' } },
+          })
+          .mount('#address-element')
         elements.create('payment').mount('#payment-element')
         if (cancelled) return
         setFormMounted(true)

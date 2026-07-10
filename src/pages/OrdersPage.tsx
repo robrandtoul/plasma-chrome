@@ -96,6 +96,9 @@ interface OrderRow {
   ship_dest_country: string | null
   ship_to_name: string | null
   ship_to_email: string | null
+  // Recipient contact number from checkout (Stripe Address Element) — the
+  // courier paperwork (FedEx especially) needs it.
+  ship_to_phone: string | null
   ship_to_address: {
     line1?: string | null
     line2?: string | null
@@ -130,7 +133,7 @@ const SELECT = `
   card_discount_type, card_discount_value, amount_card_discount, payment_method, order_kind,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, revised_at,
   date_required, dropbox_folder_url, stock_order_number, project_name, stock_colour, person_quantities,
-  ship_to_name, ship_to_email, ship_to_address, ship_dest_country, proof_id,
+  ship_to_name, ship_to_email, ship_to_phone, ship_to_address, ship_dest_country, proof_id,
   material_variants(display_name, materials(code, display_name, production_route, lead_time_max_days, outsourced_supplier_ids)),
   material_options(display_name),
   proofs(helpscout_last_reply_at, helpscout_last_customer_reply_at, helpscout_conversation_id, contacts(full_name, companies(name)))
@@ -2225,6 +2228,7 @@ function OrderCard({
                 {addrLines.map((line, i) => (
                   <span key={i} className="block">{line}</span>
                 ))}
+                {order.ship_to_phone && <span className="block text-ink-mute">{order.ship_to_phone}</span>}
               </div>
               {/* Mobile: a 48px disclosure with the postcode line as a peek so
                   the full address doesn't stretch the card. */}
@@ -2237,6 +2241,7 @@ function OrderCard({
                   {addrLines.map((line, i) => (
                     <span key={i} className="block">{line}</span>
                   ))}
+                  {order.ship_to_phone && <span className="block text-ink-mute">{order.ship_to_phone}</span>}
                 </div>
               </details>
             </>

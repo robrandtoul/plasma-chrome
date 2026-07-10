@@ -40,6 +40,7 @@ type StripeAddr = {
 function extractShipping(session: Record<string, unknown>): {
   name: string | null
   email: string | null
+  phone: string | null
   address: {
     line1: string | null
     line2: string | null
@@ -49,14 +50,15 @@ function extractShipping(session: Record<string, unknown>): {
     country: string | null
   } | null
 } {
-  const cust = (session.customer_details ?? {}) as { name?: string; email?: string; address?: StripeAddr }
+  const cust = (session.customer_details ?? {}) as { name?: string; email?: string; phone?: string; address?: StripeAddr }
   const shipDetails =
-    (session.shipping_details as { name?: string; address?: StripeAddr } | undefined) ??
-    ((session.collected_information as { shipping_details?: { name?: string; address?: StripeAddr } } | undefined)?.shipping_details)
+    (session.shipping_details as { name?: string; phone?: string; address?: StripeAddr } | undefined) ??
+    ((session.collected_information as { shipping_details?: { name?: string; phone?: string; address?: StripeAddr } } | undefined)?.shipping_details)
   const a = shipDetails?.address ?? cust.address ?? null
   return {
     name: shipDetails?.name ?? cust.name ?? null,
     email: cust.email ?? null,
+    phone: shipDetails?.phone ?? cust.phone ?? null,
     address: a
       ? {
           line1: a.line1 ?? null,
@@ -143,9 +145,9 @@ Deno.serve(async (req) => {
   //   * checkout.session.completed — the older hosted/embedded Checkout, kept
   //     so any in-flight session still fulfils.
   // We capture: order id (or the order GROUP id for a combined payment —
-  // bundle orders Slice 2), delivery name/email/address (StripeAddr shape:
-  // state + postal_code), the charged total (major units), currency, and the
-  // shared payment reference.
+  // bundle orders Slice 2), delivery name/email/phone/address (StripeAddr
+  // shape: state + postal_code), the charged total (major units), currency,
+  // and the shared payment reference.
   let orderId: string | undefined
   let groupId: string | undefined
   let reference: string | undefined
@@ -153,6 +155,7 @@ Deno.serve(async (req) => {
   let amountMajor: number | undefined
   let shipName: string | null = null
   let shipEmail: string | null = null
+  let shipPhone: string | null = null
   let shipAddr: StripeAddr | null = null
 
   if (event.type === 'checkout.session.completed') {
@@ -165,6 +168,7 @@ Deno.serve(async (req) => {
     const ship = extractShipping(session)
     shipName = ship.name
     shipEmail = ship.email
+    shipPhone = ship.phone
     shipAddr = ship.address
       ? {
           line1: ship.address.line1,
@@ -185,9 +189,12 @@ Deno.serve(async (req) => {
     orderId = meta.order_id as string | undefined
     groupId = meta.order_group_id as string | undefined
     if (!orderId && !groupId) return new Response('ok', { status: 200 })
-    const shipping = pi.shipping as { name?: string; address?: StripeAddr } | undefined
+    const shipping = pi.shipping as { name?: string; phone?: string; address?: StripeAddr } | undefined
     shipName = shipping?.name ?? null
     shipEmail = (pi.receipt_email as string | undefined) ?? null
+    // Recipient phone from the Address Element (fields.phone) — persisted for
+    // the courier paperwork (FedEx requires a contact number).
+    shipPhone = shipping?.phone ?? null
     shipAddr = shipping?.address ?? null
     reference = (meta.payment_reference as string | undefined) ?? orderId ?? groupId
     currencyUpper = String(pi.currency ?? 'gbp').toUpperCase()
@@ -230,6 +237,7 @@ Deno.serve(async (req) => {
       amountMajor,
       shipName,
       shipEmail,
+      shipPhone,
       shipAddr,
       storedAddress,
     })
@@ -245,6 +253,7 @@ Deno.serve(async (req) => {
       paid_at: new Date().toISOString(),
       ship_to_name: shipName,
       ship_to_email: shipEmail,
+      ship_to_phone: shipPhone,
       ship_to_address: storedAddress,
       updated_at: new Date().toISOString(),
     })
@@ -629,6 +638,7 @@ async function handleGroupPaid(
     amountMajor: number | undefined
     shipName: string | null
     shipEmail: string | null
+    shipPhone: string | null
     shipAddr: StripeAddr | null
     storedAddress: Record<string, unknown> | null
   },
@@ -646,6 +656,7 @@ async function handleGroupPaid(
       paid_at: nowIso,
       ship_to_name: evt.shipName,
       ship_to_email: evt.shipEmail,
+      ship_to_phone: evt.shipPhone,
       ship_to_address: evt.storedAddress,
       updated_at: nowIso,
     })
@@ -663,6 +674,7 @@ async function handleGroupPaid(
       paid_at: nowIso,
       ship_to_name: evt.shipName,
       ship_to_email: evt.shipEmail,
+      ship_to_phone: evt.shipPhone,
       ship_to_address: evt.storedAddress,
       updated_at: nowIso,
     })

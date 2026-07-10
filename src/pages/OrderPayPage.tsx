@@ -387,7 +387,8 @@ export default function OrderPayPage() {
   // Mount Stripe Elements once we have a PaymentIntent client secret. Loads
   // Stripe.js from the CDN, creates the Elements group, and mounts the Link
   // (email), Address (shipping) and Payment elements into our own layout. The
-  // Address element rides confirmPayment automatically (→ payment_intent.shipping),
+  // Address element rides confirmPayment automatically (→ payment_intent.shipping,
+  // including the required recipient phone we collect for the courier paperwork),
   // but the Link element's email does NOT — we capture it via its change event
   // and pass it as confirmParams.receipt_email at confirm time (see confirmPay).
   useEffect(() => {
@@ -411,7 +412,16 @@ export default function OrderPayPage() {
         // Capture the email so confirmPay can stamp it onto the PaymentIntent.
         linkAuth.on?.('change', (e) => { emailRef.current = e?.value?.email ?? '' })
         linkAuth.mount('#link-auth')
-        elements.create('address', { mode: 'shipping' }).mount('#address-element')
+        // Phone is required: FedEx (and DPD) need a recipient contact number on
+        // the shipping paperwork. It lands on payment_intent.shipping.phone and
+        // the webhook persists it as orders.ship_to_phone.
+        elements
+          .create('address', {
+            mode: 'shipping',
+            fields: { phone: 'always' },
+            validation: { phone: { required: 'always' } },
+          })
+          .mount('#address-element')
         elements.create('payment').mount('#payment-element')
         if (cancelled) return
         setFormMounted(true)
