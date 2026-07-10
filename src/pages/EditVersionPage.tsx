@@ -1748,8 +1748,9 @@ export default function EditVersionPage() {
   // Post-save preview gate. Replaces the form (and the rest of the
   // page chrome — the gate uses fixed inset-0) until the designer
   // confirms what the customer will see. "Go back and edit" clears
-  // the gate so the form re-appears with state intact. "Looks
-  // good, send proofs to customer" flips previewApproved and the
+  // the gate so the form re-appears with state intact. The confirm
+  // stays disabled until they've scrolled the proof and viewed every
+  // option tab; confirming flips previewApproved and the
   // MessageSendPanel branch below renders, matching the new-
   // version flow so the designer can fire a Help Scout reply
   // with the proof URL straight from here. See VersionPreviewGate
@@ -1762,7 +1763,7 @@ export default function EditVersionPage() {
         versionId={versionId}
         versionNumber={versionNumber}
         currency={savedVersionForPreview.currency}
-        confirmLabel="Looks good, send proofs to customer"
+        confirmLabel="I've checked it — continue to send"
         onConfirm={() => setPreviewApproved(true)}
         onEdit={() => setSavedVersionForPreview(null)}
       />
