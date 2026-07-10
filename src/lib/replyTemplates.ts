@@ -202,6 +202,11 @@ export const DEFAULT_BODIES: Record<string, string> = {
   // card. No order/payment language — this is the design phase.
   set_review_link:
     `Hi {first_name},\n\nHere are the proofs of your cards{? company} for {company}{/?}. There's a design for each card in the bundle — you can look through and approve each one here:\n\n{url}`,
+  // Bundle update — sent from the bundle workspace when a card is added to
+  // an already-sent bundle (seeded in 000312). Same {url} as the original
+  // review link: the customer keeps the one link.
+  bundle_update_link:
+    `Hi {first_name},\n\nWe've added another card to your review page{? company} for {company}{/?} — same link as before, with the new design ready to look over alongside the others:\n\n{url}`,
   // Post-action confirmations
   proof_approval_confirmation:
     `Thanks for approving {version_label}. We'll be in touch shortly about next steps.`,

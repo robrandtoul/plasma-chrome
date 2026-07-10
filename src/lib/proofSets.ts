@@ -7,10 +7,13 @@
 // Completely separate from order_groups (Slice 2, the payment layer) — a
 // set ends at approval and carries no pricing or order state.
 //
-// Membership is a single nullable pointer, proofs.proof_set_id. It LOCKS
-// once the set is sent to the customer (proof_sets.sent_at) — these helpers
-// enforce that app-side, mirroring how order-group eligibility lives in the
-// order-group edge function.
+// Membership is a single nullable pointer, proofs.proof_set_id. sent_at
+// records the FIRST send of the review link. Cards can still be added
+// afterwards (10 Jul decision): the customer keeps the one link, and the
+// workspace's "Send update" step announces the new card — a card counts as
+// announced once its current version carries last_reply_sent_at. Removal
+// stays pre-send only; after sending, a dropped card is handled by the
+// customer's set-aside or a designer abandon.
 
 import { supabase } from './supabase'
 import { logAudit } from './audit'
@@ -196,9 +199,8 @@ export async function attachProofToSet(setId: string, proofId: string): Promise<
     .eq('id', setId)
     .single()
   if (setErr) throw new Error(`Couldn't load the bundle: ${setErr.message}`)
-  if (set.sent_at) {
-    throw new Error('This bundle has been sent to the customer, so its cards are locked. A new card starts a fresh bundle.')
-  }
+  // Attaching to a SENT bundle is allowed (10 Jul) — the workspace's
+  // "Send update" step announces the new card on the same link.
 
   const { data: proof, error: proofErr } = await supabase
     .from('proofs')
@@ -238,9 +240,11 @@ export async function addCardToSet(setId: string, userId: string): Promise<{ pro
     .eq('id', setId)
     .single()
   if (setErr) throw new Error(`Couldn't load the bundle: ${setErr.message}`)
-  if (set.sent_at) {
-    throw new Error('This bundle has been sent to the customer, so its cards are locked. A new card starts a fresh bundle.')
-  }
+  // Adding to an already-SENT bundle is allowed (10 Jul): the customer keeps
+  // the one link, and the workspace's "Send update" step tells them about
+  // the new card. A card is "announced" once its current version carries
+  // last_reply_sent_at — until then the workspace shows it as pending an
+  // update send.
 
   const { data: proof, error: proofErr } = await supabase
     .from('proofs')

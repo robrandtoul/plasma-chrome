@@ -537,6 +537,36 @@ async function run(admin: Admin): Promise<Response> {
       const baseUrl = (Deno.env.get('PROOF_VIEWER_BASE_URL')?.trim() ?? '').replace(/\/+$/, '')
       const defaultUserId = Number(Deno.env.get('HELPSCOUT_DEFAULT_USER_ID')?.trim() ?? '')
 
+      // Bundle-aware chase links (migration 000311): a member of a SENT
+      // bundle was given the bundle review link, so its reminder should
+      // point back there, not at the card's standalone /p/ page. Members
+      // of an unsent bundle (card sent standalone first, attached later)
+      // keep the /p/ link — that's the only link the customer has.
+      // Best-effort: any failure here just falls back to /p/ links.
+      const bundleByProof = new Map<string, { id: string; token: string }>()
+      try {
+        const { data: memberRows } = await admin
+          .from('proofs')
+          .select('id, proof_set_id')
+          .in('id', grouped.send.map((c) => c.proofId))
+          .not('proof_set_id', 'is', null)
+        const setIds = [...new Set((memberRows ?? []).map((r) => r.proof_set_id as string))]
+        if (setIds.length > 0) {
+          const { data: setRows } = await admin
+            .from('proof_sets')
+            .select('id, token, sent_at')
+            .in('id', setIds)
+            .not('sent_at', 'is', null)
+          const setById = new Map((setRows ?? []).map((s) => [s.id as string, s]))
+          for (const r of memberRows ?? []) {
+            const s = setById.get(r.proof_set_id as string)
+            if (s) bundleByProof.set(r.id as string, { id: s.id as string, token: s.token as string })
+          }
+        }
+      } catch (err) {
+        console.warn('[send-nudges] bundle link lookup failed, using /p/ links', err)
+      }
+
       for (const c of grouped.send) {
         // Visible to the catch below: a claim that exists when an HsError
         // surfaces can be flipped to 'failed' (postStaffReply's HsError means
@@ -635,13 +665,18 @@ async function run(admin: Admin): Promise<Response> {
 
           // Render — {first_name} from the HS primaryCustomer so greeting and
           // recipient cannot diverge (they are equal-emailed by now anyway).
+          const bundle = bundleByProof.get(c.proofId)
           const ctx: TemplateContext = {
             first_name: (conv.primaryCustomer?.first ?? '').trim() ||
               (c.row.contact_full_name ?? '').trim().split(/\s+/)[0] || '',
             full_name: c.row.contact_full_name ?? '',
             company: c.row.company_name,
             version_number: c.row.version_number ?? '',
-            url: baseUrl ? `${baseUrl}/p/${c.proofId}` : '',
+            url: baseUrl
+              ? (bundle
+                ? `${baseUrl}/bundle/${bundle.id}?token=${bundle.token}`
+                : `${baseUrl}/p/${c.proofId}`)
+              : '',
             designer_first_name: '',
           }
           // Gate against the TEMPLATE (pre-render): the renderer blanks

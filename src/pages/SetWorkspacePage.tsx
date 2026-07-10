@@ -13,11 +13,13 @@
 // customer review link (/set/:id?token=…).
 //
 // Send posts the review link on the Help Scout thread (the existing
-// send-helpscout-reply function, template 'set_review_link') and LOCKS
-// membership: no more adding or removing cards — a later card starts a
-// fresh set (spec §5). Send-evidence (last_reply_sent_at/by) is stamped on
-// every member's current version so the follow-up automation treats each
-// card as genuinely sent at that moment.
+// send-helpscout-reply function, template 'set_review_link') and stamps
+// send-evidence (last_reply_sent_at/by) on every member's current version
+// so the follow-up automation treats each card as genuinely sent. Cards
+// can still be ADDED afterwards (10 Jul): the customer keeps the one link,
+// and the "Send update" step (template 'bundle_update_link') announces the
+// new card + stamps its send evidence. Removal stays pre-send only —
+// post-send drops go through the customer's set-aside or an abandon.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
@@ -54,6 +56,10 @@ interface MemberVersion {
   material_display: string
   names: string[]
   currency: string | null
+  // Send evidence: the card has been announced to the customer (either by
+  // the original bundle send or a later update send). Null on a card added
+  // after the bundle went out = "pending an update send".
+  last_reply_sent_at: string | null
 }
 
 interface MemberProof {
@@ -150,7 +156,7 @@ export default function SetWorkspacePage() {
       const [versionsRes, feedbackRes] = await Promise.all([
         supabase
           .from('proof_versions')
-          .select('id, proof_id, version_number, material_display, names, currency')
+          .select('id, proof_id, version_number, material_display, names, currency, last_reply_sent_at')
           .in('proof_id', proofIds)
           .eq('is_current', true),
         supabase
@@ -229,14 +235,24 @@ export default function SetWorkspacePage() {
   const approvedCount = activeMembers.filter((m) => m.status === 'approved').length
   const cardsMissingArtwork = activeMembers.filter((m) => !m.currentVersion)
 
+  // Cards the customer hasn't been told about: added after the bundle went
+  // out, so their current version carries no send evidence yet (version-less
+  // new cards count too). Drives the "Send update" step.
+  const unannounced = useMemo(
+    () => (isSent ? activeMembers.filter((m) => !m.currentVersion?.last_reply_sent_at) : []),
+    [isSent, activeMembers],
+  )
+
   const reviewUrl = set ? `${window.location.origin}${setReviewPath(set.id, set.token)}` : ''
 
   // Why Send is unavailable (null = can send). Checked in order of severity.
+  // Pre-send this gates the first review-link send; post-send it gates the
+  // "Send update" step for later additions (same artwork rule).
   const sendBlocker = !set
     ? 'Loading'
-    : isSent
+    : isSent && unannounced.length === 0
       ? null
-      : activeMembers.length === 0
+      : !isSent && activeMembers.length === 0
         ? 'Add at least one card before sending.'
         : cardsMissingArtwork.length > 0
           ? `Every card needs artwork first — ${cardsMissingArtwork.length === 1 ? '1 card is' : `${cardsMissingArtwork.length} cards are`} still empty.`
@@ -244,17 +260,21 @@ export default function SetWorkspacePage() {
             ? 'No Help Scout conversation is linked — copy the review link and send it by hand.'
             : null
 
+  // Pre-send: composes the first review-link message (set_review_link).
+  // Post-send: composes the "we've added a card" update (bundle_update_link)
+  // — same {url}, the customer keeps the one link.
   async function openSendModal() {
     if (!set || !contact) return
+    const templateId = set.sent_at ? 'bundle_update_link' : 'set_review_link'
     // Prefer the admin-edited body when one exists (Admin → Templates);
     // fall back to the compiled default so the modal works even before the
-    // 000311 seed row lands.
+    // seed row lands.
     const { data } = await supabase
       .from('reply_templates')
       .select('body')
-      .eq('id', 'set_review_link')
+      .eq('id', templateId)
       .maybeSingle()
-    const template = (data?.body as string | undefined)?.trim() || DEFAULT_BODIES.set_review_link
+    const template = (data?.body as string | undefined)?.trim() || DEFAULT_BODIES[templateId]
     setSendBody(
       renderTemplate(template, {
         first_name: contact.full_name.split(' ')[0] ?? contact.full_name,
@@ -269,7 +289,14 @@ export default function SetWorkspacePage() {
 
   async function handleSend() {
     if (!set || sendBusy) return
-    const anchor = activeMembers.find((m) => m.currentVersion)
+    const isUpdate = !!set.sent_at
+    // The message anchors on a member proof (send-helpscout-reply is
+    // proof-scoped): the first card with artwork for the initial send, or
+    // the first UNANNOUNCED card with artwork for an update — the card the
+    // update is about.
+    const anchor = isUpdate
+      ? (unannounced.find((m) => m.currentVersion) ?? activeMembers.find((m) => m.currentVersion))
+      : activeMembers.find((m) => m.currentVersion)
     if (!anchor?.currentVersion) {
       setSendError('Every card needs artwork before the bundle can be sent.')
       return
@@ -281,10 +308,9 @@ export default function SetWorkspacePage() {
     setSendBusy(true)
     setSendError(null)
     try {
-      // 1. Post the reply on the Help Scout thread. The function is
-      //    proof-scoped, so the first member with artwork anchors the send;
-      //    it stamps that version's last_reply_sent_at itself. Skipped on a
-      //    retry after a bookkeeping failure — the reply already landed.
+      // 1. Post the reply on the Help Scout thread; it stamps the anchor
+      //    version's last_reply_sent_at itself. Skipped on a retry after a
+      //    bookkeeping failure — the reply already landed.
       let threadId = sentThreadRef.current
       if (threadId == null) {
         const { data, error } = await supabase.functions.invoke<{ thread_id?: number; error?: string }>(
@@ -294,7 +320,7 @@ export default function SetWorkspacePage() {
               proof_id: anchor.id,
               version_id: anchor.currentVersion.id,
               body: sendBody,
-              template_id: 'set_review_link',
+              template_id: isUpdate ? 'bundle_update_link' : 'set_review_link',
             },
           },
         )
@@ -305,11 +331,12 @@ export default function SetWorkspacePage() {
 
       const nowIso = new Date().toISOString()
 
-      // 2. Stamp send-evidence on every OTHER member's current version too —
-      //    the customer was told about all the cards in this one reply, and
-      //    the follow-up automation reads last_reply_sent_at as its send
-      //    evidence per card.
-      const otherVersionIds = activeMembers
+      // 2. Stamp send-evidence on the other cards this message announces —
+      //    every active card on the initial send, only the unannounced ones
+      //    on an update (already-announced cards keep their original stamps,
+      //    so their reminder history stays honest).
+      const announced = isUpdate ? unannounced : activeMembers
+      const otherVersionIds = announced
         .filter((m) => m.id !== anchor.id && m.currentVersion)
         .map((m) => m.currentVersion!.id)
       if (otherVersionIds.length > 0) {
@@ -319,23 +346,30 @@ export default function SetWorkspacePage() {
           .in('id', otherVersionIds)
       }
 
-      // 3. Lock membership.
-      const { error: lockErr } = await supabase
-        .from('proof_sets')
-        .update({ sent_at: nowIso, updated_at: nowIso })
-        .eq('id', set.id)
-      if (lockErr) {
-        throw new Error(
-          `The link was posted on Help Scout, but the bundle couldn’t be marked as sent: ${lockErr.message}. Press Send again to finish up — the message won’t be posted twice.`,
-        )
+      // 3. First send: record it (sent_at = the bundle went out; later
+      //    additions show as "not announced yet" until an update send).
+      if (!isUpdate) {
+        const { error: lockErr } = await supabase
+          .from('proof_sets')
+          .update({ sent_at: nowIso, updated_at: nowIso })
+          .eq('id', set.id)
+        if (lockErr) {
+          throw new Error(
+            `The link was posted on Help Scout, but the bundle couldn’t be marked as sent: ${lockErr.message}. Press Send again to finish up — the message won’t be posted twice.`,
+          )
+        }
       }
 
       void logAudit({
-        action: 'proof_set.sent',
+        action: isUpdate ? 'proof_set.update_sent' : 'proof_set.sent',
         targetType: 'proof_set',
         targetId: set.id,
         targetLabel: customerLabel,
-        metadata: { cards: activeMembers.length, helpscout_thread_id: threadId },
+        metadata: {
+          cards: activeMembers.length,
+          ...(isUpdate ? { cards_announced: announced.length } : {}),
+          helpscout_thread_id: threadId,
+        },
       })
 
       sentThreadRef.current = null
@@ -503,6 +537,14 @@ export default function SetWorkspacePage() {
                         <> · last opened {new Date(set.last_opened_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</>
                       )}
                       {' '}· {approvedCount} of {activeMembers.length} approved
+                      {unannounced.length > 0 && (
+                        <>
+                          {' '}·{' '}
+                          <span className="font-medium text-amber-700">
+                            {unannounced.length === 1 ? '1 card' : `${unannounced.length} cards`} awaiting an update send
+                          </span>
+                        </>
+                      )}
                     </>
                   ) : (
                     <>Draft — not yet sent. Add each card, then send the customer one link to review the whole bundle.</>
@@ -514,9 +556,16 @@ export default function SetWorkspacePage() {
                   Preview customer view
                 </ButtonGhost>
                 {isSent ? (
-                  <ButtonGhost icon={linkCopied ? Check : Copy} onClick={copyReviewLink}>
-                    {linkCopied ? 'Copied' : 'Copy review link'}
-                  </ButtonGhost>
+                  <>
+                    <ButtonGhost icon={linkCopied ? Check : Copy} onClick={copyReviewLink}>
+                      {linkCopied ? 'Copied' : 'Copy review link'}
+                    </ButtonGhost>
+                    {unannounced.length > 0 && (
+                      <ButtonCoral icon={Send} onClick={() => void openSendModal()} disabled={sendBlocker != null} title={sendBlocker ?? undefined}>
+                        Send update to customer
+                      </ButtonCoral>
+                    )}
+                  </>
                 ) : (
                   <ButtonCoral icon={Send} onClick={() => void openSendModal()} disabled={sendBlocker != null} title={sendBlocker ?? undefined}>
                     Send bundle to customer
@@ -568,9 +617,9 @@ export default function SetWorkspacePage() {
               </div>
             </dl>
 
-            {sendBlocker && !isSent && (
+            {sendBlocker && (!isSent || unannounced.length > 0) && (
               <p className="mt-4 rounded-lg bg-canvas px-3 py-2 text-xs text-ink-soft ring-1 ring-line">
-                To send: {sendBlocker}
+                {isSent ? 'To send the update' : 'To send'}: {sendBlocker}
               </p>
             )}
           </header>
@@ -587,16 +636,14 @@ export default function SetWorkspacePage() {
               count={members.length}
               icon={Layers}
               action={
-                !isSent ? (
-                  <div className="flex items-center gap-2">
-                    <ButtonGhost size="sm" onClick={() => setAttachOpen(true)}>
-                      Add existing project
-                    </ButtonGhost>
-                    <ButtonCoral size="sm" icon={Plus} onClick={handleAddCard} busy={busyAction === 'add'}>
-                      Add a card
-                    </ButtonCoral>
-                  </div>
-                ) : undefined
+                <div className="flex items-center gap-2">
+                  <ButtonGhost size="sm" onClick={() => setAttachOpen(true)}>
+                    Add existing project
+                  </ButtonGhost>
+                  <ButtonCoral size="sm" icon={Plus} onClick={handleAddCard} busy={busyAction === 'add'}>
+                    Add a card
+                  </ButtonCoral>
+                </div>
               }
             >
               {members.length === 0 ? (
@@ -645,6 +692,12 @@ export default function SetWorkspacePage() {
                               {m.discardNote ? <> · “{m.discardNote}”</> : null}
                             </p>
                           )}
+                          {isSent && !discarded && !m.currentVersion?.last_reply_sent_at && (
+                            <p className="mt-1 text-xs text-amber-700">
+                              Added after the bundle was sent — the customer hasn’t been told yet.
+                              {m.currentVersion ? ' Send an update above.' : ' Build the card, then send an update.'}
+                            </p>
+                          )}
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           {!m.currentVersion && !discarded && (
@@ -673,8 +726,10 @@ export default function SetWorkspacePage() {
               )}
               {isSent && (
                 <p className="mt-4 border-t border-line pt-3 text-xs text-ink-mute">
-                  This bundle has been sent, so its cards are locked — a later addition starts a fresh bundle
-                  with a fresh link. Each card still takes revisions as normal on its own page.
+                  This bundle has been sent. You can still add cards — the customer keeps the same link,
+                  and each addition needs an update sent from here so they know to look. Cards can’t be
+                  removed once sent: the customer can set one aside on the review page, or you can abandon
+                  its project. Revisions carry on as normal on each card’s own page.
                 </p>
               )}
             </PanelShell>
@@ -720,12 +775,14 @@ export default function SetWorkspacePage() {
 
       {/* ── Send modal ─────────────────────────────────────────────────────── */}
       {sendOpen && (
-        <Modal label="Send bundle to customer" onClose={() => !sendBusy && setSendOpen(false)}>
-          <h2 className="text-lg font-semibold text-ink">Send bundle to customer</h2>
+        <Modal label={set?.sent_at ? 'Send update to customer' : 'Send bundle to customer'} onClose={() => !sendBusy && setSendOpen(false)}>
+          <h2 className="text-lg font-semibold text-ink">
+            {set?.sent_at ? 'Send update to customer' : 'Send bundle to customer'}
+          </h2>
           <p className="mt-1 text-sm text-ink-soft">
-            Posts one review link on the Help Scout conversation, covering all{' '}
-            {activeMembers.length === 1 ? 'the card' : `${activeMembers.length} cards`}. Once sent, the
-            bundle’s cards are locked — a later card starts a fresh bundle.
+            {set?.sent_at
+              ? `Tells the customer ${unannounced.length === 1 ? 'a card has' : `${unannounced.length} cards have`} been added to their review page — same link as before.`
+              : `Posts one review link on the Help Scout conversation, covering all ${activeMembers.length === 1 ? 'the card' : `${activeMembers.length} cards`}. Cards added later need an update sent from here.`}
           </p>
           <textarea
             value={sendBody}
@@ -739,7 +796,7 @@ export default function SetWorkspacePage() {
               Cancel
             </ButtonGhost>
             <ButtonCoral icon={Send} onClick={handleSend} busy={sendBusy}>
-              Send review link
+              {set?.sent_at ? 'Send update' : 'Send review link'}
             </ButtonCoral>
           </div>
         </Modal>

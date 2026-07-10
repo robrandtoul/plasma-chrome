@@ -298,13 +298,13 @@ export default function ProofDetailPage() {
   // dialog catches that instinct and redirects it, mirroring the wizard's
   // "will they pick one, or might they order both?" guard.
   //
-  // The set path then offers two routes: spin up a FRESH sibling card in
-  // this proof's set (creating the set first if there isn't one), or BRING
+  // The bundle path then offers two routes: spin up a FRESH sibling card
+  // in this proof's bundle (creating it first if there isn't one), or BRING
   // IN one of the customer's existing standalone projects as the second
   // card. The honest version of the Novion move: a second card ALONGSIDE
-  // this one, never a version that replaces it. If the existing set has
-  // already been sent, membership is locked, so a fresh card starts a
-  // fresh set (spec §5) and attaching is not offered.
+  // this one, never a version that replaces it. A card added to an
+  // already-SENT bundle joins the same link; the workspace's "Send update"
+  // step announces it to the customer.
   // Summary of this proof's set for the header strip — the always-visible
   // way back to the set workspace and the customer front door (the facts-
   // rail row alone proved too easy to miss). Null = standalone proof.
@@ -392,20 +392,17 @@ export default function ProofDetailPage() {
     setAddMaterialError(null)
     try {
       const userId = session.user.id
+      // One bundle per project, reused whether or not it's been sent — a
+      // post-send addition joins the same link and the workspace's "Send
+      // update" step announces it (10 Jul decision).
       let setId: string | null = proof.proof_set_id
       if (setId) {
         const { data: existing } = await supabase
           .from('proof_sets')
-          .select('id, sent_at')
+          .select('id')
           .eq('id', setId)
           .maybeSingle()
-        if (!existing) {
-          setId = null // stale pointer — the set was deleted
-        } else if (existing.sent_at) {
-          // Locked set: the new card starts a fresh set with the same context.
-          const fresh = await createSetFromProof(proof.id, userId, { attachSource: false })
-          setId = fresh.setId
-        }
+        if (!existing) setId = null // stale pointer — the bundle was deleted
       }
       if (!setId) {
         const created = await createSetFromProof(proof.id, userId)
@@ -4223,7 +4220,7 @@ export default function ProofDetailPage() {
               <p className="mt-2 text-sm text-ink-soft">
                 {proof.proof_set_id
                   ? addMaterialSetSent
-                    ? 'This project’s bundle has already been sent, so its cards are locked — a new card starts a fresh bundle with a fresh review link (customer, conversation and currency carry over).'
+                    ? 'This adds another card to this project’s bundle. The bundle has already been sent, so the customer keeps the same link — once the new card is built, you’ll send them a quick update from the bundle workspace.'
                     : 'This adds another card to this project’s bundle — a separate design on its own material, reviewed alongside this one through the bundle’s single review link.'
                   : 'This makes a bundle: this card plus a second card on another material, side by side. The customer gets one link to review the whole bundle, and this card’s own versions and approvals are untouched.'}
               </p>
@@ -4231,11 +4228,9 @@ export default function ProofDetailPage() {
                 <ButtonCoral block busy={addMaterialBusy} onClick={() => void handleAddAnotherMaterial()}>
                   Start a new card from scratch
                 </ButtonCoral>
-                {!(proof.proof_set_id && addMaterialSetSent) && (
-                  <ButtonGhost block disabled={addMaterialBusy} onClick={() => setAddMaterialMode('picker')}>
-                    Bring in an existing project
-                  </ButtonGhost>
-                )}
+                <ButtonGhost block disabled={addMaterialBusy} onClick={() => setAddMaterialMode('picker')}>
+                  Bring in an existing project
+                </ButtonGhost>
               </div>
               {addMaterialError && <p className="mt-3 text-sm text-rose-700">{addMaterialError}</p>}
               <div className="mt-4 flex justify-end">
