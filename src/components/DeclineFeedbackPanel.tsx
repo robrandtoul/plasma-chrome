@@ -11,6 +11,12 @@ import { supabase } from '../lib/supabase'
 // Behavioural design (from the conversion analysis): people rarely admit "too
 // expensive" or "I don't like it" outright, so the options are worded to remove
 // the awkward admission — "more than I'd budgeted", "a different direction".
+//
+// setDiscard mode (bundle orders Slice 3): the same panel doubles as the
+// per-card "decide against this card" action on the set review page. Same
+// reasons, same edge function — plus a set_discard flag so the server stamps
+// proofs.set_discarded_at — but NO recovery offers: the set front door
+// carries no pricing of any kind (docs/bundle-orders-spec.md §14.2).
 
 type ReasonCode = 'price_too_high' | 'different_direction' | 'timing' | 'going_elsewhere' | 'still_thinking'
 
@@ -41,9 +47,19 @@ function money(currency: string | null, amount: number | string | null | undefin
 export default function DeclineFeedbackPanel({
   proofId,
   proofVersionId,
+  setDiscard = false,
+  onSubmitted,
 }: {
   proofId: string
   proofVersionId: string
+  // Set review page's per-card discard (bundle orders Slice 3): different
+  // copy, a set_discard flag in the payload, and no recovery offers — the
+  // front door must never show pricing. Default false = the proof page's
+  // behaviour, byte-for-byte.
+  setDiscard?: boolean
+  // Fires after a successful submit so the set review page can reflect the
+  // card as set aside without a refetch.
+  onSubmitted?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState<ReasonCode | null>(null)
@@ -58,7 +74,9 @@ export default function DeclineFeedbackPanel({
   async function pickReason(code: ReasonCode) {
     setReason(code)
     setError(null)
-    if (code === 'price_too_high') {
+    // No recovery offers in setDiscard mode — the set front door carries no
+    // pricing (the offer card quotes from-prices and a discount).
+    if (code === 'price_too_high' && !setDiscard) {
       setRecoveryLoading(true)
       try {
         const { data } = await supabase.rpc('public_get_cheaper_alternatives', { p_proof_id: proofId })
@@ -92,10 +110,12 @@ export default function DeclineFeedbackPanel({
           note: note.trim() || undefined,
           actor_name: name.trim() || undefined,
           recovery_offer,
+          ...(setDiscard ? { set_discard: true } : {}),
         },
       })
       if (fnErr || data?.status !== 'ok') throw new Error(data?.error || fnErr?.message || 'Could not send')
       setDone(true)
+      onSubmitted?.()
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -106,7 +126,9 @@ export default function DeclineFeedbackPanel({
   if (done) {
     return (
       <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
-        Thank you — that’s a real help. We’ll be in touch.
+        {setDiscard
+          ? 'Thank you — we’ve set this card aside and let the team know.'
+          : 'Thank you — that’s a real help. We’ll be in touch.'}
       </div>
     )
   }
@@ -118,7 +140,7 @@ export default function DeclineFeedbackPanel({
         onClick={() => setOpen(true)}
         className="mt-4 text-sm text-gray-500 underline underline-offset-2 hover:text-gray-700"
       >
-        Not ready to approve just yet?
+        {setDiscard ? 'Decide against this card?' : 'Not ready to approve just yet?'}
       </button>
     )
   }
@@ -131,8 +153,14 @@ export default function DeclineFeedbackPanel({
     <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
       {!reason ? (
         <>
-          <p className="text-sm font-medium text-gray-800">No problem — what’s holding you back?</p>
-          <p className="mt-0.5 text-xs text-gray-500">This just helps us help you — choosing a reason won’t approve or change your proof on its own.</p>
+          <p className="text-sm font-medium text-gray-800">
+            {setDiscard ? 'No problem — can you let us know why?' : 'No problem — what’s holding you back?'}
+          </p>
+          <p className="mt-0.5 text-xs text-gray-500">
+            {setDiscard
+              ? 'This sets the card aside — nothing is deleted, and the rest of the set isn’t affected.'
+              : 'This just helps us help you — choosing a reason won’t approve or change your proof on its own.'}
+          </p>
           <div className="mt-3 space-y-1.5">
             {REASONS.map((r) => (
               <button
@@ -153,8 +181,9 @@ export default function DeclineFeedbackPanel({
         <>
           <p className="text-sm text-gray-700">{selected?.followUp}</p>
 
-          {/* Price-objection recovery offers */}
-          {reason === 'price_too_high' && (
+          {/* Price-objection recovery offers — never in setDiscard mode
+              (the set front door carries no pricing). */}
+          {reason === 'price_too_high' && !setDiscard && (
             <div className="mt-3 rounded-lg border border-gray-200 bg-white p-3 text-sm">
               {recoveryLoading ? (
                 <p className="text-gray-500">Finding some options…</p>
