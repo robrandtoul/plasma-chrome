@@ -49,6 +49,7 @@ export default function DeclineFeedbackPanel({
   proofVersionId,
   setDiscard = false,
   onSubmitted,
+  className = '',
 }: {
   proofId: string
   proofVersionId: string
@@ -60,6 +61,11 @@ export default function DeclineFeedbackPanel({
   // Fires after a successful submit so the set review page can reflect the
   // card as set aside without a refetch.
   onSubmitted?: () => void
+  // Extra classes on the root of every state (collapsed link, open panel,
+  // thank-you note). The customer page uses this to slot the panel into its
+  // mobile order-* reading sequence — the class must sit on the flex item
+  // itself, so a wrapper div won't do.
+  className?: string
 }) {
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState<ReasonCode | null>(null)
@@ -125,7 +131,7 @@ export default function DeclineFeedbackPanel({
 
   if (done) {
     return (
-      <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+      <div className={`mt-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700 ${className}`}>
         {setDiscard
           ? 'Thank you — we’ve set this card aside and let the team know.'
           : 'Thank you — that’s a real help. We’ll be in touch.'}
@@ -138,7 +144,7 @@ export default function DeclineFeedbackPanel({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="mt-4 text-sm text-gray-500 underline underline-offset-2 hover:text-gray-700"
+        className={`mt-4 text-sm text-gray-500 underline underline-offset-2 hover:text-gray-700 ${className}`}
       >
         {setDiscard ? 'Decide against this card?' : 'Not ready to approve just yet?'}
       </button>
@@ -150,7 +156,7 @@ export default function DeclineFeedbackPanel({
   const discountPct = recovery ? Number(recovery.discount_percent) || 0 : 0
 
   return (
-    <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+    <div className={`mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4 ${className}`}>
       {!reason ? (
         <>
           <p className="text-sm font-medium text-gray-800">
