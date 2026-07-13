@@ -150,11 +150,12 @@ const OUTCOME_LABELS: Record<string, string> = {
   skipped_no_send_evidence:     'no record this version was sent',
   skipped_snoozed:              'snoozed',
   skipped_opted_out:            'auto-chasing off for this proof',
-  skipped_capped:               '2 reminders sent — needs a human',
+  skipped_capped:               'all reminders sent — needs a human',
   skipped_capped_lifetime:      'lifetime reminder cap reached',
   skipped_cooldown:             'too soon since the last touch',
   skipped_grace_window:         'recent reply — grace window',
   skipped_followup_tag:         'tagged "follow up" — a human owns this chase',
+  skipped_us_send_window:       'held for the afternoon run (US customer)',
 }
 
 function humaniseOutcome(outcome: string | null, state: NudgeRow['state']): string {
@@ -450,6 +451,9 @@ export function NudgeOutboxPanel({
     // A human tagged the conversation "follow up" in Help Scout — the bot
     // stands down until the tag is cleared. Self-resolving by definition.
     'skipped_followup_tag',
+    // USD proofs only send on the afternoon run (~11:00 New York) —
+    // self-resolves the same day.
+    'skipped_us_send_window',
   ])
   const holdingRows = skippedRows.filter(
     (r) => r.outcome != null && HOLDING_OFF_OUTCOMES.has(r.outcome),

@@ -79,6 +79,19 @@ export default function CustomerProofPage() {
     ? setReviewPath(bundleParamId, bundleParamToken)
     : null
 
+  // Reminder attribution (migration 000315 + send-nudges): automated chase
+  // emails link to /p/:id?from=reminder-N. Presentation only, two effects —
+  // the tag rides into record_proof_view as the view's `source` (reminder
+  // effectiveness measured directly instead of inferred from timing
+  // windows), and it shows the welcome-back strip under the masthead.
+  // Sanitised to a short [A-Za-z0-9_-] tag so the anon RPC only ever
+  // receives 'reminder-2'-shaped values.
+  const fromParamRaw = searchParams.get('from')
+  const fromTag = fromParamRaw && /^[A-Za-z0-9_-]{1,40}$/.test(fromParamRaw)
+    ? fromParamRaw
+    : null
+  const isReminderVisit = fromTag !== null && fromTag.startsWith('reminder')
+
   const [proof, setProof] = useState<PublicProof | null>(null)
   const [versions, setVersions] = useState<PublicProofVersion[]>([])
   const [activeVersion, setActiveVersion] = useState<PublicProofVersion | null>(null)
@@ -442,6 +455,11 @@ export default function CustomerProofPage() {
           p_version_id: versionId,
           p_user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
           p_ip: null, // server reads from request headers
+          // Link attribution ('reminder-2' etc.), only included when
+          // present: organic views (the vast majority) keep resolving
+          // against the pre-000315 three-parameter function if a frontend
+          // deploy ever lands ahead of the migration.
+          ...(fromTag ? { p_source: fromTag } : {}),
         }).then(({ error }) => {
           if (error) console.error('[proof-viewer] record_proof_view failed:', error)
         })
@@ -2504,6 +2522,43 @@ export default function CustomerProofPage() {
         </div>
       )}
 
+      {/* Welcome-back strip for visitors arriving from an automated
+          reminder link (?from=reminder-N — see send-nudges). Same quiet
+          utility-bar idiom as the bundle bar above. This audience has
+          stalled for a week or more and the "not ready?" panel sits at
+          the very bottom of the page by design, so the strip offers the
+          jump straight to it — the one moment that placement trade-off
+          reverses. Presentation only. */}
+      {isReminderVisit && !proofIsApproved && (
+        <div className="border-b border-line bg-canvas">
+          <div className="mx-auto max-w-[1280px] px-gutter py-2.5 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <span className="text-sm text-ink">
+              Welcome back — your proof is ready whenever you are.
+            </span>
+            {activeVersion?.is_current && activeVersion.approvals_enabled && (
+              <button
+                type="button"
+                onClick={() => {
+                  // The collapsed panel's root IS its toggle button (same
+                  // id), so clicking it opens the reasons; already-open
+                  // states are a div and just get the scroll.
+                  const el = document.getElementById('decline-feedback')
+                  if (el instanceof HTMLButtonElement) el.click()
+                  requestAnimationFrame(() => {
+                    document
+                      .getElementById('decline-feedback')
+                      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                  })
+                }}
+                className="text-sm font-medium text-ink underline underline-offset-4 hover:opacity-80"
+              >
+                Something holding you up? Tell us
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* V2 customer-page main — 2-column grid on lg+: a sticky
           left rail carrying the customer card, Specs, and Pricing;
           a right column carrying the version pills, the contact-
@@ -3916,6 +3971,7 @@ export default function CustomerProofPage() {
               proofId={id ?? ''}
               proofVersionId={activeVersion.id}
               className="order-11 lg:order-none"
+              id="decline-feedback"
             />
           )}
 

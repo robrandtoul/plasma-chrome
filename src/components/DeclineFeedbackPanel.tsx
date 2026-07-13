@@ -50,6 +50,7 @@ export default function DeclineFeedbackPanel({
   setDiscard = false,
   onSubmitted,
   className = '',
+  id,
 }: {
   proofId: string
   proofVersionId: string
@@ -66,6 +67,9 @@ export default function DeclineFeedbackPanel({
   // mobile order-* reading sequence — the class must sit on the flex item
   // itself, so a wrapper div won't do.
   className?: string
+  // Anchor for the reminder welcome-back strip's "tell us" jump. On the
+  // root of every state for the same reason as className.
+  id?: string
 }) {
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState<ReasonCode | null>(null)
@@ -131,7 +135,7 @@ export default function DeclineFeedbackPanel({
 
   if (done) {
     return (
-      <div className={`mt-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700 ${className}`}>
+      <div id={id} className={`mt-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700 ${className}`}>
         {setDiscard
           ? 'Thank you — we’ve set this card aside and let the team know.'
           : 'Thank you — that’s a real help. We’ll be in touch.'}
@@ -143,6 +147,7 @@ export default function DeclineFeedbackPanel({
     return (
       <button
         type="button"
+        id={id}
         onClick={() => setOpen(true)}
         className={`mt-4 text-sm text-gray-500 underline underline-offset-2 hover:text-gray-700 ${className}`}
       >
@@ -156,7 +161,7 @@ export default function DeclineFeedbackPanel({
   const discountPct = recovery ? Number(recovery.discount_percent) || 0 : 0
 
   return (
-    <div className={`mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4 ${className}`}>
+    <div id={id} className={`mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4 ${className}`}>
       {!reason ? (
         <>
           <p className="text-sm font-medium text-gray-800">

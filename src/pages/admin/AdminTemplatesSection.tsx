@@ -118,13 +118,18 @@ function templateScope(id: string): TemplateVariableScope {
   return 'designer_picked'
 }
 
-// Render order for the reminder group — one card per chase rule, in
-// the order the rules fire across a proof's lifetime rather than
-// alphabetical id order. Unknown ids sort to the end so a future
-// fifth nudge still renders.
+// Render order for the reminder group — grouped per chase rule in the
+// order the rules fire across a proof's lifetime (not alphabetical),
+// with each rule's automated sequence (reminder 1 → 2 → final, 000313)
+// reading top to bottom. Unknown ids sort to the end so a future
+// nudge template still renders.
 const NUDGE_ORDER = [
   'nudge_sent_never_viewed',
+  'nudge_sent_never_viewed_2',
+  'nudge_sent_never_viewed_final',
   'nudge_viewed_not_actioned',
+  'nudge_viewed_not_actioned_2',
+  'nudge_viewed_not_actioned_final',
   'nudge_approaching_dormant',
   'nudge_stuck_in_progress',
 ]
