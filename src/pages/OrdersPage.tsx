@@ -58,6 +58,10 @@ interface OrderRow {
   // Combined-payment group membership (bundle orders Slice 2, migration
   // 000309). Non-null = this order pays through the group's one link.
   order_group_id: string | null
+  // The order's material (000298 — stamped on every order, whether variant-
+  // derived or open-spec). Drives thumbForOrder: a proof can carry orders in
+  // two materials, and only one can match the current version's artwork.
+  material_id: string | null
   material_variant_id: string | null
   material_option_id: string | null
   currency: Currency
@@ -128,7 +132,7 @@ interface OrderRow {
 }
 
 const SELECT = `
-  id, status, token, expires_at, sent_at, pay_link_opened_at, help_requested_at, thickness_open, finish_open, quantity_open, order_group_id, material_variant_id, material_option_id, currency, quantity, names_count, has_personalisation,
+  id, status, token, expires_at, sent_at, pay_link_opened_at, help_requested_at, thickness_open, finish_open, quantity_open, order_group_id, material_id, material_variant_id, material_option_id, currency, quantity, names_count, has_personalisation,
   custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff,
   card_discount_type, card_discount_value, amount_card_discount, payment_method, order_kind,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, revised_at,
@@ -599,6 +603,10 @@ export default function OrdersPage() {
   // than silently dropping older orders (the full history lives in the log).
   const [capped, setCapped] = useState(false)
   const [thumbs, setThumbs] = useState<Record<string, GridImage | null>>({})
+  // Newest artwork per material within a proof, keyed `${proofId}:${materialId}`.
+  // Lets an order card show its OWN material's artwork when the proof's current
+  // version is a different material (see thumbForOrder).
+  const [materialThumbs, setMaterialThumbs] = useState<Record<string, GridImage>>({})
   const [busyId, setBusyId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   // The awaiting-payment order being recorded as paid offline (bank transfer),
@@ -676,21 +684,47 @@ export default function OrdersPage() {
       // non-QR image when the current version can't be resolved. Shared by every
       // card type that shows a thumbnail: To order, Being revised, Awaiting
       // payment, and the Links-to-send worklist.
+      //
+      // Alongside that, map each material appearing in the proof's versions to
+      // its newest artwork (materialThumbs). A proof can carry orders in TWO
+      // materials — e.g. a steel + letterpress pair built as two versions of one
+      // project — and the current version can only match one of them, so order
+      // cards resolve by the ORDER's material first (thumbForOrder). The current
+      // version wins for its own material, keeping today's thumbnail whenever
+      // the materials agree.
       const loadThumbs = async (proofIds: string[]) => {
         await Promise.all(
           proofIds.map(async (proofId) => {
             try {
-              const [{ data: curV }, { data: imgData }] = await Promise.all([
-                supabase.from('proof_versions').select('id').eq('proof_id', proofId).eq('is_current', true).maybeSingle(),
+              const [{ data: versionRows }, { data: imgData }] = await Promise.all([
+                supabase
+                  .from('proof_versions')
+                  .select('id, material_id, is_current')
+                  .eq('proof_id', proofId)
+                  .order('created_at', { ascending: false }),
                 supabase.functions.invoke<{ images: GridImage[] }>('customer-proof-images', { body: { proofId } }),
               ])
-              const currentVersionId = (curV as { id?: string } | null)?.id ?? null
-              const nonQr = (imgData?.images ?? []).filter((img) => img.is_qr_code !== true)
-              const scoped = currentVersionId
-                ? nonQr.filter((img) => (img as unknown as { proof_version_id?: string }).proof_version_id === currentVersionId)
-                : []
-              const first = (scoped.length > 0 ? scoped : nonQr)[0] ?? null
-              if (!cancelled) setThumbs((prev) => ({ ...prev, [proofId]: first }))
+              const versions = (versionRows ?? []) as { id: string; material_id: string | null; is_current: boolean }[]
+              const currentVersion = versions.find((v) => v.is_current) ?? null
+              const nonQr = ((imgData?.images ?? []) as (GridImage & { proof_version_id?: string })[])
+                .filter((img) => img.is_qr_code !== true)
+              const firstOf = (versionId: string) => nonQr.find((img) => img.proof_version_id === versionId) ?? null
+              const current = (currentVersion ? firstOf(currentVersion.id) : null) ?? nonQr[0] ?? null
+              const byMaterial: Record<string, GridImage> = {}
+              if (currentVersion?.material_id && current) byMaterial[currentVersion.material_id] = current
+              for (const v of versions) {
+                if (!v.material_id || byMaterial[v.material_id]) continue
+                const img = firstOf(v.id)
+                if (img) byMaterial[v.material_id] = img
+              }
+              if (!cancelled) {
+                setThumbs((prev) => ({ ...prev, [proofId]: current }))
+                setMaterialThumbs((prev) => {
+                  const next = { ...prev }
+                  for (const [materialId, img] of Object.entries(byMaterial)) next[`${proofId}:${materialId}`] = img
+                  return next
+                })
+              }
             } catch {
               // ignore — card renders without a thumbnail
             }
@@ -949,6 +983,16 @@ export default function OrdersPage() {
     })()
     return () => { cancelled = true }
   }, [reloadKey])
+
+  // Thumbnail for an ORDER card: the newest artwork in the ORDER's material,
+  // falling back to the proof's current-version thumbnail. The two only differ
+  // when a proof carries orders in more than one material — without this, a
+  // steel order wears the letterpress artwork that happens to be current. The
+  // Being-revised card deliberately does NOT use this: its job is to show the
+  // artwork that will replace what was bought, i.e. always the current version.
+  function thumbForOrder(o: OrderRow): GridImage | null {
+    return (o.material_id ? materialThumbs[`${o.proof_id}:${o.material_id}`] : undefined) ?? thumbs[o.proof_id] ?? null
+  }
 
   // Persist a single order field (the date / Dropbox folder edits), merging into
   // local state so the gate + UI reflect it immediately. Returns whether the
@@ -1597,7 +1641,7 @@ export default function OrdersPage() {
                     <AwaitingPaymentCard
                       key={o.id}
                       order={o}
-                      thumb={thumbs[o.proof_id] ?? null}
+                      thumb={thumbForOrder(o)}
                       expired={isExpired(o)}
                       busy={busyId === o.id}
                       copied={copiedId === o.id}
@@ -1663,7 +1707,7 @@ export default function OrdersPage() {
                         <OrderCard
                           key={o.id}
                           order={o}
-                          thumb={thumbs[o.proof_id] ?? null}
+                          thumb={thumbForOrder(o)}
                           route={routeOf(o)}
                           supplierLabels={allowedSupplierLabels(o, supplierNames)}
                           supplierCount={o.material_variants?.materials?.outsourced_supplier_ids?.length ?? 0}
