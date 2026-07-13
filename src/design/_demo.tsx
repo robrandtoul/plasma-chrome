@@ -24,6 +24,64 @@ import {
   type ProofStatus,
 } from './index'
 import { tagHelp } from '../lib/tagHelp'
+import FollowUpPipelinePanel, {
+  type PipelineProjectRow,
+} from '../components/FollowUpPipelinePanel'
+
+// Fixture rows for the Follow-up pipeline showcase — one or two projects in
+// every stage, with the customer-signal timestamps exercising each badge.
+function pipelineDemo(): { rows: PipelineProjectRow[]; automation: Record<string, { repeat_days?: number; max_nudges?: number }> } {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString()
+  const base: Omit<PipelineProjectRow, 'proof_id' | 'contact_name' | 'company_name'> = {
+    material_display: 'Stainless Steel',
+    current_version_number: 1,
+    rule_code: null,
+    rule_meta: null,
+    follow_up_rule_code: 'sent_never_viewed',
+    follow_up_sent_count: 0,
+    follow_up_max_nudges: 3,
+    follow_up_last_sent_at: null,
+    current_version_viewed_at: null,
+    helpscout_last_customer_reply_at: null,
+    latest_non_view_event_at: null,
+    latest_non_view_event_type: null,
+  }
+  return {
+    automation: {
+      sent_never_viewed: { repeat_days: 3, max_nudges: 3 },
+      viewed_not_actioned: { repeat_days: 3, max_nudges: 3 },
+    },
+    rows: [
+      { ...base, proof_id: 'demo-1', contact_name: 'Ada Lovelace', company_name: 'Analytical Engines' },
+      {
+        ...base, proof_id: 'demo-2', contact_name: 'Grace Hopper', company_name: 'Flowmatic Ltd',
+        follow_up_sent_count: 1, follow_up_last_sent_at: daysAgo(1),
+      },
+      {
+        ...base, proof_id: 'demo-3', contact_name: 'Alan Turing', company_name: 'Bletchley & Co',
+        follow_up_rule_code: 'viewed_not_actioned', material_display: 'Wood',
+        follow_up_sent_count: 1, follow_up_last_sent_at: daysAgo(2),
+        current_version_viewed_at: daysAgo(1),
+      },
+      {
+        ...base, proof_id: 'demo-4', contact_name: 'Katherine Johnson', company_name: 'Orbital Mechanics',
+        follow_up_rule_code: 'viewed_not_actioned', current_version_number: 2,
+        follow_up_sent_count: 2, follow_up_last_sent_at: daysAgo(4),
+        helpscout_last_customer_reply_at: daysAgo(1),
+      },
+      {
+        ...base, proof_id: 'demo-5', contact_name: 'Tim Berners-Lee', company_name: 'Hypertext Print',
+        follow_up_sent_count: 3, follow_up_last_sent_at: daysAgo(2),
+      },
+      {
+        ...base, proof_id: 'demo-6', contact_name: 'Margaret Hamilton', company_name: 'Apollo Cards',
+        rule_code: 'nudges_exhausted', rule_meta: { sent: 3 },
+        follow_up_rule_code: null, follow_up_sent_count: null,
+        follow_up_max_nudges: null, follow_up_last_sent_at: null,
+      },
+    ],
+  }
+}
 
 // Showcase page for the reskin shared primitives (PR 2). Lives behind
 // the /__design route, which is mounted in App.tsx only when the dev
@@ -242,6 +300,15 @@ export default function DesignDemo() {
             </div>
           )}
         </PanelShell>
+
+        {/* Follow-up pipeline (Admin → Follow-ups) in fixture mode — no
+            network, so the composite can be eyeballed here without auth.
+            Dates are computed relative to now so the "sent Nd ago / next ~"
+            copy stays realistic. */}
+        <section className="space-y-3">
+          <Eyebrow>10 Follow-up pipeline (fixture data)</Eyebrow>
+          <FollowUpPipelinePanel demo={pipelineDemo()} />
+        </section>
       </div>
     </div>
   )
