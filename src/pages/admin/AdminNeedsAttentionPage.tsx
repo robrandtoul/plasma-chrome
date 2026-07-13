@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
 import AdminReminderPerformanceCard from '../../components/AdminReminderPerformanceCard'
+import FollowUpPipelinePanel from '../../components/FollowUpPipelinePanel'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -452,6 +453,11 @@ export default function AdminNeedsAttentionPage() {
           </button>
         </div>
       </div>
+
+      {/* The live stage view — where every chased project sits right now.
+          Sits first because it's the "what's happening" read; everything
+          below it is configuration. */}
+      <FollowUpPipelinePanel />
 
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-line">
         <div className="min-w-0">
