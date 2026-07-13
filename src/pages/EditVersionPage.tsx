@@ -32,6 +32,7 @@ import VersionPreviewGate from '../components/VersionPreviewGate'
 import MessageSendPanel from '../components/MessageSendPanel'
 import { firstName } from '../lib/firstName'
 import { customerProofPath } from '../lib/customerProofUrl'
+import { markSetReviewLinkSent, resolveCustomerReviewLink, type CustomerReviewLink } from '../lib/proofSets'
 
 // Materials whose physical edge construction exposes the three-
 // layer Colorplan stack (un-gilded letterpress) and therefore want
@@ -102,6 +103,22 @@ export default function EditVersionPage() {
   // are ephemeral, no DB.
   const [savedVersionForPreview, setSavedVersionForPreview] = useState<{ currency: Currency | null } | null>(null)
   const [previewApproved, setPreviewApproved] = useState(false)
+  // Which link the customer gets in the post-save reply: the bundle review
+  // front door for an active bundle member, the card's own /p/ page
+  // otherwise. Mirrors NewVersionPage — resolved when the save lands, so
+  // the preview gate gives the lookup ample time; until it resolves (or on
+  // any failure) the card link is used, the pre-bundle behaviour.
+  const [customerLink, setCustomerLink] = useState<CustomerReviewLink | null>(null)
+  useEffect(() => {
+    if (!savedVersionForPreview || !proofId) return
+    let cancelled = false
+    void resolveCustomerReviewLink(proofId).then((link) => {
+      if (!cancelled) setCustomerLink(link)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [savedVersionForPreview, proofId])
   // ── Variant rounds (build-plan step 5.5) ────────────────────────────────
   // EditVersionPage doesn't yet support editing variant-round versions.
   // When a variant-round version is loaded, the form renders an alert
@@ -1789,7 +1806,8 @@ export default function EditVersionPage() {
   if (savedVersionForPreview && previewApproved && proofId && versionId) {
     const tplId: 'first_proof' | 'revision' =
       versionNumber === 1 ? 'first_proof' : 'revision'
-    const customerUrl = `${window.location.origin}${customerProofPath(proofId)}`
+    const customerUrl =
+      customerLink?.url ?? `${window.location.origin}${customerProofPath(proofId)}`
     const messageContext = {
       first_name: firstName(proofName),
       full_name: proofName,
@@ -1818,7 +1836,12 @@ export default function EditVersionPage() {
           templateId={tplId}
           context={messageContext}
           hasHelpScoutConversation={!!proofHelpScoutConversationId}
-          onSent={() => navigate(`/proofs/${proofId}`)}
+          onSent={() => {
+            // The reply that just went out carried the bundle review link,
+            // so record the bundle as sent (no-op if it already was).
+            if (customerLink?.kind === 'bundle') void markSetReviewLinkSent(customerLink.setId)
+            navigate(`/proofs/${proofId}`)
+          }}
           onSkip={() => navigate(`/proofs/${proofId}`)}
         />
       </div>

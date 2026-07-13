@@ -12,6 +12,7 @@ import { logAudit } from '../lib/audit'
 import { snoozeProof } from '../lib/snooze'
 import { firstName } from '../lib/firstName'
 import { customerProofPath } from '../lib/customerProofUrl'
+import { resolveCustomerReviewLink, type CustomerReviewLink } from '../lib/proofSets'
 import type { NeedsAttentionMeta, NeedsAttentionRule } from '../lib/dashboardGrouping'
 import type { TemplateContext } from '../lib/replyTemplates'
 
@@ -78,6 +79,23 @@ export function ResolvePopover({
   // loaded, so the toggle stays hidden rather than showing a wrong state.
   const [autoNudgeDisabledAt, setAutoNudgeDisabledAt] = useState<string | null | undefined>(undefined)
   const [autoNudgeBusy, setAutoNudgeBusy] = useState(false)
+  // Which link the reminder's {url} carries. Chase semantics — a reminder
+  // must re-present a link the customer already holds, so an active member
+  // of a SENT bundle gets the bundle front door and everything else keeps
+  // the card's /p/ link (mirrors the auto-sender, send-nudges). Resolved
+  // lazily when the popover opens; until then (or on failure) the card
+  // link is used.
+  const [reviewLink, setReviewLink] = useState<CustomerReviewLink | null>(null)
+  useEffect(() => {
+    if (!open || reviewLink) return
+    let cancelled = false
+    void resolveCustomerReviewLink(proofId, { chase: true }).then((link) => {
+      if (!cancelled) setReviewLink(link)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open, reviewLink, proofId])
   // Stale-click re-validation (followup-automation-spec, architecture rule
   // #1's manual half): the popover renders from dashboard data that may be
   // minutes old, so "Send a reminder" re-checks the rule still fires before
@@ -131,7 +149,7 @@ export function ResolvePopover({
     full_name: contactFullName ?? '',
     company: companyName,
     version_number: versionNumber ?? '',
-    url: `${window.location.origin}${customerProofPath(proofId)}`,
+    url: reviewLink?.url ?? `${window.location.origin}${customerProofPath(proofId)}`,
     designer_first_name: '',
   }
 

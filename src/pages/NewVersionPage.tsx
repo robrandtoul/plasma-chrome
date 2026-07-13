@@ -26,7 +26,7 @@ import { usePersonalisationPricing } from '../lib/quote/usePersonalisationPricin
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { computeQrArtworkChangedSlots, isQrSlotFlagged, resolveQrEffectiveKeep } from '../lib/qrCarryForward'
 import { rostersAreDisjoint } from '../lib/strandedApprovals'
-import { createSetFromProof } from '../lib/proofSets'
+import { createSetFromProof, markSetReviewLinkSent, resolveCustomerReviewLink, type CustomerReviewLink } from '../lib/proofSets'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { LAYER_COLOUR_MATERIAL_CODES } from '../lib/letterpress'
 import {
@@ -278,6 +278,23 @@ export default function NewVersionPage() {
   // editable; non-null after handleSubmit's insert returns. Replaces
   // the previous immediate navigate(`/proofs/${proofId}`).
   const [savedVersion, setSavedVersion] = useState<{ id: string; number: number } | null>(null)
+  // Which link the customer gets in the post-save reply: the bundle review
+  // front door for an active bundle member, the card's own /p/ page
+  // otherwise. Resolved as soon as the save lands (after any Entry-A set
+  // creation), so the preview gate gives the lookup ample time before the
+  // send panel needs it; until it resolves — or on any failure — the card
+  // link is used, which is the pre-bundle behaviour.
+  const [customerLink, setCustomerLink] = useState<CustomerReviewLink | null>(null)
+  useEffect(() => {
+    if (!savedVersion || !proofId) return
+    let cancelled = false
+    void resolveCustomerReviewLink(proofId).then((link) => {
+      if (!cancelled) setCustomerLink(link)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [savedVersion, proofId])
   // Preview gate state. After save the designer first sees
   // VersionPreviewGate (an iframe of the customer page with a
   // banner of action buttons); only after clicking "Looks good"
@@ -4882,7 +4899,8 @@ export default function NewVersionPage() {
           // paths navigate to the project detail page.
           const tplId: 'first_proof' | 'revision' =
             savedVersion.number === 1 ? 'first_proof' : 'revision'
-          const customerUrl = `${window.location.origin}${customerProofPath(proofId!)}`
+          const customerUrl =
+            customerLink?.url ?? `${window.location.origin}${customerProofPath(proofId!)}`
           const messageContext = {
             first_name: firstName(proofName),
             full_name: proofName,
@@ -4902,7 +4920,13 @@ export default function NewVersionPage() {
               templateId={tplId}
               context={messageContext}
               hasHelpScoutConversation={!!proofHelpScoutConversationId}
-              onSent={() => navigate(`/proofs/${proofId}`)}
+              onSent={() => {
+                // The reply that just went out carried the bundle review
+                // link, so record the bundle as sent (no-op if it already
+                // was — the helper guards on sent_at IS NULL).
+                if (customerLink?.kind === 'bundle') void markSetReviewLinkSent(customerLink.setId)
+                navigate(`/proofs/${proofId}`)
+              }}
               onSkip={() => navigate(`/proofs/${proofId}`)}
             />
           )

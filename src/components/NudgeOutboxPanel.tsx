@@ -11,6 +11,7 @@ import { nudgeTemplateFor } from '../lib/needsAttention'
 import { snoozeProof } from '../lib/snooze'
 import { firstName } from '../lib/firstName'
 import { customerProofPath } from '../lib/customerProofUrl'
+import { resolveCustomerReviewLink, type CustomerReviewLink } from '../lib/proofSets'
 import { isCurrentlySnoozed, type DashboardProject } from '../lib/dashboardGrouping'
 import { tagHelp } from '../lib/tagHelp'
 import type { TemplateContext } from '../lib/replyTemplates'
@@ -953,12 +954,20 @@ function ReviewQueueItem({
 
   const templateId = project.rule_code ? nudgeTemplateFor(project.rule_code) : null
 
+  // Chase semantics for the reminder's {url} — an active member of a SENT
+  // bundle is re-pointed at the bundle front door (the link the customer
+  // already holds); everything else keeps the card's /p/ link. Resolved in
+  // openSend below, alongside the staleness re-check, so the panel opens
+  // with the right link already in hand; a failed lookup falls back to the
+  // card link. Mirrors the auto-sender (send-nudges).
+  const [reviewLink, setReviewLink] = useState<CustomerReviewLink | null>(null)
+
   const context: TemplateContext = {
     first_name: firstName(project.contact_name ?? ''),
     full_name: project.contact_name ?? '',
     company: project.company_name,
     version_number: project.current_version_number ?? '',
-    url: `${window.location.origin}${customerProofPath(project.proof_id)}`,
+    url: reviewLink?.url ?? `${window.location.origin}${customerProofPath(project.proof_id)}`,
     designer_first_name: '',
   }
 
@@ -969,11 +978,17 @@ function ReviewQueueItem({
     // Single-row re-check against the live rules engine; a cleared rule
     // shows "no longer needed" instead of sending. A fetch error falls
     // through and opens the panel — a human reads the body before sending.
-    const { data, error } = await supabase
-      .from('public_dashboard_projects')
-      .select('rule_code')
-      .eq('proof_id', project.proof_id)
-      .maybeSingle()
+    // The bundle-link resolution rides along in parallel — both are one
+    // indexed read, so "Checking…" stays as brief as before.
+    const [{ data, error }, link] = await Promise.all([
+      supabase
+        .from('public_dashboard_projects')
+        .select('rule_code')
+        .eq('proof_id', project.proof_id)
+        .maybeSingle(),
+      resolveCustomerReviewLink(project.proof_id, { chase: true }),
+    ])
+    setReviewLink(link)
     setChecking(false)
     if (!error && data?.rule_code !== project.rule_code) {
       setStaleNote('No longer needed — this resolved itself.')

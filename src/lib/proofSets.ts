@@ -17,6 +17,7 @@
 
 import { supabase } from './supabase'
 import { logAudit } from './audit'
+import { customerProofPath } from './customerProofUrl'
 
 export type SetCurrency = 'GBP' | 'EUR' | 'USD'
 
@@ -38,6 +39,93 @@ export interface ProofSetRow {
 // token gates the RPC read.
 export function setReviewPath(setId: string, token: string, opts?: { preview?: boolean }): string {
   return `/bundle/${setId}?token=${encodeURIComponent(token)}${opts?.preview ? '&preview=1' : ''}`
+}
+
+// Which link the CUSTOMER receives for a proof. The everyday send surfaces
+// (the post-save reply, the detail-page resend, Copy customer URL, manual
+// reminders) used to hand out the card's /p/:id link even when the proof had
+// a bundle front door — so the customer ended up on one card's sub-page
+// instead of the overview. This is the single answer they all share now.
+//
+// Two policies, matching the auto-sender (send-nudges):
+//   * presentation (default) — the send IS the introduction, so an active
+//     bundle member gets the bundle review link even if the bundle has never
+//     been sent; the caller stamps sent_at on a successful send via
+//     markSetReviewLinkSent below.
+//   * chase — a reminder must re-present a link the customer already holds,
+//     so the bundle link is used only when the bundle was SENT; members of
+//     an unsent bundle (card sent standalone first, attached later) keep the
+//     /p/ link — that's the only link the customer has.
+//
+// A set-aside or abandoned card always keeps its /p/ link: the front door
+// lists those as "Set aside" with no way in, so pointing the customer there
+// would dead-end. Any lookup failure falls back to the card link — exactly
+// the pre-bundle behaviour, never a blocked send.
+export type CustomerReviewLink =
+  | { kind: 'card'; url: string }
+  | { kind: 'bundle'; url: string; setId: string; setSentAt: string | null }
+
+export async function resolveCustomerReviewLink(
+  proofId: string,
+  opts?: { chase?: boolean },
+): Promise<CustomerReviewLink> {
+  const cardLink: CustomerReviewLink = {
+    kind: 'card',
+    url: `${window.location.origin}${customerProofPath(proofId)}`,
+  }
+  try {
+    const { data: proof } = await supabase
+      .from('proofs')
+      .select('proof_set_id, set_discarded_at, status')
+      .eq('id', proofId)
+      .maybeSingle()
+    if (!proof?.proof_set_id || proof.set_discarded_at || proof.status === 'abandoned') {
+      return cardLink
+    }
+    const { data: set } = await supabase
+      .from('proof_sets')
+      .select('id, token, sent_at')
+      .eq('id', proof.proof_set_id)
+      .maybeSingle()
+    if (!set?.token) return cardLink
+    if (opts?.chase && !set.sent_at) return cardLink
+    return {
+      kind: 'bundle',
+      url: `${window.location.origin}${setReviewPath(set.id, set.token)}`,
+      setId: set.id,
+      setSentAt: set.sent_at,
+    }
+  } catch (err) {
+    console.warn('[proofSets] bundle link lookup failed, using /p/ link', err)
+    return cardLink
+  }
+}
+
+// First-send bookkeeping for sends that bypass the workspace's own Send
+// button: when a version reply carries the bundle review link, the bundle
+// has gone out just as surely as via the workspace, so stamp sent_at (the
+// workspace flips to "Sent to the customer", and membership rules see a
+// sent bundle). Guarded on sent_at IS NULL — a repeat send, or a race with
+// the workspace, is a 0-row no-op and logs nothing.
+export async function markSetReviewLinkSent(setId: string): Promise<void> {
+  const nowIso = new Date().toISOString()
+  const { data, error } = await supabase
+    .from('proof_sets')
+    .update({ sent_at: nowIso, updated_at: nowIso })
+    .eq('id', setId)
+    .is('sent_at', null)
+    .select('id')
+  if (error) {
+    console.warn('[proofSets] could not stamp bundle sent_at', error)
+    return
+  }
+  if (!data?.length) return
+  void logAudit({
+    action: 'proof_set.sent',
+    targetType: 'proof_set',
+    targetId: setId,
+    metadata: { source: 'version_reply' },
+  })
 }
 
 // 48 hex chars from the browser CSPRNG — same bearer-token posture as

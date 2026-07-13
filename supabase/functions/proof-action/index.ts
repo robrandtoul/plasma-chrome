@@ -1336,7 +1336,43 @@ Deno.serve(async (req) => {
     allowedOrigin ||
     Deno.env.get('PROOF_VIEWER_BASE_URL')?.trim() ||
     ''
-  const proofUrl = baseUrl ? `${baseUrl.replace(/\/+$/, '')}/p/${v.proof_id}` : null
+  let proofUrl = baseUrl ? `${baseUrl.replace(/\/+$/, '')}/p/${v.proof_id}` : null
+
+  // Bundle members (migration 000311): when this card is an active member
+  // of a bundle whose review link has been SENT, the confirmation's "View
+  // the proof" pointer goes to the bundle front door — the link the
+  // customer already holds — instead of the card's standalone /p/ page.
+  // Members of an unsent bundle, set-aside/abandoned cards (the front door
+  // lists those without a way in) and standalone proofs keep the /p/ link.
+  // Mirrors send-nudges' chase-link rule; best-effort — any failure falls
+  // back to the /p/ link already built above.
+  if (proofUrl) {
+    try {
+      const { data: memberRow } = await admin
+        .from('proofs')
+        .select('proof_set_id, set_discarded_at, status, proof_sets(id, token, sent_at)')
+        .eq('id', v.proof_id)
+        .maybeSingle()
+      const member = memberRow as {
+        proof_set_id: string | null
+        set_discarded_at: string | null
+        status: string
+        proof_sets: { id: string; token: string; sent_at: string | null } | null
+      } | null
+      const set = member?.proof_sets
+      if (
+        member?.proof_set_id &&
+        !member.set_discarded_at &&
+        member.status !== 'abandoned' &&
+        set?.token &&
+        set.sent_at
+      ) {
+        proofUrl = `${baseUrl.replace(/\/+$/, '')}/bundle/${set.id}?token=${encodeURIComponent(set.token)}`
+      }
+    } catch (err) {
+      console.warn('[proof-action] bundle link lookup failed, using /p/ link', err)
+    }
+  }
 
   // Look up the human-readable option label + dimension noun for the
   // HS thread copy. Two cheap reads when materialOptionCode is set;

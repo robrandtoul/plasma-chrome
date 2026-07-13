@@ -26,7 +26,7 @@ import type {
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { deriveSharedApprovalState, type SharedApprovalState } from '../lib/sharedApproval'
 import { findStrandedMaterialApprovals } from '../lib/strandedApprovals'
-import { addCardToSet, attachProofToSet, createSetFromProof, setReviewPath } from '../lib/proofSets'
+import { addCardToSet, attachProofToSet, createSetFromProof, markSetReviewLinkSent, setReviewPath } from '../lib/proofSets'
 import ExistingProjectPicker from '../components/ExistingProjectPicker'
 import { useLiveProofViews } from '../lib/useLiveProofViews'
 import { downloadBlob } from '../lib/downloadFile'
@@ -338,6 +338,25 @@ export default function ProofDetailPage() {
       cancelled = true
     }
   }, [proof?.proof_set_id])
+
+  // The link the CUSTOMER gets for this proof (Copy customer URL, the
+  // Public URL readout, the reply modal's {url}): an active bundle member's
+  // is the bundle review front door — one link, the whole set — while a
+  // standalone, set-aside or abandoned card keeps its own /p/ page (the
+  // front door lists aside cards without a way in). setSummary loads a
+  // beat after the proof; until it lands the card link is used, matching
+  // pre-bundle behaviour. Same policy as resolveCustomerReviewLink in
+  // lib/proofSets.ts, computed synchronously here because the set row is
+  // already in state.
+  const bundleLink =
+    proof && proof.proof_set_id && !proof.set_discarded_at && proof.status !== 'abandoned'
+      ? setSummary
+      : null
+  const customerLinkPath = bundleLink
+    ? setReviewPath(bundleLink.id, bundleLink.token)
+    : proof
+      ? customerProofPath(proof.id)
+      : ''
 
   const [addMaterialDialog, setAddMaterialDialog] = useState(false)
   const [addMaterialMode, setAddMaterialMode] = useState<'intent' | 'choose' | 'picker' | 'revision'>('intent')
@@ -1883,7 +1902,7 @@ export default function ProofDetailPage() {
   }
 
   async function copyCustomerUrl() {
-    const url = `${window.location.origin}${customerProofPath(proof!.id)}`
+    const url = `${window.location.origin}${customerLinkPath}`
     let copiedOk = false
     try {
       await navigator.clipboard.writeText(url)
@@ -2371,10 +2390,10 @@ export default function ProofDetailPage() {
     <section className="rounded-[14px] border border-line bg-surface p-4">
       <dl className="space-y-3">
         <div className="min-w-0">
-          <dt className="eyebrow text-ink-mute">Public URL</dt>
+          <dt className="eyebrow text-ink-mute">{bundleLink ? 'Public URL (bundle review)' : 'Public URL'}</dt>
           <dd className="mt-1 flex items-center gap-2">
             <span className="truncate font-mono text-[12px] text-ink-soft">
-              proofs.plasmadesign.co.uk{customerProofPath(proof.id)}
+              proofs.plasmadesign.co.uk{customerLinkPath}
             </span>
             <button
               type="button"
@@ -3913,7 +3932,7 @@ export default function ProofDetailPage() {
         if (!proof.helpscout_conversation_id) return null
         const tplId: 'first_proof' | 'revision' =
           currentVersion.version_number === 1 ? 'first_proof' : 'revision'
-        const customerUrl = `${window.location.origin}${customerProofPath(proof.id)}`
+        const customerUrl = `${window.location.origin}${customerLinkPath}`
         const messageContext = {
           first_name: firstName(proof.contacts.full_name),
           full_name: proof.contacts.full_name,
@@ -3949,6 +3968,14 @@ export default function ProofDetailPage() {
                         v.id === currentVersion.id ? { ...v, last_reply_sent_at: nowIso } : v,
                       ),
                     )
+                    // The reply carried the bundle review link, so record
+                    // the bundle as sent (no-op if it already was) and
+                    // reflect it locally — the setSummary effect only
+                    // refetches when proof_set_id changes.
+                    if (bundleLink) {
+                      if (!bundleLink.sent_at) void markSetReviewLinkSent(bundleLink.id)
+                      setSetSummary((s) => (s ? { ...s, sent_at: s.sent_at ?? nowIso } : s))
+                    }
                     setShowReplyModal(false)
                     if (id) loadProof(id)
                   }}
