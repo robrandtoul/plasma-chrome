@@ -534,8 +534,14 @@ Deno.serve(async (req) => {
       amountPersonalisation = priced.personalisation
     }
     amountShipping = shippingTreatment === 'manual' ? round2(Number(shippingCharged ?? 0)) : 0
-    const cardsBase = customQuoteTotal != null ? customQuoteTotal : (amountCards ?? 0)
-    amountCardDiscount = resolveCardDiscount(cardDiscountType, cardDiscountValue, cardsBase)
+    // Discount base = the goods subtotal (cards + finish + tooling +
+    // personalisation; custom quotes carry their agreed figure), matching
+    // create-checkout-session so offline and online orders discount alike.
+    const goodsBase =
+      customQuoteTotal != null
+        ? customQuoteTotal
+        : round2(Number(amountCards ?? 0) + Number(amountTooling ?? 0) + Number(amountPersonalisation ?? 0))
+    amountCardDiscount = resolveCardDiscount(cardDiscountType, cardDiscountValue, goodsBase)
   }
 
   // ── Insert ──────────────────────────────────────────────────────

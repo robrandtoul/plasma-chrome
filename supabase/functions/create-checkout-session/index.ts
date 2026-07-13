@@ -701,15 +701,16 @@ Deno.serve(async (req) => {
   const usTariff = resolveUsTariff(effectiveDestCountry, usTariffFee, optedOutOfUsTariff)
 
   // ── Cards discount (server-authoritative) ────────────────────────
-  // The designer's per-order discount applies to the CARDS line only (the
-  // folded amount_cards = base cards + finish; or the custom-quote figure).
-  // Resolved + capped here, stamped as amount_card_discount, shown as its own
-  // negative line on the pay page + invoice, and netted off the charged total.
-  const cardDiscountBase = order.custom_quote_total != null ? Number(order.custom_quote_total) : (amountCards ?? 0)
+  // The designer's per-order discount applies to the GOODS subtotal — cards +
+  // finish + split-name tooling + personalisation (or the custom-quote figure),
+  // i.e. everything above shipping + tariff, so a percent discount matches the
+  // item figure the customer sees. Resolved + capped here, stamped as
+  // amount_card_discount, shown as its own negative line on the pay page +
+  // invoice, and netted off the charged total.
   const cardDiscount = resolveCardDiscount(
     order.card_discount_type as string | null,
     order.card_discount_value as number | null,
-    cardDiscountBase,
+    goods,
   )
 
   // Stamp the resolved breakdown so the Stripe→Xero webhook can itemise the
@@ -1140,8 +1141,10 @@ async function handleGroupCheckout(ctx: {
       totalCardsGrams = null
     }
 
-    const cardsBase = m.custom_quote_total != null ? Number(m.custom_quote_total) : (amountCards ?? 0)
-    const cardDiscount = resolveCardDiscount(m.card_discount_type, m.card_discount_value, cardsBase)
+    // Discount base = the member's goods figure (cards + finish + tooling +
+    // personalisation; custom quotes carry their agreed figure) — the same
+    // number shown as the member's item line, so a percent discount matches it.
+    const cardDiscount = resolveCardDiscount(m.card_discount_type, m.card_discount_value, goods)
 
     goodsSum = round2(goodsSum + goods)
     discountSum = round2(discountSum + cardDiscount)

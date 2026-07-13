@@ -191,7 +191,8 @@ function memberGoods(m: GroupMemberPayload): number {
 }
 
 // Designer per-order discount, mirroring the server's resolveCardDiscount
-// EXACTLY (percent-or-fixed on the cards+finish base, capped at the base).
+// EXACTLY (percent-or-fixed on the member's goods base — cards + finish +
+// tooling + personalisation, or the custom-quote figure — capped at the base).
 function cardDiscountForBase(type: string | null, value: number | null, base: number): number {
   if (type !== 'percent' && type !== 'fixed') return 0
   const v = Number(value)
@@ -947,7 +948,9 @@ export default function OrderGroupPayPage() {
         : 0
     const overCap = qty != null && data.flatAboveTop && qty > MAX_ONLINE_FLAT_QUANTITY
     const goods = specPicked && qty != null && cards != null && !overCap ? round2(cards + finish + tooling + pers) : null
-    const discount = goods != null ? cardDiscountForBase(m.card_discount_type, m.card_discount_value, round2((cards ?? 0) + finish)) : 0
+    // Discount base = the member's goods figure — the same number shown as the
+    // item line — matching the group checkout's server computation.
+    const discount = goods != null ? cardDiscountForBase(m.card_discount_type, m.card_discount_value, goods) : 0
     // Range hint once the quantity is entered but can't be priced.
     const bounds = activeTiers.length > 0 ? activeTiers : data.specVariants.flatMap((v) => v.tiers)
     const qmin = bounds.length > 0 ? Math.min(...bounds.map((t) => t.quantity)) : null

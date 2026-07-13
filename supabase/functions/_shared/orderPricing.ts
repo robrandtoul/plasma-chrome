@@ -173,21 +173,24 @@ export function computeOrderTotal(inp: OrderPriceInputs): OrderPriceResult {
   return { ok: true, cards, splitName, personalisation, finish, shipping, goods, total }
 }
 
-// Designer-set per-order discount on the CARDS line only (mirrors the shipping
-// subsidy pattern: a type + value stored on the order). Returns the discount
-// amount in major units, capped so it can never exceed the cards figure (cards −
-// discount >= 0) and never goes negative. 'none' / a missing or non-positive
-// value / a zero cards base all yield 0. Pure so the checkout charge, the
-// pay-page mirror, and the invoice line can't drift.
+// Designer-set per-order discount on the GOODS subtotal (mirrors the shipping
+// subsidy pattern: a type + value stored on the order). The base is everything
+// the customer sees as the item — cards + finish + split-name tooling +
+// personalisation, or the agreed custom-quote figure — so a percent discount
+// matches the displayed line; shipping and the US tariff stay outside it.
+// Returns the discount amount in major units, capped so it can never exceed
+// the goods figure (goods − discount >= 0) and never goes negative. 'none' / a
+// missing or non-positive value / a zero goods base all yield 0. Pure so the
+// checkout charge, the pay-page mirror, and the invoice line can't drift.
 export function resolveCardDiscount(
   type: string | null | undefined,
   value: number | null | undefined,
-  cardsAmount: number,
+  goodsAmount: number,
 ): number {
   if (type !== 'percent' && type !== 'fixed') return 0
   const v = Number(value)
   if (!Number.isFinite(v) || v <= 0) return 0
-  const base = Number.isFinite(cardsAmount) && cardsAmount > 0 ? cardsAmount : 0
+  const base = Number.isFinite(goodsAmount) && goodsAmount > 0 ? goodsAmount : 0
   if (base <= 0) return 0
   const raw = type === 'percent' ? base * (v / 100) : v
   const capped = Math.min(Math.max(raw, 0), base)

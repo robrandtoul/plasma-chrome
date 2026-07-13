@@ -540,7 +540,7 @@ export default function EditOrderModal({
                 </Field>
 
                 {/* Card discount */}
-                <Field label="Card discount" asLabel={false} hint="An optional discount on the cards line — applied at checkout against the new price.">
+                <Field label="Card discount" asLabel={false} hint="An optional discount on the cards, tooling and personalisation subtotal — applied at checkout against the new price.">
                   <div className="flex flex-wrap gap-2">
                     {CARD_DISCOUNT_OPTIONS.map((opt) => (
                       <button

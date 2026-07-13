@@ -35,9 +35,10 @@ export interface OrderForInvoice {
   amount_personalisation: number | null
   amount_shipping: number | null
   amount_us_tariff: number | null
-  // Designer-set per-order discount on the cards line, stamped at checkout.
-  // Booked as a separate negative line carrying the product's own item code so
-  // it inherits the correct VAT rate; null / 0 → no discount line.
+  // Designer-set per-order discount on the goods subtotal (cards + tooling +
+  // personalisation), stamped at checkout. Booked as a separate negative line
+  // carrying the product's own item code so it inherits the correct VAT rate
+  // (every goods line shares one rate per invoice); null / 0 → no discount line.
   amount_card_discount: number | null
   // 'production' (default) | 'prototype'. A prototype is a custom-quote order
   // (custom_quote_total = the flat prototyping fee) that kept its variant, so
@@ -210,10 +211,13 @@ export async function buildOrderGoodsLines(
       })
     }
   }
-  // Designer-set cards discount — a separate negative line carrying the SAME
-  // item code as the product line, so Xero applies the cards line's own VAT rate
-  // to the (negative) discount and the net VAT comes out right. The cards line
-  // stays at full price; this shows the saving and nets the total down.
+  // Designer-set goods discount (base: cards + tooling + personalisation) — a
+  // separate negative line carrying the SAME item code as the product line, so
+  // Xero applies the goods lines' own VAT rate to the (negative) discount and
+  // the net VAT comes out right (all goods lines share one rate per invoice;
+  // the discount can exceed the product line alone but never the goods sum, so
+  // the invoice total stays >= 0). The goods lines stay at full price; this
+  // shows the saving and nets the total down.
   if (cardDiscount > 0 && lines.length > 0) {
     lines.push({ description: 'Discount', amount: -cardDiscount, itemCode })
   }
