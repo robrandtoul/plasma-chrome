@@ -16,6 +16,14 @@
 
 // ── Config shapes ─────────────────────────────────────────────────────────────
 
+/**
+ * Extra working days added to the cooldown per reminder already sent for the
+ * same (proof, rule, version): the gap before reminder 2 is repeat_days, the
+ * gap before reminder 3 is repeat_days + 2, and so on. Not an admin dial —
+ * the base repeat_days stays the single configurable knob.
+ */
+export const COOLDOWN_STRETCH_WD = 2
+
 export interface AutomationRuleConfig {
   mode: 'auto' | 'review' | 'off'
   /** Working-day cooldown between nudges. */
@@ -80,6 +88,14 @@ export interface CandidateFacts {
    * conversation, so a human owns the chase: automation stands down.
    */
   hasFollowUpTag: boolean
+  /**
+   * Current version's currency — the house proxy for territory (EUR/USD are
+   * only used outside the UK). USD proofs are deferred to the afternoon run
+   * so reminders land mid-morning US time instead of ~5am ET (the live data
+   * showed USD re-engagement at half the GBP rate). Null for per-direction
+   * variant rounds and pre-000314 candidate rows → treated as "not USD".
+   */
+  currency: string | null
 }
 
 export interface LedgerRow {
@@ -225,6 +241,20 @@ export function isWithinSendWindow(now: Date, bankHolidays: ReadonlySet<string>)
   return hour >= 9 && hour < 17
 }
 
+/**
+ * Monday before 13:00 London. The sender demotes this run to dry_run and the
+ * weekend-matured batch goes out on the afternoon run instead: Monday-morning
+ * sends re-engaged 12/55 (22%) vs ~35-39% midweek in the first month of live
+ * data — the biggest batch of the week landing at the worst-performing
+ * moment. A deferral, not a drop: the same candidates send at ~16:00 London
+ * the same day, so proofs_in_follow_up()'s "automation will handle it"
+ * promise still holds.
+ */
+export function isLondonMondayMorning(instant: Date): boolean {
+  const dow = new Date(utcMidnight(londonDate(instant))).getUTCDay() // 0=Sun..6=Sat
+  return dow === 1 && londonHour(instant) < 13
+}
+
 // ── The per-proof decision ───────────────────────────────────────────────────
 
 // LOCKSTEP: the dashboard mirrors this function's pre-send guards in SQL — see
@@ -235,6 +265,10 @@ export function isWithinSendWindow(now: Date, bankHolidays: ReadonlySet<string>)
 // snooze, opt-out, follow-up tag, customer-reply floor, per-version cap,
 // threshold), update Branch B in lockstep — otherwise a proof the automation
 // can't actually send may be wrongly hidden from the human pile.
+// Deliberately NOT mirrored in Branch B: the USD morning deferral (the proof
+// still sends the same day, on the afternoon run) and the progressive
+// cooldown stretch (changes WHEN, never WHETHER — a proof waiting out a
+// cooldown is exactly the "automation will handle it" case).
 export function decideForProof(
   facts: CandidateFacts,
   ledger: LedgerRow[],
@@ -323,7 +357,12 @@ export function decideForProof(
   // Cooldown: working days since the newest counted touch of ANY source —
   // manual nudges always delay automation. Authoritative from the ledger;
   // the grace window above is belt-and-braces, never the spacing mechanism.
-  const repeatDays = cfg.automation.repeat_days ?? 3
+  // The gap STRETCHES as this rule's sequence progresses (repeat_days before
+  // reminder 2, +2 working days per later reminder — so 3, 5, … at the
+  // default dial): the live decay curve showed later reminders barely
+  // re-engage, so they get more room instead of the same drumbeat.
+  const repeatDays = (cfg.automation.repeat_days ?? 3) +
+    COOLDOWN_STRETCH_WD * Math.max(0, versionRuleCount - 1)
   if (counted.length > 0) {
     const newest = counted.reduce((a, b) => (a.createdAt > b.createdAt ? a : b))
     const since = workingDaysBetween(
@@ -332,6 +371,14 @@ export function decideForProof(
       cfg.bankHolidays,
     )
     if (since < repeatDays) return { action: 'skip', outcome: 'skipped_cooldown' }
+  }
+
+  // USD proofs only send on the afternoon run (~11:00 New York) — the last
+  // gate, so a capped / cooling-down / replied proof reports that instead of
+  // the deferral. Same-day timing only: never changes whether a proof sends,
+  // so the Branch B mirror is deliberately untouched (see LOCKSTEP above).
+  if ((facts.currency ?? '').toUpperCase() === 'USD' && londonHour(now) < 13) {
+    return { action: 'skip', outcome: 'skipped_us_send_window' }
   }
 
   return { action: 'send' }
@@ -355,6 +402,30 @@ export function nudgeNumberFor(
       r.versionId === facts.versionId &&
       r.ruleCode === ruleCode,
   ).length + 1
+}
+
+/**
+ * Template lookup chain for a given reminder position, most specific first.
+ * The sender takes the first id with a non-empty body (DB row, else seeded
+ * default): reminder 1 uses the base per-rule template; the LAST allowed
+ * reminder (position == max_nudges) prefers `<base>_final` — the
+ * "we'll stop nudging you" close; anything in between prefers its numbered
+ * id, then `<base>_2`. Every chain ends at the base id, so a missing row can
+ * never block a send — worst case the customer gets the reminder-1 body
+ * again, which is exactly the pre-sequence behaviour.
+ */
+export function nudgeTemplateIds(
+  baseId: string,
+  nudgeNumber: number,
+  maxNudges: number,
+): string[] {
+  const ids: string[] = []
+  if (nudgeNumber >= 2) {
+    if (nudgeNumber >= maxNudges) ids.push(`${baseId}_final`)
+    ids.push(`${baseId}_${nudgeNumber}`, `${baseId}_2`)
+  }
+  ids.push(baseId)
+  return [...new Set(ids)]
 }
 
 // ── Batch-level grouping ─────────────────────────────────────────────────────

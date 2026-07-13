@@ -97,15 +97,30 @@ export function templateProblem(
   return null
 }
 
-// Default bodies for the four needs-attention nudge templates, the fallback
-// when the reply_templates row is missing. Must stay in sync with BOTH the
-// seed migration (000207) and src/lib/replyTemplates.ts DEFAULT_BODIES.
+// Default bodies for the needs-attention nudge templates, the fallback when
+// the reply_templates row is missing. Must stay in sync with BOTH the seed
+// migrations (000207 base bodies, 000313 sequence bodies) and
+// src/lib/replyTemplates.ts DEFAULT_BODIES.
 // No sign-off: Help Scout auto-appends the configured signature.
+//
+// The `_2` / `_final` ids are the per-position bodies for the automated
+// reminder sequence (000313): send-nudges resolves them via nudgeTemplateIds
+// so a customer never receives the same reminder twice — base body for
+// reminder 1, `_2` for the middle, `_final` (the "we'll stop nudging you"
+// close) for the last allowed reminder.
 export const NUDGE_DEFAULT_BODIES: Record<string, string> = {
   nudge_sent_never_viewed:
     `Hi {first_name},\n\nJust checking the proof of your cards{? company} for {company}{/?} reached you — it doesn't look like it's been opened yet. Here's the link again whenever you have a moment:\n\n{url}`,
+  nudge_sent_never_viewed_2:
+    `Hi {first_name},\n\nEmails have a way of getting buried, so here's the link to the proof of your cards{? company} for {company}{/?} again — it only takes a minute to look over:\n\n{url}\n\nIf now isn't a good time, just reply and let us know — we'll hold off on the reminders.`,
+  nudge_sent_never_viewed_final:
+    `Hi {first_name},\n\nWe haven't managed to reach you about your card proof{? company} for {company}{/?}, so this is our last reminder — we don't want to clutter your inbox.\n\nYour proof stays saved, and you can pick it up any time:\n\n{url}\n\nIf the timing's wrong or something's not quite right, a one-line reply is all it takes.`,
   nudge_viewed_not_actioned:
     `Hi {first_name},\n\nHope you've had a chance to look over the proof{? company} for {company}{/?}. Any thoughts, or are you happy for us to go ahead? Here's the link if you'd like another look:\n\n{url}`,
+  nudge_viewed_not_actioned_2:
+    `Hi {first_name},\n\nJust picking up on the proof of your cards{? company} for {company}{/?}. If you're happy with it, you can approve it on the page in a few seconds — and if you'd like anything changed (layout, wording, colours), just reply and we'll sort it:\n\n{url}\n\nIf it's the price giving you pause, tell us — there's often a more affordable route with a different material or quantity.`,
+  nudge_viewed_not_actioned_final:
+    `Hi {first_name},\n\nThis is our last reminder about your card proof{? company} for {company}{/?} — we don't want to be a pest. Your proof stays saved, so you can come back to it whenever suits:\n\n{url}\n\nIf you've decided not to go ahead, no hard feelings — a quick reply telling us why (price, timing, direction) genuinely helps us do better.`,
   nudge_approaching_dormant:
     `Hi {first_name},\n\nJust a quick nudge on your card proof{? company} for {company}{/?} before it slips off our active list. Let us know if you'd like any changes — here's the link:\n\n{url}`,
   nudge_stuck_in_progress:

@@ -54,9 +54,11 @@ import {
   decideForProof,
   EW_BANK_HOLIDAYS_FALLBACK,
   groupSendables,
+  isLondonMondayMorning,
   isWithinSendWindow,
   londonDate,
   nudgeNumberFor,
+  nudgeTemplateIds,
   simulateDryLedger,
   type AutomationRuleConfig,
   type CandidateFacts,
@@ -182,6 +184,7 @@ interface CandidateRow {
   snoozed: boolean
   auto_nudge_disabled: boolean
   has_followup_tag: boolean
+  currency: string | null
 }
 
 type Candidate = CandidateFacts & { row: CandidateRow }
@@ -205,6 +208,10 @@ function toFacts(row: CandidateRow): Candidate {
     snoozed: row.snoozed,
     autoNudgeDisabled: row.auto_nudge_disabled,
     hasFollowUpTag: row.has_followup_tag === true,
+    // Pre-000314 candidate rows have no currency column → null → the USD
+    // afternoon-deferral simply doesn't fire (old behaviour). Order-safe
+    // whichever of the migration / this deploy lands first.
+    currency: row.currency ?? null,
     row,
   }
 }
@@ -395,6 +402,18 @@ async function run(admin: Admin): Promise<Response> {
     modeNote = 'dry run: outside the London send window'
   }
 
+  // Monday-morning deferral: the weekend-matured batch — the biggest of the
+  // week — re-engaged markedly worse at Monday 10:00 than any other slot, so
+  // it goes out on the afternoon run instead (see isLondonMondayMorning).
+  // Dry-running rather than aborting keeps the Outbox picture complete, and
+  // dry rows never block the afternoon's live claims (the claim index only
+  // covers sending/sent).
+  if (mode === 'live' && isLondonMondayMorning(now)) {
+    mode = 'dry_run'
+    modeNote =
+      'dry run: Monday-morning batch held for the afternoon run (weekend backlog re-engages better later in the day)'
+  }
+
   // ── Heartbeat: the run row is the pipeline's FIRST write ───────────────────
   const { data: runRow, error: runErr } = await admin
     .from('nudge_runs')
@@ -463,20 +482,35 @@ async function run(admin: Admin): Promise<Response> {
     }
     const grouped = groupSendables(eligible)
 
-    // ── Template bodies per rule (DB row, falling back to the seeded
-    // default) ───────────────────────────────────────────────────────────────
-    const bodyByRule = new Map<string, string>()
-    for (const rule of NUDGE_RULES) {
-      let body = NUDGE_DEFAULT_BODIES[rule.templateId]
-      const { data: tpl } = await admin
+    // ── Template bodies (DB rows, falling back to the seeded defaults) ──────
+    // One fetch of every nudge_* row; the body for each send is then resolved
+    // per reminder position via nudgeTemplateIds — base body for reminder 1,
+    // `_2` for the middle of the sequence, `_final` (the "we'll stop nudging
+    // you" close) for the last allowed reminder — so a customer never
+    // receives the same reminder twice. A missing/blanked row falls through
+    // the chain; worst case is the base body, the pre-sequence behaviour.
+    const dbBodies = new Map<string, string>()
+    {
+      const { data: tplRows } = await admin
         .from('reply_templates')
-        .select('body')
-        .eq('id', rule.templateId)
-        .maybeSingle()
-      if (tpl?.body && typeof tpl.body === 'string' && tpl.body.trim() !== '') {
-        body = tpl.body
+        .select('id, body')
+        .like('id', 'nudge_%')
+      for (const t of tplRows ?? []) {
+        if (typeof t.body === 'string' && t.body.trim() !== '') {
+          dbBodies.set(t.id as string, t.body)
+        }
       }
-      bodyByRule.set(rule.code, body)
+    }
+    const resolveTemplate = (
+      baseId: string,
+      nudgeNumber: number,
+      maxNudges: number,
+    ): { id: string; body: string } => {
+      for (const id of nudgeTemplateIds(baseId, nudgeNumber, maxNudges)) {
+        const body = dbBodies.get(id) ?? NUDGE_DEFAULT_BODIES[id]
+        if (body && body.trim() !== '') return { id, body }
+      }
+      return { id: baseId, body: NUDGE_DEFAULT_BODIES[baseId] }
     }
 
     const insertLedgerRow = async (row: LedgerInsert): Promise<string | null> => {
@@ -574,7 +608,16 @@ async function run(admin: Admin): Promise<Response> {
         // ambiguous failures (network throws, where the POST may have
         // landed) leave the claim in 'sending' for human verification.
         const rule = NUDGE_RULE_BY_CODE.get(c.ruleCode)!
-        const templateBody = bodyByRule.get(c.ruleCode)!
+        // Which reminder this is (1-based) decides the template body, the
+        // fresh-conversation switch, and the link attribution tag. In dry-run
+        // mode the simulated ledger advances it night-over-night.
+        const nudgeNumber = nudgeNumberFor(c, ledger, c.ruleCode)
+        const maxNudges = cfgByRule.get(c.ruleCode)?.automation.max_nudges ?? 2
+        const { id: templateId, body: templateBody } = resolveTemplate(
+          rule.templateId,
+          nudgeNumber,
+          maxNudges,
+        )
         let claimId: string | null = null
         try {
           // One GET serves four checks: existence, status, recipient, trail.
@@ -665,9 +708,17 @@ async function run(admin: Admin): Promise<Response> {
 
           // Render — {first_name} from the HS primaryCustomer so greeting and
           // recipient cannot diverge (they are equal-emailed by now anyway).
+          // First token only: some Help Scout customer records carry a full
+          // name in the first-name field, and "Hi Yasin Ludvigsen" reads like
+          // a bot where "Hi Yasin" doesn't.
+          // The /p/ link carries ?from=reminder-N: the customer page passes
+          // it through record_proof_view into proof_version_views.source
+          // (000315), so reminder-driven views are attributable directly
+          // instead of inferred from timing windows. Bundle links stay
+          // untouched — the bundle page has its own open tracking.
           const bundle = bundleByProof.get(c.proofId)
           const ctx: TemplateContext = {
-            first_name: (conv.primaryCustomer?.first ?? '').trim() ||
+            first_name: ((conv.primaryCustomer?.first ?? '').trim().split(/\s+/)[0] ?? '') ||
               (c.row.contact_full_name ?? '').trim().split(/\s+/)[0] || '',
             full_name: c.row.contact_full_name ?? '',
             company: c.row.company_name,
@@ -675,7 +726,7 @@ async function run(admin: Admin): Promise<Response> {
             url: baseUrl
               ? (bundle
                 ? `${baseUrl}/bundle/${bundle.id}?token=${bundle.token}`
-                : `${baseUrl}/p/${c.proofId}`)
+                : `${baseUrl}/p/${c.proofId}?from=reminder-${nudgeNumber}`)
               : '',
             designer_first_name: '',
           }
@@ -701,12 +752,12 @@ async function run(admin: Admin): Promise<Response> {
           // Reminder #2+ opens a NEW conversation with a fresh subject
           // (spec section 6) — the deliverability lever, and the nudge-1
           // vs nudge-2 response split doubles as the spam signal in the
-          // analytics. In dry-run mode the simulated ledger advances the
-          // number night-over-night, so the Outbox demonstrates the
-          // fresh-conversation path before any live send. Falls back to
-          // the same thread if HS ever returns a conversation without a
+          // analytics. The subject is deliberately the SAME constant for
+          // every fresh conversation (Rob, 2026-07-13): reminder #1 is a
+          // reply and cannot change subject anyway, and varying the fresh
+          // ones would fragment the customer's inbox threading. Falls back
+          // to the same thread if HS ever returns a conversation without a
           // mailbox id — better in-thread than not at all.
-          const nudgeNumber = nudgeNumberFor(c, ledger, c.ruleCode)
           const freshConversation = nudgeNumber >= 2 && typeof conv.mailboxId === 'number'
 
           if (mode === 'dry_run') {
@@ -714,7 +765,7 @@ async function run(admin: Admin): Promise<Response> {
               proof_id: c.proofId,
               proof_version_id: c.versionId,
               rule_code: c.ruleCode,
-              template_id: rule.templateId,
+              template_id: templateId,
               source: 'auto',
               state: 'dry_run',
               outcome: freshConversation ? 'would_send_new_conversation' : 'would_send',
@@ -730,7 +781,7 @@ async function run(admin: Admin): Promise<Response> {
             proof_id: c.proofId,
             proof_version_id: c.versionId,
             rule_code: c.ruleCode,
-            template_id: rule.templateId,
+            template_id: templateId,
             source: 'auto',
             state: 'sending',
             outcome: 'sending',
@@ -830,7 +881,7 @@ async function run(admin: Admin): Promise<Response> {
             target_id: c.proofId,
             metadata: {
               rule_code: c.ruleCode,
-              template_id: rule.templateId,
+              template_id: templateId,
               nudge_id: claimId,
               helpscout_thread_id: threadId || null,
               nudge_number: nudgeNumber,

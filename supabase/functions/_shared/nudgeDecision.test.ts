@@ -11,11 +11,13 @@ import {
   capRows,
   decideForProof,
   groupSendables,
+  isLondonMondayMorning,
   isWithinSendWindow,
   isWorkingDay,
   londonDate,
   londonHour,
   nudgeNumberFor,
+  nudgeTemplateIds,
   simulateDryLedger,
   workingDaysBetween,
   type CandidateFacts,
@@ -76,6 +78,7 @@ function facts(overrides: Partial<CandidateFacts> = {}): CandidateFacts {
     snoozed: false,
     autoNudgeDisabled: false,
     hasFollowUpTag: false,
+    currency: 'GBP',
   }
   const merged = { ...base, ...overrides }
   // sent_never_viewed anchors on its send evidence, so a test that moves
@@ -379,6 +382,75 @@ eq('viewed_not_actioned reminder number counts its own rule',
   eq('cooldown clears the day after', cleared.action, 'send')
 }
 
+// Progressive stretch: the gap grows by 2 working days per reminder already
+// sent for this rule+version (3 before #2, 5 before #3 at the default dial).
+{
+  const cfg3: NudgeConfig = { ...CFG, automation: { mode: 'auto', repeat_days: 3, max_nudges: 3 } }
+  // Two prior sends; newest Thursday 4 June → 4 working days before NOW.
+  // Base repeat_days 3 would clear, but the stretched gap before reminder #3
+  // is 5 → still cooling.
+  const cooling = [
+    row({ createdAt: '2026-05-28T08:30:00Z' }),
+    row({ createdAt: '2026-06-04T08:30:00Z' }),
+  ]
+  const d1 = decideForProof(facts(), cooling, cfg3, NOW)
+  check('stretched cooldown holds reminder #3 at 4 working days',
+    d1.action === 'skip' && d1.outcome === 'skipped_cooldown', JSON.stringify(d1))
+  // Newest Monday 1 June → 7 working days before NOW ≥ 5 → clear.
+  const cleared = [
+    row({ createdAt: '2026-05-26T08:30:00Z' }),
+    row({ createdAt: '2026-06-01T08:30:00Z' }),
+  ]
+  eq('stretched cooldown clears at 7 working days', decideForProof(facts(), cleared, cfg3, NOW).action, 'send')
+  // The stretch is per-rule progress: the OTHER rule's rows space the send
+  // (cooldown counts any counted touch) but don't stretch this rule's gap.
+  const otherRule = [row({ ruleCode: 'viewed_not_actioned', createdAt: '2026-06-04T08:30:00Z' })]
+  const d2 = decideForProof(facts(), otherRule, cfg3, NOW)
+  eq('other-rule touches do not stretch the gap (base 3wd, 4 elapsed → send)', d2.action, 'send')
+}
+
+// ── USD afternoon window ─────────────────────────────────────────────────────
+//
+// USD proofs only send on the afternoon run (~11:00 New York). Morning →
+// deferral skip; afternoon → sends; other/unknown currencies unaffected.
+
+{
+  const d = decideForProof(facts({ currency: 'USD' }), [], CFG, NOW) // 10:30 BST
+  check('USD proof defers on the morning run', d.action === 'skip' && d.outcome === 'skipped_us_send_window')
+}
+eq('USD proof sends on the afternoon run',
+  decideForProof(facts({ currency: 'USD' }), [], CFG, new Date('2026-06-10T14:30:00Z')).action, 'send') // 15:30 BST
+eq('null currency uses the normal window',
+  decideForProof(facts({ currency: null }), [], CFG, NOW).action, 'send')
+// The deferral is the LAST gate: a capped USD proof reports the cap, not the window.
+{
+  const ledger = [
+    row({ createdAt: '2026-05-26T08:30:00Z' }),
+    row({ createdAt: '2026-06-01T08:30:00Z' }),
+  ]
+  const d = decideForProof(facts({ currency: 'USD' }), ledger, CFG, NOW)
+  check('capped USD proof reports the cap, not the deferral', d.action === 'skip' && d.outcome === 'skipped_capped')
+}
+
+// ── Monday-morning deferral helper ───────────────────────────────────────────
+
+eq('Monday 10:30 BST is a Monday morning', isLondonMondayMorning(new Date('2026-06-08T09:30:00Z')), true)
+eq('Monday 15:30 BST is not', isLondonMondayMorning(new Date('2026-06-08T14:30:00Z')), false)
+eq('Wednesday morning is not', isLondonMondayMorning(NOW), false)
+eq('winter Monday 12:30 GMT is (hour boundary)', isLondonMondayMorning(new Date('2026-01-12T12:30:00Z')), true)
+eq('winter Monday 13:00 GMT is not', isLondonMondayMorning(new Date('2026-01-12T13:00:00Z')), false)
+
+// ── nudgeTemplateIds (per-position template chain) ───────────────────────────
+
+eq('reminder 1 uses the base template', nudgeTemplateIds('nudge_x', 1, 3).join(','), 'nudge_x')
+eq('reminder 2 of 3 prefers _2', nudgeTemplateIds('nudge_x', 2, 3).join(','), 'nudge_x_2,nudge_x')
+eq('last reminder prefers _final', nudgeTemplateIds('nudge_x', 3, 3).join(','), 'nudge_x_final,nudge_x_3,nudge_x_2,nudge_x')
+eq('middle reminder at cap 4 prefers its number then _2', nudgeTemplateIds('nudge_x', 3, 4).join(','), 'nudge_x_3,nudge_x_2,nudge_x')
+eq('reminder 4 of 4 prefers _final', nudgeTemplateIds('nudge_x', 4, 4).join(','), 'nudge_x_final,nudge_x_4,nudge_x_2,nudge_x')
+// A cap lowered below the current number still resolves (the position is
+// past max → _final wins, matching "this is the last one we may send").
+eq('number past a lowered cap still resolves to _final', nudgeTemplateIds('nudge_x', 3, 2).join(','), 'nudge_x_final,nudge_x_3,nudge_x_2,nudge_x')
+
 // ── Sibling grouping ─────────────────────────────────────────────────────────
 
 {
@@ -461,6 +533,16 @@ eq('other version does not advance the number',
 const GOOD_CTX = { first_name: 'Jane', full_name: 'Jane Doe', company: 'Acme', version_number: 2, url: 'https://x/p/1', designer_first_name: '' }
 
 eq('seeded template is clean', templateProblem(NUDGE_DEFAULT_BODIES.nudge_sent_never_viewed, GOOD_CTX), null)
+// Every sequence body (000313) must pass the pre-render gate with the
+// standard context, or the sender would skip instead of send.
+for (const id of [
+  'nudge_sent_never_viewed_2',
+  'nudge_sent_never_viewed_final',
+  'nudge_viewed_not_actioned_2',
+  'nudge_viewed_not_actioned_final',
+]) {
+  eq(`sequence template ${id} is clean`, templateProblem(NUDGE_DEFAULT_BODIES[id], GOOD_CTX), null)
+}
 check('typo token is caught pre-render', templateProblem('Hi {first_name}, link: {ur1}', GOOD_CTX) !== null)
 check('unbalanced conditional is caught', templateProblem('Hi {? company}for {company}', GOOD_CTX) !== null)
 check('empty url is caught', templateProblem('Hi {first_name} {url}', { ...GOOD_CTX, url: '' }) !== null)

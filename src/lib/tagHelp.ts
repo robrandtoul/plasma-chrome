@@ -48,7 +48,7 @@ const TAG_HELP: Record<TagHelpFamily, Record<string, string>> = {
     skipped_snoozed: 'Reminders are snoozed on this proof, so none was sent.',
     skipped_opted_out: 'Automatic chasing is switched off for this proof.',
     skipped_capped:
-      'The automatic chasing has hit its limit (2 reminders) with no response. Time for a call or a personal email.',
+      'The automatic chasing has sent every reminder it is allowed for this version with no response. Time for a call or a personal email.',
     skipped_capped_lifetime:
       'This proof has had the maximum number of reminders over its lifetime, so no more will be sent automatically.',
     skipped_cooldown:
@@ -57,6 +57,8 @@ const TAG_HELP: Record<TagHelpFamily, Record<string, string>> = {
       'The customer replied recently, so we are holding off for a few days before sending any reminder.',
     skipped_followup_tag:
       "The Help Scout conversation is tagged 'follow up', so a person is handling the chase and the automation stays out of it.",
+    skipped_us_send_window:
+      'This customer pays in USD, so their reminder goes out on the afternoon run — mid-morning in the US — instead of ~5am their time.',
   },
 
   // ── Needs-attention rules. Keyed by rule_code (proofs_needing_attention).
