@@ -193,11 +193,15 @@ Deno.serve(async (req) => {
   }
 
   const amountShipping = shipping === 'manual' ? round2(Number(shippingCharged ?? 0)) : 0
-  const cardsBase = customQuoteTotal != null ? customQuoteTotal : amountCards
+  // Discount base = the goods subtotal (cards + finish + tooling +
+  // personalisation; a custom quote folds its agreed figure into amountCards
+  // above), matching create-checkout-session so an offline payment discounts
+  // like an online one.
+  const goodsBase = round2(amountCards + amountTooling + amountPersonalisation)
   const amountCardDiscount = resolveCardDiscount(
     order.card_discount_type as string | null,
     order.card_discount_value == null ? null : Number(order.card_discount_value),
-    cardsBase,
+    goodsBase,
   )
 
   // ── Flip the order to paid / offline, in place ──────────────────

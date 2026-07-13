@@ -20,8 +20,9 @@ export interface OrderAmounts {
 }
 
 // The order's charged total, matching the Stripe charge + Xero invoice:
-// the cards discount nets off either branch; shipping + the US tariff ride on
-// top as their own charged lines. Null when there are no priced parts at all.
+// the designer discount (stamped against the goods subtotal) nets off either
+// branch; shipping + the US tariff ride on top as their own charged lines.
+// Null when there are no priced parts at all.
 // Shipping is added in BOTH branches — a custom-quote order (incl. a prototype)
 // still has carriage stamped at checkout and invoiced as its own line, so the
 // displayed total must include it to match the Stripe charge.

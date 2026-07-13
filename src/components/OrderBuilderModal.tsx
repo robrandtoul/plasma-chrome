@@ -143,9 +143,10 @@ export default function OrderBuilderModal({
   const [shipDestCountry, setShipDestCountry] = useState('')
   // Per-order goodwill discount, % off the computed rate (Rob, 2026-06-15).
   const [shippingDiscountPercent, setShippingDiscountPercent] = useState('')
-  // Per-order discount on the CARDS line — none / % off / fixed amount off,
-  // with an optional reason. Resolved + capped at checkout against the priced
-  // cards figure; shows as its own negative line on the pay page + invoice.
+  // Per-order discount on the GOODS subtotal (cards + tooling +
+  // personalisation) — none / % off / fixed amount off, with an optional
+  // reason. Resolved + capped at checkout against the priced goods figure;
+  // shows as its own negative line on the pay page + invoice.
   const [cardDiscountType, setCardDiscountType] = useState<CardDiscountType>('none')
   const [cardDiscountValue, setCardDiscountValue] = useState('')
   const [cardDiscountReason, setCardDiscountReason] = useState('')
@@ -1640,12 +1641,13 @@ export default function OrderBuilderModal({
             </Field>
             )}
 
-            {/* Card discount — online only; designer-set, reduces only the cards
-                line, shown as its own negative line on the pay page + invoice.
-                Skipped for offline (you invoice in Xero) and for prototypes
-                (the flat fee is the price). */}
+            {/* Card discount — online only; designer-set, reduces the goods
+                subtotal (cards + tooling + personalisation), shown as its own
+                negative line on the pay page + invoice. Skipped for offline
+                (you invoice in Xero) and for prototypes (the flat fee is the
+                price). */}
             {!isPrototype && paymentMethod !== 'offline' && (
-            <Field label="Card discount" htmlFor="order-card-discount" className="md:col-span-2" hint="Optional. Reduces only the cards subtotal — shows as its own discount line on the pay page and invoice. Shipping has its own subsidy above.">
+            <Field label="Card discount" htmlFor="order-card-discount" className="md:col-span-2" hint="Optional. Reduces the cards, tooling and personalisation subtotal — shows as its own discount line on the pay page and invoice. Shipping and US tariff are not discounted; shipping has its own subsidy above.">
               {offeredDiscount != null && offeredDiscount > 0 && cardDiscountType === 'none' && (
                 <div
                   className="mb-2 flex flex-wrap items-center gap-2 rounded-lg px-3 py-2 text-[13px]"

@@ -226,9 +226,10 @@ Deno.serve(async (req) => {
     customQuoteTotal = Math.round(c * 100) / 100
   }
 
-  // card_discount — the per-order discount on the CARDS line. The resolved
-  // amount is recomputed + stamped at checkout against the (possibly new) priced
-  // cards figure; here we only persist the rule.
+  // card_discount — the per-order discount on the GOODS subtotal (cards +
+  // tooling + personalisation). The resolved amount is recomputed + stamped at
+  // checkout against the (possibly new) priced goods figure; here we only
+  // persist the rule.
   const cardDiscountType = (body.card_discount_type as CardDiscountType) ?? 'none'
   if (!CARD_DISCOUNT_TYPES.includes(cardDiscountType)) {
     return json({ error: 'Invalid card_discount_type' }, 400)

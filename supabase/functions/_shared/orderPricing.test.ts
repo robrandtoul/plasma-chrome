@@ -213,20 +213,20 @@ test('computeOrderTotal: quantity out of range cannot be priced', () => {
 
 // ── resolveCardDiscount ─────────────────────────────────────────────
 
-test('resolveCardDiscount: percent off the cards', () => {
-  // 10% off £500 cards → £50
+test('resolveCardDiscount: percent off the goods base', () => {
+  // 10% off a £500 goods base → £50
   assertEqual(resolveCardDiscount('percent', 10, 500), 50)
 })
 
-test('resolveCardDiscount: percent over 100 is capped to the cards figure', () => {
+test('resolveCardDiscount: percent over 100 is capped to the goods figure', () => {
   assertEqual(resolveCardDiscount('percent', 150, 500), 500)
 })
 
-test('resolveCardDiscount: fixed amount off the cards', () => {
+test('resolveCardDiscount: fixed amount off the goods base', () => {
   assertEqual(resolveCardDiscount('fixed', 100, 500), 100)
 })
 
-test('resolveCardDiscount: fixed amount over the cards is capped (never negative)', () => {
+test('resolveCardDiscount: fixed amount over the goods base is capped (never negative)', () => {
   assertEqual(resolveCardDiscount('fixed', 600, 500), 500)
 })
 
@@ -241,18 +241,31 @@ test('resolveCardDiscount: percent rounds to the penny', () => {
   assertEqual(resolveCardDiscount('percent', 12.5, 99.99), 12.5)
 })
 
-test('computeOrderTotal goods uses full cards; discount is applied by the caller', () => {
-  // The cards-only discount is resolved + applied at checkout against the
-  // folded amount_cards, not inside computeOrderTotal — so goods stays full
-  // here and the caller subtracts resolveCardDiscount() from the charged total.
+test('computeOrderTotal goods stays full; discount is applied by the caller', () => {
+  // The discount is resolved + applied at checkout against the goods subtotal,
+  // not inside computeOrderTotal — so goods stays full here and the caller
+  // subtracts resolveCardDiscount() from the charged total.
   const tiers: Tier[] = [{ quantity: 100, total_price: 500 }]
   const r = computeOrderTotal({
     tiers, quantity: 100, perExtraNameSurcharge: 39, namesCount: 2, personalisation: null, shipping: 0,
   })
   if (!r.ok) throw new Error('expected ok')
-  const discount = resolveCardDiscount('percent', 10, r.cards) // 10% of 500 = 50
-  assertEqual(discount, 50)
-  assertEqual(Math.round((r.total - discount) * 100) / 100, 489) // 539 − 50
+  const discount = resolveCardDiscount('percent', 10, r.goods) // 10% of 539 (500 cards + 39 tooling)
+  assertEqual(discount, 53.9)
+  assertEqual(Math.round((r.total - discount) * 100) / 100, 485.1) // 539 − 53.90
+})
+
+test('percent discount covers split-name tooling (the Experience Auto Group case)', () => {
+  // 700 carbon fibre cards at $1,543 split across 7 names ($49/extra name →
+  // $294 tooling): 10% must come off the full $1,837 goods figure the customer
+  // sees as the item line — $183.70, not $154.30 off the cards alone.
+  const tiers: Tier[] = [{ quantity: 700, total_price: 1543 }]
+  const r = computeOrderTotal({
+    tiers, quantity: 700, perExtraNameSurcharge: 49, namesCount: 7, personalisation: null, shipping: 0,
+  })
+  if (!r.ok) throw new Error('expected ok')
+  assertEqual(r.goods, 1837)
+  assertEqual(resolveCardDiscount('percent', 10, r.goods), 183.7)
 })
 
 // ── resolveUsTariff ─────────────────────────────────────────────────

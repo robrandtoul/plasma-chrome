@@ -1268,9 +1268,10 @@ export default function OrderPayPage() {
     return surchargeFromTiers(exvSurTiers(finishTiers), qty, flatAboveTop)
   }
 
-  // Cards discount for a given cards-base, mirroring the server's
+  // Designer discount for a given goods base, mirroring the server's
   // resolveCardDiscount EXACTLY so the displayed figure equals the charge. The
-  // base is the cards line (cards + finish folded), matching create-checkout-session.
+  // base is the goods subtotal (cards + finish + tooling + personalisation; a
+  // custom quote's agreed figure), matching create-checkout-session.
   function cardDiscountForBase(base: number): number {
     const t = order?.card_discount_type
     const v = Number(order?.card_discount_value)
@@ -1293,10 +1294,10 @@ export default function OrderPayPage() {
     const splitName = perExtraName && order.names_count > 1 ? (order.names_count - 1) * exv(perExtraName) : 0
     const pers = personalisation ? Math.max(exv(personalisation.minCharge), qty * exv(personalisation.perCardRate)) : 0
     const finish = finishSurchargeForQty(qty)
-    // Designer discount applies to the cards line (cards + finish) only, netted
-    // off the total exactly as create-checkout-session does — so the button and
-    // Total match the amount actually charged.
-    const discount = cardDiscountForBase(round2(cards + finish))
+    // Designer discount applies to the goods subtotal (cards + tooling +
+    // personalisation + finish), netted off the total exactly as
+    // create-checkout-session does — so the button and Total match the charge.
+    const discount = cardDiscountForBase(round2(cards + splitName + pers + finish))
     return round2(round2(cards + splitName + pers + finish) - discount + shippingAmount + tariffAmount)
   }
 
@@ -1403,16 +1404,27 @@ export default function OrderPayPage() {
     : order.quantity
   // Pre-checkout preview components, mirroring the post-checkout breakdown so
   // the customer sees Cards / Discount before paying — not an undiscounted
-  // lump. Cards base = cards + finish (the discount base); the discount and
-  // tooling are derived from it for the chosen / locked quantity.
+  // lump. The Cards row shows cards + finish; the discount is computed on the
+  // full goods subtotal (cards + finish + tooling + personalisation, or the
+  // custom-quote figure), matching create-checkout-session.
   const previewCardsBase =
     order.custom_quote_total != null
       ? order.custom_quote_total
       : displayQty != null && cardTotalForQty(displayQty) != null
         ? round2((cardTotalForQty(displayQty) as number) + finishSurchargeForQty(displayQty))
         : null
-  const previewDiscount = previewCardsBase != null ? cardDiscountForBase(previewCardsBase) : 0
   const previewTooling = perExtraName && order.names_count > 1 ? round2((order.names_count - 1) * exv(perExtraName)) : 0
+  const previewPersonalisation =
+    order.custom_quote_total == null && displayQty != null && personalisation
+      ? round2(Math.max(exv(personalisation.minCharge), displayQty * exv(personalisation.perCardRate)))
+      : 0
+  const previewGoods =
+    previewCardsBase != null
+      ? order.custom_quote_total != null
+        ? previewCardsBase
+        : round2(previewCardsBase + previewTooling + previewPersonalisation)
+      : null
+  const previewDiscount = previewGoods != null ? cardDiscountForBase(previewGoods) : 0
 
   // Quantity inputs (open-quantity orders). One JSX block, two homes: inside
   // the "Confirm your card" section ABOVE the thickness/finish cards for
@@ -1529,6 +1541,7 @@ export default function OrderPayPage() {
                     )}
                     {previewDiscount > 0 && <Row label="Discount" value={formatPrice(-previewDiscount, order.currency)} />}
                     {previewTooling > 0 && <Row label="Tooling" value={formatPrice(previewTooling, order.currency)} />}
+                    {previewPersonalisation > 0 && <Row label="Personalisation" value={formatPrice(previewPersonalisation, order.currency)} />}
                     <Row label={SHIPPING_LABEL[order.shipping_treatment]} value={
                       order.shipping_treatment === 'free' ? 'Free'
                         : order.shipping_charged != null ? formatPrice(order.shipping_charged, order.currency)
