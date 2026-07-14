@@ -102,9 +102,14 @@ on the latest order's status:
   order it also shows the ☐ "old Stock Control job cancelled" check that gates the
   re-place (passed to place-order as `old_job_cancelled`).
 - **Cancel** button on each "Awaiting payment" (`sent`) card, beside Reactivate →
-  confirm → `order-lifecycle(cancel, reason:abort, notify:true)`. The order leaves
-  the list (the page query is `.in('status',['sent','paid','fulfilled'])`; add
-  `'revision'` so the new section populates — cancelled stays excluded).
+  confirm dialog → `order-lifecycle(cancel, reason:abort, notify:<choice>)`. The
+  dialog (July 2026: `CancelOrderDialog`, replacing the original `window.confirm`)
+  carries an "Email the customer to let them know" checkbox — ticked by default
+  (posts the `order_cancelled` reply, the original behaviour); untick to cancel
+  **silently** (no customer email — for correcting a mistake before sending a
+  fresh link). The order leaves the list (the page query is
+  `.in('status',['sent','paid','fulfilled'])`; add `'revision'` so the new
+  section populates — cancelled stays excluded).
 
 ### 3e. `OrderPayPage.tsx` — non-payable states
 The customer page status union already includes `cancelled`. Add explicit, calm

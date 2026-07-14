@@ -20,6 +20,7 @@ import OrderBuilderModal from '../components/OrderBuilderModal'
 import GroupOrdersModal, { type GroupCandidate } from '../components/GroupOrdersModal'
 import RecordOfflinePaymentModal from '../components/RecordOfflinePaymentModal'
 import EditOrderModal from '../components/EditOrderModal'
+import Modal from '../components/Modal'
 import DesignerAvatar from '../components/DesignerAvatar'
 import { ChevronRight, StickyNote } from 'lucide-react'
 
@@ -621,6 +622,13 @@ export default function OrdersPage() {
   const [groupModalOpen, setGroupModalOpen] = useState(false)
   // The unpaid order being edited in place (thickness/quantity/etc.), if any.
   const [editingOrder, setEditingOrder] = useState<OrderRow | null>(null)
+  // The unpaid order the cancel confirm dialog is open for, plus the dialog's
+  // "email the customer" choice (ticked by default — untick to cancel silently,
+  // e.g. when correcting a mistake before sending a fresh link) and any error
+  // from the last attempt so it shows inside the dialog.
+  const [cancelTarget, setCancelTarget] = useState<OrderRow | null>(null)
+  const [cancelNotify, setCancelNotify] = useState(true)
+  const [cancelError, setCancelError] = useState<string | null>(null)
   const navigate = useNavigate()
   // Per-order reminder roll-up (the automated unpaid-order chase, 000238).
   const [reminders, setReminders] = useState<Record<string, ReminderSummary>>({})
@@ -1081,22 +1089,26 @@ export default function OrdersPage() {
     }
   }
 
-  // Cancel an unpaid order link (abort). order-lifecycle flips sent→cancelled,
-  // posts the customer a Help Scout note, and writes the audit row server-side —
-  // so no client logAudit here (that would double-log). The page never refetches,
-  // so drop the row locally to remove the card.
-  async function cancelOrder(o: OrderRow) {
-    if (!window.confirm('Cancel this unpaid order link? The customer will be told it has been cancelled.')) return
+  // Cancel an unpaid order link (abort). Confirmed via the CancelOrderDialog,
+  // where the designer chooses whether the customer is told: notify=true posts
+  // the order_cancelled reply on the Help Scout thread (the edge function only
+  // sends it when asked); notify=false cancels silently. order-lifecycle flips
+  // sent→cancelled and writes the audit row server-side — so no client logAudit
+  // here (that would double-log). The page never refetches, so drop the row
+  // locally to remove the card.
+  async function cancelOrder(o: OrderRow, notify: boolean) {
     setBusyId(o.id)
+    setCancelError(null)
     try {
       const { data, error } = await supabase.functions.invoke<{ ok: boolean; status?: string; error?: string }>(
         'order-lifecycle',
-        { body: { order_id: o.id, action: 'cancel', reason: 'abort', notify: true } },
+        { body: { order_id: o.id, action: 'cancel', reason: 'abort', notify } },
       )
       if (error || !data?.ok) {
-        window.alert(`Could not cancel the order: ${error?.message ?? data?.error ?? 'unknown error'}`)
+        setCancelError(`Could not cancel the order: ${error?.message ?? data?.error ?? 'unknown error'}`)
         return
       }
+      setCancelTarget(null)
       setOrders((prev) => prev.filter((r) => r.id !== o.id))
     } finally {
       setBusyId(null)
@@ -1655,7 +1667,7 @@ export default function OrdersPage() {
                       onCopy={() => void copyLink(o)}
                       onReactivate={() => void reactivate(o)}
                       onEdit={() => setEditingOrder(o)}
-                      onCancel={() => void cancelOrder(o)}
+                      onCancel={() => { setCancelNotify(true); setCancelError(null); setCancelTarget(o) }}
                       onRecordOffline={() => setRecordOffline(o)}
                     />
                   ))}
@@ -1825,8 +1837,89 @@ export default function OrdersPage() {
             onCreated={() => { setSelectMode(false); setGroupSelect(new Set()) }}
           />
         )}
+
+        {cancelTarget && (
+          <CancelOrderDialog
+            customer={customerLabel(cancelTarget)}
+            reference={cancelTarget.payment_reference}
+            notify={cancelNotify}
+            onNotifyChange={setCancelNotify}
+            working={busyId === cancelTarget.id}
+            errorMsg={cancelError}
+            onConfirm={() => void cancelOrder(cancelTarget, cancelNotify)}
+            onClose={() => { setCancelTarget(null); setCancelError(null) }}
+          />
+        )}
       </div>
     </DesignerChrome>
+  )
+}
+
+// Confirm dialog for cancelling an unpaid order link. Replaces the old
+// window.confirm so the designer can choose whether the customer hears about
+// it: ticked (the default, matching the old behaviour) posts the usual
+// order_cancelled reply on the Help Scout thread; unticked cancels silently —
+// for correcting a mistake (wrong quantity, wrong material) where a
+// "your order is cancelled" email would only confuse, typically just before
+// sending a fresh link.
+function CancelOrderDialog({
+  customer,
+  reference,
+  notify,
+  onNotifyChange,
+  working,
+  errorMsg,
+  onConfirm,
+  onClose,
+}: {
+  customer: string
+  reference: string | null
+  notify: boolean
+  onNotifyChange: (v: boolean) => void
+  working: boolean
+  errorMsg: string | null
+  onConfirm: () => void
+  onClose: () => void
+}) {
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      preventClose={working}
+      ariaLabelledBy="cancel-order-dialog-title"
+      ariaDescribedBy="cancel-order-dialog-msg"
+      panelClassName="w-full max-w-md rounded-2xl bg-surface p-6 shadow-xl"
+    >
+      <h2 id="cancel-order-dialog-title" className="text-lg font-semibold text-ink">Cancel this order link?</h2>
+      <p id="cancel-order-dialog-msg" className="mt-2 text-sm text-ink-soft">
+        The unpaid order for {customer}{reference ? ` (${reference})` : ''} will be cancelled and its payment
+        link will stop working. No payment has been taken.
+      </p>
+      <label className="mt-4 flex items-start gap-2 text-sm text-ink">
+        <input
+          type="checkbox"
+          checked={notify}
+          onChange={(e) => onNotifyChange(e.target.checked)}
+          disabled={working}
+          className="mt-0.5"
+        />
+        <span>Email the customer to let them know</span>
+      </label>
+      <p className="mt-1.5 pl-6 text-[13px] text-ink-mute">
+        {notify
+          ? 'We’ll post the usual cancellation note on their Help Scout thread.'
+          : 'Cancel silently — the customer won’t be told. Handy when you’re correcting a mistake and sending a fresh link.'}
+      </p>
+      {errorMsg && (
+        <p className="mt-3 rounded-lg bg-out-soft px-3 py-2 text-xs text-out">{errorMsg}</p>
+      )}
+      <div className="mt-5 flex justify-end gap-2">
+        <ButtonGhost size="sm" onClick={onClose} disabled={working}>Keep order</ButtonGhost>
+        <ButtonInk size="sm" onClick={onConfirm} disabled={working}>
+          {working ? 'Cancelling…' : notify ? 'Cancel order' : 'Cancel silently'}
+        </ButtonInk>
+      </div>
+    </Modal>
   )
 }
 
