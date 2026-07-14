@@ -26,8 +26,9 @@
 //     international — converted to the order currency, with goodwill
 //     taking the designer's per-order discount % off (Rob, 2026-06-15).
 // If a rate can't be obtained (e.g. FedEx won't quote the lane, or an
-// international order with no priced variant to weigh), we fall back to a
-// clear "we'll confirm shipping" message rather than charging a guess.
+// international order with no material at all to weigh — a custom quote with
+// no variant falls back to a representative weight for its material), we fall
+// back to a clear "we'll confirm shipping" message rather than charging a guess.
 //
 // Auth: none — the pay-page is anonymous. The order id + secret token
 // are validated against proofs.orders (service-role read) exactly like
@@ -54,6 +55,31 @@ function splitNameForCurrency(
   if (!m) return null
   const v = currency === 'GBP' ? m.split_name_surcharge_gbp : currency === 'EUR' ? m.split_name_surcharge_eur : m.split_name_surcharge_usd
   return v == null ? null : Number(v)
+}
+
+// Representative per-card weight (grams) for a material — the median across its
+// active variants' weights. A shipping-only fallback for a custom-quote order
+// that has a material but no pinned variant to read a weight from (a pre-fix
+// order, or a bespoke quote the designer didn't attach a thickness to).
+// International shipping needs SOME weight to rate the parcel; the agreed goods
+// price and the Xero invoice line are untouched. Null when the material has no
+// weighed variants — the caller then falls back to the "confirm shipping"
+// message exactly as before.
+async function representativeWeightGrams(
+  admin: SupabaseClient,
+  materialId: string,
+): Promise<number | null> {
+  const { data: vs } = await admin
+    .from('material_variants')
+    .select('weight_grams')
+    .eq('material_id', materialId)
+    .eq('is_active', true)
+  const weights = (vs ?? [])
+    .map((v) => Number(v.weight_grams))
+    .filter((w) => Number.isFinite(w) && w > 0)
+    .sort((a, b) => a - b)
+  if (weights.length === 0) return null
+  return weights[Math.floor((weights.length - 1) / 2)]
 }
 
 const CORS = {
@@ -380,10 +406,14 @@ Deno.serve(async (req) => {
   // invoice Qty column is right). For a locked order it's order.quantity;
   // for an open order it's the customer's choice, validated below.
   let resolvedQuantity: number | null = null
-  // Per-card weight of the chosen variant, needed to weigh an
-  // international parcel for the FedEx rate. Null for custom-quote orders
-  // (no variant) → international shipping can't be rated for those.
+  // Per-card weight of the chosen variant, needed to weigh an international
+  // parcel for the FedEx rate. A custom-quote order with no pinned variant
+  // falls back to a representative weight for its material (below) so it can
+  // still be rated; only a truly material-less quote leaves this null.
   let variantWeightGrams: number | null = null
+  // True when the weight above came from the material-median fallback rather
+  // than a pinned variant — surfaced in the shipping log for support.
+  let weightFromMaterialFallback = false
   // Human label for the Stripe summary's product line (e.g. "500 × Stainless
   // Steel 500µm — Mirror"). Built in the grid branch from the variant/option;
   // a generic fallback for custom quotes.
@@ -393,10 +423,10 @@ Deno.serve(async (req) => {
     productLabel = order.order_kind === 'prototype' ? 'Plasma prototype sample' : 'Plasma cards (bespoke quote)'
     // A prototype (and any custom-quote order that kept its variant) carries a
     // material_variant_id + a fixed quantity (the prototype's 1–3 copies). Read
-    // the per-card weight + copies so international shipping can be rated below;
-    // without these, only domestic-UK (flat-rate) shipping would work. A truly
-    // bespoke custom quote with no variant/quantity leaves both null → the same
-    // "we'll confirm shipping" fallback as before (no behaviour change there).
+    // the per-card weight + copies so international shipping can be rated below.
+    // A custom quote with no pinned variant falls back to a material-median
+    // weight (just after) so it can still be rated; only a quote with no
+    // material or no quantity leaves the parcel unweighable → "confirm shipping".
     if (order.material_variant_id) {
       const { data: variant } = await admin
         .from('material_variants')
@@ -404,6 +434,14 @@ Deno.serve(async (req) => {
         .eq('id', order.material_variant_id)
         .maybeSingle()
       if (variant?.weight_grams != null) variantWeightGrams = Number(variant.weight_grams)
+    }
+    // Fallback: a custom quote with a material but no pinned variant (a pre-fix
+    // order, or a bespoke quote with no thickness attached) still needs a
+    // per-card weight to rate international shipping. Use a representative
+    // weight for the material — shipping-only; the $ total + invoice are as-is.
+    if (variantWeightGrams == null && order.material_id) {
+      variantWeightGrams = await representativeWeightGrams(admin, order.material_id as string)
+      if (variantWeightGrams != null) weightFromMaterialFallback = true
     }
     if (order.quantity != null) resolvedQuantity = order.quantity
   } else {
@@ -663,6 +701,7 @@ Deno.serve(async (req) => {
       destPostcode,
       resolvedQuantity,
       variantWeightGrams,
+      weightFromMaterialFallback,
       baseGbp,
       reason: shipReason,
     }))
@@ -1025,6 +1064,12 @@ async function handleGroupCheckout(ctx: {
         if (materialName) {
           label = m.order_kind === 'prototype' ? `${materialName} — prototype sample` : `${materialName} (bespoke quote)`
         }
+      }
+      // Fallback (mirrors the single-order path): a grouped custom-quote member
+      // with no pinned variant still contributes weight to the combined parcel,
+      // so one unweighable member can't null the whole group's rating.
+      if (variantWeightGrams == null && m.material_id) {
+        variantWeightGrams = await representativeWeightGrams(admin, m.material_id as string)
       }
     } else {
       // Grid member — the effective (locked or customer-chosen) variant +

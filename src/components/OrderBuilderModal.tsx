@@ -264,7 +264,7 @@ export default function OrderBuilderModal({
   const [estimate, setEstimate] = useState<ShipEstimate>({ kind: 'idle' })
 
   useEffect(() => {
-    if (isCustomQuote || !materialId || !currency) return
+    if (!materialId || !currency) return
     let cancelled = false
     void (async () => {
       setVariantsLoading(true)
@@ -274,36 +274,39 @@ export default function OrderBuilderModal({
         .eq('material_id', materialId)
         .eq('is_active', true)
         .order('sort_order')
-      const ids = (vs ?? []).map((v) => v.id as string)
-      // Which variants have at least one price tier in this currency. A single
-      // fetch-all-tiers query hits supabase-js's 1000-row cap once a material
-      // has many tiers (e.g. 8 ink variants × ~197 tiers > 1000), silently
-      // dropping variants from the list. A per-variant head count (no rows
-      // transferred) is exact regardless of tier volume.
-      const checks = await Promise.all(
-        ids.map(async (id) => {
-          const { count } = await supabase
-            .from('price_tiers')
-            .select('id', { count: 'exact', head: true })
-            .eq('material_variant_id', id)
-            .eq('currency', currency)
-          return { id, has: (count ?? 0) > 0 }
-        }),
-      )
-      const priced = new Set(checks.filter((c) => c.has).map((c) => c.id))
-      const options = (vs ?? [])
-        .filter((v) => priced.has(v.id as string))
-        .map((v) => ({
-          id: v.id as string,
-          display_name: (v.display_name as string) ?? 'Option',
-          weight_grams: typeof v.weight_grams === 'number' ? v.weight_grams : null,
-          variant_type: (v.variant_type as string | null) ?? null,
-        }))
+      const all = (vs ?? []).map((v) => ({
+        id: v.id as string,
+        display_name: (v.display_name as string) ?? 'Option',
+        weight_grams: typeof v.weight_grams === 'number' ? v.weight_grams : null,
+        variant_type: (v.variant_type as string | null) ?? null,
+      }))
+      // Grid orders price from tiers, so list only variants that HAVE a tier in
+      // this currency — a per-variant head count avoids supabase-js's 1000-row
+      // cap (8 ink variants × ~197 tiers > 1000 would silently drop rows). A
+      // custom quote has an agreed total (no tier lookup), so it lists every
+      // active variant: the designer picks the thickness the quote is for, which
+      // captures the shipping weight + the Xero item code that were otherwise
+      // missing (the "no parcel weight" checkout failure on custom quotes).
+      let options = all
+      if (!isCustomQuote) {
+        const checks = await Promise.all(
+          all.map(async (v) => {
+            const { count } = await supabase
+              .from('price_tiers')
+              .select('id', { count: 'exact', head: true })
+              .eq('material_variant_id', v.id)
+              .eq('currency', currency)
+            return { id: v.id, has: (count ?? 0) > 0 }
+          }),
+        )
+        const priced = new Set(checks.filter((c) => c.has).map((c) => c.id))
+        options = all.filter((v) => priced.has(v.id))
+      }
       if (cancelled) return
       setVariants(options)
       // Pre-select the variant the proof priced (when it's a single displayed
-      // variant priced in this currency). Lock it read-only only when it's
-      // defined by the approved artwork and can't change at order time:
+      // variant). Lock it read-only only when it's defined by the approved
+      // artwork and can't change at order time:
       //   * ink_count — letterpress / plastics (the artwork has that many inks)
       //   * finish    — standard paper (Standard / UV Spot / Foiling is printed
       //                 into the approved artwork)
@@ -313,19 +316,17 @@ export default function OrderBuilderModal({
       const fromProofOpt = displayedVariantIds.length === 1
         ? options.find((o) => o.id === displayedVariantIds[0]) ?? null
         : null
-      setLockedFromProof(
-        !!fromProofOpt && (fromProofOpt.variant_type === 'ink_count' || fromProofOpt.variant_type === 'finish'),
-      )
-      setVariantId(fromProofOpt?.id ?? (options.length === 1 ? options[0].id : null))
-      // Default the thickness to "customer chooses at checkout" when the
-      // material genuinely offers a thickness choice (2+ priced thickness
-      // variants — the metal family and friends) and the artwork doesn't pin
-      // the variant. The variantId pre-selection above stays as the designer's
-      // fallback if they switch back to locking it.
       const artworkPinned =
         !!fromProofOpt && (fromProofOpt.variant_type === 'ink_count' || fromProofOpt.variant_type === 'finish')
+      setLockedFromProof(artworkPinned)
+      setVariantId(fromProofOpt?.id ?? (options.length === 1 ? options[0].id : null))
+      // Default the thickness to "customer chooses at checkout" when the
+      // material genuinely offers a thickness choice (2+ thickness variants —
+      // the metal family and friends) and the artwork doesn't pin the variant.
+      // A custom quote never offers that (open-spec is disabled for agreed-price
+      // orders), so it stays locked — the designer just picks the thickness.
       setThicknessMode(
-        !artworkPinned && options.length > 1 && options.every((o) => o.variant_type === 'thickness')
+        !isCustomQuote && !artworkPinned && options.length > 1 && options.every((o) => o.variant_type === 'thickness')
           ? 'customer'
           : 'locked',
       )
@@ -697,6 +698,13 @@ export default function OrderBuilderModal({
     }
     if (!isPrototype && !isCustomQuote && variants.length > 0 && !variantId && !thicknessCustomer) {
       setError('Please choose which option this order is for, or let the customer choose at checkout.')
+      return
+    }
+    // Custom quote with a real thickness choice (metal etc.): the designer must
+    // pick which one, so the order carries a weighable variant. Without it an
+    // international order can't be rated at checkout ("no parcel weight").
+    if (!isPrototype && isCustomQuote && thicknessEligible && !variantId) {
+      setError('Please choose the card thickness — it sets the shipping weight and production spec (the agreed price is unchanged).')
       return
     }
     let quantityValue: number | null = null
@@ -1148,13 +1156,20 @@ export default function OrderBuilderModal({
 
             {/* Variant — grid orders only; sets the price tiers the
                 server prices against. */}
-            {!isPrototype && !isCustomQuote && (
-              <Field label="Option" htmlFor="order-variant" hint="Which variant this order is for — sets the price used at checkout.">
+            {!isPrototype && (
+              <Field
+                label="Option"
+                htmlFor="order-variant"
+                hint={isCustomQuote
+                  ? 'Which thickness these cards are — sets the shipping weight and production spec. The agreed price is unchanged.'
+                  : 'Which variant this order is for — sets the price used at checkout.'}
+              >
                 {/* Open-spec pills (000298): a real thickness choice (metal
                     etc.) defaults to the customer picking on the pay page,
                     where they get the thickness guide + live prices. Locking
-                    stays one click away; offline forces locked. */}
-                {thicknessEligible && (
+                    stays one click away; offline forces locked. Not offered on
+                    a custom quote — its price is agreed, so the spec is locked. */}
+                {thicknessEligible && !isCustomQuote && (
                   <div className="mb-2 flex flex-wrap gap-2">
                     {([['customer', 'Customer chooses at checkout'], ['locked', 'Lock it now']] as const).map(([m, label]) => {
                       const blocked = paymentMethod === 'offline' && m === 'customer'
@@ -1181,7 +1196,9 @@ export default function OrderBuilderModal({
                   <p className="text-sm text-ink-mute">Loading options…</p>
                 ) : variants.length === 0 ? (
                   <p className="text-sm text-ink-mute">
-                    No priced options found for this material/currency. You can still create the order, but it won&rsquo;t be payable online yet.
+                    {isCustomQuote
+                      ? 'No thickness options found for this material.'
+                      : 'No priced options found for this material/currency. You can still create the order, but it won’t be payable online yet.'}
                   </p>
                 ) : thicknessCustomer ? (
                   <p className="text-sm text-ink-soft">
