@@ -156,9 +156,13 @@ export default function OrderReviewPage() {
       // Approved artwork for review. Resolve the proof id off the order; ignore
       // failures (the page still works without artwork).
       if (id) {
-        const { data: order } = await supabase.from('orders').select('proof_id, status, fulfilled_at').eq('id', id).maybeSingle()
+        const { data: order } = await supabase.from('orders').select('proof_id, status, fulfilled_at, material_id').eq('id', id).maybeSingle()
         const proofId = (order as { proof_id?: string } | null)?.proof_id
         const orderStatus = (order as { status?: string } | null)?.status ?? null
+        // The order's own material — the artwork gallery must show the version this
+        // order was placed against, which for a two-material proof is NOT
+        // necessarily the current version (mirrors place-order + OrdersPage).
+        const orderMaterialId = (order as { material_id?: string | null } | null)?.material_id ?? null
         if (!cancelled) {
           const o = order as { status?: string; fulfilled_at?: string | null } | null
           setRevisionReplace(o?.status === 'revision' && !!o?.fulfilled_at)
@@ -171,22 +175,26 @@ export default function OrderReviewPage() {
         if (proofId && !cancelled) {
           try {
             // customer-proof-images returns EVERY version's images (the customer
-            // page has a version switcher), so scope to the CURRENT version —
-            // otherwise earlier-version artwork would leak in. Show ALL of the
-            // current version's non-QR images (every name + side) so the
-            // reviewer sees exactly what's being produced. Falls back to all
-            // non-QR images only if the current version can't be resolved.
-            const { data: curV } = await supabase
+            // page has a version switcher), so scope to the version this ORDER was
+            // placed against — the version whose material matches the order's, NOT
+            // necessarily the current version. A proof can carry orders in two
+            // materials (e.g. a metal order on a proof whose current version is now
+            // letterpress); the current version's art would be the wrong product.
+            // Prefer the current version when it matches (the common case); fall
+            // back to it, then to all non-QR images, if nothing matches.
+            const { data: vRows } = await supabase
               .from('proof_versions')
-              .select('id')
+              .select('id, material_id, is_current, version_number')
               .eq('proof_id', proofId)
-              .eq('is_current', true)
-              .maybeSingle()
-            const currentVersionId = (curV as { id?: string } | null)?.id ?? null
+              .order('version_number', { ascending: false })
+            const vers = (vRows ?? []) as { id: string; material_id: string | null; is_current: boolean }[]
+            const matches = orderMaterialId ? vers.filter((v) => v.material_id === orderMaterialId) : []
+            const scopedVersionId =
+              (matches.find((v) => v.is_current) ?? matches[0] ?? vers.find((v) => v.is_current))?.id ?? null
             const nonQr = ((await supabase.functions.invoke<{ images: GridImage[] }>('customer-proof-images', { body: { proofId } })).data?.images ?? [])
               .filter((img) => img.is_qr_code !== true)
-            const scoped = currentVersionId
-              ? nonQr.filter((img) => (img as unknown as { proof_version_id?: string }).proof_version_id === currentVersionId)
+            const scoped = scopedVersionId
+              ? nonQr.filter((img) => (img as unknown as { proof_version_id?: string }).proof_version_id === scopedVersionId)
               : []
             const gallery = scoped.length > 0 ? scoped : nonQr
             // Caption each image with name + side, but only show a dimension when

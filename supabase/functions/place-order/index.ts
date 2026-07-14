@@ -442,7 +442,7 @@ Deno.serve(async (req) => {
   // ── Load order + proof + current version ──────────────────────────────────
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, status, quantity, person_quantities, has_personalisation, custom_quote_total, order_kind, date_required, stock_order_number, project_name, stock_colour, proof_id, ship_dest_country, ship_to_address, material_variant_id, material_option_id, dropbox_folder_url, payment_reference, currency, fulfilled_at')
+    .select('id, status, quantity, person_quantities, has_personalisation, custom_quote_total, order_kind, date_required, stock_order_number, project_name, stock_colour, proof_id, ship_dest_country, ship_to_address, material_id, material_variant_id, material_option_id, dropbox_folder_url, payment_reference, currency, fulfilled_at')
     .eq('id', orderId)
     .maybeSingle()
   if (orderErr) return json({ ok: false, error: `Order lookup failed: ${orderErr.message}` }, 500)
@@ -477,15 +477,58 @@ Deno.serve(async (req) => {
   const contact = (proof as { contacts?: { full_name?: string | null; email?: string | null; companies?: { name?: string | null } | null } | null } | null)?.contacts ?? null
   const customerName = (contact?.companies?.name?.trim()) || (contact?.full_name?.trim()) || (order.project_name?.trim()) || 'Customer'
 
-  const { data: pv } = await admin
+  // The order carries its OWN material (material_id), copied from the version it
+  // was placed against. A proof can hold versions of DIFFERENT materials (e.g. v1
+  // steel, v2 letterpress), so the version to read — and the production route —
+  // must follow the ORDER's material, NOT blindly the current version. This
+  // mirrors the Orders page (OrdersPage.tsx routeOf / thumbForOrder), which
+  // already keys off the order's material. Without this, a metal order on a proof
+  // whose current version is letterpress reads the letterpress spec and routes
+  // in-house instead of to the metal supplier (PV — Novion Order 403868).
+  type VersionRow = {
+    id: string
+    version_number: number
+    is_current: boolean
+    material_id: string | null
+    material_display: string | null
+    ink_names: unknown
+    material_options: unknown
+    front_colour_id: string | null
+    core_colour_id: string | null
+    back_colour_id: string | null
+    materials: { code: string; display_name: string | null; production_route: string | null; outsourced_product_type: string | null; outsourced_supplier_ids: string[] | null } | null
+  }
+  const orderMaterialId = (order as { material_id: string | null }).material_id ?? null
+  const { data: versionRows } = await admin
     .from('proof_versions')
-    .select('material_display, ink_names, material_options, front_colour_id, core_colour_id, back_colour_id, materials(code, display_name, production_route, outsourced_product_type, outsourced_supplier_ids)')
+    .select('id, version_number, is_current, material_id, material_display, ink_names, material_options, front_colour_id, core_colour_id, back_colour_id, materials(code, display_name, production_route, outsourced_product_type, outsourced_supplier_ids)')
     .eq('proof_id', order.proof_id)
-    .eq('is_current', true)
-    .maybeSingle()
-  if (!pv) return json({ ok: false, error: 'No current proof version found.' }, 404)
-  const mat = (pv as { materials: { code: string; display_name: string | null; production_route: string | null; outsourced_product_type: string | null; outsourced_supplier_ids: string[] | null } | null }).materials
-  if (!mat) return json({ ok: false, error: 'This version has no single material (mixed / variant round) — place it manually.' }, 400)
+    .order('version_number', { ascending: false })
+  const allVersions = (versionRows ?? []) as VersionRow[]
+  const currentVersion = allVersions.find((v) => v.is_current) ?? null
+  const materialMatches = orderMaterialId ? allVersions.filter((v) => v.material_id === orderMaterialId) : []
+  // Prefer the current version when it carries the order's material (the common
+  // single-material case → identical to the old behaviour); else the latest
+  // version that does; else the current version (legacy orders with no
+  // material_id, or nothing matching).
+  const pv = materialMatches.find((v) => v.is_current) ?? materialMatches[0] ?? currentVersion
+  if (!pv) return json({ ok: false, error: 'No proof version found.' }, 404)
+
+  // Material identity + production route come from the ORDER's material. When the
+  // chosen version already IS the order's material (the normal path) that's just
+  // pv.materials; only when they diverge (or pv has no single material) do we load
+  // the order's material directly — so route / supplier / product-type always
+  // match the order the Orders page showed, never a superseded version's material.
+  let mat = pv.materials
+  if (orderMaterialId && (!mat || pv.material_id !== orderMaterialId)) {
+    const { data: m } = await admin
+      .from('materials')
+      .select('code, display_name, production_route, outsourced_product_type, outsourced_supplier_ids')
+      .eq('id', orderMaterialId)
+      .maybeSingle()
+    if (m) mat = m as VersionRow['materials']
+  }
+  if (!mat) return json({ ok: false, error: 'This order has no single material (mixed / variant round) — place it manually.' }, 400)
   const route = mat.production_route === 'supplier' ? 'supplier' : 'in_house'
 
   // Variant (thickness / finish) + chosen finish option.
