@@ -112,7 +112,8 @@ const ORDERS: FixtureOrder[] = [
     material_variants: { display_name: '2 colours', materials: letterpress },
     proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-2', contacts: contact(null, 'Ken Ng') },
   }),
-  // Awaiting payment — open-spec (customer picks quantity + thickness).
+  // Awaiting payment — open-spec (customer picks quantity + thickness),
+  // member of the combined-payment group g1.
   order({
     id: 'o3',
     quantity: null,
@@ -121,14 +122,24 @@ const ORDERS: FixtureOrder[] = [
     material_variant_id: null,
     material_variants: null,
     amount_cards: null,
+    order_group_id: 'g1',
     proofs: { helpscout_last_reply_at: daysAgo(1), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-3', contacts: contact('Globex', 'Hank Scorpio') },
     help_requested_at: daysAgo(0.2),
   }),
-  // Awaiting payment — second Globex order so Combine payments is offered.
+  // Awaiting payment — second member of group g1.
   order({
     id: 'o4',
     quantity: 250,
+    order_group_id: 'g1',
     proofs: { helpscout_last_reply_at: daysAgo(1), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-3', contacts: contact('Globex', 'Hank Scorpio') },
+  }),
+  // Awaiting payment — two more standalone orders so the Combine control
+  // still has 2+ eligible candidates with g1's members locked away.
+  order({
+    id: 'o11',
+    quantity: 350,
+    sent_at: daysAgo(1),
+    proofs: { helpscout_last_reply_at: daysAgo(1), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-7', contacts: contact('Initech', 'Bill Lumbergh') },
   }),
   // To order — paid but the Xero invoice FAILED (auto-expands, retry in view).
   order({
@@ -298,7 +309,8 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
     ]
     if (Array.isArray(filters['in:order_id'])) rows = rows.filter((r) => filters['in:order_id'].includes(r.order_id))
   } else if (table === 'order_groups') {
-    rows = []
+    rows = [{ id: 'g1', status: 'sent', currency: 'GBP', token: 'gtok', payment_reference: 'GRP-TEST01', expires_at: daysAhead(12), xero_invoice_id: null, xero_invoice_error: null }]
+    if (Array.isArray(filters['in:id'])) rows = rows.filter((r) => filters['in:id'].includes(r.id))
   } else if (table === 'profiles') {
     rows = [{ designer_initials: 'RR', designer_colour: 'blue', full_name: 'Rob Randtoul', avatar_url: null, feedback_seen_at: null }]
   } else if (table === 'watch_items') {
