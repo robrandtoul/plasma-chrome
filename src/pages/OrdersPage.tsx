@@ -1465,6 +1465,13 @@ export default function OrdersPage() {
   const activeGroups = Object.values(groups)
     .filter((g) => g.status === 'sent' && awaitingPayment.some((o) => o.order_group_id === g.id))
     .sort((a, b) => (a.payment_reference ?? '').localeCompare(b.payment_reference ?? ''))
+  // Members of an active (unpaid) group render NESTED inside their group's
+  // block, so the grouping reads as containment; everything else renders as a
+  // standalone card in the list below the blocks.
+  const groupedAwaitingIds = new Set(
+    activeGroups.flatMap((g) => awaitingPayment.filter((o) => o.order_group_id === g.id).map((o) => o.id)),
+  )
+  const ungroupedAwaiting = awaitingPayment.filter((o) => !groupedAwaitingIds.has(o.id))
 
   // Whole-pipeline counts for the header tiles (unfiltered — the header is a
   // status overview, independent of the queue's search/filter). The £ on To
@@ -1696,45 +1703,75 @@ export default function OrdersPage() {
                   </PanelShell>
                 )}
 
-                {/* One banner per unpaid combined payment: the group's link is
-                    the live one (member cards below carry a matching pill). */}
+                {/* Each unpaid combined payment renders as ONE tinted block:
+                    the group header (its link is the live, payable one) with
+                    the member cards nested inside it, so the grouping reads
+                    as containment rather than a banner + matching reference
+                    codes on cards that may sit anywhere in the list. */}
                 {activeGroups.map((g) => {
                   const memberOrders = awaitingPayment.filter((o) => o.order_group_id === g.id)
                   const groupExpired = g.expires_at != null && new Date(g.expires_at).getTime() < Date.now()
                   return (
-                    <div key={g.id} className="mt-3 rounded-xl border border-[var(--c-brand)]/40 bg-canvas px-4 py-3">
-                      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div key={g.id} className="mt-3 rounded-2xl border border-[var(--c-brand)]/50 bg-[var(--c-brand)]/[0.05] p-3">
+                      <div className="flex flex-col gap-2 px-1 md:flex-row md:items-center md:justify-between">
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-ink">
                             Combined payment {g.payment_reference}
-                            <span className="font-normal text-ink-soft"> · {memberOrders.length} orders, one pay link</span>
+                            <span className="font-normal text-ink-soft"> · these {memberOrders.length} orders, one pay link</span>
                             {groupExpired && <span className="font-normal text-out"> · link expired</span>}
                           </p>
                           <p className="mt-0.5 text-[13px] text-ink-mute">
-                            {memberOrders.map((o) => customerLabel(o)).filter((v, i, a) => a.indexOf(v) === i).join(' · ')}
-                            {g.expires_at ? ` · ${groupExpired ? 'expired' : 'expires'} ${formatDate(g.expires_at)}` : ''}
+                            {g.expires_at ? `${groupExpired ? 'Expired' : 'Expires'} ${formatDate(g.expires_at)} · ` : ''}
+                            automatic reminders pause while the orders are grouped.
                           </p>
                         </div>
                         <div className="flex shrink-0 flex-wrap gap-2">
-                          <ButtonGhost size="sm" onClick={() => void copyGroupLink(g)}>
+                          <ButtonGhost size="sm" onClick={() => void copyGroupLink(g)} className="max-md:h-11">
                             {copiedId === g.id ? 'Copied' : 'Copy combined link'}
                           </ButtonGhost>
                           {groupExpired && (
-                            <ButtonInk size="sm" onClick={() => void reactivateGroup(g)} disabled={busyId === g.id}>
+                            <ButtonInk size="sm" onClick={() => void reactivateGroup(g)} disabled={busyId === g.id} className="max-md:h-11">
                               {busyId === g.id ? 'Reactivating…' : 'Reactivate link'}
                             </ButtonInk>
                           )}
-                          <ButtonGhost size="sm" onClick={() => void dissolveGroup(g)} disabled={busyId === g.id}>
+                          <ButtonGhost size="sm" onClick={() => void dissolveGroup(g)} disabled={busyId === g.id} className="max-md:h-11">
                             Split back up
                           </ButtonGhost>
                         </div>
+                      </div>
+                      <div className="mt-3 space-y-3">
+                        {memberOrders.map((o) => (
+                          <div key={o.id} id={`order-card-${o.id}`}>
+                            <AwaitingPaymentCard
+                              order={o}
+                              thumb={thumbForOrder(o)}
+                              expired={isExpired(o)}
+                              busy={busyId === o.id}
+                              copied={copiedId === o.id}
+                              flash={flashOrderId === o.id}
+                              nested
+                              summary={reminders[o.id] ?? null}
+                              cadence={cadence}
+                              group={g}
+                              selectable={false}
+                              selected={false}
+                              onToggleSelect={() => {}}
+                              onRelease={() => void releaseFromGroup(o)}
+                              onCopy={() => void copyLink(o)}
+                              onReactivate={() => void reactivate(o)}
+                              onEdit={() => setEditingOrder(o)}
+                              onCancel={() => { setCancelNotify(true); setCancelError(null); setCancelTarget(o) }}
+                              onRecordOffline={() => setRecordOffline(o)}
+                            />
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )
                 })}
 
                 <div className="mt-3 space-y-3">
-                  {awaitingPayment.map((o) => (
+                  {ungroupedAwaiting.map((o) => (
                     <div key={o.id} id={`order-card-${o.id}`}>
                       <AwaitingPaymentCard
                         order={o}
@@ -2638,6 +2675,7 @@ function AwaitingPaymentCard({
   busy,
   copied,
   flash,
+  nested = false,
   summary,
   cadence,
   group,
@@ -2658,6 +2696,11 @@ function AwaitingPaymentCard({
   copied: boolean
   /** Briefly ring the card after a "Needs action" jump lands on it. */
   flash: boolean
+  /** Rendered inside its combined-payment group block. The wrapper carries
+   *  the group identity, expiry and reminders-pause note, so the card drops
+   *  its own group pill, its dormant per-order link expiry, its opened line
+   *  and the pause sentence — they'd repeat (or contradict) the header. */
+  nested?: boolean
   summary: ReminderSummary | null
   cadence: ReminderCadence
   // The combined-payment group this order belongs to (bundle orders Slice 2),
@@ -2748,9 +2791,11 @@ function AwaitingPaymentCard({
               {customerLabel(order)}
             </Link>
             {inActiveGroup ? (
-              <Pill colour="brand" title="Part of a combined payment — the customer pays every order in it with one link.">
-                Combined payment{group?.payment_reference ? ` · ${group.payment_reference}` : ''}
-              </Pill>
+              nested ? null : (
+                <Pill colour="brand" title="Part of a combined payment — the customer pays every order in it with one link.">
+                  Combined payment{group?.payment_reference ? ` · ${group.payment_reference}` : ''}
+                </Pill>
+              )
             ) : expired ? <Pill colour="out">Expired</Pill> : <Pill colour="low">Awaiting payment</Pill>}
             {order.help_requested_at && (
               <Pill colour="brand" title={`Asked from the pay page ${relativeTime(order.help_requested_at)} — reply on the Help Scout thread.`}>
@@ -2769,22 +2814,29 @@ function AwaitingPaymentCard({
           <p className="mt-0.5 text-[13px] text-ink-mute">
             Ref {order.payment_reference}
             {order.sent_at ? ` · sent ${formatDate(order.sent_at)}` : ''}
-            {order.expires_at ? ` · ${expired ? 'expired' : 'expires'} ${formatDate(order.expires_at)}` : ''}
+            {/* A nested member's own link is dormant (the group's link is the
+                payable one), so its expiry would only contradict the group's. */}
+            {order.expires_at && !nested ? ` · ${expired ? 'expired' : 'expires'} ${formatDate(order.expires_at)}` : ''}
           </p>
-          <p className="mt-0.5 text-[13px] text-ink-mute">
-            {order.pay_link_opened_at
-              ? <span title={formatAbsoluteDateTime(order.pay_link_opened_at)}>Pay link opened {relativeTime(order.pay_link_opened_at)}</span>
-              : 'Pay link not opened yet'}
-          </p>
+          {!nested && (
+            <p className="mt-0.5 text-[13px] text-ink-mute">
+              {order.pay_link_opened_at
+                ? <span title={formatAbsoluteDateTime(order.pay_link_opened_at)}>Pay link opened {relativeTime(order.pay_link_opened_at)}</span>
+                : 'Pay link not opened yet'}
+            </p>
+          )}
           {/* Auto-chase progress: how many reminders have gone, what's next,
               and any problem stopping the chase. A grouped member is skipped
-              by the reminder sender (its own link isn't payable), so the
-              chase lines give way to a one-line explanation. */}
+              by the reminder sender (its own link isn't payable): nested cards
+              say nothing (the group header carries the pause note once);
+              a stray non-nested grouped card keeps the one-line explanation. */}
           <div className="mt-1 space-y-0.5 text-[13px]">
             {inActiveGroup ? (
-              <span className="block text-ink-mute">
-                Paid through the combined payment link — automatic reminders pause while it&rsquo;s grouped.
-              </span>
+              nested ? null : (
+                <span className="block text-ink-mute">
+                  Paid through the combined payment link — automatic reminders pause while it&rsquo;s grouped.
+                </span>
+              )
             ) : (
               <>
                 {sentCount > 0 && (
