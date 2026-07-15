@@ -16,7 +16,7 @@ import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { requireDesigner, json, CORS_HEADERS, type CallerContext } from '../_shared/admin.ts'
 import { getAccessContext, createSalesInvoice } from '../_shared/xero.ts'
 import { buildOrderInvoiceLines, buildGroupInvoiceLines, resolveZeroRatedTaxType, type OrderForInvoice } from '../_shared/invoiceBuild.ts'
-import { isVatFreeGbpDestination } from '../_shared/ukVatArea.ts'
+import { isGbpOrderVatFree } from '../_shared/ukVatArea.ts'
 import { logAudit } from '../_shared/audit.ts'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
@@ -53,6 +53,7 @@ interface OrderRow {
     country?: string | null
   } | null
   ship_dest_country: string | null
+  vat_treatment: string | null
   proofs: { contacts: { full_name: string | null; email: string | null } | null } | null
 }
 
@@ -88,7 +89,7 @@ Deno.serve(async (req) => {
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, order_kind, currency, status, payment_method, xero_invoice_id, xero_contact_id, xero_contact_name, payment_reference, ship_to_name, ship_to_email, ship_to_address, ship_dest_country, proofs(contacts(full_name, email))')
+    .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, order_kind, currency, status, payment_method, xero_invoice_id, xero_contact_id, xero_contact_name, payment_reference, ship_to_name, ship_to_email, ship_to_address, ship_dest_country, vat_treatment, proofs(contacts(full_name, email))')
     .eq('id', orderId)
     .single<OrderRow>()
   if (orderErr || !order) return json({ error: 'Order not found' }, 404)
@@ -139,9 +140,10 @@ Deno.serve(async (req) => {
   // invoice books exactly as the original would have; the card-form address
   // is only the fallback when no rated destination was stored.
   const country = order.ship_dest_country ?? order.ship_to_address?.country ?? null
-  // GBP + Channel Islands destination → priced ex-VAT at checkout, so the
-  // invoice books VAT-free, exactly as the webhook would have.
-  const vatFree = currency === 'GBP' && isVatFreeGbpDestination(order.ship_dest_country ?? null)
+  // GBP order delivering outside the UK VAT area → priced ex-VAT at checkout,
+  // so the invoice books VAT-free, exactly as the webhook would have. Honours
+  // the designer's manual vat_treatment override, same as the webhook.
+  const vatFree = currency === 'GBP' && isGbpOrderVatFree(order.vat_treatment ?? null, order.ship_dest_country ?? null)
   // Zero-rated rate for a VAT-free invoice ("0% EU" / "0% ROW", settings
   // 000306) — same resolution the webhook runs, so a retried invoice books
   // to the same rate the original would have.
@@ -274,6 +276,7 @@ async function retryGroupInvoice(
     amount_shipping: number | null
     amount_us_tariff: number | null
     ship_dest_country: string | null
+    vat_treatment: string | null
     ship_to_name: string | null
     ship_to_email: string | null
     ship_to_address: {
@@ -288,7 +291,7 @@ async function retryGroupInvoice(
 
   const { data: group, error: groupErr } = await admin
     .from('order_groups')
-    .select('id, status, currency, payment_reference, xero_invoice_id, xero_contact_id, xero_contact_name, amount_shipping, amount_us_tariff, ship_dest_country, ship_to_name, ship_to_email, ship_to_address')
+    .select('id, status, currency, payment_reference, xero_invoice_id, xero_contact_id, xero_contact_name, amount_shipping, amount_us_tariff, ship_dest_country, vat_treatment, ship_to_name, ship_to_email, ship_to_address')
     .eq('id', groupId)
     .single<GroupRow>()
   if (groupErr || !group) return json({ error: 'Payment group not found' }, 404)
@@ -337,7 +340,7 @@ async function retryGroupInvoice(
   expectedTotal = round2(expectedTotal + Number(group.amount_shipping ?? 0) + Number(group.amount_us_tariff ?? 0))
 
   const country = group.ship_dest_country ?? group.ship_to_address?.country ?? null
-  const vatFree = currency === 'GBP' && isVatFreeGbpDestination(group.ship_dest_country ?? null)
+  const vatFree = currency === 'GBP' && isGbpOrderVatFree(group.vat_treatment ?? null, group.ship_dest_country ?? null)
   const zeroRatedTaxType = await resolveZeroRatedTaxType(admin, country, currency)
 
   const { lines } = await buildGroupInvoiceLines(

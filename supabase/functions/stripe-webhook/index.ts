@@ -18,7 +18,7 @@
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { getAccessContext, createSalesInvoice, recordInvoicePayment, emailSalesInvoice, ensureInvoiceEmailRecipient } from '../_shared/xero.ts'
 import { buildOrderInvoiceLines, buildGroupInvoiceLines, resolveZeroRatedTaxType, type OrderForInvoice } from '../_shared/invoiceBuild.ts'
-import { isVatFreeGbpDestination } from '../_shared/ukVatArea.ts'
+import { isGbpOrderVatFree } from '../_shared/ukVatArea.ts'
 import { getAccessToken, fetchConversation, postStaffReply, HsError } from '../_shared/helpscout.ts'
 import { renderTemplate, ORDER_CONFIRMATION_DEFAULT_BODY } from '../_shared/replyTemplates.ts'
 
@@ -283,7 +283,7 @@ Deno.serve(async (req) => {
       // (so the VAT invoice is emailed exactly once).
       const { data: order } = await admin
         .from('orders')
-        .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, order_kind, ship_dest_country, xero_invoice_id, xero_contact_id, xero_contact_name, invoice_emailed_at')
+        .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, order_kind, ship_dest_country, vat_treatment, xero_invoice_id, xero_contact_id, xero_contact_name, invoice_emailed_at')
         .eq('id', orderId)
         .single()
       let invoiceId: string | null = (order?.xero_invoice_id as string | null) ?? null
@@ -303,15 +303,15 @@ Deno.serve(async (req) => {
       // so it's only the fallback when the order has no rated destination
       // (e.g. a free/manual order with no hint).
       const country = (order?.ship_dest_country as string | null) ?? shipAddr?.country ?? null
-      // GBP + Channel Islands destination → the order was priced ex-VAT at
-      // checkout, so the invoice must book VAT-free (NoTax) or Xero would
-      // carve VAT back out of the ex-VAT figures. Derived from the RATED
-      // destination only (ship_dest_country, normalised + persisted by
-      // create-checkout-session) — the same source the pricing used — never
-      // from the card-form address, so the tax treatment always matches the
-      // stamped amounts.
+      // GBP order delivering outside the UK VAT area → priced ex-VAT at
+      // checkout (a zero-rated export), so the invoice must book VAT-free or
+      // Xero would carve VAT back out of the ex-VAT figures. Derived from the
+      // RATED destination (ship_dest_country, normalised + persisted by
+      // create-checkout-session) and the designer's manual vat_treatment
+      // override — the same inputs the pricing used — never from the card-form
+      // address, so the tax treatment always matches the stamped amounts.
       const vatFree =
-        currency === 'GBP' && isVatFreeGbpDestination((order?.ship_dest_country as string | null) ?? null)
+        currency === 'GBP' && isGbpOrderVatFree((order?.vat_treatment as string | null) ?? null, (order?.ship_dest_country as string | null) ?? null)
       const invoiceAddress = shipAddr
         ? {
             line1: shipAddr.line1 ?? null,
@@ -691,7 +691,7 @@ async function handleGroupPaid(
     if (ctx && typeof evt.amountMajor === 'number') {
       const { data: group } = await admin
         .from('order_groups')
-        .select('payment_reference, currency, ship_dest_country, amount_shipping, amount_us_tariff, xero_invoice_id, xero_contact_id, xero_contact_name, invoice_emailed_at')
+        .select('payment_reference, currency, ship_dest_country, vat_treatment, amount_shipping, amount_us_tariff, xero_invoice_id, xero_contact_id, xero_contact_name, invoice_emailed_at')
         .eq('id', groupId)
         .single()
       const { data: memberRows } = await admin
@@ -713,7 +713,7 @@ async function handleGroupPaid(
       // precedence as single orders, for the same reason.
       const country = (group?.ship_dest_country as string | null) ?? evt.shipAddr?.country ?? null
       const vatFree =
-        currency === 'GBP' && isVatFreeGbpDestination((group?.ship_dest_country as string | null) ?? null)
+        currency === 'GBP' && isGbpOrderVatFree((group?.vat_treatment as string | null) ?? null, (group?.ship_dest_country as string | null) ?? null)
       const invoiceAddress = evt.shipAddr
         ? {
             line1: evt.shipAddr.line1 ?? null,

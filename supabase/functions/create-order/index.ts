@@ -21,7 +21,7 @@
 import { json, requireDesigner } from '../_shared/admin.ts'
 import { logAudit } from '../_shared/audit.ts'
 import { cardTotalForQuantity, computeOrderTotal, resolveCardDiscount, pricesFlatAboveTopTier, type Tier } from '../_shared/orderPricing.ts'
-import { exVat, isVatFreeGbpDestination } from '../_shared/ukVatArea.ts'
+import { exVat, isGbpOrderVatFree, type VatTreatment } from '../_shared/ukVatArea.ts'
 import { buildOrderSpecSnapshot } from '../_shared/orderSpecSnapshot.ts'
 
 type ShippingTreatment = 'full_cost' | 'goodwill' | 'free' | 'manual'
@@ -32,6 +32,7 @@ type PaymentMethod = 'online' | 'offline'
 const SHIPPING_TREATMENTS: ShippingTreatment[] = ['full_cost', 'goodwill', 'free', 'manual']
 const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
 const CARD_DISCOUNT_TYPES: CardDiscountType[] = ['none', 'percent', 'fixed']
+const VAT_TREATMENTS: VatTreatment[] = ['auto', 'export', 'standard']
 
 function splitNameForCurrency(
   m: { split_name_surcharge_gbp: number | null; split_name_surcharge_eur: number | null; split_name_surcharge_usd: number | null } | null,
@@ -187,6 +188,14 @@ Deno.serve(async (req) => {
     }
     shipDestCountry = c
   }
+
+  // Manual VAT-treatment override (000316). 'auto' (default) decides from the
+  // delivery destination; 'export' forces VAT-free (a direct export we ship +
+  // hold proof of export for), 'standard' forces UK VAT. Only meaningful for
+  // GBP — EUR/USD are VAT-free regardless. An unknown value falls back to auto.
+  const vatTreatment: VatTreatment = VAT_TREATMENTS.includes(body.vat_treatment as VatTreatment)
+    ? (body.vat_treatment as VatTreatment)
+    : 'auto'
 
   // shipping_discount_percent — the per-order goodwill discount (0–100). Only
   // meaningful for the goodwill treatment; required there, ignored otherwise.
@@ -455,13 +464,14 @@ Deno.serve(async (req) => {
   let amountCardDiscount: number | null = null
   if (paymentMethod === 'offline') {
     const round2 = (n: number) => Math.round(n * 100) / 100
-    // GBP orders delivering to the Channel Islands are VAT-free — strip the
-    // VAT element from the price inputs exactly as create-checkout-session
-    // does, so an offline order's stamped record matches what the online
-    // checkout would have charged. Destination = the designer's country hint
-    // (offline orders never collect a customer postcode); a custom-quote
-    // figure stays as agreed either way. See _shared/ukVatArea.ts.
-    const vatFree = currency === 'GBP' && isVatFreeGbpDestination(shipDestCountry)
+    // GBP orders delivering outside the UK VAT area are VAT-free (zero-rated
+    // exports) — strip the VAT element from the price inputs exactly as
+    // create-checkout-session does, so an offline order's stamped record
+    // matches what the online checkout would have charged. Destination = the
+    // designer's country hint (offline orders never collect a customer
+    // postcode), and the manual override wins over it; a custom-quote figure
+    // stays as agreed either way. See _shared/ukVatArea.ts.
+    const vatFree = currency === 'GBP' && isGbpOrderVatFree(vatTreatment, shipDestCountry)
     const exv = (n: number) => (vatFree ? exVat(n) : n)
     if (customQuoteTotal != null) {
       amountCards = customQuoteTotal
@@ -655,6 +665,7 @@ Deno.serve(async (req) => {
       card_discount_reason: cardDiscountReason,
       ship_dest_country: shipDestCountry,
       ship_dest_postcode: shipDestPostcode,
+      vat_treatment: vatTreatment,
       currency,
       token,
       expires_at: expiresAt,
@@ -707,6 +718,7 @@ Deno.serve(async (req) => {
       card_discount_reason: cardDiscountReason,
       ship_dest_country: shipDestCountry,
       ship_dest_postcode: shipDestPostcode,
+      vat_treatment: vatTreatment,
       has_personalisation: hasPersonalisation,
       custom_quote_total: customQuoteTotal,
       material_option_id: materialOptionId,

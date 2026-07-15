@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase'
 import { customerOrderUrl } from '../lib/customerOrderUrl'
 import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { SHIP_COUNTRIES, REPRESENTATIVE_POSTCODES } from '../lib/shipCountries'
-import { isVatFreeGbpDestination } from '../lib/ukVatArea'
+import { isGbpOrderVatFree, type VatTreatment } from '../lib/ukVatArea'
 import { renderTemplate, DEFAULT_BODIES } from '../lib/replyTemplates'
 import type { StrandedCard } from '../lib/strandedApprovals'
 import { formatPrice } from '../lib/currency'
@@ -141,6 +141,11 @@ export default function OrderBuilderModal({
   // (support rarely knows the postcode upfront), and the rate is computed
   // there — so this is just a convenience hint, not required.
   const [shipDestCountry, setShipDestCountry] = useState('')
+  // Manual VAT-treatment override (000316). 'auto' decides from the delivery
+  // destination (VAT for UK + Isle of Man, zero-rated export elsewhere); the
+  // designer can force a GBP order to zero-rate as an export or to charge UK
+  // VAT for the rare case the destination alone gets it wrong. GBP only.
+  const [vatTreatment, setVatTreatment] = useState<VatTreatment>('auto')
   // Per-order goodwill discount, % off the computed rate (Rob, 2026-06-15).
   const [shippingDiscountPercent, setShippingDiscountPercent] = useState('')
   // Per-order discount on the GOODS subtotal (cards + tooling +
@@ -864,6 +869,10 @@ export default function OrderBuilderModal({
           card_discount_value: isPrototype ? null : cardDiscountValueParsed,
           card_discount_reason: isPrototype ? undefined : (cardDiscountReason.trim() || undefined),
           ship_dest_country: shipDestCountryValue,
+          // Manual VAT-treatment override (GBP only; server ignores it for
+          // EUR/USD, which are VAT-free regardless). 'auto' = decide from the
+          // destination.
+          vat_treatment: currency === 'GBP' ? vatTreatment : 'auto',
           // Prototype: server resolves + sets the fee, so don't send a total.
           custom_quote_total: isPrototype ? null : customQuoteValue,
           // Persist the chosen thickness + finish even on a custom quote: they're
@@ -1130,7 +1139,7 @@ export default function OrderBuilderModal({
                     </span>
                   </div>
                   <p className="mt-1 text-[12px] text-ink-mute">
-                    Flat fee for 1–3 copies. {currency === 'GBP' ? (isVatFreeGbpDestination(shipDestCountry) ? 'VAT-free (Channel Islands).' : 'Includes VAT.') : 'VAT-free.'} Shipping calculated at checkout.
+                    Flat fee for 1–3 copies. {currency === 'GBP' ? (isGbpOrderVatFree(vatTreatment, shipDestCountry) ? 'VAT-free (export).' : 'Includes VAT.') : 'VAT-free.'} Shipping calculated at checkout.
                   </p>
                 </div>
                 <div className="mt-3">
@@ -1544,12 +1553,40 @@ export default function OrderBuilderModal({
                     US destination — US tariff &amp; customs handling will be added to this order by default. The customer can opt out at checkout (and then deals with US Customs themselves).
                   </p>
                 )}
-                {currency === 'GBP' && isVatFreeGbpDestination(shipDestCountry) && (
+                {currency === 'GBP' && isGbpOrderVatFree(vatTreatment, shipDestCountry) && (
                   <p className="mt-2 rounded-lg border border-low bg-low-soft px-3 py-2 text-[13px] text-ink">
-                    Channel Islands destination — outside UK VAT, so grid prices are charged ex-VAT at checkout (the GBP list price with the VAT element removed) and the invoice carries no VAT. Custom-quote figures are charged exactly as agreed.
+                    VAT-free (zero-rated export) — grid prices are charged ex-VAT at checkout (the GBP list price with the VAT element removed) and the invoice carries no VAT. Custom-quote figures are charged exactly as agreed. Keep your proof of export.
                   </p>
                 )}
               </div>
+
+              {/* Manual VAT-treatment override (000316). GBP only — EUR/USD are
+                  VAT-free regardless. Automatic (default) charges VAT for UK +
+                  Isle of Man and zero-rates any other destination as an export;
+                  the override is for the rare case the destination alone gets it
+                  wrong (e.g. a UK company having us ship straight abroad, or a
+                  non-UK delivery that must still carry VAT). */}
+              {currency === 'GBP' && (
+                <div className="mt-3">
+                  <label htmlFor="vat-treatment" className="mb-1 block text-[13px] font-medium text-ink-soft">
+                    VAT treatment
+                  </label>
+                  <select
+                    id="vat-treatment"
+                    aria-label="VAT treatment"
+                    value={vatTreatment}
+                    onChange={(e) => setVatTreatment(e.target.value as VatTreatment)}
+                    className={selectClass}
+                  >
+                    <option value="auto">Automatic — decide from the delivery country</option>
+                    <option value="export">Zero-rate as export (VAT-free)</option>
+                    <option value="standard">Charge UK VAT</option>
+                  </select>
+                  <p className="mt-1 text-[12px] text-ink-mute">
+                    Automatic zero-rates deliveries outside the UK &amp; Isle of Man as exports and charges VAT elsewhere. Override only when the destination alone would get it wrong.
+                  </p>
+                </div>
+              )}
 
               {/* Goodwill discount %. */}
               {shippingTreatment === 'goodwill' && (

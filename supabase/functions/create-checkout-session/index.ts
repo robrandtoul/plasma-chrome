@@ -46,7 +46,7 @@ import {
   type Currency,
 } from '../_shared/shipping.ts'
 import { getFedExToken, requestRate, parseRateResponse, FedExError } from '../_shared/fedex.ts'
-import { exVat, isVatFreeGbpDestination, normaliseShipDestination } from '../_shared/ukVatArea.ts'
+import { exVat, isGbpOrderVatFree, normaliseShipDestination } from '../_shared/ukVatArea.ts'
 
 function splitNameForCurrency(
   m: { split_name_surcharge_gbp: number | null; split_name_surcharge_eur: number | null; split_name_surcharge_usd: number | null } | null,
@@ -294,7 +294,7 @@ Deno.serve(async (req) => {
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, token, status, currency, custom_quote_total, shipping_treatment, shipping_charged, shipping_discount_percent, card_discount_type, card_discount_value, ship_dest_country, ship_dest_postcode, payment_reference, expires_at, material_variant_id, material_option_id, material_id, thickness_open, finish_open, quantity_open, quantity, names_count, has_personalisation, order_kind, proof_id, order_group_id')
+    .select('id, token, status, currency, custom_quote_total, shipping_treatment, shipping_charged, shipping_discount_percent, card_discount_type, card_discount_value, ship_dest_country, ship_dest_postcode, vat_treatment, payment_reference, expires_at, material_variant_id, material_option_id, material_id, thickness_open, finish_open, quantity_open, quantity, names_count, has_personalisation, order_kind, proof_id, order_group_id')
     .eq('id', orderId)
     .eq('token', token)
     .single()
@@ -382,15 +382,15 @@ Deno.serve(async (req) => {
     reqDestCountry ?? (order.ship_dest_country as string | null) ?? '',
     effectiveDestPostcode,
   )
-  // GBP prices are VAT-inclusive, and the Channel Islands are outside the UK
-  // VAT area — a GBP order delivering there is charged ex-VAT. The strip is
-  // applied to every VAT-inclusive INPUT (tier totals, split-name tooling,
-  // personalisation rates, finish surcharges) before the pricing maths, so
-  // the stamped breakdown and the pay-page mirror run identical sums.
-  // Custom-quote figures and the designer's fixed discount are charged as
-  // agreed. The Isle of Man is INSIDE the UK VAT area — no relief there.
-  // See _shared/ukVatArea.ts.
-  const vatFree = order.currency === 'GBP' && isVatFreeGbpDestination(effectiveDestCountry)
+  // GBP prices are VAT-inclusive, and a GBP order delivering outside the UK
+  // VAT area is a zero-rated export charged ex-VAT (the designer's manual
+  // vat_treatment override can force this either way). The strip is applied to
+  // every VAT-inclusive INPUT (tier totals, split-name tooling, personalisation
+  // rates, finish surcharges) before the pricing maths, so the stamped
+  // breakdown and the pay-page mirror run identical sums. Custom-quote figures
+  // and the designer's fixed discount are charged as agreed. The Isle of Man is
+  // INSIDE the UK VAT area — no relief there. See _shared/ukVatArea.ts.
+  const vatFree = order.currency === 'GBP' && isGbpOrderVatFree(order.vat_treatment as string | null, effectiveDestCountry)
   const exv = (n: number) => (vatFree ? exVat(n) : n)
 
   // ── Goods total (server-authoritative) ───────────────────────────
@@ -918,7 +918,7 @@ async function handleGroupCheckout(ctx: {
 
   const { data: group, error: groupErr } = await admin
     .from('order_groups')
-    .select('id, token, status, currency, shipping_treatment, shipping_charged, shipping_discount_percent, ship_dest_country, ship_dest_postcode, payment_reference, expires_at')
+    .select('id, token, status, currency, shipping_treatment, shipping_charged, shipping_discount_percent, ship_dest_country, ship_dest_postcode, vat_treatment, payment_reference, expires_at')
     .eq('id', groupId)
     .eq('token', token)
     .single()
@@ -967,7 +967,7 @@ async function handleGroupCheckout(ctx: {
     ctx.reqDestCountry ?? (group.ship_dest_country as string | null) ?? '',
     effectiveDestPostcode,
   )
-  const vatFree = group.currency === 'GBP' && isVatFreeGbpDestination(effectiveDestCountry)
+  const vatFree = group.currency === 'GBP' && isGbpOrderVatFree(group.vat_treatment as string | null, effectiveDestCountry)
   const exv = (n: number) => (vatFree ? exVat(n) : n)
 
   // ── Price each member (server-authoritative, same maths as single) ──

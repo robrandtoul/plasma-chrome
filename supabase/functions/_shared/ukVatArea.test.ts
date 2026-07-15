@@ -37,19 +37,40 @@ function assertBoth<T>(fn: (m: typeof deno) => T, expected: T) {
 }
 
 console.log('isVatFreeGbpDestination')
-test('Jersey and Guernsey are VAT-free destinations', () => {
-  assertBoth((m) => m.isVatFreeGbpDestination('JE'), true)
+test('anywhere outside the UK VAT area is a VAT-free (export) destination', () => {
+  assertBoth((m) => m.isVatFreeGbpDestination('JE'), true) // Channel Islands
   assertBoth((m) => m.isVatFreeGbpDestination('GG'), true)
   assertBoth((m) => m.isVatFreeGbpDestination(' je '), true)
+  assertBoth((m) => m.isVatFreeGbpDestination('FR'), true) // EU export
+  assertBoth((m) => m.isVatFreeGbpDestination('US'), true) // rest-of-world export
+  assertBoth((m) => m.isVatFreeGbpDestination('AU'), true)
 })
-test('GB, the Isle of Man and the rest of the world are not', () => {
+test('GB, the Isle of Man and an unknown destination are not', () => {
   assertBoth((m) => m.isVatFreeGbpDestination('GB'), false)
   assertBoth((m) => m.isVatFreeGbpDestination('IM'), false)
-  assertBoth((m) => m.isVatFreeGbpDestination('FR'), false)
-  assertBoth((m) => m.isVatFreeGbpDestination('US'), false)
   assertBoth((m) => m.isVatFreeGbpDestination(''), false)
   assertBoth((m) => m.isVatFreeGbpDestination(null), false)
   assertBoth((m) => m.isVatFreeGbpDestination(undefined), false)
+})
+
+console.log('isGbpOrderVatFree')
+test("'auto' (or null) defers to the destination", () => {
+  assertBoth((m) => m.isGbpOrderVatFree('auto', 'FR'), true)
+  assertBoth((m) => m.isGbpOrderVatFree('auto', 'GB'), false)
+  assertBoth((m) => m.isGbpOrderVatFree(null, 'US'), true)
+  assertBoth((m) => m.isGbpOrderVatFree(undefined, 'GB'), false)
+  assertBoth((m) => m.isGbpOrderVatFree('auto', ''), false)
+})
+test("'export' forces VAT-free even on a domestic / unknown destination", () => {
+  assertBoth((m) => m.isGbpOrderVatFree('export', 'GB'), true)
+  assertBoth((m) => m.isGbpOrderVatFree('export', ''), true)
+  assertBoth((m) => m.isGbpOrderVatFree('export', null), true)
+  assertBoth((m) => m.isGbpOrderVatFree(' Export ', 'GB'), true)
+})
+test("'standard' forces VAT even on a foreign destination", () => {
+  assertBoth((m) => m.isGbpOrderVatFree('standard', 'FR'), false)
+  assertBoth((m) => m.isGbpOrderVatFree('standard', 'JE'), false)
+  assertBoth((m) => m.isGbpOrderVatFree('STANDARD', 'US'), false)
 })
 
 console.log('isUkVatAreaCountry')

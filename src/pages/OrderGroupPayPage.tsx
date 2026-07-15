@@ -8,7 +8,7 @@ import { CustomerHeader } from '../components/CustomerHeader'
 import { FinishChoiceCard } from '../components/FinishChoiceCard'
 import { ArtworkFade, buildRecapTiles } from '../components/ArtworkFade'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
-import { exVat, isVatFreeGbpDestination, normaliseShipDestination } from '../lib/ukVatArea'
+import { exVat, isGbpOrderVatFree, normaliseShipDestination } from '../lib/ukVatArea'
 import { totalFromTiers, surchargeFromTiers, thicknessNoteFor, type SpecVariantChoice, type SpecFinishChoice } from '../lib/openSpecTiers'
 import { pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/interpolation'
 import { hasThicknessGuide, thicknessSetForMaterial, type ThicknessOption } from '../lib/metalThicknessNotes'
@@ -45,6 +45,7 @@ interface GroupPayload {
   shipping_charged: number | null
   ship_dest_country: string | null
   ship_dest_postcode: string | null
+  vat_treatment: string | null
   amount_shipping: number | null
   amount_us_tariff: number | null
   us_tariff_opted_out: boolean
@@ -702,7 +703,7 @@ export default function OrderGroupPayPage() {
     const total = round2(goods - discount + shipping + usTariff)
     const vatFreeGroup =
       g.currency === 'GBP' &&
-      isVatFreeGbpDestination(normaliseShipDestination(g.ship_dest_country ?? '', g.ship_to_address?.postal_code ?? ''))
+      isGbpOrderVatFree(g.vat_treatment ?? null, normaliseShipDestination(g.ship_dest_country ?? '', g.ship_to_address?.postal_code ?? ''))
     const addr = g.ship_to_address
     const haveAddress = confirmed && !!addr && !!(addr.line1 || addr.postal_code)
     const addressLine = addr
@@ -756,7 +757,7 @@ export default function OrderGroupPayPage() {
                 </div>
                 {g.currency === 'GBP' && (
                   <p className="text-[12px] text-ink-mute">
-                    {vatFreeGroup ? 'VAT-free — Channel Islands orders are outside UK VAT.' : 'Includes VAT.'}
+                    {vatFreeGroup ? 'VAT-free — delivered outside the UK VAT area (zero-rated export).' : 'Includes VAT.'}
                   </p>
                 )}
               </div>
@@ -856,9 +857,10 @@ export default function OrderGroupPayPage() {
   )
   const tariffFee = tariff ? tariff.fees[group.currency] ?? 0 : 0
   const tariffApplies = effectiveDestCountry === 'US' && tariffFee > 0
-  // GBP prices are VAT-inclusive; a Channel Islands delivery strips VAT off
-  // every pricing input BEFORE the tier maths, exactly as the server does.
-  const vatRelief = group.currency === 'GBP' && isVatFreeGbpDestination(effectiveDestCountry)
+  // GBP prices are VAT-inclusive; a delivery outside the UK VAT area (or a
+  // forced export) strips VAT off every pricing input BEFORE the tier maths,
+  // exactly as the server does.
+  const vatRelief = group.currency === 'GBP' && isGbpOrderVatFree(group.vat_treatment ?? null, effectiveDestCountry)
   const exv = (n: number) => (vatRelief ? exVat(n) : n)
   const exvTiers = (ts: { quantity: number; total_price: number }[]) =>
     vatRelief ? ts.map((t) => ({ ...t, total_price: exVat(t.total_price) })) : ts

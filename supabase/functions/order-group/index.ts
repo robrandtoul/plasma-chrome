@@ -72,6 +72,7 @@ interface MemberRow {
   proof_id: string
   payment_reference: string | null
   ship_dest_country: string | null
+  vat_treatment: string | null
   xero_contact_id: string | null
   xero_contact_name: string | null
 }
@@ -138,7 +139,7 @@ Deno.serve(async (req) => {
 
     const { data: memberRows, error: memberErr } = await admin
       .from('orders')
-      .select('id, status, payment_method, order_group_id, currency, thickness_open, finish_open, quantity_open, quantity, custom_quote_total, proof_id, payment_reference, ship_dest_country, xero_contact_id, xero_contact_name')
+      .select('id, status, payment_method, order_group_id, currency, thickness_open, finish_open, quantity_open, quantity, custom_quote_total, proof_id, payment_reference, ship_dest_country, vat_treatment, xero_contact_id, xero_contact_name')
       .in('id', uniqueIds)
     if (memberErr) return json({ error: `Could not read the orders: ${memberErr.message}` }, 500)
     const members = (memberRows ?? []) as MemberRow[]
@@ -195,6 +196,16 @@ Deno.serve(async (req) => {
       if (hints.length === 1) shipDestCountry = hints[0]
     }
 
+    // VAT treatment (000316): adopt the members' choice when they unanimously
+    // agree on a non-default override; a mixed bag (or all 'auto') falls back
+    // to 'auto', which lets the group's single destination decide. So a set of
+    // orders the designer already forced to 'export' stays zero-rated once
+    // combined, instead of silently losing the override at group level.
+    const memberTreatments = [...new Set(members.map((m) => m.vat_treatment ?? 'auto'))]
+    const groupVatTreatment = memberTreatments.length === 1 && memberTreatments[0] !== 'auto'
+      ? memberTreatments[0]
+      : 'auto'
+
     // Xero contact binding: adopt the members' choice when they unanimously
     // agree on an existing contact; otherwise leave unbound (the webhook lets
     // Xero create the contact from the payer, exactly like a single order).
@@ -224,6 +235,7 @@ Deno.serve(async (req) => {
         shipping_charged: shippingCharged,
         shipping_discount_percent: shippingDiscountPercent,
         ship_dest_country: shipDestCountry,
+        vat_treatment: groupVatTreatment,
         xero_contact_id: xeroContactId,
         xero_contact_name: xeroContactName,
         token,
@@ -272,6 +284,7 @@ Deno.serve(async (req) => {
         shipping_charged: shippingCharged,
         shipping_discount_percent: shippingDiscountPercent,
         ship_dest_country: shipDestCountry,
+        vat_treatment: groupVatTreatment,
         xero_contact_id: xeroContactId,
         xero_contact_name: xeroContactName,
       },

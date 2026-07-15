@@ -11,7 +11,7 @@ import { ArtworkFade, buildRecapTiles } from '../components/ArtworkFade'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
 import { pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/interpolation'
 import { totalFromTiers, surchargeFromTiers, thicknessNoteFor, type SpecVariantChoice, type SpecFinishChoice } from '../lib/openSpecTiers'
-import { exVat, isVatFreeGbpDestination, normaliseShipDestination } from '../lib/ukVatArea'
+import { exVat, isGbpOrderVatFree, normaliseShipDestination } from '../lib/ukVatArea'
 import { hasThicknessGuide, thicknessSetForMaterial, type ThicknessOption } from '../lib/metalThicknessNotes'
 import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { SHIP_COUNTRIES } from '../lib/shipCountries'
@@ -63,6 +63,7 @@ interface OrderPayload {
   shipping_treatment: 'full_cost' | 'goodwill' | 'free' | 'manual'
   shipping_charged: number | null
   ship_dest_country: string | null
+  vat_treatment: string | null
   currency: Currency
   expires_at: string | null
   payment_reference: string | null
@@ -903,7 +904,8 @@ export default function OrderPayPage() {
     // fallback for orders that never rated (designer hint left as GB).
     const vatFreeOrder =
       o.currency === 'GBP' &&
-      isVatFreeGbpDestination(
+      isGbpOrderVatFree(
+        o.vat_treatment ?? null,
         normaliseShipDestination(o.ship_dest_country ?? '', o.ship_to_address?.postal_code ?? ''),
       )
     const cards = o.custom_quote_total != null ? Number(o.custom_quote_total) : amt(o.amount_cards)
@@ -1003,7 +1005,7 @@ export default function OrderPayPage() {
                   </div>
                   {o.currency === 'GBP' && (
                     <p className="text-[12px] text-ink-mute">
-                      {vatFreeOrder ? 'VAT-free — Channel Islands orders are outside UK VAT.' : 'Includes VAT.'}
+                      {vatFreeOrder ? 'VAT-free — delivered outside the UK VAT area (zero-rated export).' : 'Includes VAT.'}
                     </p>
                   )}
                 </div>
@@ -1196,7 +1198,7 @@ export default function OrderPayPage() {
   // result, because the interpolation's round-up isn't scale-invariant. The
   // custom-quote figure and a fixed discount stay at face value, matching
   // create-checkout-session. See src/lib/ukVatArea.ts.
-  const vatRelief = order.currency === 'GBP' && isVatFreeGbpDestination(effectiveDestCountry)
+  const vatRelief = order.currency === 'GBP' && isGbpOrderVatFree(order.vat_treatment ?? null, effectiveDestCountry)
   const exv = (n: number) => (vatRelief ? exVat(n) : n)
   const exvTiers = (ts: { quantity: number; total_price: number }[]) =>
     vatRelief ? ts.map((t) => ({ ...t, total_price: exVat(t.total_price) })) : ts
