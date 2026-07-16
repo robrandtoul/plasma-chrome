@@ -409,6 +409,12 @@ verify_jwt = false
 [functions.stripe-webhook]
 verify_jwt = false
 
+# retry-order-invoice — designer/admin-initiated invoice retry. Self-auths via
+# requireDesigner, so the platform JWT gate stays off (same posture as
+# create-order). Recorded here so a plain CLI deploy can't default it back on.
+[functions.retry-order-invoice]
+verify_jwt = false
+
 # Xero OAuth — start is admin-gated inside the body (requireAdmin); the
 # callback is a public browser redirect from Xero, CSRF-protected by the
 # state param. Both keep the platform JWT gate off.
@@ -507,6 +513,13 @@ verify_jwt = true
 # the live place-order deploy (same pattern, deployed via MCP); the designer
 # frontend always sends a fresh session JWT, and requireDesigner is the role gate.
 [functions.order-lifecycle]
+verify_jwt = true
+
+# order-group: designer-initiated combined-payment (bundle) groups. Same posture
+# as order-lifecycle — requireDesigner is the role gate, and verify_jwt = true
+# matches the live deploy + the designer frontend's fresh session JWT. Recorded
+# here so a plain CLI deploy keeps it on rather than defaulting it.
+[functions.order-group]
 verify_jwt = true
 
 [analytics]
