@@ -23,6 +23,7 @@ import EditOrderModal from '../components/EditOrderModal'
 import CardActionsMenu, { type CardMenuItem } from '../components/CardActionsMenu'
 import Modal from '../components/Modal'
 import DesignerAvatar from '../components/DesignerAvatar'
+import ApprovedArtworkPanel from '../components/ApprovedArtworkPanel'
 import { ChevronDown, ChevronRight, StickyNote } from 'lucide-react'
 
 // Orders / "to order" surface (Ordering & checkout, Step 6 — overhauled).
@@ -2581,6 +2582,20 @@ function OrderCard({
                 )}
               </div>
             </div>
+          )}
+
+          {/* Approved artwork — the production files this order was approved on,
+              downloadable straight from the prep area (individually or as the
+              hand-off ZIP), so the designer needn't open the proof to fetch
+              them. Skipped for a revision order: its current version may be the
+              new artwork still being changed, not the approved set. */}
+          {!isRevision && (
+            <ApprovedArtworkPanel
+              proofId={order.proof_id}
+              projectName={order.proofs?.contacts?.full_name ?? customerLabel(order)}
+              customerName={order.proofs?.contacts?.companies?.name ?? '—'}
+              materialDisplay={order.material_variants?.materials?.display_name ?? null}
+            />
           )}
             </>
           )}

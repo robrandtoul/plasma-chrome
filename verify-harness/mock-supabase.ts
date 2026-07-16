@@ -309,8 +309,17 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
       rows = ids.map((pid) => ({ proof_id: pid, materials: { code: PROOF_MATERIAL[pid] ?? 'metal_steel' } }))
     } else {
       const pid = filters['eq:proof_id']
-      rows = pid ? [{ id: `ver-${pid}`, material_id: ORDERS.find((o) => o.proof_id === pid)?.material_id ?? 'm-steel', is_current: true }] : []
+      rows = pid ? [{ id: `ver-${pid}`, material_id: ORDERS.find((o) => o.proof_id === pid)?.material_id ?? 'm-steel', is_current: true, version_number: 3, shape: null }] : []
     }
+  } else if (table === 'proofs') {
+    rows = [{ approved_at: daysAgo(1) }]
+  } else if (table === 'proof_version_images') {
+    // Two approved files (front + back, shared artwork) so the To-order card's
+    // Approved artwork panel renders a populated list.
+    rows = [
+      { id: 'img-front', image_path: 'proofs/approved-front.pdf', original_filename: 'Approved_Front.pdf', associated_name: null, side: 'front', layout_id: null },
+      { id: 'img-back', image_path: 'proofs/approved-back.pdf', original_filename: 'Approved_Back.pdf', associated_name: null, side: 'back', layout_id: null },
+    ]
   } else if (table === 'settings') {
     rows = [{ ordering_enabled: true, order_reminders_max: 3, order_reminder_interval_days: 3, auto_order_reminders_enabled: true }]
   } else if (table === 'site_settings') {
@@ -403,6 +412,13 @@ export const supabase: any = {
     getSession: async () => ({ data: { session: { access_token: 'test-token', user: { id: 'user-rob' } } } }),
     signOut: async () => ({ error: null }),
     onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
+  },
+  storage: {
+    // Return a data-URL "signed URL" so the Approved artwork downloads work in
+    // the harness (fetch(dataUrl) → blob) without a real storage backend.
+    from: (_bucket: string) => ({
+      createSignedUrl: async (path: string) => ({ data: { signedUrl: swatch('#334155', path.slice(-8)) }, error: null }),
+    }),
   },
   supabaseUrl: 'https://example.supabase.co',
 }
