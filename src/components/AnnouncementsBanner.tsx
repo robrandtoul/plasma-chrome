@@ -106,17 +106,28 @@ export default function AnnouncementsBanner() {
             return (
               <div
                 key={a.id}
-                className="flex items-start gap-3 rounded-[14px] border border-line bg-surface py-3 pl-4 pr-3"
-                style={{ borderLeftColor: meta.accent, borderLeftWidth: 3 }}
+                className="flex items-start gap-3 rounded-[14px] border py-3.5 pl-4 pr-3 shadow-[0_2px_10px_-3px_rgba(22,19,17,0.14)]"
+                style={{
+                  backgroundColor: `color-mix(in srgb, ${meta.accent} 11%, var(--c-surface))`,
+                  borderColor: `color-mix(in srgb, ${meta.accent} 34%, transparent)`,
+                }}
               >
-                <span className="mt-0.5 flex-shrink-0" style={{ color: meta.accent }} aria-hidden="true">
-                  <Icon size={18} />
+                <span
+                  className="mt-px flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-white"
+                  style={{ backgroundColor: meta.accent }}
+                  aria-hidden="true"
+                >
+                  <Icon size={16} />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="whitespace-pre-wrap text-[14px] leading-snug text-ink">{a.body}</p>
+                  <p className="whitespace-pre-wrap text-[15px] font-medium leading-snug text-ink">{a.body}</p>
                   {(expiry || isAdmin) && (
                     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-ink-mute">
-                      {expiry && <span>{expiry}</span>}
+                      {expiry && (
+                        <span className="font-medium" style={{ color: meta.accent }}>
+                          {expiry}
+                        </span>
+                      )}
                       {isAdmin && a.created_by_name && (
                         <span>
                           {expiry ? '· ' : ''}
@@ -132,7 +143,7 @@ export default function AnnouncementsBanner() {
                     onClick={() => handleRemove(a.id)}
                     aria-label="Remove announcement"
                     title="Remove"
-                    className="flex-shrink-0 rounded-full p-1 text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
+                    className="flex-shrink-0 rounded-full p-1 text-ink-mute transition-colors hover:bg-black/5 hover:text-ink"
                   >
                     <X size={16} aria-hidden="true" />
                   </button>
