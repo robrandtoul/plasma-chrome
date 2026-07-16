@@ -307,19 +307,21 @@ export default function OrderGroupPayPage() {
     return () => { cancelled = true }
   }, [id, token])
 
-  // Chooser catalogues for OPEN members — the same sources the single pay
-  // page reads: the proof graph (variants + tiers + finishes + surcharges +
-  // personalisation + names), the admin thickness copy, and the member's own
-  // artwork for finish swatches. Failure on one member leaves its chooser
-  // unloaded (the page shows the reply-to-us hint rather than a dead card);
-  // it never blocks the rest.
+  // Catalogues for EVERY member — the same sources the single pay page reads:
+  // the proof graph (variants + tiers + finishes + surcharges + personalisation
+  // + names), the admin thickness copy, and (open members only) the member's
+  // own artwork for finish swatches. Open members drive the choosers; locked
+  // members need the price bases too, because online orders don't stamp
+  // amount_cards until checkout — so their summary price is computed live from
+  // the catalogue rather than read from a still-null stamped figure. Failure on
+  // one member leaves it unpriced (the page shows the reply-to-us hint rather
+  // than a dead card); it never blocks the rest.
   useEffect(() => {
-    const open = members.filter(memberIsOpen)
-    if (open.length === 0 || !group) return
+    if (members.length === 0 || !group) return
     let cancelled = false
     void (async () => {
       const settings = await getPublicSettings().catch(() => null)
-      await Promise.all(open.map(async (m) => {
+      await Promise.all(members.map(async (m) => {
         try {
           const { data: graph } = await supabase.rpc('public_get_customer_proof', { p_proof_id: m.proof_id })
           if (cancelled || !graph) return
@@ -433,6 +435,10 @@ export default function OrderGroupPayPage() {
                   : {},
             },
           }))
+
+          // Locked members show no chooser or finish swatches — the price
+          // bases above are all they need, so skip the artwork fetch.
+          if (!memberIsOpen(m)) return
 
           // The member's own artwork: the per-card preview (cross-fading with
           // the finish pick, exactly like the single-order checkout) plus the
@@ -890,12 +896,42 @@ export default function OrderGroupPayPage() {
   const memberLive = new Map<string, MemberLive>()
   for (const m of members) {
     if (!memberIsOpen(m)) {
-      const stamped = memberGoods(m)
+      // A fully-locked member is priced live from the catalogue — the same
+      // maths the single pay page and the group checkout use — because online
+      // orders don't stamp amount_cards until checkout, so a first-time visitor
+      // has no stamped figure to read (only offline orders and returning
+      // visitors do). Custom quotes carry their agreed face-value total; fall
+      // back to any stamped breakdown when the catalogue can't price it live.
+      const data = chooserData[m.id]
+      const lockedQty = m.quantity
+      let goods: number | null = null
+      let discount = 0
+      if (m.custom_quote_total != null) {
+        goods = Number(m.custom_quote_total)
+        discount = cardDiscountForBase(m.card_discount_type, m.card_discount_value, goods)
+      } else if (data && lockedQty != null && data.lockedTiers.length > 0) {
+        const cards = totalFromTiers(exvTiers(data.lockedTiers), lockedQty, data.flatAboveTop)
+        if (cards != null) {
+          const finish = surchargeFromTiers(exvSurTiers(data.lockedFinishSurTiers), lockedQty, data.flatAboveTop)
+          const tooling =
+            data.perExtraName != null && m.names_count > 1 ? round2((m.names_count - 1) * exv(data.perExtraName)) : 0
+          const pers = data.personalisation
+            ? Math.max(exv(data.personalisation.minCharge), lockedQty * exv(data.personalisation.perCardRate))
+            : 0
+          goods = round2(cards + finish + tooling + pers)
+          discount = cardDiscountForBase(m.card_discount_type, m.card_discount_value, goods)
+        }
+      }
+      if (goods == null) {
+        const stamped = memberGoods(m)
+        goods = stamped > 0 ? stamped : null
+        discount = Number(m.amount_card_discount ?? 0)
+      }
       memberLive.set(m.id, {
         open: false,
         ready: true,
-        goods: stamped > 0 ? stamped : null,
-        discount: Number(m.amount_card_discount ?? 0),
+        goods,
+        discount,
         qty: m.quantity,
         hint: null,
         label: memberLabel(m),
