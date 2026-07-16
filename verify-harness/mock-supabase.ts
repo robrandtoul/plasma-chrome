@@ -362,6 +362,28 @@ export const supabase: any = {
   schema: (schema: string) => ({ from: (table: string) => makeBuilder(schema, table) }),
   functions: {
     invoke: async (name: string, opts?: { body?: any }) => {
+      // Full PaymentsStatus shape — AdminSettingsPage reads this on mount and
+      // renders payStatus.stripe.* / .xero.* unguarded, so the generic
+      // { ok: true } fallback below would crash the whole page.
+      if (name === 'payments-status') {
+        return {
+          data: {
+            stripe: {
+              mode: 'live', selectedKeyKind: 'live', testKeyPresent: true, liveKeyPresent: true,
+              webhookTestSecretPresent: true, webhookLiveSecretPresent: true, consistent: true,
+            },
+            xero: { connected: true, orgName: 'Plasma Design (fixture)', isDemoCompany: false, baseCurrency: 'GBP', error: null },
+            verdict: 'ready',
+            bankAccounts: [{ name: 'Stripe clearing (fixture)', code: '125' }],
+            taxRates: [
+              { name: '0% EU', taxType: 'TAX004', effectiveRate: 0 },
+              { name: '0% ROW', taxType: 'TAX003', effectiveRate: 0 },
+            ],
+            stripeAccountCode: '125',
+          },
+          error: null,
+        }
+      }
       if (name === 'customer-proof-images') {
         const proofId: string = opts?.body?.proofId ?? ''
         const colour = THUMB_COLOUR[proofId]

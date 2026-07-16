@@ -165,6 +165,25 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
+// The nine on-page sections, in render order — drives the sticky jump nav
+// under the page heading and its scrollspy highlight. Each id is stamped on
+// the matching <section> below via SECTION_CLASS, whose scroll-mt makes a
+// jump land clear of the sticky app bar + jump nav (~50px + ~44px).
+const SECTIONS = [
+  { id: 'customer-approvals', label: 'Customer approvals' },
+  { id: 'ordering-checkout', label: 'Ordering & checkout' },
+  { id: 'order-tracking', label: 'Order tracking' },
+  { id: 'designer-defaults', label: 'Designer defaults' },
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'notifications', label: 'Notifications' },
+  { id: 'help-scout', label: 'Help Scout' },
+  { id: 'shipping', label: 'Shipping' },
+  { id: 'us-tariff', label: 'US tariff' },
+] as const
+
+const SECTION_CLASS =
+  'scroll-mt-[calc(env(safe-area-inset-top)+104px)] rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line'
+
 export default function AdminSettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -190,6 +209,37 @@ export default function AdminSettingsPage() {
   // fires when the admin clicks the Test connection button.
   const [hsTestState, setHsTestState] = useState<HelpScoutTestState>({ kind: 'untested' })
   const [hsTesting, setHsTesting] = useState(false)
+
+  // Scrollspy for the jump nav: highlight the section currently under the
+  // sticky chrome. Depends on whether settings have loaded because the
+  // sections only exist in the DOM once the first fetch renders them.
+  const [activeSection, setActiveSection] = useState<string>(SECTIONS[0].id)
+  const settingsLoaded = settings != null
+  useEffect(() => {
+    if (!settingsLoaded) return
+    const visible = new Set<string>()
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) visible.add(e.target.id)
+          else visible.delete(e.target.id)
+        }
+        // First visible section in page order wins, so at a boundary the
+        // one whose heading sits under the jump nav stays highlighted.
+        const first = SECTIONS.find((s) => visible.has(s.id))
+        if (first) setActiveSection(first.id)
+      },
+      // Top edge sits just below the sticky app bar + jump nav; the -55%
+      // bottom margin keeps the highlight on the section being read rather
+      // than one only peeking in at the foot of the screen.
+      { rootMargin: '-100px 0px -55% 0px' },
+    )
+    for (const s of SECTIONS) {
+      const el = document.getElementById(s.id)
+      if (el) observer.observe(el)
+    }
+    return () => observer.disconnect()
+  }, [settingsLoaded])
 
   // Xero connect (Ordering & checkout, Step 5b). Kicks off the one-time
   // OAuth authorisation; the returned consent URL opens in a new tab and
@@ -518,8 +568,34 @@ export default function AdminSettingsPage() {
         </p>
       </div>
 
+      {/* Jump nav — nine long sections; this pins under the app bar (same
+          offset trick as the Orders page section headers) so any section is
+          one tap away mid-scroll. Buttons rather than #hash anchors so the
+          router URL stays clean. Bleeds to the screen edge below lg, in
+          step with the page container's px-4 / sm:px-6 padding. */}
+      <nav
+        aria-label="Settings sections"
+        className="sticky top-[calc(env(safe-area-inset-top)+50px)] z-[4] -mx-4 flex gap-1 overflow-x-auto bg-canvas/95 px-4 py-2 backdrop-blur-sm sm:-mx-6 sm:px-6 lg:mx-0 lg:px-0"
+      >
+        {SECTIONS.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => document.getElementById(s.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            className={[
+              'whitespace-nowrap rounded-[8px] px-2.5 py-1.5 text-xs transition-colors',
+              activeSection === s.id
+                ? 'bg-surface border border-line text-ink font-medium'
+                : 'border border-transparent text-ink-mute hover:bg-surface hover:text-ink',
+            ].join(' ')}
+          >
+            {s.label}
+          </button>
+        ))}
+      </nav>
+
       {/* ── Customer approvals (Phase 2) ──────────────────────────── */}
-      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+      <section id="customer-approvals" className={SECTION_CLASS}>
         <h3 className="mb-4 text-sm font-semibold text-ink">Customer approvals</h3>
         <div className="space-y-5">
           <FieldRow
@@ -578,7 +654,7 @@ export default function AdminSettingsPage() {
           this gate so the existing approve → manual-Xero-invoice flow is
           unaffected until Rob turns ordering on. See
           docs/ordering-checkout-spec.md. */}
-      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+      <section id="ordering-checkout" className={SECTION_CLASS}>
         <h3 className="mb-4 text-sm font-semibold text-ink">Ordering &amp; checkout</h3>
         <div className="space-y-5">
           <FieldRow
@@ -939,7 +1015,7 @@ export default function AdminSettingsPage() {
         const knownIds = new Set(trackingSuppliers.map((s) => s.id))
         const orphanIds = Object.keys(cfg.suppliers).filter((id) => !knownIds.has(id))
         return (
-          <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+          <section id="order-tracking" className={SECTION_CLASS}>
             <h3 className="mb-1 text-sm font-semibold text-ink">Customer order tracking</h3>
             <p className="mb-4 text-xs text-ink-mute">
               Shows a quiet order-progress strip on the customer&rsquo;s paid screen. Off by default — turn it on, then choose how much detail each route and supplier reveals. <span className="font-medium">Broad</span> shows date-free stages (In production → On its way → Delivered) so a late supplier stays invisible; <span className="font-medium">Granular</span> adds an estimated arrival date.
@@ -1042,7 +1118,7 @@ export default function AdminSettingsPage() {
       })()}
 
       {/* ── Designer defaults ─────────────────────────────────────── */}
-      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+      <section id="designer-defaults" className={SECTION_CLASS}>
         <h3 className="mb-4 text-sm font-semibold text-ink">Designer defaults</h3>
         <div className="space-y-5">
           <FieldRow
@@ -1085,7 +1161,7 @@ export default function AdminSettingsPage() {
       </section>
 
       {/* ── Dashboard (migration 000280) ──────────────────────────── */}
-      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+      <section id="dashboard" className={SECTION_CLASS}>
         <h3 className="mb-4 text-sm font-semibold text-ink">Dashboard</h3>
         <div className="space-y-5">
           <FieldRow
@@ -1106,7 +1182,7 @@ export default function AdminSettingsPage() {
       </section>
 
       {/* ── Notifications (migration 000283) ──────────────────────── */}
-      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+      <section id="notifications" className={SECTION_CLASS}>
         <h3 className="mb-4 text-sm font-semibold text-ink">Notifications</h3>
         <div className="space-y-5">
           <FieldRow
@@ -1134,7 +1210,7 @@ export default function AdminSettingsPage() {
           messages keyed off the structured `reason` returned by
           admin-test-helpscout. State is component-scoped — leaving
           and returning resets to "Not tested this session". */}
-      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+      <section id="help-scout" className={SECTION_CLASS}>
         <h3 className="mb-4 text-sm font-semibold text-ink">Help Scout</h3>
 
         <div className="flex flex-wrap items-start gap-4">
@@ -1162,7 +1238,7 @@ export default function AdminSettingsPage() {
           cache is invalidated so other open tabs pick the change up
           faster than the 60s TTL. Customer-facing pages are
           unaffected. */}
-      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+      <section id="shipping" className={SECTION_CLASS}>
         <h3 className="mb-4 text-sm font-semibold text-ink">Shipping</h3>
         <div className="space-y-5">
           <FieldRow
@@ -1253,7 +1329,7 @@ export default function AdminSettingsPage() {
           import tariffs + customs clearance. Fee per currency, the Xero item
           code the invoice line books to, and the customer-facing pay-page
           copy. A 0 fee disables the service for that currency. */}
-      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+      <section id="us-tariff" className={SECTION_CLASS}>
         <h3 className="mb-1 text-sm font-semibold text-ink">US tariff &amp; customs handling</h3>
         <p className="mb-4 text-[13px] text-ink-mute">
           Added by default to orders shipping to the US — the customer can opt out at checkout. US orders are billed in USD in practice; the GBP/EUR fees cover the rare non-USD US order. Set a fee to 0 to switch the service off for that currency.

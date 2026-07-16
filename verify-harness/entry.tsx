@@ -16,6 +16,7 @@ import AdminCatalogueDataPage from '../src/pages/admin/AdminCatalogueDataPage'
 import AdminContentPage from '../src/pages/admin/AdminContentPage'
 import AdminNeedsAttentionPage from '../src/pages/admin/AdminNeedsAttentionPage'
 import AdminShippingPage from '../src/pages/admin/AdminShippingPage'
+import AdminSettingsPage from '../src/pages/admin/AdminSettingsPage'
 import '../src/index.css'
 
 function Elsewhere() {
@@ -36,6 +37,7 @@ const tree = requestedPath?.startsWith('/admin') ? (
         <Route path="content/:tab" element={<AdminContentPage />} />
         <Route path="needs-attention" element={<AdminNeedsAttentionPage />} />
         <Route path="shipping" element={<AdminShippingPage />} />
+        <Route path="settings" element={<AdminSettingsPage />} />
         <Route path="*" element={<Stub />} />
       </Route>
       <Route path="*" element={<Elsewhere />} />
