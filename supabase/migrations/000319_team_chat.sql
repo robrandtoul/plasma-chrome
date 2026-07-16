@@ -5,7 +5,11 @@
 -- project's dashboard SQL editor (or an MCP apply_migration). Do NOT use
 -- `supabase db push` — the CLI link points at the retired standalone project.
 --
--- AUTHORED, NOT YET APPLIED — Rob applies this.
+-- Applied to live (merged stock-control project bjvinrzbdrwebylkmbwy) via MCP
+-- apply_migration on 2026-07-16. Verified: table + 3 policies + RLS on,
+-- authenticated SELECT/INSERT/DELETE grants, trigger present,
+-- profiles.team_chat_seen_at added, proofs.team_messages in the
+-- supabase_realtime publication; security advisors clean.
 --
 -- We work in different locations and currently message across disparate systems.
 -- This is one internal channel, right inside the dashboard we all live in.

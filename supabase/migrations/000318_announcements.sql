@@ -5,7 +5,9 @@
 -- project's dashboard SQL editor (or an MCP apply_migration). Do NOT use
 -- `supabase db push` — the CLI link points at the retired standalone project.
 --
--- AUTHORED, NOT YET APPLIED — Rob applies this.
+-- Applied to live (merged stock-control project bjvinrzbdrwebylkmbwy) via MCP
+-- apply_migration on 2026-07-16. Verified: table + 4 policies + RLS on,
+-- authenticated CRUD grants, trigger present; security advisors clean.
 --
 -- The four of us work in different locations and live in the dashboard all day.
 -- This is the one place to post something everyone should see — e.g. "10% off
