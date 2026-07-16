@@ -51,3 +51,15 @@ export async function getOrderingEnabled(): Promise<boolean> {
 export function invalidateOrderingEnabled(): void {
   cache = null
 }
+
+/** Synchronous peek at the last-known value, or null if it's never been
+ *  fetched in this session. The header seeds its initial render from this so
+ *  the Orders nav pill doesn't pop in (and shove the pills beside it) on every
+ *  page navigation: because getOrderingEnabled() is async, a warm cache still
+ *  resolves a tick after the first paint, so seeding from false would flash the
+ *  pill in every time. The 60s TTL is ignored on purpose — a slightly stale
+ *  boolean is a far better first paint than false, and the effect re-fetches
+ *  immediately anyway. */
+export function peekOrderingEnabled(): boolean | null {
+  return cache ? cache.value : null
+}

@@ -22,7 +22,7 @@ import {
 import { PlasmaWordmark } from './PlasmaWordmark'
 import { Sheet } from './Sheet'
 import { useScrolled } from './useScrolled'
-import { getOrderingEnabled } from '../lib/orderingEnabled'
+import { getOrderingEnabled, peekOrderingEnabled } from '../lib/orderingEnabled'
 
 // Shared chrome for every designer-facing page. Sticky top bar with
 // the wordmark on the left, a pill nav strip beside it, an optional
@@ -133,8 +133,12 @@ export function DesignerHeader({
 }: DesignerHeaderProps) {
   // Ordering is OFF by default; the Orders nav pill stays hidden until an
   // admin turns the feature on. Fail-safe false (getOrderingEnabled) so a
-  // settings outage never reveals the unfinished feature.
-  const [orderingEnabled, setOrderingEnabled] = useState(false)
+  // settings outage never reveals the unfinished feature. Seed from the warm
+  // module cache (peekOrderingEnabled) so on every navigation after the first
+  // the pill is already in its final state at first paint — otherwise the async
+  // refresh flips it a tick later and the pill pops in, shoving the pills beside
+  // it sideways on each page switch.
+  const [orderingEnabled, setOrderingEnabled] = useState(() => peekOrderingEnabled() ?? false)
   // Mobile-only: the search field collapses behind an icon button, and
   // the bottom-tab Account entry opens an account sheet. Neither piece of
   // state has any effect at md:+ where the desktop chrome is rendered.

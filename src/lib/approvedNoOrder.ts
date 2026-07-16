@@ -55,6 +55,16 @@ export function invalidateApprovedNoOrderCount(): void {
   cache = null
 }
 
+// Synchronous peek at the last-known count, or null if never fetched this
+// session. The header seeds its badge state from this so the count doesn't
+// flash from 0 to N (widening the Orders pill and shoving its neighbours) on
+// every navigation — getApprovedNoOrderCount() is async, so a warm cache still
+// resolves after the first paint. Stale-while-revalidate: the TTL is ignored
+// here; the effect's getApprovedNoOrderCount() still refreshes the value.
+export function peekApprovedNoOrderCount(): number | null {
+  return cache ? cache.value : null
+}
+
 export async function getApprovedNoOrderCount(): Promise<number> {
   if (cache && Date.now() - cache.fetchedAt < TTL_MS) return cache.value
   if (inFlight) return inFlight

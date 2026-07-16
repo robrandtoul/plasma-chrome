@@ -10,8 +10,8 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import EditProfileModal, { type EditProfileSavedPayload } from '../components/EditProfileModal'
 import { FEEDBACK_RESOLVED_STATUSES, isUnseenResolved } from '../lib/feedback'
-import { getApprovedNoOrderCount } from '../lib/approvedNoOrder'
-import { getFlaggedCount } from '../lib/flaggedCount'
+import { getApprovedNoOrderCount, peekApprovedNoOrderCount } from '../lib/approvedNoOrder'
+import { getFlaggedCount, peekFlaggedCount } from '../lib/flaggedCount'
 import { DesignerHeader, type DesignerNavId, type DesignerHeaderColour } from './DesignerHeader'
 
 // Shared chrome wrapper for every designer-facing page. Owns the
@@ -38,6 +38,15 @@ const DesignerProfileContext = createContext<DesignerProfile | null>(null)
 export function useDesignerProfile(): DesignerProfile | null {
   return useContext(DesignerProfileContext)
 }
+
+// Module-level cache of the signed-in user's feedback-unread count so the badge
+// on the header's Feedback icon doesn't reset to 0 and flash back in on every
+// navigation (each page remounts this chrome). Same seed-from-warm-cache idea
+// as the Orders / Flagged nav badges, but this count is derived from the
+// profile + feedback fetch in the effect below rather than a standalone cached
+// helper, so the tiny cache lives here. Keyed by user id; the effect refreshes
+// it on every mount, so it's stale-while-revalidate like the other badges.
+let feedbackUnreadCache: { userId: string; value: number } | null = null
 
 interface DesignerChromeProps {
   /** Which nav pill in the header is highlighted. Pass null to
@@ -71,15 +80,22 @@ export function DesignerChrome({
   const [profile, setProfile] = useState<DesignerProfile | null>(null)
   const [editProfileOpen, setEditProfileOpen] = useState(false)
   // Count of the signed-in user's own feedback items resolved (done/wont_do)
-  // since they last opened the board — drives the header's Feedback badge.
-  const [feedbackUnread, setFeedbackUnread] = useState(0)
+  // since they last opened the board — drives the header's Feedback badge. Seed
+  // from the warm module cache (keyed by user) so a page switch doesn't blank
+  // the badge and flash it back in; the effect below refreshes + re-caches it.
+  const [feedbackUnread, setFeedbackUnread] = useState(() =>
+    feedbackUnreadCache?.userId === userId ? feedbackUnreadCache.value : 0,
+  )
   // Count of approved proofs with no order link sent yet — badges the Orders
   // nav pill so the "Links to send" worklist is reachable from any page. Cached
-  // (60s) in the helper so it doesn't re-query on every navigation.
-  const [ordersUnread, setOrdersUnread] = useState(0)
+  // (60s) in the helper so it doesn't re-query on every navigation. Seed the
+  // initial state from the warm cache (peek*) so the badge doesn't flash 0 → N
+  // and widen the pill on every page switch — the async refresh below still
+  // runs, but a cache hit means the first paint already carries the count.
+  const [ordersUnread, setOrdersUnread] = useState(() => peekApprovedNoOrderCount() ?? 0)
   // Count of open items on the Flagged board — badges the Flagged nav pill from
-  // any page. Same cached-helper pattern as ordersUnread.
-  const [flaggedUnread, setFlaggedUnread] = useState(0)
+  // any page. Same cached-helper + seeded-initial-state pattern as ordersUnread.
+  const [flaggedUnread, setFlaggedUnread] = useState(() => peekFlaggedCount() ?? 0)
 
   // Fetch the signed-in designer's profile for the header avatar +
   // any consumer that reads via useDesignerProfile(); the same fetch
@@ -119,6 +135,9 @@ export function DesignerChrome({
       const count = (resolved ?? []).filter((it) =>
         isUnseenResolved(it as Parameters<typeof isUnseenResolved>[0], userId, seenAt),
       ).length
+      // Cache before setting state so the next navigation seeds from this value
+      // (userId is non-null here — the effect early-returns otherwise).
+      feedbackUnreadCache = { userId, value: count }
       setFeedbackUnread(count)
     })()
     return () => {

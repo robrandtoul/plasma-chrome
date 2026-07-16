@@ -36,3 +36,13 @@ export async function getFlaggedCount(): Promise<number> {
   })()
   return inFlight
 }
+
+// Synchronous peek at the last-known count, or null if never fetched this
+// session. The header seeds its badge state from this so the count doesn't
+// flash from 0 to N (widening the Flagged pill and shoving its neighbours) on
+// every navigation — getFlaggedCount() is async, so a warm cache still resolves
+// after the first paint. Stale-while-revalidate: the TTL is ignored here; the
+// effect's getFlaggedCount() still refreshes the value.
+export function peekFlaggedCount(): number | null {
+  return cache ? cache.value : null
+}
