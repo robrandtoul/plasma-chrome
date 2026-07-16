@@ -17,6 +17,7 @@ import {
   LogOut,
   Settings,
   MessageSquare,
+  MessagesSquare,
   type LucideIcon,
 } from 'lucide-react'
 import { PlasmaWordmark } from './PlasmaWordmark'
@@ -35,7 +36,7 @@ import { getOrderingEnabled, peekOrderingEnabled } from '../lib/orderingEnabled'
 // field as a controlled input so the parent can both read the value
 // (to drive filtering) and clear it from elsewhere if needed.
 
-export type DesignerNavId = 'proofs' | 'quote' | 'orders' | 'flagged' | 'feedback' | 'admin'
+export type DesignerNavId = 'proofs' | 'quote' | 'orders' | 'flagged' | 'feedback' | 'chat' | 'admin'
 export type DesignerHeaderColour = 'blue' | 'teal' | 'coral' | 'purple'
 
 interface NavItem {
@@ -108,6 +109,9 @@ interface DesignerHeaderProps {
   /** Count of the user's own feedback items resolved since they last
    *  opened the board. Badges the Feedback icon / Account tab when > 0. */
   feedbackUnread?: number
+  /** Count of team-chat messages from others since the user last opened the
+   *  chat. Badges the Chat icon / Account tab when > 0. */
+  chatUnread?: number
   /** Count of approved proofs with no order link sent yet. Badges the Orders
    *  nav pill (desktop) and the Orders bottom tab (mobile) when > 0. */
   ordersUnread?: number
@@ -126,6 +130,7 @@ export function DesignerHeader({
   actions,
   mobileBell,
   feedbackUnread = 0,
+  chatUnread = 0,
   ordersUnread = 0,
   flaggedCount = 0,
   onEditProfile,
@@ -279,6 +284,25 @@ export function DesignerHeader({
             </button>
           )}
 
+          {/* Team chat — a right-aligned icon by the account button, same
+              treatment as Feedback. Desktop only; on mobile it's in the
+              account sheet (below). */}
+          <Link
+            to="/chat"
+            aria-label={chatUnread > 0 ? `Team chat — ${chatUnread} new` : 'Team chat'}
+            title="Team chat"
+            aria-current={active === 'chat' ? 'page' : undefined}
+            className={[
+              'relative hidden md:flex h-9 w-9 items-center justify-center rounded-full transition-colors',
+              active === 'chat'
+                ? 'text-ink bg-canvas border border-line'
+                : 'text-ink-mute hover:text-ink hover:bg-canvas',
+            ].join(' ')}
+          >
+            <MessagesSquare size={18} aria-hidden="true" />
+            {chatUnread > 0 && <CountBadge count={chatUnread} />}
+          </Link>
+
           {/* Feedback — a right-aligned icon by the account button rather than
               a text pill in the main nav. Desktop only; on mobile it lives in
               the account sheet (below). */}
@@ -321,6 +345,7 @@ export function DesignerHeader({
         active={active}
         orderingEnabled={orderingEnabled}
         feedbackUnread={feedbackUnread}
+        chatUnread={chatUnread}
         ordersUnread={ordersUnread}
         onAccount={() => setAccountOpen(true)}
       />
@@ -331,6 +356,7 @@ export function DesignerHeader({
         user={user}
         role={role}
         feedbackUnread={feedbackUnread}
+        chatUnread={chatUnread}
         onEditProfile={onEditProfile}
         onSignOut={onSignOut}
       />
@@ -351,12 +377,14 @@ function BottomTabBar({
   active,
   orderingEnabled,
   feedbackUnread,
+  chatUnread,
   ordersUnread,
   onAccount,
 }: {
   active: DesignerNavId | null
   orderingEnabled: boolean
   feedbackUnread: number
+  chatUnread: number
   ordersUnread: number
   onAccount: () => void
 }) {
@@ -391,13 +419,13 @@ function BottomTabBar({
         type="button"
         onClick={onAccount}
         className="flex flex-1 items-center justify-center"
-        aria-current={active === 'admin' || active === 'feedback' ? 'page' : undefined}
+        aria-current={active === 'admin' || active === 'feedback' || active === 'chat' ? 'page' : undefined}
       >
         <TabInner
           label="Account"
           Icon={UserCircle}
-          active={active === 'admin' || active === 'feedback'}
-          showDot={feedbackUnread > 0}
+          active={active === 'admin' || active === 'feedback' || active === 'chat'}
+          showDot={feedbackUnread > 0 || chatUnread > 0}
         />
       </button>
     </nav>
@@ -460,6 +488,7 @@ function AccountSheet({
   user,
   role,
   feedbackUnread,
+  chatUnread,
   onEditProfile,
   onSignOut,
 }: {
@@ -468,6 +497,7 @@ function AccountSheet({
   user: UserProps
   role: 'admin' | 'designer' | null
   feedbackUnread: number
+  chatUnread: number
   onEditProfile?: () => void
   onSignOut?: () => void
 }) {
@@ -498,6 +528,19 @@ function AccountSheet({
           >
             <Bell size={18} aria-hidden="true" className="text-ink-mute" />
             Notifications
+          </Link>
+          <Link
+            to="/chat"
+            onClick={onClose}
+            className="flex min-h-[56px] items-center gap-3 border-b border-line-soft px-4 text-[15px] text-ink-soft hover:bg-canvas"
+          >
+            <MessagesSquare size={18} aria-hidden="true" className="text-ink-mute" />
+            Team chat
+            {chatUnread > 0 && (
+              <span className="ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-brand px-1.5 text-[11px] font-semibold leading-none text-white">
+                {chatUnread > 9 ? '9+' : chatUnread}
+              </span>
+            )}
           </Link>
           <Link
             to="/feedback"
