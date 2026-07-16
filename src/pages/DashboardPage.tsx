@@ -28,6 +28,7 @@ import { ResolvePopover } from '../components/ResolvePopover'
 import { NudgeOutboxPanel } from '../components/NudgeOutboxPanel'
 import CollapsibleSidebarPanel from '../components/CollapsibleSidebarPanel'
 import HotLeadsCard from '../components/HotLeadsCard'
+import AnnouncementsBanner from '../components/AnnouncementsBanner'
 import SharedDesignerAvatar from '../components/DesignerAvatar'
 // QuoteLink imported + rendered inside DesignerChrome (PR 31) so
 // every designer page surfaces the same new-tab "phone rings"
@@ -2890,6 +2891,8 @@ export default function DashboardPage() {
           </div>
         ) : (
           <>
+            <AnnouncementsBanner />
+
             {/* Unified hero + tile panel. One bordered card spanning
                 the full page width: hero header (eyebrow + greeting +
                 date+count line + Saved views + New proof) at the top,
