@@ -12,6 +12,7 @@ import { createRoot } from 'react-dom/client'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import OrdersPage from '../src/pages/OrdersPage'
 import AdminLayout from '../src/pages/admin/AdminLayout'
+import AdminHomePage from '../src/pages/admin/AdminHomePage'
 import AdminCatalogueDataPage from '../src/pages/admin/AdminCatalogueDataPage'
 import AdminContentPage from '../src/pages/admin/AdminContentPage'
 import AdminNeedsAttentionPage from '../src/pages/admin/AdminNeedsAttentionPage'
@@ -33,6 +34,7 @@ const tree = requestedPath?.startsWith('/admin') ? (
   <MemoryRouter initialEntries={[requestedPath]}>
     <Routes>
       <Route path="/admin" element={<AdminLayout />}>
+        <Route index element={<AdminHomePage />} />
         <Route path="catalogue/:tab" element={<AdminCatalogueDataPage />} />
         <Route path="content/:tab" element={<AdminContentPage />} />
         <Route path="needs-attention" element={<AdminNeedsAttentionPage />} />

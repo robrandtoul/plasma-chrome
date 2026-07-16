@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
 import { invalidatePublicSettings } from '../../lib/publicSettings'
@@ -240,6 +241,25 @@ export default function AdminSettingsPage() {
     }
     return () => observer.disconnect()
   }, [settingsLoaded])
+
+  // Deep-link support: a "/admin/settings#help-scout" URL (used by the admin
+  // feature search to land on a specific section) scrolls that section into
+  // view once settings have rendered. location.key is in the deps so
+  // re-selecting the same section from the palette scrolls again; the rAF lets
+  // the section paint on the same tick settings first load.
+  const location = useLocation()
+  useEffect(() => {
+    if (!settingsLoaded) return
+    const id = location.hash.replace(/^#/, '')
+    if (!id || !SECTIONS.some((s) => s.id === id)) return
+    const el = document.getElementById(id)
+    if (!el) return
+    const raf = requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setActiveSection(id)
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [settingsLoaded, location.key, location.hash])
 
   // Xero connect (Ordering & checkout, Step 5b). Kicks off the one-time
   // OAuth authorisation; the returned consent URL opens in a new tab and

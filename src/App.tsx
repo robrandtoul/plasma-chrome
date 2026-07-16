@@ -37,6 +37,7 @@ const FeedbackPage = lazyWithRetry(() => import('./pages/FeedbackPage'), 'Feedba
 const FlaggedPage = lazyWithRetry(() => import('./pages/FlaggedPage'), 'FlaggedPage')
 const NotificationSettingsPage = lazyWithRetry(() => import('./pages/NotificationSettingsPage'), 'NotificationSettingsPage')
 const AdminLayout = lazyWithRetry(() => import('./pages/admin/AdminLayout'), 'AdminLayout')
+const AdminHomePage = lazyWithRetry(() => import('./pages/admin/AdminHomePage'), 'AdminHomePage')
 const AdminUsersPage = lazyWithRetry(() => import('./pages/admin/AdminUsersPage'), 'AdminUsersPage')
 const AdminPricingPage = lazyWithRetry(() => import('./pages/admin/AdminPricingPage'), 'AdminPricingPage')
 const AdminMaterialsPage = lazyWithRetry(() => import('./pages/admin/AdminMaterialsPage'), 'AdminMaterialsPage')
@@ -136,7 +137,9 @@ function AppShell() {
 
         {/* Admin area — all paths under /admin go through the admin shell */}
         <Route path="/admin" element={<RequireAdmin><AdminLayout /></RequireAdmin>}>
-          <Route index element={<Navigate to="analytics" replace />} />
+          {/* The /admin landing is a home hub (search + section cards), not a
+              redirect into a data page — see AdminHomePage. */}
+          <Route index element={<AdminHomePage />} />
           <Route path="analytics" element={<AdminAnalyticsPage />} />
           <Route path="users" element={<AdminUsersPage />} />
           <Route path="customers" element={<CustomersPage />} />

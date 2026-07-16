@@ -61,7 +61,7 @@ const NAV: NavItem[] = [
   // Feedback deliberately omitted here — it's a right-aligned icon button
   // next to the account pill (see the header) rather than a text nav pill.
   // /admin (not a specific tab) so the landing page is decided in one
-  // place — the index redirect in App.tsx (currently → Analytics).
+  // place — the index route in App.tsx (the Admin home hub, AdminHomePage).
   { id: 'admin',  label: 'Admin',  to: '/admin' },
 ]
 
