@@ -1128,10 +1128,21 @@ export default function OrderGroupPayPage() {
             <p className="text-[13px] text-ink-soft">Choose your thickness — the price updates as you pick.</p>
             {orderedVariants.map((v) => {
               const note = thicknessNoteFor(data.thicknessNotes, v.display_name)
-              const price =
+              // Fold a LOCKED non-base finish's surcharge (e.g. Brushed) into
+              // every thickness card, so the shown price matches the line total
+              // and the charge. The finish isn't pickable here (finish_open is
+              // false), so its premium belongs in each card's price rather than
+              // on a separate finish card.
+              const priceBasisQty = qty ?? v.tiers[0]?.quantity ?? null
+              const lockedFinishAdd =
+                !m.finish_open && data.lockedFinishSurTiers.length > 0 && priceBasisQty != null
+                  ? surchargeFromTiers(exvSurTiers(data.lockedFinishSurTiers), priceBasisQty, data.flatAboveTop)
+                  : 0
+              const base =
                 qty != null
                   ? totalFromTiers(exvTiers(v.tiers), qty, data.flatAboveTop)
                   : v.tiers[0] != null ? exv(v.tiers[0].total_price) : null
+              const price = base != null ? round2(base + lockedFinishAdd) : null
               const priceLabel =
                 price != null
                   ? qty != null
