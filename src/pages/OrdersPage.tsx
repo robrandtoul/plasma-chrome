@@ -179,6 +179,7 @@ interface OrderGroupRow {
   token: string
   payment_reference: string | null
   expires_at: string | null
+  pay_link_opened_at: string | null
   xero_invoice_id: string | null
   xero_invoice_error: string | null
 }
@@ -928,7 +929,7 @@ export default function OrdersPage() {
       if (groupIds.length > 0) {
         void supabase
           .from('order_groups')
-          .select('id, status, currency, token, payment_reference, expires_at, xero_invoice_id, xero_invoice_error')
+          .select('id, status, currency, token, payment_reference, expires_at, pay_link_opened_at, xero_invoice_id, xero_invoice_error')
           .in('id', groupIds)
           .then(({ data: groupRows }) => {
             if (cancelled || !groupRows) return
@@ -1723,7 +1724,13 @@ export default function OrdersPage() {
                           </p>
                           <p className="mt-0.5 text-[13px] text-ink-mute">
                             {g.expires_at ? `${groupExpired ? 'Expired' : 'Expires'} ${formatDate(g.expires_at)} · ` : ''}
-                            automatic reminders pause while the orders are grouped.
+                            {/* The group's own opened stamp — the members' stamps stay
+                                frozen while grouped (their links are dormant), so this
+                                is the only honest "has the customer seen it" signal. */}
+                            {g.pay_link_opened_at
+                              ? <span title={formatAbsoluteDateTime(g.pay_link_opened_at)}>pay link opened {relativeTime(g.pay_link_opened_at)}</span>
+                              : 'pay link not opened yet'}
+                            {' · automatic reminders pause while the orders are grouped.'}
                           </p>
                         </div>
                         <div className="flex shrink-0 flex-wrap gap-2">
@@ -2724,9 +2731,10 @@ function AwaitingPaymentCard({
   /** Briefly ring the card after a "Needs action" jump lands on it. */
   flash: boolean
   /** Rendered inside its combined-payment group block. The wrapper carries
-   *  the group identity, expiry and reminders-pause note, so the card drops
-   *  its own group pill, its dormant per-order link expiry, its opened line
-   *  and the pause sentence — they'd repeat (or contradict) the header. */
+   *  the group identity, expiry, opened status and reminders-pause note, so
+   *  the card drops its own group pill, its dormant per-order link expiry,
+   *  its opened line and the pause sentence — they'd repeat (or contradict)
+   *  the header. */
   nested?: boolean
   summary: ReminderSummary | null
   cadence: ReminderCadence
