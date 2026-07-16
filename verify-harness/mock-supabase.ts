@@ -168,7 +168,9 @@ const ORDERS: FixtureOrder[] = [
     card_discount_value: 10,
     amount_card_discount: 44.9,
     ship_to_name: 'Hank Scorpio',
-    ship_to_address: { line1: 'Globex Campus', city: 'Cypress Creek', postal_code: 'CC1 2GX', country: 'GB' },
+    ship_to_email: 'hank.scorpio@globex.example',
+    ship_to_phone: '+44 161 496 0000',
+    ship_to_address: { line1: 'Globex Campus', city: 'Cypress Creek', region: 'Cypress County', postal_code: 'CC1 2GX', country: 'GB' },
     proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-3', contacts: contact('Globex', 'Hank Scorpio') },
   }),
   // To order — paid, supplier route, folder + date already saved (ready).

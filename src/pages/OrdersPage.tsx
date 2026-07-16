@@ -2159,8 +2159,12 @@ function OrderCard({
   const total = orderTotal(order)
   const invoiceError = !order.xero_invoice_id ? friendlyInvoiceError(order.xero_invoice_error) : null
   const addr = order.ship_to_address
+  // Address lines in postal order — county (region) sits between the town/
+  // postcode line and the country, matching the admin Order log. Stripe stores
+  // it as region (the state/county field); .filter(Boolean) drops it when blank,
+  // so UK orders that leave the optional county empty show no stray line.
   const addrLines = addr
-    ? [order.ship_to_name, addr.line1, addr.line2, [addr.city, addr.postal_code].filter(Boolean).join(' '), addr.country]
+    ? [order.ship_to_name, addr.line1, addr.line2, [addr.city, addr.postal_code].filter(Boolean).join(' '), addr.region, addr.country]
         .map((s) => (s ?? '').trim())
         .filter(Boolean)
     : []
@@ -2578,7 +2582,15 @@ function OrderCard({
               </div>
             </div>
           )}
+            </>
+          )}
 
+          {/* Delivery details from checkout — surfaced on the collapsed triage
+              card too, not only inside the prep form, since the recipient name,
+              address, email and phone are exactly what fulfilment and the
+              courier paperwork need to hand the order off. The empty-address
+              note stays prep-only so a collapsed card without an address (an
+              offline / manually-recorded order) doesn't carry a stray line. */}
           {addrLines.length > 0 ? (
             <>
               {/* Desktop: full address block. */}
@@ -2587,6 +2599,7 @@ function OrderCard({
                 {addrLines.map((line, i) => (
                   <span key={i} className="block">{line}</span>
                 ))}
+                {order.ship_to_email && <span className="block text-ink-mute">{order.ship_to_email}</span>}
                 {order.ship_to_phone && <span className="block text-ink-mute">{order.ship_to_phone}</span>}
               </div>
               {/* Mobile: a 48px disclosure with the postcode line as a peek so
@@ -2600,15 +2613,14 @@ function OrderCard({
                   {addrLines.map((line, i) => (
                     <span key={i} className="block">{line}</span>
                   ))}
+                  {order.ship_to_email && <span className="block text-ink-mute">{order.ship_to_email}</span>}
                   {order.ship_to_phone && <span className="block text-ink-mute">{order.ship_to_phone}</span>}
                 </div>
               </details>
             </>
-          ) : (
+          ) : expanded ? (
             <p className="mt-3 text-[13px] text-ink-mute">Delivery address on the Stripe payment / Xero invoice.</p>
-          )}
-            </>
-          )}
+          ) : null}
         </div>
 
         <div className="flex shrink-0 flex-col gap-2 md:items-end">
