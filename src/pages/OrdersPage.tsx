@@ -2607,13 +2607,11 @@ function OrderCard({
             </>
           )}
 
-          {/* Delivery details from checkout — surfaced on the collapsed triage
-              card too, not only inside the prep form, since the recipient name,
-              address, email and phone are exactly what fulfilment and the
-              courier paperwork need to hand the order off. The empty-address
-              note stays prep-only so a collapsed card without an address (an
-              offline / manually-recorded order) doesn't carry a stray line. */}
-          {addrLines.length > 0 ? (
+          {/* Delivery details from checkout — shown only in the expanded
+              "Prepare order" view, so the collapsed triage card stays compact.
+              Carries the recipient name, address, email and phone that
+              fulfilment and the courier paperwork need to hand the order off. */}
+          {expanded && (addrLines.length > 0 ? (
             <>
               {/* Desktop: full address block. */}
               <div className="mt-3 hidden rounded-lg border border-line bg-canvas px-3 py-2 text-[13px] text-ink-soft md:block">
@@ -2640,9 +2638,9 @@ function OrderCard({
                 </div>
               </details>
             </>
-          ) : expanded ? (
+          ) : (
             <p className="mt-3 text-[13px] text-ink-mute">Delivery address on the Stripe payment / Xero invoice.</p>
-          ) : null}
+          ))}
         </div>
 
         <div className="flex shrink-0 flex-col gap-2 md:items-end">
