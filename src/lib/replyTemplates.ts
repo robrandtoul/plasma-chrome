@@ -232,6 +232,14 @@ export const DEFAULT_BODIES: Record<string, string> = {
     `Hi {first_name},\n\nJust picking up on the proof of your cards{? company} for {company}{/?}. If you're happy with it, you can approve it on the page in a few seconds — and if you'd like anything changed (layout, wording, colours), just reply and we'll sort it:\n\n{url}\n\nIf it's the price giving you pause, tell us — there's often a more affordable route with a different material or quantity.`,
   nudge_viewed_not_actioned_final:
     `Hi {first_name},\n\nThis is our last reminder about your card proof{? company} for {company}{/?} — we don't want to be a pest. Your proof stays saved, so you can come back to it whenever suits:\n\n{url}\n\nIf you've decided not to go ahead, no hard feelings — a quick reply telling us why (price, timing, direction) genuinely helps us do better.`,
+  // Bundle reminders (migration 000317): ONE reminder for a whole set of cards,
+  // pointing at the bundle review link ({url}). Pluralised; no {version_number}.
+  nudge_bundle:
+    `Hi {first_name},\n\nJust checking the proofs of your cards{? company} for {company}{/?} reached you — a few are still waiting for your review. You can look over the whole set, and approve each one, here:\n\n{url}`,
+  nudge_bundle_2:
+    `Hi {first_name},\n\nCircling back on your card proofs{? company} for {company}{/?} — a few are still waiting for the go-ahead. It only takes a minute to review the set and approve the ones you're happy with:\n\n{url}\n\nIf now isn't a good time, just reply and let us know — we'll hold off on the reminders.`,
+  nudge_bundle_final:
+    `Hi {first_name},\n\nWe haven't managed to reach you about your card proofs{? company} for {company}{/?}, so this is our last reminder — we don't want to clutter your inbox.\n\nYour proofs stay saved, and you can review the set any time:\n\n{url}\n\nIf the timing's wrong or something's not quite right, a one-line reply is all it takes.`,
   nudge_approaching_dormant:
     `Hi {first_name},\n\nJust a quick nudge on your card proof{? company} for {company}{/?} before it slips off our active list. Let us know if you'd like any changes — here's the link:\n\n{url}`,
   nudge_stuck_in_progress:

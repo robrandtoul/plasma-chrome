@@ -7,8 +7,10 @@
 // no test framework in this repo; exits 1 on any failure.)
 
 import {
+  bundleNudgeNumber,
   calendarDaysBetween,
   capRows,
+  decideForBundle,
   decideForProof,
   groupSendables,
   isLondonMondayMorning,
@@ -20,6 +22,7 @@ import {
   nudgeTemplateIds,
   simulateDryLedger,
   workingDaysBetween,
+  type BundleConfig,
   type CandidateFacts,
   type LedgerRow,
   type NudgeConfig,
@@ -480,6 +483,92 @@ eq('number past a lowered cap still resolves to _final', nudgeTemplateIds('nudge
 {
   const g = groupSendables([facts({ contactEmail: null })])
   eq('null email falls back to conversation identity', g.send.length, 1)
+}
+
+// ── Bundle collapse (migration 000317) ──────────────────────────────────────
+
+{
+  // Two due cards of ONE sent bundle (same customer) → one bundle reminder,
+  // not two suppressed siblings.
+  const a = facts({ proofId: 'pA', conversationId: 'cA', contactEmail: 'team@x.com', bundleId: 'set1', sendEvidenceAt: '2026-06-01T10:00:00Z', anchorAt: '2026-06-01T10:00:00Z' })
+  const b = facts({ proofId: 'pB', conversationId: 'cB', contactEmail: 'team@x.com', bundleId: 'set1', sendEvidenceAt: '2026-06-03T10:00:00Z', anchorAt: '2026-06-03T10:00:00Z' })
+  const g = groupSendables([a, b])
+  eq('bundle cards do not send individually', g.send.length, 0)
+  eq('bundle cards are not suppressed', g.suppressed.length, 0)
+  eq('one bundle group is formed', g.bundles.length, 1)
+  eq('the group keeps both cards', g.bundles[0]?.members.length, 2)
+  eq('the most-overdue card is the rep', g.bundles[0]?.rep.proofId, 'pA')
+}
+
+{
+  // A single due card of a bundle (its siblings viewed / cooling down) still
+  // collapses to a bundle reminder — the reminder covers the whole set, so it
+  // must not go out as a lone per-card send.
+  const a = facts({ proofId: 'pA', contactEmail: 'team@x.com', bundleId: 'set1' })
+  const g = groupSendables([a])
+  eq('a lone due bundle card still collapses', g.bundles.length, 1)
+  eq('and does not send per-card', g.send.length, 0)
+}
+
+{
+  // Bundle + an unrelated standalone for the same customer → two logical items
+  // → human combined message, exactly as two unrelated proofs behave today.
+  const a = facts({ proofId: 'pA', contactEmail: 'team@x.com', bundleId: 'set1' })
+  const b = facts({ proofId: 'pB', contactEmail: 'team@x.com', bundleId: 'set1' })
+  const solo = facts({ proofId: 'pS', contactEmail: 'team@x.com', bundleId: null })
+  const g = groupSendables([a, b, solo])
+  eq('bundle colliding with an unrelated card → all suppressed', g.suppressed.length, 3)
+  eq('no bundle group when it collides', g.bundles.length, 0)
+  eq('nothing sends individually', g.send.length, 0)
+}
+
+{
+  // Two DIFFERENT bundles for the same customer → two logical items → deferred
+  // (rare, but preserves the one-touch-per-customer guarantee).
+  const a = facts({ proofId: 'pA', contactEmail: 'team@x.com', bundleId: 'set1' })
+  const b = facts({ proofId: 'pB', contactEmail: 'team@x.com', bundleId: 'set2' })
+  const g = groupSendables([a, b])
+  eq('two bundles, same customer → suppressed', g.suppressed.length, 2)
+  eq('no bundle groups formed', g.bundles.length, 0)
+}
+
+{
+  // A standalone proof is untouched by the bundle path.
+  const g = groupSendables([facts({ proofId: 'pSolo', bundleId: null })])
+  eq('standalone still sends per-card', g.send.length, 1)
+  eq('and forms no bundle', g.bundles.length, 0)
+}
+
+// ── decideForBundle (bundle cap + cooldown, migration 000317) ────────────────
+
+{
+  const BCFG: BundleConfig = { maxNudges: 3, repeatDays: 3, bankHolidays: HOLIDAYS }
+  eq('first bundle reminder sends', decideForBundle([], BCFG, NOW, 'GBP').action, 'send')
+  eq('bundle reminder number starts at 1', bundleNudgeNumber([]), 1)
+
+  // One prior bundle send yesterday (Tue 9th) — 1 working day < 3 → cooldown.
+  const one = [row({ createdAt: '2026-06-09T08:30:00Z' })]
+  const d1 = decideForBundle(one, BCFG, NOW, 'GBP')
+  check('bundle within cooldown skips', d1.action === 'skip' && d1.outcome === 'skipped_cooldown')
+  eq('bundle number after one send is 2', bundleNudgeNumber(one), 2)
+
+  // Three prior sends → cap spent (mirrors the single-card cap semantics).
+  const capped = [
+    row({ createdAt: '2026-05-13T08:30:00Z' }),
+    row({ createdAt: '2026-05-20T08:30:00Z' }),
+    row({ createdAt: '2026-05-27T08:30:00Z' }),
+  ]
+  const dc = decideForBundle(capped, BCFG, NOW, 'GBP')
+  check('capped bundle skips', dc.action === 'skip' && dc.outcome === 'skipped_capped')
+
+  // USD bundle deferred on the morning run, like a single USD card.
+  const dUsd = decideForBundle([], BCFG, new Date('2026-06-10T08:30:00Z'), 'USD')
+  check('USD bundle defers in the morning', dUsd.action === 'skip' && dUsd.outcome === 'skipped_us_send_window')
+  eq('USD bundle sends in the afternoon', decideForBundle([], BCFG, new Date('2026-06-10T14:30:00Z'), 'USD').action, 'send')
+
+  // Dry rows never count toward the bundle cap/cooldown (capRows filter).
+  eq('dry bundle rows do not advance the number',
+    bundleNudgeNumber([row({ state: 'dry_run', outcome: 'would_send' })]), 1)
 }
 
 // ── Calendar-mode threshold (the live rules carry per-rule calendar flags) ──

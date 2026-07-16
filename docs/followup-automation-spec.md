@@ -260,6 +260,19 @@ with these corrections and guards:
     **none**, emit a single combined review-queue item listing the siblings so
     a human sends one email covering all. Log `suppressed_sibling` — a
     suppression must not advance the suppressed proofs' cap/cooldown clocks.
+  - **Bundle exception (migration 000317).** A "sibling" collision that is
+    actually the cards of ONE sent bundle is no longer suppressed — the cards
+    collapse into a SINGLE bundle reminder, posted on the bundle's own Help
+    Scout thread with the `/bundle/:id?token` review link, and capped/spaced per
+    *set* (3 reminders, same cadence as a single card). A bundle already has a
+    shared link and thread, so the "human sends one combined message" rationale
+    is served automatically. The suppression still applies when a customer's due
+    work spans more than one logical item (two projects, or a bundle plus an
+    unrelated card) — `bundleId ?? proofId` is the item key. A bundle down to
+    its LAST outstanding card (others approved) is not a bundle any more: that
+    card chases per-card on its own `/p/` link (Rob, 2026-07-15). The
+    collapse/decision live in `groupSendables` + `decideForBundle`; the per-set
+    ledger is `proof_nudges` rows with `rule_code = 'bundle'` + `proof_set_id`.
 
 **Send identity & visibility.** Sender resolution: current version's
 `created_by` → `profiles.helpscout_user_id` → the HS conversation assignee →

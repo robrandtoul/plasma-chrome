@@ -96,6 +96,17 @@ export interface CandidateFacts {
    * variant rounds and pre-000314 candidate rows → treated as "not USD".
    */
   currency: string | null
+  /**
+   * The proof set (bundle) this card belongs to, IFF the sender has determined
+   * the bundle is SENT and still has ≥2 outstanding cards — the trigger to
+   * collapse the bundle's due cards into ONE reminder (migration 000317).
+   * Null/undefined for a standalone proof, an unsent bundle, or a bundle down
+   * to its last outstanding card (that lone card chases individually, per Rob's
+   * 2026-07-15 decision). Set by the sender after decideForProof; read only by
+   * groupSendables. Absent on the candidate SQL — a sender concern, not the
+   * database's.
+   */
+  bundleId?: string | null
 }
 
 export interface LedgerRow {
@@ -434,20 +445,59 @@ export interface Sendable<T extends CandidateFacts = CandidateFacts> {
   facts: T
 }
 
+export interface BundleGroup<T extends CandidateFacts = CandidateFacts> {
+  bundleId: string
+  /**
+   * The most-overdue due card — carries the ledger attribution (proof_id +
+   * version) and the greeting context. All members share one customer, so the
+   * choice only affects which row the bundle reminder is booked against.
+   */
+  rep: T
+  /** Every due card of this bundle this run (includes rep). */
+  members: T[]
+}
+
 export interface GroupedSendables<T extends CandidateFacts> {
   send: T[]
   /** outcome 'suppressed_sibling' — logged, and the cap/cooldown clocks must not advance. */
   suppressed: T[]
+  /**
+   * One entry per bundle whose due cards collapse into a SINGLE reminder
+   * (migration 000317). The sender then applies the bundle-level cap/cooldown
+   * (decideForBundle) and, if it sends, posts one reminder on the bundle's own
+   * Help Scout thread with the bundle review link.
+   */
+  bundles: BundleGroup<T>[]
+}
+
+// Most overdue first: oldest send evidence. A null/empty evidence sorts first
+// (empty string < any ISO date), matching the pre-000317 conversation pass.
+function byOverdue<T extends CandidateFacts>(a: T, b: T): number {
+  return (a.sendEvidenceAt ?? '').localeCompare(b.sendEvidenceAt ?? '')
 }
 
 /**
- * Sibling rules (spec):
- *   * Same daily-touch identity (lowercased contact email, falling back to
- *     conversation id, then proof id) with more than one eligible proof →
- *     auto-send NONE of them; a human sends one combined message.
+ * Batch grouping. Three outputs:
+ *   * send        — per-card reminders (standalone proofs, or a bundle down to
+ *                   its last outstanding card, which chases on its own link).
+ *   * suppressed  — outcome 'suppressed_sibling': a customer's daily touch that
+ *                   maps to MORE THAN ONE logical item (two separate projects,
+ *                   or a bundle plus an unrelated card) still defers to a human
+ *                   combined message. The cap/cooldown clocks must not advance.
+ *   * bundles     — one entry per bundle whose due cards collapse into a single
+ *                   reminder (000317), so a bundle's own cards no longer cancel
+ *                   each other out.
+ *
+ * A "logical item" is one bundle OR one standalone proof (`bundleId ?? proofId`).
+ * The tag on `bundleId` is the sender's call (sent bundle + ≥2 outstanding
+ * cards); here it just decides collapse vs. per-card.
+ *
+ * Rules preserved from the pre-bundle version:
+ *   * Same daily-touch identity (lowercased contact email → conversation id →
+ *     proof id) covering >1 logical item → suppress all (human sends one).
  *   * Different identities sharing one conversation (rare) → at most one per
- *     conversation per run; the most overdue (oldest send evidence) wins.
- *     The proof_nudges_convo_daily unique index backstops this in the DB.
+ *     conversation per run; the most overdue wins. The proof_nudges_convo_daily
+ *     unique index backstops this — and the bundle conversation — in the DB.
  */
 export function groupSendables<T extends CandidateFacts>(eligible: T[]): GroupedSendables<T> {
   const byIdentity = new Map<string, T[]>()
@@ -459,37 +509,108 @@ export function groupSendables<T extends CandidateFacts>(eligible: T[]): Grouped
     byIdentity.set(identity, list)
   }
 
-  const send: T[] = []
   const suppressed: T[] = []
+  const survivors: T[] = [] // per-card sendables → conversation pass below
+  const bundleMembers: T[] = [] // collapse by bundleId below
+
   for (const list of byIdentity.values()) {
-    if (list.length > 1) suppressed.push(...list)
-    else send.push(list[0])
+    // More than one logical item for this customer this run → human combined
+    // message (a bundle plus an unrelated card lands here too, preserving the
+    // one-touch-per-customer guarantee). A bundle's own cards share ONE logical
+    // key, so they fall through to the collapse instead of cancelling out.
+    const logicalKeys = new Set(list.map((f) => f.bundleId ?? f.proofId))
+    if (logicalKeys.size > 1) {
+      suppressed.push(...list)
+      continue
+    }
+    if (list[0].bundleId) bundleMembers.push(...list)
+    else survivors.push(list[0])
   }
 
-  // Conversation-level pass over the survivors.
+  // Collapse bundle members by set. Grouping here (not per identity) keeps one
+  // group even if a bundle's cards ever span two contact emails → two identity
+  // buckets. Each set becomes one reminder, booked against its most-overdue card.
+  const byBundle = new Map<string, T[]>()
+  for (const f of bundleMembers) {
+    const list = byBundle.get(f.bundleId!) ?? []
+    list.push(f)
+    byBundle.set(f.bundleId!, list)
+  }
+  const bundles: BundleGroup<T>[] = []
+  for (const [bundleId, members] of byBundle) {
+    const rep = [...members].sort(byOverdue)[0]
+    bundles.push({ bundleId, rep, members })
+  }
+  bundles.sort((a, b) => byOverdue(a.rep, b.rep))
+
+  // Conversation-level pass over the per-card survivors (unchanged behaviour).
   const byConversation = new Map<string, T[]>()
-  for (const f of send) {
+  for (const f of survivors) {
     const key = f.conversationId ?? f.proofId
     const list = byConversation.get(key) ?? []
     list.push(f)
     byConversation.set(key, list)
   }
-  const finalSend: T[] = []
+  const send: T[] = []
   for (const list of byConversation.values()) {
     if (list.length === 1) {
-      finalSend.push(list[0])
+      send.push(list[0])
       continue
     }
-    const sorted = [...list].sort((a, b) =>
-      (a.sendEvidenceAt ?? '').localeCompare(b.sendEvidenceAt ?? ''),
-    )
-    finalSend.push(sorted[0])
+    const sorted = [...list].sort(byOverdue)
+    send.push(sorted[0])
     suppressed.push(...sorted.slice(1))
   }
 
   // Deterministic order: most overdue first.
-  finalSend.sort((a, b) => (a.sendEvidenceAt ?? '').localeCompare(b.sendEvidenceAt ?? ''))
-  return { send: finalSend, suppressed }
+  send.sort(byOverdue)
+  return { send, suppressed, bundles }
+}
+
+// ── Bundle-level decision (migration 000317) ─────────────────────────────────
+
+export interface BundleConfig {
+  /** Auto-reminder cap for the whole bundle. Mirrors a single card's cap. */
+  maxNudges: number
+  /** Base working-day cooldown; stretches per prior reminder like a single card. */
+  repeatDays: number
+  bankHolidays: ReadonlySet<string>
+}
+
+/** Reminder position for a bundle (1-based) — counts sent/sending bundle rows. */
+export function bundleNudgeNumber(bundleLedger: LedgerRow[]): number {
+  return capRows(bundleLedger).length + 1
+}
+
+/**
+ * Cap + cooldown for a whole-bundle reminder. Every due card already passed
+ * decideForProof (threshold, snooze, grace, customer-reply floor, opt-out,
+ * follow-up tag) to be eligible, so the bundle decision owns ONLY what is
+ * genuinely per-bundle: the reminder cap, the stretching cooldown (same curve
+ * as a single card, COOLDOWN_STRETCH_WD per prior reminder), and the USD
+ * afternoon deferral. A customer reply landing on the bundle's own thread is
+ * caught by the sender's live thread-trail re-check before it posts.
+ * `bundleLedger` is this set's rows only (rule_code = 'bundle', by proof_set_id).
+ */
+export function decideForBundle(
+  bundleLedger: LedgerRow[],
+  cfg: BundleConfig,
+  now: Date,
+  currency: string | null,
+): ProofDecision {
+  const counted = capRows(bundleLedger)
+  const today = londonDate(now)
+  if (counted.length >= cfg.maxNudges) return { action: 'skip', outcome: 'skipped_capped' }
+  const repeatDays = cfg.repeatDays + COOLDOWN_STRETCH_WD * Math.max(0, counted.length - 1)
+  if (counted.length > 0) {
+    const newest = counted.reduce((a, b) => (a.createdAt > b.createdAt ? a : b))
+    const since = workingDaysBetween(londonDate(new Date(newest.createdAt)), today, cfg.bankHolidays)
+    if (since < repeatDays) return { action: 'skip', outcome: 'skipped_cooldown' }
+  }
+  if ((currency ?? '').toUpperCase() === 'USD' && londonHour(now) < 13) {
+    return { action: 'skip', outcome: 'skipped_us_send_window' }
+  }
+  return { action: 'send' }
 }
 
 // ── Bank-holiday fallback ────────────────────────────────────────────────────

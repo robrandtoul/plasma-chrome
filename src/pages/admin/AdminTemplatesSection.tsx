@@ -130,6 +130,10 @@ const NUDGE_ORDER = [
   'nudge_viewed_not_actioned',
   'nudge_viewed_not_actioned_2',
   'nudge_viewed_not_actioned_final',
+  // Bundle reminders (000317): one reminder for a whole set of cards.
+  'nudge_bundle',
+  'nudge_bundle_2',
+  'nudge_bundle_final',
   'nudge_approaching_dormant',
   'nudge_stuck_in_progress',
 ]

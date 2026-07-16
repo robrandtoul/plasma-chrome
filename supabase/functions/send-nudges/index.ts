@@ -50,7 +50,9 @@ import {
   type TemplateContext,
 } from '../_shared/replyTemplates.ts'
 import {
+  bundleNudgeNumber,
   capRows,
+  decideForBundle,
   decideForProof,
   EW_BANK_HOLIDAYS_FALLBACK,
   groupSendables,
@@ -95,6 +97,16 @@ const NUDGE_RULES: NudgeRuleSpec[] = [
   },
 ]
 const NUDGE_RULE_BY_CODE = new Map(NUDGE_RULES.map((r) => [r.code, r]))
+
+// Whole-bundle reminders (migration 000317). A bundle's due cards collapse into
+// ONE reminder on the bundle's own Help Scout thread, pointing at the bundle
+// review link. The cadence mirrors a single card's current live dials (000313):
+// up to 3 reminders, 3 working days apart with the same progressive stretch.
+const BUNDLE_RULE_CODE = 'bundle'
+const BUNDLE_TEMPLATE_ID = 'nudge_bundle'
+const BUNDLE_FRESH_SUBJECT = 'Your card proofs from PlasmaDesign'
+const BUNDLE_MAX_NUDGES = 3
+const BUNDLE_REPEAT_DAYS = 3
 // An open run row older than this is treated as crashed (gates live sends);
 // younger means a run is genuinely in flight (this invocation aborts).
 const OPEN_RUN_STALE_MS = 10 * 60 * 1000
@@ -212,6 +224,9 @@ function toFacts(row: CandidateRow): Candidate {
     // afternoon-deferral simply doesn't fire (old behaviour). Order-safe
     // whichever of the migration / this deploy lands first.
     currency: row.currency ?? null,
+    // Tagged below, after decideForProof, for cards in a sent bundle with ≥2
+    // outstanding cards (migration 000317). Null means "chase per-card".
+    bundleId: null,
     row,
   }
 }
@@ -228,6 +243,9 @@ interface LedgerInsert {
   // (migration 000228). Rendered under the Outbox "Needs you"/"Failed" rows.
   detail?: string | null
   helpscout_conversation_id: string | null
+  // The set a bundle-level reminder covers (migration 000317). Null for every
+  // per-card reminder; the bundle cap/cooldown counts sent rows by this column.
+  proof_set_id?: string | null
   rendered_body?: string | null
 }
 
@@ -480,6 +498,106 @@ async function run(admin: Admin): Promise<Response> {
       else if (d.action === 'skip') skips.push({ c, outcome: d.outcome })
       // drops are silent by design (below threshold / rule off / mode≠auto).
     }
+
+    // ── Bundle grouping (migration 000317) ───────────────────────────────────
+    // A card in a SENT bundle with ≥2 still-outstanding cards is tagged with its
+    // set id, so groupSendables collapses the bundle's due cards into ONE
+    // reminder rather than suppressing them as siblings. A bundle down to its
+    // last outstanding card stays untagged and chases per-card on its own link
+    // (Rob, 2026-07-15). Best-effort: any failure leaves cards untagged, which
+    // is exactly the pre-000317 behaviour (siblings suppressed → a human sends).
+    const sentSetById = new Map<
+      string,
+      { id: string; token: string; conversationId: string | null }
+    >()
+    const bundleLedgerBySet = new Map<string, LedgerRow[]>()
+    if (eligible.length > 0) {
+      try {
+        const { data: memberRows } = await admin
+          .from('proofs')
+          .select('id, proof_set_id')
+          .in('id', eligible.map((c) => c.proofId))
+          .not('proof_set_id', 'is', null)
+        const setByProof = new Map<string, string>()
+        for (const r of memberRows ?? []) {
+          setByProof.set(r.id as string, r.proof_set_id as string)
+        }
+        const setIds = [...new Set(setByProof.values())]
+        if (setIds.length > 0) {
+          // Only SENT bundles are chaseable as a unit — an unsent bundle has no
+          // shared review link yet, so its cards keep their own /p/ links.
+          const { data: setRows } = await admin
+            .from('proof_sets')
+            .select('id, token, sent_at, helpscout_conversation_id')
+            .in('id', setIds)
+            .not('sent_at', 'is', null)
+          for (const s of setRows ?? []) {
+            sentSetById.set(s.id as string, {
+              id: s.id as string,
+              token: s.token as string,
+              conversationId: (s.helpscout_conversation_id as string | null),
+            })
+          }
+          const sentSetIds = [...sentSetById.keys()]
+          if (sentSetIds.length > 0) {
+            // Outstanding = still in_progress and not set aside by the customer.
+            const { data: outstanding } = await admin
+              .from('proofs')
+              .select('id, proof_set_id')
+              .in('proof_set_id', sentSetIds)
+              .eq('status', 'in_progress')
+              .is('set_discarded_at', null)
+            const outstandingCount = new Map<string, number>()
+            for (const r of outstanding ?? []) {
+              const setId = r.proof_set_id as string
+              outstandingCount.set(setId, (outstandingCount.get(setId) ?? 0) + 1)
+            }
+            for (const c of eligible) {
+              const setId = setByProof.get(c.proofId)
+              if (setId && sentSetById.has(setId) && (outstandingCount.get(setId) ?? 0) >= 2) {
+                c.bundleId = setId
+              }
+            }
+            // Bundle ledger (rule_code='bundle') for the per-set cap + cooldown.
+            const taggedSetIds = [...new Set(
+              eligible.map((c) => c.bundleId).filter((v): v is string => !!v),
+            )]
+            if (taggedSetIds.length > 0) {
+              const { data: bl } = await admin
+                .from('proof_nudges')
+                .select('proof_set_id, source, state, outcome, created_at')
+                .in('proof_set_id', taggedSetIds)
+                .eq('rule_code', BUNDLE_RULE_CODE)
+              for (const r of bl ?? []) {
+                const setId = r.proof_set_id as string
+                const list = bundleLedgerBySet.get(setId) ?? []
+                list.push({
+                  proofId: setId,
+                  versionId: null,
+                  ruleCode: BUNDLE_RULE_CODE,
+                  source: r.source as 'auto' | 'manual',
+                  state: r.state as string,
+                  outcome: (r.outcome as string | null),
+                  createdAt: r.created_at as string,
+                })
+                bundleLedgerBySet.set(setId, list)
+              }
+              // Dry-run cadence simulation, mirroring the per-card ledger: a
+              // prior would-send bundle row counts as sent so the dry week shows
+              // the bundle cooldown/cap exactly as live would.
+              if (mode === 'dry_run') {
+                for (const [k, v] of bundleLedgerBySet) {
+                  bundleLedgerBySet.set(k, simulateDryLedger(v))
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[send-nudges] bundle grouping lookup failed, chasing per-card', err)
+      }
+    }
+
     const grouped = groupSendables(eligible)
 
     // ── Template bodies (DB rows, falling back to the seeded defaults) ──────
@@ -562,7 +680,12 @@ async function run(admin: Admin): Promise<Response> {
     }
 
     // ── The send loop ────────────────────────────────────────────────────────
-    if (grouped.send.length > 0) {
+    // Per-card chases and whole-bundle chases share ONE send path: the Help
+    // Scout gates (existence / status / recipient / live trail), the claim-first
+    // write, the post, and the send-evidence re-stamp are identical — only the
+    // conversation, the {url}, the template family, and (for a bundle) the set
+    // of covered cards differ. A SendJob carries those differences.
+    if (grouped.send.length > 0 || grouped.bundles.length > 0) {
       const appId = Deno.env.get('HELPSCOUT_APP_ID')?.trim()
       const appSecret = Deno.env.get('HELPSCOUT_APP_SECRET')?.trim()
       if (!appId || !appSecret) throw new Error('Help Scout credentials not configured')
@@ -571,64 +694,63 @@ async function run(admin: Admin): Promise<Response> {
       const baseUrl = (Deno.env.get('PROOF_VIEWER_BASE_URL')?.trim() ?? '').replace(/\/+$/, '')
       const defaultUserId = Number(Deno.env.get('HELPSCOUT_DEFAULT_USER_ID')?.trim() ?? '')
 
-      // Bundle-aware chase links (migration 000311): a member of a SENT
-      // bundle was given the bundle review link, so its reminder should
-      // point back there, not at the card's standalone /p/ page. Members
-      // of an unsent bundle (card sent standalone first, attached later)
-      // keep the /p/ link — that's the only link the customer has.
-      // Best-effort: any failure here just falls back to /p/ links.
-      const bundleByProof = new Map<string, { id: string; token: string }>()
-      try {
-        const { data: memberRows } = await admin
-          .from('proofs')
-          .select('id, proof_set_id')
-          .in('id', grouped.send.map((c) => c.proofId))
-          .not('proof_set_id', 'is', null)
-        const setIds = [...new Set((memberRows ?? []).map((r) => r.proof_set_id as string))]
-        if (setIds.length > 0) {
-          const { data: setRows } = await admin
-            .from('proof_sets')
-            .select('id, token, sent_at')
-            .in('id', setIds)
-            .not('sent_at', 'is', null)
-          const setById = new Map((setRows ?? []).map((s) => [s.id as string, s]))
-          for (const r of memberRows ?? []) {
-            const s = setById.get(r.proof_set_id as string)
-            if (s) bundleByProof.set(r.id as string, { id: s.id as string, token: s.token as string })
-          }
-        }
-      } catch (err) {
-        console.warn('[send-nudges] bundle link lookup failed, using /p/ links', err)
+      // One reminder to send — a per-card chase or a whole-bundle chase.
+      interface SendJob {
+        kind: 'card' | 'bundle'
+        // Ledger proof_id + audit target (the bundle's most-overdue card).
+        proofId: string
+        versionId: string
+        conversationId: string // HS conversation to fetch + post to
+        contactEmail: string | null
+        ruleCode: string // 'sent_never_viewed' | 'viewed_not_actioned' | 'bundle'
+        templateBaseId: string
+        freshSubject: string
+        nudgeNumber: number
+        maxNudges: number
+        link: string // {url} — a /p/ card link or a /bundle/ review link
+        proofSetId: string | null
+        // Current versions to re-stamp with send evidence on a successful send
+        // (all the bundle's due cards; the single card for a per-card chase).
+        stampVersions: Array<{ proofId: string; versionId: string }>
+        // Non-rep bundle cards to log as 'folded_into_bundle' (empty for a card).
+        foldMembers: Array<{ proofId: string; versionId: string; ruleCode: string }>
+        // Greeting + template context.
+        contactFullName: string | null
+        companyName: string | null
+        versionNumber: number | string | null
+        designerHelpscoutUserId: number | null
+        // Outbound-touch inputs for the belt-and-braces customer-reply re-check.
+        sendEvidenceAt: string | null
+        lastStaffReplyAt: string | null
+        priorTouch: LedgerRow[]
       }
 
-      for (const c of grouped.send) {
+      // Set on an HS 429 so both builder loops stop the run (eligible work goes
+      // out on the next run). A shared flag replaces the old inline `break`.
+      let haltForRateLimit = false
+
+      const processReminder = async (job: SendJob): Promise<void> => {
+        const { id: templateId, body: templateBody } = resolveTemplate(
+          job.templateBaseId,
+          job.nudgeNumber,
+          job.maxNudges,
+        )
         // Visible to the catch below: a claim that exists when an HsError
         // surfaces can be flipped to 'failed' (postStaffReply's HsError means
-        // HS definitively rejected the POST — nothing was sent). Only
-        // ambiguous failures (network throws, where the POST may have
-        // landed) leave the claim in 'sending' for human verification.
-        const rule = NUDGE_RULE_BY_CODE.get(c.ruleCode)!
-        // Which reminder this is (1-based) decides the template body, the
-        // fresh-conversation switch, and the link attribution tag. In dry-run
-        // mode the simulated ledger advances it night-over-night.
-        const nudgeNumber = nudgeNumberFor(c, ledger, c.ruleCode)
-        const maxNudges = cfgByRule.get(c.ruleCode)?.automation.max_nudges ?? 2
-        const { id: templateId, body: templateBody } = resolveTemplate(
-          rule.templateId,
-          nudgeNumber,
-          maxNudges,
-        )
+        // HS definitively rejected the POST — nothing was sent). Only ambiguous
+        // failures (network throws, where the POST may have landed) leave the
+        // claim in 'sending' for human verification.
         let claimId: string | null = null
         try {
           // One GET serves four checks: existence, status, recipient, trail.
           let conv: HsConversationWithThreads | null
           try {
-            conv = await fetchConversationWithThreads(token, c.conversationId!)
+            conv = await fetchConversationWithThreads(token, job.conversationId)
           } catch (err) {
             // One 401 retry: tokens can expire mid-batch.
             if (err instanceof HsError && err.status === 401) {
               token = await getAccessToken(appId, appSecret)
-              conv = await fetchConversationWithThreads(token, c.conversationId!)
+              conv = await fetchConversationWithThreads(token, job.conversationId)
             } else {
               throw err
             }
@@ -636,25 +758,47 @@ async function run(admin: Admin): Promise<Response> {
 
           const logSkip = async (outcome: string, detail?: string) => {
             const id = await insertLedgerRow({
-              proof_id: c.proofId,
-              proof_version_id: c.versionId,
-              rule_code: c.ruleCode,
+              proof_id: job.proofId,
+              proof_version_id: job.versionId,
+              rule_code: job.ruleCode,
               template_id: null,
               source: 'auto',
               state: logState,
               outcome,
               detail: detail ?? null,
-              helpscout_conversation_id: c.conversationId,
+              helpscout_conversation_id: job.conversationId,
+              proof_set_id: job.proofSetId,
             })
             if (id) skipped++
+          }
+
+          // Fold rows: the bundle's OTHER due cards are covered by this one
+          // reminder, so they get an informational skipped/dry row rather than
+          // silence. No conversation id (so the convo-daily index ignores them);
+          // never a sending/sent state, so they never count toward any cap.
+          const logFolded = async () => {
+            for (const m of job.foldMembers) {
+              await insertLedgerRow({
+                proof_id: m.proofId,
+                proof_version_id: m.versionId,
+                rule_code: m.ruleCode,
+                template_id: null,
+                source: 'auto',
+                state: logState,
+                outcome: 'folded_into_bundle',
+                detail: 'Covered by the single bundle reminder sent to this customer.',
+                helpscout_conversation_id: null,
+                proof_set_id: job.proofSetId,
+              })
+            }
           }
 
           if (!conv) {
             await logSkip(
               'skipped_conversation_missing',
-              `The linked Help Scout conversation (id ${c.conversationId}) couldn't be found — it may have been deleted or merged. Re-link this proof to the correct conversation.`,
+              `The linked Help Scout conversation (id ${job.conversationId}) couldn't be found — it may have been deleted or merged. Re-link this proof to the correct conversation.`,
             )
-            continue
+            return
           }
           const status = (conv.status ?? '').toLowerCase()
           if (status === 'closed' || status === 'spam') {
@@ -662,13 +806,13 @@ async function run(admin: Admin): Promise<Response> {
               'skipped_closed_conversation',
               `The linked Help Scout conversation is ${status === 'spam' ? 'marked as spam' : 'closed'}, so no reminder was sent. Reopen it in Help Scout if the customer still needs chasing.`,
             )
-            continue
+            return
           }
 
           // Recipient match: the email HS will actually send to vs the proof's
           // contact. Either side missing is a mismatch — fail toward a human.
           const hsEmail = (conv.primaryCustomer?.email ?? '').trim().toLowerCase()
-          const contactEmail = (c.contactEmail ?? '').trim().toLowerCase()
+          const contactEmail = (job.contactEmail ?? '').trim().toLowerCase()
           if (!hsEmail || !contactEmail || hsEmail !== contactEmail) {
             // Spell out the specific clash so the panel can show what to fix —
             // the Help Scout side is only known here, live, and isn't stored.
@@ -683,16 +827,17 @@ async function run(admin: Admin): Promise<Response> {
               mismatchDetail = `Help Scout will email ${hsEmail}, but this proof's contact is ${contactEmail}. Update the contact's email in Admin → Customers so the two match.`
             }
             await logSkip('recipient_mismatch', mismatchDetail)
-            continue
+            return
           }
 
           // Belt-and-braces for architecture rule #3: the live thread trail
-          // catches a customer reply the webhook never delivered.
-          const counted = capRows(ledger).filter((r) => r.proofId === c.proofId)
+          // catches a customer reply the webhook never delivered. For a bundle,
+          // priorTouch is the bundle's own reminder history, so a reply on the
+          // bundle thread newer than our last bundle touch still holds it back.
           const lastOutbound = Math.max(
-            c.sendEvidenceAt ? Date.parse(c.sendEvidenceAt) : -Infinity,
-            c.lastStaffReplyAt ? Date.parse(c.lastStaffReplyAt) : -Infinity,
-            ...counted.map((r) => Date.parse(r.createdAt)),
+            job.sendEvidenceAt ? Date.parse(job.sendEvidenceAt) : -Infinity,
+            job.lastStaffReplyAt ? Date.parse(job.lastStaffReplyAt) : -Infinity,
+            ...job.priorTouch.map((r) => Date.parse(r.createdAt)),
           )
           const newestCustomerThread = (conv._embedded?.threads ?? [])
             .filter((t) => t.createdBy?.type === 'customer' && t.createdAt)
@@ -703,31 +848,23 @@ async function run(admin: Admin): Promise<Response> {
               'skipped_customer_replied',
               `The customer replied on the Help Scout thread after our last message, so the reminder was held back. Open the conversation and reply to them directly.`,
             )
-            continue
+            return
           }
 
           // Render — {first_name} from the HS primaryCustomer so greeting and
           // recipient cannot diverge (they are equal-emailed by now anyway).
           // First token only: some Help Scout customer records carry a full
           // name in the first-name field, and "Hi Yasin Ludvigsen" reads like
-          // a bot where "Hi Yasin" doesn't.
-          // The /p/ link carries ?from=reminder-N: the customer page passes
-          // it through record_proof_view into proof_version_views.source
-          // (000315), so reminder-driven views are attributable directly
-          // instead of inferred from timing windows. Bundle links stay
-          // untouched — the bundle page has its own open tracking.
-          const bundle = bundleByProof.get(c.proofId)
+          // a bot where "Hi Yasin" doesn't. A card link carries
+          // ?from=reminder-N so record_proof_view attributes the open (000315);
+          // a bundle link is left untouched — the bundle page tracks its own opens.
           const ctx: TemplateContext = {
             first_name: ((conv.primaryCustomer?.first ?? '').trim().split(/\s+/)[0] ?? '') ||
-              (c.row.contact_full_name ?? '').trim().split(/\s+/)[0] || '',
-            full_name: c.row.contact_full_name ?? '',
-            company: c.row.company_name,
-            version_number: c.row.version_number ?? '',
-            url: baseUrl
-              ? (bundle
-                ? `${baseUrl}/bundle/${bundle.id}?token=${bundle.token}`
-                : `${baseUrl}/p/${c.proofId}?from=reminder-${nudgeNumber}`)
-              : '',
+              (job.contactFullName ?? '').trim().split(/\s+/)[0] || '',
+            full_name: job.contactFullName ?? '',
+            company: job.companyName,
+            version_number: job.versionNumber ?? '',
+            url: job.link,
             designer_first_name: '',
           }
           // Gate against the TEMPLATE (pre-render): the renderer blanks
@@ -738,7 +875,7 @@ async function run(admin: Admin): Promise<Response> {
               `render_failed: ${problem}`,
               `The reminder couldn't be filled in (${problem}). Check the reminder template in Admin → Templates.`,
             )
-            continue
+            return
           }
           const rendered = renderTemplate(templateBody, ctx)
           // HTML form for the actual Help Scout send — escaped, {url}
@@ -758,43 +895,46 @@ async function run(admin: Admin): Promise<Response> {
           // ones would fragment the customer's inbox threading. Falls back
           // to the same thread if HS ever returns a conversation without a
           // mailbox id — better in-thread than not at all.
-          const freshConversation = nudgeNumber >= 2 && typeof conv.mailboxId === 'number'
+          const freshConversation = job.nudgeNumber >= 2 && typeof conv.mailboxId === 'number'
 
           if (mode === 'dry_run') {
             const id = await insertLedgerRow({
-              proof_id: c.proofId,
-              proof_version_id: c.versionId,
-              rule_code: c.ruleCode,
+              proof_id: job.proofId,
+              proof_version_id: job.versionId,
+              rule_code: job.ruleCode,
               template_id: templateId,
               source: 'auto',
               state: 'dry_run',
               outcome: freshConversation ? 'would_send_new_conversation' : 'would_send',
-              helpscout_conversation_id: c.conversationId,
+              helpscout_conversation_id: job.conversationId,
+              proof_set_id: job.proofSetId,
               rendered_body: rendered,
             })
             if (id) sent++ // counted as a would-send in the run stats
-            continue
+            await logFolded()
+            return
           }
 
           // ── LIVE: claim first (architecture rule #2) ──────────────────────
           claimId = await insertLedgerRow({
-            proof_id: c.proofId,
-            proof_version_id: c.versionId,
-            rule_code: c.ruleCode,
+            proof_id: job.proofId,
+            proof_version_id: job.versionId,
+            rule_code: job.ruleCode,
             template_id: templateId,
             source: 'auto',
             state: 'sending',
             outcome: 'sending',
-            helpscout_conversation_id: c.conversationId,
+            helpscout_conversation_id: job.conversationId,
+            proof_set_id: job.proofSetId,
             rendered_body: rendered,
           })
           if (!claimId) {
-            console.warn('[send-nudges] claim conflict, already handled today', { proofId: c.proofId })
-            continue
+            console.warn('[send-nudges] claim conflict, already handled today', { proofId: job.proofId, kind: job.kind })
+            return
           }
 
           // Sender identity: version designer → conversation assignee → default.
-          const senderId = c.row.designer_helpscout_user_id ??
+          const senderId = job.designerHelpscoutUserId ??
             conv.assignee?.id ??
             (Number.isInteger(defaultUserId) && defaultUserId > 0 ? defaultUserId : null)
           if (!senderId) {
@@ -805,8 +945,8 @@ async function run(admin: Admin): Promise<Response> {
                 detail: `No Help Scout sender could be determined for this reminder (no version designer, no conversation assignee, and no default sender configured). Assign the conversation in Help Scout, or set a default sender.`,
               })
               .eq('id', claimId)
-            errors.push({ proof_id: c.proofId, error: 'no sender identity' })
-            continue
+            errors.push({ proof_id: job.proofId, error: 'no sender identity' })
+            return
           }
 
           const customerId = conv.primaryCustomer?.id
@@ -818,8 +958,8 @@ async function run(admin: Admin): Promise<Response> {
                 detail: `The linked Help Scout conversation has no customer attached, so there was no one to email. Add the customer to the conversation in Help Scout.`,
               })
               .eq('id', claimId)
-            errors.push({ proof_id: c.proofId, error: 'no primary customer' })
-            continue
+            errors.push({ proof_id: job.proofId, error: 'no primary customer' })
+            return
           }
 
           // Reminder #1 replies into the existing thread (deliberately no
@@ -833,13 +973,13 @@ async function run(admin: Admin): Promise<Response> {
           if (freshConversation) {
             newConversationId = await createStaffConversation(token, {
               mailboxId: conv.mailboxId!,
-              subject: rule.freshSubject,
+              subject: job.freshSubject,
               customerId,
               userId: senderId,
               text: renderedHtml,
             })
           } else {
-            threadId = await postStaffReply(token, c.conversationId!, {
+            threadId = await postStaffReply(token, job.conversationId, {
               text: renderedHtml,
               userId: senderId,
               customerId,
@@ -860,16 +1000,21 @@ async function run(admin: Admin): Promise<Response> {
             .eq('id', claimId)
           sent++
 
-          // Send evidence for the next cycle + the proof detail page.
-          // last_reply_sent_by is explicitly NULLed (migration 000215):
-          // an automated reminder re-stamps last_reply_sent_at, and
-          // leaving a previous manual sender's id in place would
-          // attribute this nudge to the wrong designer on the
-          // Activity timeline. NULL renders unattributed.
-          await admin.from('proof_versions')
-            .update({ last_reply_sent_at: new Date().toISOString(), last_reply_sent_by: null })
-            .eq('id', c.versionId)
-            .eq('proof_id', c.proofId)
+          // Send evidence for the next cycle + the proof detail page, stamped on
+          // every card this reminder covered (all the bundle's due cards, or the
+          // single card). last_reply_sent_by is explicitly NULLed (migration
+          // 000215): an automated reminder re-stamps last_reply_sent_at, and
+          // leaving a previous manual sender's id in place would attribute this
+          // nudge to the wrong designer on the Activity timeline. NULL renders
+          // unattributed.
+          const stampedAt = new Date().toISOString()
+          for (const v of job.stampVersions) {
+            await admin.from('proof_versions')
+              .update({ last_reply_sent_at: stampedAt, last_reply_sent_by: null })
+              .eq('id', v.versionId)
+              .eq('proof_id', v.proofId)
+          }
+          await logFolded()
 
           // Audit trail (the ledger row is the canonical record; this makes
           // the send visible in the admin audit view alongside human sends).
@@ -878,14 +1023,18 @@ async function run(admin: Admin): Promise<Response> {
             actor_label: 'Automated reminder',
             action: 'proof.auto_nudge_sent',
             target_type: 'proof',
-            target_id: c.proofId,
+            target_id: job.proofId,
             metadata: {
-              rule_code: c.ruleCode,
+              rule_code: job.ruleCode,
               template_id: templateId,
               nudge_id: claimId,
               helpscout_thread_id: threadId || null,
-              nudge_number: nudgeNumber,
+              nudge_number: job.nudgeNumber,
               new_conversation_id: newConversationId,
+              proof_set_id: job.proofSetId,
+              covered_proof_ids: job.kind === 'bundle'
+                ? job.stampVersions.map((v) => v.proofId)
+                : null,
               automated: true,
             },
           })
@@ -905,18 +1054,114 @@ async function run(admin: Admin): Promise<Response> {
               .eq('state', 'sending')
           }
           if (err instanceof HsError && err.status === 429) {
-            // Rate limited: stop the remainder — eligible proofs go tomorrow.
+            // Rate limited: stop the remainder — eligible work goes next run.
             errors.push({ error: 'hs_429_rate_limited, run stopped early' })
             console.error('[send-nudges] HS 429, stopping run early')
-            break
+            haltForRateLimit = true
+            return
           }
           const detail = err instanceof Error ? err.message : String(err)
-          errors.push({ proof_id: c.proofId, error: detail })
-          console.error('[send-nudges] item failed', { proofId: c.proofId, detail })
+          errors.push({ proof_id: job.proofId, error: detail })
+          console.error('[send-nudges] item failed', { proofId: job.proofId, kind: job.kind, detail })
           // A claim left in 'sending' after a NON-HsError is deliberate: the
           // POST may have landed, so it counts toward the cap and surfaces
           // for human verification (resolve_stuck_nudge); never auto-retried.
         }
+      }
+
+      // Per-card jobs: standalone proofs + any bundle down to its last card.
+      for (const c of grouped.send) {
+        if (haltForRateLimit) break
+        const rule = NUDGE_RULE_BY_CODE.get(c.ruleCode)!
+        // Which reminder this is (1-based) decides the template body, the
+        // fresh-conversation switch, and the link attribution tag. In dry-run
+        // mode the simulated ledger advances it night-over-night.
+        const nudgeNumber = nudgeNumberFor(c, ledger, c.ruleCode)
+        const maxNudges = cfgByRule.get(c.ruleCode)?.automation.max_nudges ?? 2
+        await processReminder({
+          kind: 'card',
+          proofId: c.proofId,
+          versionId: c.versionId,
+          conversationId: c.conversationId!,
+          contactEmail: c.contactEmail,
+          ruleCode: c.ruleCode,
+          templateBaseId: rule.templateId,
+          freshSubject: rule.freshSubject,
+          nudgeNumber,
+          maxNudges,
+          link: baseUrl ? `${baseUrl}/p/${c.proofId}?from=reminder-${nudgeNumber}` : '',
+          proofSetId: null,
+          stampVersions: [{ proofId: c.proofId, versionId: c.versionId }],
+          foldMembers: [],
+          contactFullName: c.row.contact_full_name,
+          companyName: c.row.company_name,
+          versionNumber: c.row.version_number,
+          designerHelpscoutUserId: c.row.designer_helpscout_user_id,
+          sendEvidenceAt: c.sendEvidenceAt,
+          lastStaffReplyAt: c.lastStaffReplyAt,
+          priorTouch: capRows(ledger).filter((r) => r.proofId === c.proofId),
+        })
+      }
+
+      // Bundle jobs: ONE reminder per bundle whose due cards were collapsed
+      // (migration 000317). Its cap + cooldown are per-set (decideForBundle),
+      // separate from any single card's, and it posts on the bundle's own thread
+      // with the bundle review link.
+      for (const bg of grouped.bundles) {
+        if (haltForRateLimit) break
+        const set = sentSetById.get(bg.bundleId)
+        // The set must exist and have somewhere to post. A missing conversation
+        // (older sets predate the field) falls back to the rep's own thread.
+        const conversationId = set?.conversationId ?? bg.rep.conversationId
+        if (!set || !conversationId) continue
+        const bundleLedger = bundleLedgerBySet.get(bg.bundleId) ?? []
+        const decision = decideForBundle(
+          bundleLedger,
+          { maxNudges: BUNDLE_MAX_NUDGES, repeatDays: BUNDLE_REPEAT_DAYS, bankHolidays },
+          now,
+          bg.rep.currency ?? null,
+        )
+        if (decision.action !== 'send') {
+          const id = await insertLedgerRow({
+            proof_id: bg.rep.proofId,
+            proof_version_id: bg.rep.versionId,
+            rule_code: BUNDLE_RULE_CODE,
+            template_id: null,
+            source: 'auto',
+            state: logState,
+            outcome: decision.action === 'skip' ? decision.outcome : 'dropped',
+            helpscout_conversation_id: conversationId,
+            proof_set_id: bg.bundleId,
+          })
+          if (id) skipped++
+          continue
+        }
+        const nudgeNumber = bundleNudgeNumber(bundleLedger)
+        await processReminder({
+          kind: 'bundle',
+          proofId: bg.rep.proofId,
+          versionId: bg.rep.versionId,
+          conversationId,
+          contactEmail: bg.rep.contactEmail,
+          ruleCode: BUNDLE_RULE_CODE,
+          templateBaseId: BUNDLE_TEMPLATE_ID,
+          freshSubject: BUNDLE_FRESH_SUBJECT,
+          nudgeNumber,
+          maxNudges: BUNDLE_MAX_NUDGES,
+          link: baseUrl ? `${baseUrl}/bundle/${set.id}?token=${set.token}` : '',
+          proofSetId: bg.bundleId,
+          stampVersions: bg.members.map((m) => ({ proofId: m.proofId, versionId: m.versionId })),
+          foldMembers: bg.members
+            .filter((m) => m.proofId !== bg.rep.proofId)
+            .map((m) => ({ proofId: m.proofId, versionId: m.versionId, ruleCode: m.ruleCode })),
+          contactFullName: bg.rep.row.contact_full_name,
+          companyName: bg.rep.row.company_name,
+          versionNumber: bg.rep.row.version_number,
+          designerHelpscoutUserId: bg.rep.row.designer_helpscout_user_id,
+          sendEvidenceAt: bg.rep.sendEvidenceAt,
+          lastStaffReplyAt: bg.rep.lastStaffReplyAt,
+          priorTouch: capRows(bundleLedger),
+        })
       }
     }
 
