@@ -192,6 +192,7 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
   ]},
   { name: 'Orders', actions: [
     { code: 'order.created',                  label: 'Order created' },
+    { code: 'order.shipping_updated',         label: 'Delivery details updated' },
     { code: 'order.placed',                   label: 'Order placed for production' },
     { code: 'order.place_sent_not_recorded',  label: 'Order placed but not recorded' },
     { code: 'order.link_reactivated',         label: 'Pay link reactivated' },

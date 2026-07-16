@@ -173,6 +173,19 @@ const ORDERS: FixtureOrder[] = [
     ship_to_address: { line1: 'Globex Campus', city: 'Cypress Creek', region: 'Cypress County', postal_code: 'CC1 2GX', country: 'GB' },
     proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-3', contacts: contact('Globex', 'Hank Scorpio') },
   }),
+  // Shipping readiness — offline paid, international, nothing captured at
+  // checkout: exercises the worklist (no address/phone/name, unknown
+  // destination 'ZZ', card weight unrecorded on a weight-rated lane).
+  order({
+    id: 'o12',
+    status: 'paid',
+    payment_method: 'offline',
+    paid_at: daysAgo(1),
+    ship_dest_country: 'ZZ',
+    amount_shipping: 0,
+    xero_invoice_id: 'xi-3',
+    proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Umbrella Corp', 'Alice Wesker') },
+  }),
   // To order — paid, supplier route, folder + date already saved (ready).
   order({
     id: 'o7',
