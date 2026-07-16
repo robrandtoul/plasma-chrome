@@ -163,7 +163,7 @@ export default function AdminStrandedApprovalsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-ink">Stranded approvals</h2>
+        <h3 className="text-base font-bold text-ink">Stranded approvals</h3>
         <p className="mt-1 text-sm text-ink-mute">
           Proofs where a card was approved on an <strong>earlier</strong> version in a <strong>different material</strong> than the current one. That earlier card can’t be ordered or seen by the customer — it’s stranded. Usually it means two different products were built as versions of each other instead of separate projects.
         </p>

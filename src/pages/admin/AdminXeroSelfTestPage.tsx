@@ -103,7 +103,7 @@ export default function AdminXeroSelfTestPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-ink">Xero invoice self-test</h2>
+        <h3 className="text-base font-bold text-ink">Xero invoice self-test</h3>
         <p className="mt-1 text-sm text-ink-mute">
           Creates one <strong>draft</strong> invoice per product type in the connected Xero org — using the exact same logic a real paid order uses — then checks each one booked to the right item code and shows the tax rate Xero applied. No Stripe checkout, no real money, nothing posted to the ledger.
         </p>

@@ -5,7 +5,7 @@ import { CoreColourSwatch } from '../../components/CoreColourSwatch'
 import { supabase } from '../../lib/supabase'
 import type { LetterpressCoreColour } from '../../lib/types'
 
-// XLSX import flow for /admin/core-colours.
+// XLSX import flow for the Paper colours tab (/admin/catalogue/paper-colours).
 //
 // Three states: upload (file picker) → preview (validation + diff)
 // → applying. Apply commits via the apply_core_colours_import RPC

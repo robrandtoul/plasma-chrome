@@ -358,8 +358,7 @@ export default function AdminCoreColoursPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-ink">Letterpress paper colours</h2>
-          <p className="mt-1 max-w-xl text-sm text-ink-mute">
+          <p className="max-w-xl text-sm text-ink-mute">
             The Colorplan paper palette used for the front, core, and back layers of un-gilded
             letterpress cards. Designers pick from active colours when creating a letterpress proof.
           </p>

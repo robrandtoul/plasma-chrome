@@ -447,8 +447,7 @@ export default function AdminCardWeightsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-ink">Card weights</h2>
-        <p className="mt-1 text-sm text-ink-mute">
+        <p className="text-sm text-ink-mute">
           Single-card weight in grams. The Quote compiler multiplies this by quantity and adds the FedEx box tare weight to derive the parcel weight for shipping rates. Customer-facing pages are unaffected — weights only surface internally on the Quote compiler.
         </p>
         <p className="mt-2 text-xs text-ink-dim">

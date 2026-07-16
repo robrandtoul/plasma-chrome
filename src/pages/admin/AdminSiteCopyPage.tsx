@@ -6,7 +6,8 @@ import LoginCopySection from './LoginCopySection'
 import MetalThicknessNotesSection from './MetalThicknessNotesSection'
 import { FieldRow, inputClass } from './settingsControls'
 
-// /admin/site-copy — every piece of editable wording, in one place.
+// The Site copy tab of /admin/content (previously its own /admin/site-copy
+// page) — every piece of editable wording, in one place.
 // The Customer-facing card moved here wholesale from AdminSettingsPage
 // (same per-field blur-save + audit flow, loading only the columns this
 // page owns); LoginCopySection and MetalThicknessNotesSection are
@@ -135,8 +136,7 @@ export default function AdminSiteCopyPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-xl font-bold text-ink">Site copy</h2>
-        <p className="mt-1 text-sm text-ink-mute">
+        <p className="text-sm text-ink-mute">
           The editable wording on the customer proof page and the designer sign-in page. Changes save automatically and customer-facing values update within a minute.
         </p>
       </div>

@@ -309,8 +309,7 @@ export default function AdminMaterialOptionsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-ink">Material options</h2>
-        <p className="mt-1 text-sm text-ink-mute">
+        <p className="text-sm text-ink-mute">
           The choices offered within a material — wood species, metal finishes. Add a new option (e.g. a new wood species), rename one, set its sort order, or set the Xero item code it invoices as. The customer page picks up new options automatically.
         </p>
         <p className="mt-2 text-xs text-ink-dim">

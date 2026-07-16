@@ -206,8 +206,7 @@ export default function AdminXeroItemCodesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-ink">Xero item codes</h2>
-        <p className="mt-1 text-sm text-ink-mute">
+        <p className="text-sm text-ink-mute">
           The Xero ItemCode each card variant invoices as. When a customer pays, the invoice's product line uses this code so Xero books it to the right inventory item and per-product revenue reports work. Split-name tooling and shipping use their own fixed codes (020, and 050 / 052) — set those nowhere here.
         </p>
         <p className="mt-2 text-xs text-ink-dim">

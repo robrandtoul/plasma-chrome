@@ -234,8 +234,7 @@ export default function AdminLeadTimesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-ink">Lead times</h2>
-        <p className="mt-1 text-sm text-ink-mute">
+        <p className="text-sm text-ink-mute">
           Set the current production lead time per material, in business days. Surfaces on the Quote compiler so the designer sees a live figure beside the material and quantity inputs. Customer-facing pages are unaffected. Clear both fields on a row to remove the recorded lead time for that material.
         </p>
       </div>

@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
 import AdminReminderPerformanceCard from '../../components/AdminReminderPerformanceCard'
 import FollowUpPipelinePanel from '../../components/FollowUpPipelinePanel'
+import AdminStrandedApprovalsReport from './AdminStrandedApprovalsPage'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -726,6 +727,13 @@ export default function AdminNeedsAttentionPage() {
             Reset to defaults
           </button>
         )}
+      </div>
+
+      {/* Stranded-approvals report — previously its own /admin/stranded-approvals
+          page; folded in here (2026-07 admin nav cleanup) because it's the same
+          job as the rest of this page: proofs needing a person to step in. */}
+      <div className="border-t border-line pt-6">
+        <AdminStrandedApprovalsReport />
       </div>
     </div>
   )

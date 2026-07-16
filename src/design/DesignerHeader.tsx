@@ -60,7 +60,9 @@ const NAV: NavItem[] = [
   { id: 'flagged', label: 'Flagged', to: '/flagged' },
   // Feedback deliberately omitted here — it's a right-aligned icon button
   // next to the account pill (see the header) rather than a text nav pill.
-  { id: 'admin',  label: 'Admin',  to: '/admin/users' },
+  // /admin (not a specific tab) so the landing page is decided in one
+  // place — the index redirect in App.tsx (currently → Analytics).
+  { id: 'admin',  label: 'Admin',  to: '/admin' },
 ]
 
 // Map the four legacy designer colours to design-system tokens. The
@@ -508,7 +510,7 @@ function AccountSheet({
           </Link>
           {role === 'admin' && (
             <Link
-              to="/admin/users"
+              to="/admin"
               onClick={onClose}
               className="flex min-h-[56px] items-center gap-3 border-b border-line-soft px-4 text-[15px] text-ink-soft hover:bg-canvas"
             >

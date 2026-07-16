@@ -195,8 +195,7 @@ export default function AdminPrototypePricesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-ink">Prototype prices</h2>
-        <p className="mt-1 text-sm text-ink-mute">
+        <p className="text-sm text-ink-mute">
           The flat prototyping-service fee — up to three exact copies of an approved design — per material family. Charged instead of the per-quantity price grid; shipping is added on top. Changes apply immediately to new prototype orders, with no redeploy.
         </p>
         <p className="mt-2 text-xs text-ink-dim">

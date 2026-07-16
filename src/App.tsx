@@ -45,21 +45,13 @@ const AdminAddOnEditor = lazyWithRetry(() => import('./pages/admin/AdminAddOnEdi
 const AdminActivityPage = lazyWithRetry(() => import('./pages/admin/AdminActivityPage'), 'AdminActivityPage')
 const AdminOrderLogPage = lazyWithRetry(() => import('./pages/admin/AdminOrderLogPage'), 'AdminOrderLogPage')
 const AdminSettingsPage = lazyWithRetry(() => import('./pages/admin/AdminSettingsPage'), 'AdminSettingsPage')
-const AdminTemplatesPage = lazyWithRetry(() => import('./pages/admin/AdminTemplatesPage'), 'AdminTemplatesPage')
 const AdminOutsourcingPage = lazyWithRetry(() => import('./pages/admin/AdminOutsourcingPage'), 'AdminOutsourcingPage')
-const AdminSiteCopyPage = lazyWithRetry(() => import('./pages/admin/AdminSiteCopyPage'), 'AdminSiteCopyPage')
+const AdminContentPage = lazyWithRetry(() => import('./pages/admin/AdminContentPage'), 'AdminContentPage')
 const AdminAiDraftsPage = lazyWithRetry(() => import('./pages/admin/AdminAiDraftsPage'), 'AdminAiDraftsPage')
 const AdminCreateMaterialPage = lazyWithRetry(() => import('./pages/admin/AdminCreateMaterialPage'), 'AdminCreateMaterialPage')
-const AdminCoreColoursPage = lazyWithRetry(() => import('./pages/admin/AdminCoreColoursPage'), 'AdminCoreColoursPage')
 const AdminNeedsAttentionPage = lazyWithRetry(() => import('./pages/admin/AdminNeedsAttentionPage'), 'AdminNeedsAttentionPage')
-const AdminLeadTimesPage = lazyWithRetry(() => import('./pages/admin/AdminLeadTimesPage'), 'AdminLeadTimesPage')
-const AdminCardWeightsPage = lazyWithRetry(() => import('./pages/admin/AdminCardWeightsPage'), 'AdminCardWeightsPage')
-const AdminPrototypePricesPage = lazyWithRetry(() => import('./pages/admin/AdminPrototypePricesPage'), 'AdminPrototypePricesPage')
-const AdminXeroItemCodesPage = lazyWithRetry(() => import('./pages/admin/AdminXeroItemCodesPage'), 'AdminXeroItemCodesPage')
-const AdminMaterialOptionsPage = lazyWithRetry(() => import('./pages/admin/AdminMaterialOptionsPage'), 'AdminMaterialOptionsPage')
-const AdminXeroSelfTestPage = lazyWithRetry(() => import('./pages/admin/AdminXeroSelfTestPage'), 'AdminXeroSelfTestPage')
+const AdminCatalogueDataPage = lazyWithRetry(() => import('./pages/admin/AdminCatalogueDataPage'), 'AdminCatalogueDataPage')
 const AdminAnalyticsPage = lazyWithRetry(() => import('./pages/admin/AdminAnalyticsPage'), 'AdminAnalyticsPage')
-const AdminStrandedApprovalsPage = lazyWithRetry(() => import('./pages/admin/AdminStrandedApprovalsPage'), 'AdminStrandedApprovalsPage')
 const AdminShippingPage = lazyWithRetry(() => import('./pages/admin/AdminShippingPage'), 'AdminShippingPage')
 const DesignDemo = lazyWithRetry(() => import('./design/_demo'), 'DesignDemo')
 
@@ -144,7 +136,7 @@ function AppShell() {
 
         {/* Admin area — all paths under /admin go through the admin shell */}
         <Route path="/admin" element={<RequireAdmin><AdminLayout /></RequireAdmin>}>
-          <Route index element={<Navigate to="users" replace />} />
+          <Route index element={<Navigate to="analytics" replace />} />
           <Route path="analytics" element={<AdminAnalyticsPage />} />
           <Route path="users" element={<AdminUsersPage />} />
           <Route path="customers" element={<CustomersPage />} />
@@ -152,25 +144,32 @@ function AppShell() {
           <Route path="orders" element={<AdminOrderLogPage />} />
           <Route path="shipping" element={<AdminShippingPage />} />
           <Route path="materials" element={<AdminMaterialsPage />} />
-          <Route path="material-options" element={<AdminMaterialOptionsPage />} />
-          <Route path="pricing" element={<AdminPricingPage />} />
-          <Route path="lead-times" element={<AdminLeadTimesPage />} />
-          <Route path="card-weights" element={<AdminCardWeightsPage />} />
-          <Route path="prototype-prices" element={<AdminPrototypePricesPage />} />
-          <Route path="outsourcing" element={<AdminOutsourcingPage />} />
-          <Route path="xero-item-codes" element={<AdminXeroItemCodesPage />} />
-          <Route path="xero-self-test" element={<AdminXeroSelfTestPage />} />
           <Route path="materials/new" element={<AdminCreateMaterialPage />} />
+          <Route path="pricing" element={<AdminPricingPage />} />
           <Route path="pricing/materials/:code" element={<AdminMaterialEditor />} />
           <Route path="pricing/add-ons/:code" element={<AdminAddOnEditor />} />
-          <Route path="core-colours" element={<AdminCoreColoursPage />} />
+          <Route path="catalogue" element={<Navigate to="/admin/catalogue/lead-times" replace />} />
+          <Route path="catalogue/:tab" element={<AdminCatalogueDataPage />} />
+          <Route path="content" element={<Navigate to="/admin/content/messages" replace />} />
+          <Route path="content/:tab" element={<AdminContentPage />} />
+          <Route path="outsourcing" element={<AdminOutsourcingPage />} />
           <Route path="needs-attention" element={<AdminNeedsAttentionPage />} />
-          <Route path="stranded-approvals" element={<AdminStrandedApprovalsPage />} />
-          <Route path="activity" element={<AdminActivityPage />} />
-          <Route path="templates" element={<AdminTemplatesPage />} />
-          <Route path="site-copy" element={<AdminSiteCopyPage />} />
           <Route path="ai-drafts" element={<AdminAiDraftsPage />} />
+          <Route path="activity" element={<AdminActivityPage />} />
           <Route path="settings" element={<AdminSettingsPage />} />
+
+          {/* Old flat-nav URLs (pre the 2026-07 admin nav cleanup) —
+              bookmarks and muscle memory keep working via redirects. */}
+          <Route path="lead-times" element={<Navigate to="/admin/catalogue/lead-times" replace />} />
+          <Route path="card-weights" element={<Navigate to="/admin/catalogue/card-weights" replace />} />
+          <Route path="prototype-prices" element={<Navigate to="/admin/catalogue/prototype-prices" replace />} />
+          <Route path="xero-item-codes" element={<Navigate to="/admin/catalogue/xero-item-codes" replace />} />
+          <Route path="xero-self-test" element={<Navigate to="/admin/catalogue/xero-item-codes" replace />} />
+          <Route path="material-options" element={<Navigate to="/admin/catalogue/material-options" replace />} />
+          <Route path="core-colours" element={<Navigate to="/admin/catalogue/paper-colours" replace />} />
+          <Route path="stranded-approvals" element={<Navigate to="/admin/needs-attention" replace />} />
+          <Route path="templates" element={<Navigate to="/admin/content/messages" replace />} />
+          <Route path="site-copy" element={<Navigate to="/admin/content/site-copy" replace />} />
         </Route>
       </Routes>
     </Suspense>

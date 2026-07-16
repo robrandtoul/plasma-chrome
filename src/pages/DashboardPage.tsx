@@ -2101,7 +2101,7 @@ function LeadTimesChart({
           No lead times set yet.{' '}
           <button
             type="button"
-            onClick={() => navigate('/admin/lead-times')}
+            onClick={() => navigate('/admin/catalogue/lead-times')}
             className="font-medium text-ink underline underline-offset-2 hover:text-brand"
           >
             Set them in Admin
