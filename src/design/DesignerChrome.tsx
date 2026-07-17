@@ -215,25 +215,30 @@ export function DesignerChrome({
           const next = `${h}px`
           if (el.style.height !== next) el.style.height = next
         }
-      } else if (el.style.height) {
-        el.style.removeProperty('height')
+        // NEVER counter-shift while a field is focused: during keyboard
+        // open iOS pans legitimately to lift the input above the keyboard,
+        // and compensating against that becomes a tug-of-war that ends with
+        // iOS abandoning the keyboard entirely (Rob: "no keyboard at all").
+        if (el.style.transform) el.style.removeProperty('transform')
+      } else {
+        if (el.style.height) el.style.removeProperty('height')
+        // iOS sometimes leaves its keyboard pan behind after dismissal —
+        // the entire rendered surface sits shifted up in a layer JS
+        // scrolling cannot reach (the user can literally thumb-drag it
+        // back). With nothing focused the keyboard is gone, so ANY
+        // remaining visualViewport.offsetTop is exactly that stuck pan:
+        // counter-shift the frame by it so the app stays aligned with the
+        // visible area; the shift comes straight off when iOS (or a drag)
+        // restores the pan. The vv 'scroll' listener keeps this live.
+        const pan = Math.round(vv?.offsetTop ?? 0)
+        if (pan > 0) {
+          const shift = `translateY(${pan}px)`
+          if (el.style.transform !== shift) el.style.transform = shift
+        } else if (el.style.transform) {
+          el.style.removeProperty('transform')
+        }
       }
       if (window.scrollY > 0) window.scrollTo(0, 0)
-      // iOS sometimes leaves its own keyboard pan behind after dismissal —
-      // the entire rendered surface sits shifted up in a layer JS scrolling
-      // cannot reach (the user can literally thumb-drag it back; Rob did).
-      // We can't move that layer, but we CAN measure it: visualViewport
-      // .offsetTop is exactly the leftover pan. Counter-shift the frame by
-      // it so the app stays aligned with the visible area; when iOS (or a
-      // thumb drag) restores the pan, the offset reads 0 and the shift
-      // comes straight off. The vv 'scroll' listener keeps this live.
-      const pan = Math.round(vv?.offsetTop ?? 0)
-      if (pan > 0) {
-        const shift = `translateY(${pan}px)`
-        if (el.style.transform !== shift) el.style.transform = shift
-      } else if (el.style.transform) {
-        el.style.removeProperty('transform')
-      }
     }
     // Focus / orientation / app-switch changes settle over a few frames
     // (keyboard animation, webview resize), so re-check shortly after too.
