@@ -429,6 +429,8 @@ The patterns below come from real friction in PV-2026W20. Each one cost a round 
 
 **Future SELECT-only tables need an explicit REVOKE.** `ALTER DEFAULT PRIVILEGES` (000176) grants full CRUD to `authenticated` on every new table by default. If a future migration creates a table that should be SELECT-only for `authenticated` (e.g. a sensitive admin-only catalogue), it must immediately follow the `CREATE TABLE` with `REVOKE INSERT, UPDATE, DELETE ON <table> FROM authenticated`. Forgetting this is silent — RLS may block the writes in practice, but the grant is still unnecessarily permissive and a policy change could expose it.
 
+**supabase-js queries are lazy — a bare `void` builder never runs.** A PostgREST builder only sends its HTTP request when `.then()` is invoked (i.e. when awaited). `void supabase.from(...).update(...)` with no `.then` attached is a no-op: no request, no error, nothing. This shipped as a real bug (July 2026): the chat read-stamps, `feedback_seen_at`, `orders_seen_at` and the bundle `record_proof_set_opened` call were all fired this way and silently never persisted — unread badges cleared locally then resurrected on every reload. Every fire-and-forget write must attach `.then(({ error }) => …)` (log or roll back on error); `supabase.functions.invoke(...)` and `supabase.auth.*` return real promises and are exempt. Applies identically to the Stock Control port's `proofs()` accessor.
+
 ## Working style
 
 - Rob is a non-coder doing his first Claude Code project. Explain each step as you go, avoid jargon, don't assume knowledge of build tooling or SQL beyond the basics.

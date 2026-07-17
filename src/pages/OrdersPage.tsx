@@ -645,10 +645,15 @@ export default function OrdersPage() {
   // orders paid since this stamp (profiles.orders_seen_at, 000325).
   useEffect(() => {
     if (!userId) return
+    // .then makes the lazy builder actually execute (see teamChatStore's
+    // stampSeen note) — without it the header Orders badge never cleared.
     void supabase
       .from('profiles')
       .update({ orders_seen_at: new Date().toISOString() })
       .eq('id', userId)
+      .then(({ error }) => {
+        if (error) console.error('[orders] seen stamp failed:', error.message)
+      })
   }, [userId])
   const [loading, setLoading] = useState(true)
   const [orders, setOrders] = useState<OrderRow[]>([])
