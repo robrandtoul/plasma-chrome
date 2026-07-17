@@ -99,34 +99,45 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
   }
 
   // Drag the bottom-left corner to resize. The panel is anchored top-right, so
-  // width grows leftward (right edge pinned) and height grows downward. Window
-  // listeners rather than pointer-capture so the drag survives the cursor
-  // leaving the small handle; the final size is saved to localStorage on
-  // pointerup (sizeRef holds the latest committed value).
-  function onResizeStart(e: ReactPointerEvent) {
+  // width grows leftward (right edge pinned) and height grows downward. We
+  // capture the pointer to the handle so every move/up — finger or mouse — is
+  // delivered here even once it leaves the little grip; paired with
+  // touch-action:none on the button (below) so iPad Safari doesn't claim the
+  // drag as a page scroll. The final size is saved to localStorage on release
+  // (sizeRef holds the latest committed value).
+  function onResizeStart(e: ReactPointerEvent<HTMLButtonElement>) {
     e.preventDefault()
+    const handle = e.currentTarget
+    const pointerId = e.pointerId
     const startX = e.clientX
     const startY = e.clientY
     const startW = sizeRef.current.w
     const startH = sizeRef.current.h
     const maxW = Math.min(760, window.innerWidth - 16)
     const maxH = window.innerHeight - 96
+    try {
+      handle.setPointerCapture(pointerId)
+    } catch {
+      /* pointer capture unsupported — the listeners below still run */
+    }
     function onMove(ev: PointerEvent) {
       const w = Math.min(maxW, Math.max(MIN_W, startW - (ev.clientX - startX)))
       const h = Math.min(maxH, Math.max(MIN_H, startH + (ev.clientY - startY)))
       setSize({ w, h })
     }
-    function onUp() {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
+    function onEnd() {
+      handle.removeEventListener('pointermove', onMove)
+      handle.removeEventListener('pointerup', onEnd)
+      handle.removeEventListener('pointercancel', onEnd)
       try {
         localStorage.setItem(SIZE_KEY, JSON.stringify(sizeRef.current))
       } catch {
         /* ignore */
       }
     }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
+    handle.addEventListener('pointermove', onMove)
+    handle.addEventListener('pointerup', onEnd)
+    handle.addEventListener('pointercancel', onEnd)
   }
 
   const highlighted = open || active
@@ -216,7 +227,7 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
             onPointerDown={onResizeStart}
             aria-label="Resize chat window"
             title="Drag to resize"
-            className="absolute bottom-0 left-0 z-10 flex h-5 w-5 cursor-nesw-resize items-end justify-start p-1 text-ink-mute/50 transition-colors hover:text-ink-mute"
+            className="absolute bottom-0 left-0 z-10 flex h-[18px] w-[18px] touch-none cursor-nesw-resize items-end justify-start p-1 text-ink-mute/70 transition-colors hover:text-ink"
           >
             <svg
               width="10"
@@ -224,7 +235,7 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
               viewBox="0 0 10 10"
               fill="none"
               stroke="currentColor"
-              strokeWidth="1.2"
+              strokeWidth="1.3"
               strokeLinecap="round"
               aria-hidden="true"
             >
