@@ -169,7 +169,19 @@ export function DesignerChrome({
   const frameRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     const vv = window.visualViewport
-    if (!vv) return
+    // Mobile viewport glue — the one-pass fix after every event-driven
+    // approach failed on device. iOS gives three "viewport height" signals
+    // (100dvh, window.innerHeight, visualViewport.height) that DISAGREE in
+    // the standalone PWA: when the soft keyboard opens the webview resizes
+    // but dvh does not follow, so a dvh-sized frame kept extending
+    // underneath the keyboard (composer + tab bar hidden behind it), and
+    // iOS's caret-chasing pan then stranded the layout when the keyboard
+    // closed. The only signal that always matches what the user can see is
+    // visualViewport.height — so below md the frame's height is driven from
+    // it directly AT ALL TIMES: on every viewport/focus/visibility event,
+    // and verified by a permanent 1s tick so a missed event can never
+    // strand a stale height. Any stray window pan is snapped back in the
+    // same pass. The h-dvh class remains only as the pre-JS first paint.
     const apply = () => {
       const el = frameRef.current
       if (!el) return
@@ -177,21 +189,40 @@ export function DesignerChrome({
         el.style.removeProperty('height')
         return
       }
-      const keyboardHeight = window.innerHeight - vv.height
-      if (keyboardHeight > 80) {
-        el.style.height = `${Math.round(vv.height)}px`
-        // Nothing should stay panned while the frame tracks the keyboard.
-        window.scrollTo(0, 0)
-      } else {
-        el.style.removeProperty('height')
+      const h = Math.round(vv?.height ?? window.innerHeight)
+      if (h > 0) {
+        const next = `${h}px`
+        if (el.style.height !== next) el.style.height = next
       }
+      if (window.scrollY > 0) window.scrollTo(0, 0)
     }
-    vv.addEventListener('resize', apply)
+    // Focus / orientation / app-switch changes settle over a few frames
+    // (keyboard animation, webview resize), so re-check shortly after too.
+    const settle = () => {
+      apply()
+      window.setTimeout(apply, 120)
+      window.setTimeout(apply, 400)
+    }
+    vv?.addEventListener('resize', apply)
+    vv?.addEventListener('scroll', apply)
     window.addEventListener('resize', apply)
+    window.addEventListener('orientationchange', settle)
+    document.addEventListener('focusin', settle)
+    document.addEventListener('focusout', settle)
+    document.addEventListener('visibilitychange', settle)
+    window.addEventListener('pageshow', settle)
+    const tick = window.setInterval(apply, 1000)
     apply()
     return () => {
-      vv.removeEventListener('resize', apply)
+      vv?.removeEventListener('resize', apply)
+      vv?.removeEventListener('scroll', apply)
       window.removeEventListener('resize', apply)
+      window.removeEventListener('orientationchange', settle)
+      document.removeEventListener('focusin', settle)
+      document.removeEventListener('focusout', settle)
+      document.removeEventListener('visibilitychange', settle)
+      window.removeEventListener('pageshow', settle)
+      window.clearInterval(tick)
       frameRef.current?.style.removeProperty('height')
     }
   }, [])
