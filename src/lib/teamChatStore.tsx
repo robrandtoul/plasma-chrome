@@ -86,6 +86,11 @@ interface TeamChatValue {
    *  blip for a general message, a brighter chime when you're @mentioned. */
   soundEnabled: boolean
   setSoundEnabled: (enabled: boolean) => void
+  /** Other people currently typing a message (auto-expires ~4.5s after their
+   *  last keystroke). Never includes yourself. */
+  typingUsers: { userId: string; name: string | null }[]
+  /** Call as the user types to broadcast a throttled "typing" signal. */
+  notifyTyping: () => void
 }
 
 const PINNED_KEY = 'pv:chat-pinned'
@@ -126,6 +131,8 @@ const DEFAULT: TeamChatValue = {
   setDropdownPinned: () => {},
   soundEnabled: true,
   setSoundEnabled: () => {},
+  typingUsers: [],
+  notifyTyping: () => {},
 }
 
 const TeamChatContext = createContext<TeamChatValue>(DEFAULT)
@@ -176,6 +183,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   const [myStatus, setMyStatus] = useState<ChatStatus>('online')
   const [dropdownPinned, setDropdownPinnedState] = useState<boolean>(readPinned)
   const [soundEnabled, setSoundEnabledState] = useState<boolean>(readSound)
+  const [typingUsers, setTypingUsers] = useState<{ userId: string; name: string | null }[]>([])
 
   // Refs the realtime handlers / timers read so the channel never has to be torn
   // down and rebuilt just to see fresh values.
@@ -184,6 +192,8 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   const soundEnabledRef = useRef(soundEnabled)
   soundEnabledRef.current = soundEnabled
   const lastGeneralSoundRef = useRef(0)
+  const typingMapRef = useRef<Map<string, { name: string | null; expiresAt: number }>>(new Map())
+  const lastTypingSentRef = useRef(0)
   const viewingRef = useRef(false)
   const manualRef = useRef<'away' | 'busy' | null>(null)
   const lastActivityRef = useRef(Date.now())
@@ -229,6 +239,17 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     const nowIso = new Date().toISOString()
     seenAtRef.current = nowIso
     void supabase.from('profiles').update({ team_chat_seen_at: nowIso }).eq('id', uid)
+  }
+
+  // Rebuild the typing-users list from the ref, dropping any that have expired.
+  function recomputeTyping() {
+    const now = Date.now()
+    const arr: { userId: string; name: string | null }[] = []
+    for (const [uid, v] of typingMapRef.current) {
+      if (v.expiresAt > now) arr.push({ userId: uid, name: v.name })
+      else typingMapRef.current.delete(uid)
+    }
+    setTypingUsers(arr)
   }
 
   // Load messages + presence identity, then open the shared channel.
@@ -338,6 +359,12 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
           const state = channel.presenceState() as unknown as Record<string, PresenceMeta[]>
           setPresence(reducePresence(state))
         })
+        .on('broadcast', { event: 'typing' }, ({ payload }) => {
+          const p = payload as { userId?: string; name?: string | null }
+          if (!p.userId || p.userId === userIdRef.current) return
+          typingMapRef.current.set(p.userId, { name: p.name ?? null, expiresAt: Date.now() + 4500 })
+          recomputeTyping()
+        })
         .subscribe((status) => {
           if (status === 'SUBSCRIBED') {
             lastActivityRef.current = Date.now()
@@ -384,6 +411,14 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', onVisibility)
       window.clearInterval(tick)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId])
+
+  // Expire stale "typing" entries even if no new broadcast arrives.
+  useEffect(() => {
+    if (!userId) return
+    const t = window.setInterval(recomputeTyping, 1500)
+    return () => window.clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId])
 
@@ -454,6 +489,19 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       } catch {
         /* localStorage unavailable — still works for this session */
       }
+    },
+    typingUsers,
+    notifyTyping: () => {
+      const now = Date.now()
+      if (now - lastTypingSentRef.current < 2500) return
+      lastTypingSentRef.current = now
+      const ch = channelRef.current
+      if (!ch) return
+      void ch.send({
+        type: 'broadcast',
+        event: 'typing',
+        payload: { userId: userIdRef.current, name: profileRef.current.name },
+      })
     },
   }
 

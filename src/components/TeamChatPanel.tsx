@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Send, Trash2, ChevronDown, Check, Volume2, VolumeX } from 'lucide-react'
+import { Send, Trash2, ChevronDown, Check, Volume2, VolumeX, Search as SearchIcon, X } from 'lucide-react'
 import { Textarea } from '../design'
 import { useAuth } from '../lib/auth'
 import { playChatSound } from '../lib/chatSound'
@@ -147,6 +147,13 @@ function SoundToggle() {
   )
 }
 
+function typingLabel(users: { name: string | null }[]): string {
+  const names = users.map((u) => u.name ?? 'Someone')
+  if (names.length === 1) return `${names[0]} is typing…`
+  if (names.length === 2) return `${names[0]} and ${names[1]} are typing…`
+  return 'Several people are typing…'
+}
+
 // Is the caret sitting in an "@query" the composer should autocomplete?
 function detectMention(text: string, caret: number): { at: number; query: string } | null {
   const before = text.slice(0, caret)
@@ -162,11 +169,14 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
   const { session, role } = useAuth()
   const userId = session?.user.id ?? null
   const isAdmin = role === 'admin'
-  const { messages, loading, presence, members, send, remove, setViewing } = useTeamChat()
+  const { messages, loading, presence, members, send, remove, setViewing, typingUsers, notifyTyping } =
+    useTeamChat()
 
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -181,6 +191,15 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     () => members.map((m) => m.name ?? '').filter(Boolean),
     [members],
   )
+  const searchQuery = search.trim().toLowerCase()
+  const shown = useMemo(() => {
+    if (!searchQuery) return messages
+    return messages.filter(
+      (m) =>
+        m.body.toLowerCase().includes(searchQuery) ||
+        (m.author_name ?? '').toLowerCase().includes(searchQuery),
+    )
+  }, [messages, searchQuery])
   const filtered = useMemo(() => {
     if (mentionQuery === null) return []
     const q = mentionQuery.toLowerCase()
@@ -201,6 +220,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
   function onDraftChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const value = e.target.value
     setDraft(value)
+    if (value.trim()) notifyTyping()
     const caret = e.target.selectionStart ?? value.length
     const det = detectMention(value, caret)
     if (det) {
@@ -306,8 +326,51 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             </>
           )}
         </div>
+        <button
+          type="button"
+          onClick={() =>
+            setSearchOpen((v) => {
+              const next = !v
+              if (!next) setSearch('')
+              return next
+            })
+          }
+          aria-pressed={searchOpen}
+          aria-label={searchOpen ? 'Close search' : 'Search messages'}
+          title="Search messages"
+          className={[
+            'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full transition-colors',
+            searchOpen ? 'bg-canvas text-ink' : 'text-ink-mute hover:bg-canvas hover:text-ink',
+          ].join(' ')}
+        >
+          <SearchIcon size={15} aria-hidden="true" />
+        </button>
         <SoundToggle />
       </div>
+
+      {searchOpen && (
+        <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2">
+          <SearchIcon size={14} className="text-ink-mute" aria-hidden="true" />
+          <input
+            type="search"
+            autoFocus
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search messages…"
+            className="flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-dim"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              aria-label="Clear search"
+              className="text-ink-mute hover:text-ink"
+            >
+              <X size={14} aria-hidden="true" />
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Messages */}
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
@@ -323,10 +386,15 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             <p className="text-[14px] text-ink-soft">No messages yet.</p>
             <p className="text-[13px] text-ink-mute">Say hello to the team.</p>
           </div>
+        ) : shown.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center text-center">
+            <p className="text-[14px] text-ink-soft">No matches</p>
+            <p className="text-[13px] text-ink-mute">Nothing matches “{search.trim()}”.</p>
+          </div>
         ) : (
           <ul className="space-y-0">
-            {messages.map((m, i) => {
-              const prev = messages[i - 1]
+            {shown.map((m, i) => {
+              const prev = shown[i - 1]
               const grouped = isGroupedWithPrevious(prev, m)
               const showDay = !prev || dayKey(prev.created_at) !== dayKey(m.created_at)
               const canDelete = m.author_id === userId || isAdmin
@@ -410,6 +478,11 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
 
       {/* Composer */}
       <div className="relative border-t border-line-soft p-2.5">
+        {typingUsers.length > 0 && (
+          <div className="mb-1.5 text-[12px] italic text-ink-mute" aria-live="polite">
+            {typingLabel(typingUsers)}
+          </div>
+        )}
         {/* @mention autocomplete — opens upward above the composer. */}
         {mentionQuery !== null && filtered.length > 0 && (
           <div className="absolute inset-x-2.5 bottom-full z-10 mb-1 max-h-52 overflow-y-auto rounded-[10px] border border-line bg-surface shadow-lg">
