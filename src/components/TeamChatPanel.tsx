@@ -929,7 +929,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
       {/* Thread switcher: the shared room + a private thread per teammate.
           Lives in the shared engine, so the dropdown / dock / page all show
           the same conversation. */}
-      <div className="flex flex-shrink-0 items-center gap-1.5 overflow-x-auto border-b border-line-soft px-3 py-2">
+      <div className="flex flex-shrink-0 flex-wrap items-center gap-1.5 border-b border-line-soft px-3 py-2">
         <ThreadPill
           label="Team"
           active={activeThread === 'team'}

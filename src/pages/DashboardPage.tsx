@@ -3141,7 +3141,11 @@ export default function DashboardPage() {
                 left, Latest activity sidebar on the right. Lives below
                 the unified hero+tile panel so the sidebar starts under
                 the tile row rather than aligning with the hero. */}
-            <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
+            {/* Right rail: 22rem on smaller laptops (the project list is
+                already snug there; chat pills wrap to a second line), widened
+                to 25rem at xl so the docked chat fits all five thread pills +
+                an unread badge on one line and every rail panel breathes. */}
+            <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1fr)_25rem]">
               <div className="min-w-0">
 
                 {/* PR 25: the outer list-card wrapper retired here. Controls

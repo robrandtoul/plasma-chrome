@@ -5,7 +5,9 @@ import { useTeamChat } from '../lib/teamChatStore'
 import TeamChatPanel from './TeamChatPanel'
 
 const SIZE_KEY = 'pv:chat-size'
-const DEFAULT_SIZE = { w: 380, h: 460 }
+// Wide enough that the five thread pills (Team + four names, with an unread
+// badge or two) fit on one line out of the box.
+const DEFAULT_SIZE = { w: 460, h: 460 }
 const MIN_W = 320
 const MIN_H = 300
 
