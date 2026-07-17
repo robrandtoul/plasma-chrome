@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Send, Trash2, ChevronDown, Check } from 'lucide-react'
+import { Send, Trash2, ChevronDown, Check, Volume2, VolumeX } from 'lucide-react'
 import { Textarea } from '../design'
 import { useAuth } from '../lib/auth'
+import { playChatSound } from '../lib/chatSound'
 import {
   useTeamChat,
   CHAT_STATUS_META,
@@ -119,6 +120,30 @@ function StatusPicker() {
         </div>
       )}
     </div>
+  )
+}
+
+function SoundToggle() {
+  const { soundEnabled, setSoundEnabled } = useTeamChat()
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        const next = !soundEnabled
+        setSoundEnabled(next)
+        if (next) playChatSound('general') // confirm + unlock audio on enable
+      }}
+      aria-pressed={soundEnabled}
+      aria-label={soundEnabled ? 'Mute chat sounds' : 'Unmute chat sounds'}
+      title={soundEnabled ? 'Mute chat sounds' : 'Unmute chat sounds'}
+      className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
+    >
+      {soundEnabled ? (
+        <Volume2 size={15} aria-hidden="true" />
+      ) : (
+        <VolumeX size={15} aria-hidden="true" />
+      )}
+    </button>
   )
 }
 
@@ -281,6 +306,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             </>
           )}
         </div>
+        <SoundToggle />
       </div>
 
       {/* Messages */}

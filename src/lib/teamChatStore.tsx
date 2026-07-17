@@ -9,6 +9,7 @@ import {
 import { supabase } from './supabase'
 import { useAuth } from './auth'
 import type { TeamMessage } from './teamChat'
+import { playChatSound } from './chatSound'
 
 // Shared "engine" for the team chat: one live connection (message realtime +
 // presence) mounted once near the app root, so the header badge, the dropdown
@@ -81,15 +82,29 @@ interface TeamChatValue {
    *  outside-clicks, so you can keep chatting while working elsewhere. */
   dropdownPinned: boolean
   setDropdownPinned: (pinned: boolean) => void
+  /** Whether notification sounds play on incoming messages (persisted). A subtle
+   *  blip for a general message, a brighter chime when you're @mentioned. */
+  soundEnabled: boolean
+  setSoundEnabled: (enabled: boolean) => void
 }
 
 const PINNED_KEY = 'pv:chat-pinned'
+const SOUND_KEY = 'pv:chat-sound'
 
 function readPinned(): boolean {
   try {
     return localStorage.getItem(PINNED_KEY) === '1'
   } catch {
     return false
+  }
+}
+
+// Sounds default ON; only an explicit '0' turns them off.
+function readSound(): boolean {
+  try {
+    return localStorage.getItem(SOUND_KEY) !== '0'
+  } catch {
+    return true
   }
 }
 
@@ -109,6 +124,8 @@ const DEFAULT: TeamChatValue = {
   setManualStatus: () => {},
   dropdownPinned: false,
   setDropdownPinned: () => {},
+  soundEnabled: true,
+  setSoundEnabled: () => {},
 }
 
 const TeamChatContext = createContext<TeamChatValue>(DEFAULT)
@@ -158,11 +175,15 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   const [members, setMembers] = useState<TeamMember[]>([])
   const [myStatus, setMyStatus] = useState<ChatStatus>('online')
   const [dropdownPinned, setDropdownPinnedState] = useState<boolean>(readPinned)
+  const [soundEnabled, setSoundEnabledState] = useState<boolean>(readSound)
 
   // Refs the realtime handlers / timers read so the channel never has to be torn
   // down and rebuilt just to see fresh values.
   const userIdRef = useRef<string | null>(userId)
   userIdRef.current = userId
+  const soundEnabledRef = useRef(soundEnabled)
+  soundEnabledRef.current = soundEnabled
+  const lastGeneralSoundRef = useRef(0)
   const viewingRef = useRef(false)
   const manualRef = useRef<'away' | 'busy' | null>(null)
   const lastActivityRef = useRef(Date.now())
@@ -283,6 +304,25 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
             if (row.author_id !== userIdRef.current) {
               if (viewingRef.current) stampSeen()
               else setUnread((n) => n + 1)
+              // Audio cue: a brighter chime if it @mentions me, else a subtle
+              // blip (throttled so a burst doesn't machine-gun).
+              if (soundEnabledRef.current) {
+                const mentions = (payload.new as { mentioned_user_ids?: string[] | null })
+                  .mentioned_user_ids
+                const mentioned =
+                  Array.isArray(mentions) &&
+                  !!userIdRef.current &&
+                  mentions.includes(userIdRef.current)
+                if (mentioned) {
+                  playChatSound('mention')
+                } else {
+                  const now = Date.now()
+                  if (now - lastGeneralSoundRef.current > 2000) {
+                    lastGeneralSoundRef.current = now
+                    playChatSound('general')
+                  }
+                }
+              }
             }
           },
         )
@@ -403,6 +443,16 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
         else localStorage.removeItem(PINNED_KEY)
       } catch {
         /* localStorage unavailable — pin still works for this session */
+      }
+    },
+    soundEnabled,
+    setSoundEnabled: (enabled: boolean) => {
+      setSoundEnabledState(enabled)
+      try {
+        if (enabled) localStorage.removeItem(SOUND_KEY)
+        else localStorage.setItem(SOUND_KEY, '0')
+      } catch {
+        /* localStorage unavailable — still works for this session */
       }
     },
   }
