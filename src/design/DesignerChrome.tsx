@@ -182,6 +182,25 @@ export function DesignerChrome({
     // and verified by a permanent 1s tick so a missed event can never
     // strand a stale height. Any stray window pan is snapped back in the
     // same pass. The h-dvh class remains only as the pre-JS first paint.
+    // Each height signal is only trusted where it's honest. While an editable
+    // element is focused (the only time a keyboard can be up), follow
+    // visualViewport.height — the true visible area during typing. The moment
+    // nothing is focused, hand the frame back to CSS h-dvh: after a
+    // dismissal iOS sometimes NEVER updates visualViewport/innerHeight (they
+    // keep reporting the keyboard's inset — Rob's bar floating at the old
+    // keyboard top), but dvh always reads the full screen in the PWA, so the
+    // release can't be lied to.
+    const editableFocused = () => {
+      const el = document.activeElement
+      if (!el) return false
+      const tag = el.tagName
+      return (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        (el as HTMLElement).isContentEditable
+      )
+    }
     const apply = () => {
       const el = frameRef.current
       if (!el) return
@@ -189,19 +208,29 @@ export function DesignerChrome({
         el.style.removeProperty('height')
         return
       }
-      const h = Math.round(vv?.height ?? window.innerHeight)
-      if (h > 0) {
-        const next = `${h}px`
-        if (el.style.height !== next) el.style.height = next
+      if (editableFocused()) {
+        const h = Math.round(vv?.height ?? window.innerHeight)
+        if (h > 0) {
+          const next = `${h}px`
+          if (el.style.height !== next) el.style.height = next
+        }
+      } else if (el.style.height) {
+        el.style.removeProperty('height')
       }
       if (window.scrollY > 0) window.scrollTo(0, 0)
     }
     // Focus / orientation / app-switch changes settle over a few frames
     // (keyboard animation, webview resize), so re-check shortly after too.
+    // The 1px scroll nudge runs WebKit's clamp path, which un-sticks a
+    // stranded visual pan even though the document itself can't scroll.
     const settle = () => {
       apply()
-      window.setTimeout(apply, 120)
-      window.setTimeout(apply, 400)
+      window.setTimeout(() => {
+        apply()
+        window.scrollTo(0, 1)
+        window.scrollTo(0, 0)
+      }, 150)
+      window.setTimeout(apply, 450)
     }
     vv?.addEventListener('resize', apply)
     vv?.addEventListener('scroll', apply)
