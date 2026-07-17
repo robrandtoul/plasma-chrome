@@ -24,6 +24,7 @@ import { PlasmaWordmark } from './PlasmaWordmark'
 import { Sheet } from './Sheet'
 import { useScrolled } from './useScrolled'
 import { getOrderingEnabled, peekOrderingEnabled } from '../lib/orderingEnabled'
+import ChatMenu from '../components/ChatMenu'
 
 // Shared chrome for every designer-facing page. Sticky top bar with
 // the wordmark on the left, a pill nav strip beside it, an optional
@@ -284,24 +285,9 @@ export function DesignerHeader({
             </button>
           )}
 
-          {/* Team chat — a right-aligned icon by the account button, same
-              treatment as Feedback. Desktop only; on mobile it's in the
-              account sheet (below). */}
-          <Link
-            to="/chat"
-            aria-label={chatUnread > 0 ? `Team chat — ${chatUnread} new` : 'Team chat'}
-            title="Team chat"
-            aria-current={active === 'chat' ? 'page' : undefined}
-            className={[
-              'relative hidden md:flex h-9 w-9 items-center justify-center rounded-full transition-colors',
-              active === 'chat'
-                ? 'text-ink bg-canvas border border-line'
-                : 'text-ink-mute hover:text-ink hover:bg-canvas',
-            ].join(' ')}
-          >
-            <MessagesSquare size={18} aria-hidden="true" />
-            {chatUnread > 0 && <CountBadge count={chatUnread} />}
-          </Link>
+          {/* Team chat — desktop dropdown from the icon; mobile uses the full
+              page via the account sheet (below). */}
+          <ChatMenu active={active === 'chat'} />
 
           {/* Feedback — a right-aligned icon by the account button rather than
               a text pill in the main nav. Desktop only; on mobile it lives in

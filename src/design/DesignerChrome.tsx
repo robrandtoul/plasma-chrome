@@ -2,13 +2,13 @@ import {
   createContext,
   useContext,
   useEffect,
-  useId,
   useState,
   type ReactNode,
 } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
+import { useTeamChat } from '../lib/teamChatStore'
 import EditProfileModal, { type EditProfileSavedPayload } from '../components/EditProfileModal'
 import { FEEDBACK_RESOLVED_STATUSES, isUnseenResolved } from '../lib/feedback'
 import { getApprovedNoOrderCount, peekApprovedNoOrderCount } from '../lib/approvedNoOrder'
@@ -49,12 +49,6 @@ export function useDesignerProfile(): DesignerProfile | null {
 // it on every mount, so it's stale-while-revalidate like the other badges.
 let feedbackUnreadCache: { userId: string; value: number } | null = null
 
-// Same idea for the team-chat unread badge: cache the last count per user so a
-// page switch (which remounts this chrome) doesn't blank the badge and flash it
-// back in. The profile effect refreshes it on mount; a realtime subscription
-// bumps it live while any designer page is open.
-let chatUnreadCache: { userId: string; value: number } | null = null
-
 interface DesignerChromeProps {
   /** Which nav pill in the header is highlighted. Pass null to
    *  highlight nothing (rare — proof-detail / new-version etc.
@@ -93,14 +87,10 @@ export function DesignerChrome({
   const [feedbackUnread, setFeedbackUnread] = useState(() =>
     feedbackUnreadCache?.userId === userId ? feedbackUnreadCache.value : 0,
   )
-  // Count of team-chat messages from others since this user last opened the
-  // chat. Seeded from the warm cache like feedbackUnread.
-  const [chatUnread, setChatUnread] = useState(() =>
-    chatUnreadCache?.userId === userId ? chatUnreadCache.value : 0,
-  )
-  // Per-mount suffix for the chat-unread realtime channel (avoids a StrictMode
-  // double-mount collision, same guard as useLiveProofViews).
-  const chatChannelSuffix = useId()
+  // Team-chat unread comes from the shared chat engine (one live connection for
+  // the whole app), so the badge here, the header dropdown and the /chat page
+  // never disagree.
+  const { unread: chatUnread } = useTeamChat()
   // Count of approved proofs with no order link sent yet — badges the Orders
   // nav pill so the "Links to send" worklist is reachable from any page. Cached
   // (60s) in the helper so it doesn't re-query on every navigation. Seed the
@@ -122,7 +112,7 @@ export function DesignerChrome({
     void (async () => {
       const { data } = await supabase
         .from('profiles')
-        .select('designer_initials, designer_colour, full_name, avatar_url, feedback_seen_at, team_chat_seen_at')
+        .select('designer_initials, designer_colour, full_name, avatar_url, feedback_seen_at')
         .eq('id', userId)
         .single()
       if (cancelled || !data) return
@@ -154,19 +144,6 @@ export function DesignerChrome({
       // (userId is non-null here — the effect early-returns otherwise).
       feedbackUnreadCache = { userId, value: count }
       setFeedbackUnread(count)
-
-      // Team-chat unread: messages newer than the user's seen marker, not their
-      // own. A head + exact-count query (no rows fetched) keeps it cheap.
-      const chatSeenAt = (data.team_chat_seen_at as string | null) ?? null
-      let chatQuery = supabase
-        .from('team_messages')
-        .select('id', { count: 'exact', head: true })
-        .neq('author_id', userId)
-      if (chatSeenAt) chatQuery = chatQuery.gt('created_at', chatSeenAt)
-      const { count: chatCount } = await chatQuery
-      if (cancelled) return
-      chatUnreadCache = { userId, value: chatCount ?? 0 }
-      setChatUnread(chatCount ?? 0)
     })()
     return () => {
       cancelled = true
@@ -189,33 +166,6 @@ export function DesignerChrome({
     void getFlaggedCount().then((n) => { if (!cancelled) setFlaggedUnread(n) })
     return () => { cancelled = true }
   }, [])
-
-  // Live-bump the chat badge while any designer page is open, so a new message
-  // is noticed without navigating or reloading. Own messages don't count. On
-  // navigation this chrome remounts and the profile effect recomputes the exact
-  // count from the freshly-stamped seen marker, so this only needs to increment.
-  useEffect(() => {
-    if (!userId) return
-    const channel = supabase
-      .channel(`chat-unread-${chatChannelSuffix}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'proofs', table: 'team_messages' },
-        (payload) => {
-          const row = payload.new as { author_id?: string | null }
-          if (row.author_id === userId) return
-          setChatUnread((n) => {
-            const next = n + 1
-            chatUnreadCache = { userId, value: next }
-            return next
-          })
-        },
-      )
-      .subscribe()
-    return () => {
-      void supabase.removeChannel(channel)
-    }
-  }, [userId, chatChannelSuffix])
 
   async function handleSignOut() {
     await supabase.auth.signOut()

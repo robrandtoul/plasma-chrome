@@ -1,6 +1,7 @@
 import { Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './lib/auth'
+import { TeamChatProvider } from './lib/teamChatStore'
 import { lazyWithRetry } from './lib/lazyWithRetry'
 import { useQuoteShortcut } from './lib/useQuoteShortcut'
 import RequireAuth from './components/RequireAuth'
@@ -89,8 +90,9 @@ function AppShell() {
     )
   }
   return (
-    <Suspense fallback={<RouteFallback />}>
-      <Routes>
+    <TeamChatProvider>
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
         {/* Public */}
         <Route path="/p/:id" element={<CustomerProofPage />} />
         {/* The bundle review front door (bundle orders Slice 3) — token-gated
@@ -177,7 +179,8 @@ function AppShell() {
           <Route path="site-copy" element={<Navigate to="/admin/content/site-copy" replace />} />
         </Route>
       </Routes>
-    </Suspense>
+      </Suspense>
+    </TeamChatProvider>
   )
 }
 
