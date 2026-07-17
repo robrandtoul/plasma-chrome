@@ -5,7 +5,7 @@ import {
   type ChangeEvent,
   type ReactNode,
 } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import {
   Search,
   Bell,
@@ -38,7 +38,15 @@ import ChatMenu from '../components/ChatMenu'
 // field as a controlled input so the parent can both read the value
 // (to drive filtering) and clear it from elsewhere if needed.
 
-export type DesignerNavId = 'proofs' | 'quote' | 'orders' | 'flagged' | 'feedback' | 'chat' | 'admin'
+export type DesignerNavId =
+  | 'proofs'
+  | 'quote'
+  | 'orders'
+  | 'flagged'
+  | 'feedback'
+  | 'chat'
+  | 'activity'
+  | 'admin'
 export type DesignerHeaderColour = 'blue' | 'teal' | 'coral' | 'purple'
 
 interface NavItem {
@@ -105,11 +113,10 @@ interface DesignerHeaderProps {
   /** Optional content placed to the left of the user pill. Use for
    *  page-specific CTAs like the dashboard's "New proof" button. */
   actions?: ReactNode
-  /** Mobile Activity control (Dashboard activity rail). On the dashboard the
-   *  bottom-bar Activity tab calls onClick to open the sheet in place; on
-   *  other pages it navigates to the dashboard with ?activity=1 instead.
-   *  hasUnseen dots the Activity tab. */
-  mobileBell?: { onClick: () => void; hasUnseen: boolean }
+  /** Dots the mobile Activity tab when the feed has entries newer than the
+   *  user's last visit to /activity. Only the dashboard knows this (it owns
+   *  the feed data), so other pages simply omit it. */
+  activityUnseen?: boolean
   /** Count of team-chat messages from others since the user last opened the
    *  chat. Badges the Chat icon / Chat tab when > 0. */
   chatUnread?: number
@@ -132,7 +139,7 @@ export function DesignerHeader({
   user,
   search,
   actions,
-  mobileBell,
+  activityUnseen = false,
   chatUnread = 0,
   chatMentionUnread = 0,
   ordersUnread = 0,
@@ -140,7 +147,6 @@ export function DesignerHeader({
   onEditProfile,
   onSignOut,
 }: DesignerHeaderProps) {
-  const navigate = useNavigate()
   // Ordering is OFF by default; the Orders nav pill stays hidden until an
   // admin turns the feature on. Fail-safe false (getOrderingEnabled) so a
   // settings outage never reveals the unfinished feature. Seed from the warm
@@ -304,13 +310,7 @@ export function DesignerHeader({
         chatUnread={chatUnread}
         chatMentionUnread={chatMentionUnread}
         ordersUnread={ordersUnread}
-        activityUnseen={mobileBell?.hasUnseen ?? false}
-        onActivity={() => {
-          // On the dashboard the sheet opens in place; anywhere else, go to
-          // the dashboard and ask it to open the sheet on arrival.
-          if (mobileBell) mobileBell.onClick()
-          else navigate('/?activity=1')
-        }}
+        activityUnseen={activityUnseen}
         onMore={() => setAccountOpen(true)}
       />
 
@@ -342,7 +342,6 @@ function BottomTabBar({
   chatMentionUnread,
   ordersUnread,
   activityUnseen,
-  onActivity,
   onMore,
 }: {
   active: DesignerNavId | null
@@ -351,7 +350,6 @@ function BottomTabBar({
   chatMentionUnread: number
   ordersUnread: number
   activityUnseen: boolean
-  onActivity: () => void
   onMore: () => void
 }) {
   const moreActive =
@@ -405,14 +403,17 @@ function BottomTabBar({
           badgeLoud={chatMentionUnread > 0}
         />
       </Link>
-      <button
-        type="button"
-        onClick={onActivity}
+      {/* A real page like the other tabs (was a full-screen sheet with a
+          Close button — jarring next to Chat's page idiom, and it hid the
+          nav). */}
+      <Link
+        to="/activity"
         className="flex flex-1 items-center justify-center"
+        aria-current={active === 'activity' ? 'page' : undefined}
         aria-label="Latest activity"
       >
-        <TabInner label="Activity" Icon={Bell} active={false} showDot={activityUnseen} />
-      </button>
+        <TabInner label="Activity" Icon={Bell} active={active === 'activity'} showDot={activityUnseen} />
+      </Link>
       <button
         type="button"
         onClick={onMore}

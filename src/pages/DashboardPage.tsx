@@ -2208,7 +2208,12 @@ function HeroGreeting() {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export default function DashboardPage() {
+// activityView: render the dashboard's data in "Activity page" mode instead —
+// the /activity route the mobile tab bar links to. Reuses this page's whole
+// data pipeline (the feed is synthesised from five sources), so there's one
+// loader and zero drift; it just renders the three activity panels as a
+// normal page inside the app chrome rather than the dashboard body.
+export default function DashboardPage({ activityView = false }: { activityView?: boolean }) {
   const navigate = useNavigate()
   const { session, role } = useAuth()
   const userId = session?.user.id ?? null
@@ -2279,10 +2284,9 @@ export default function DashboardPage() {
   // without every call site threading it through. Empty = working set.
   const serverSearchRef = useRef('')
 
-  // ── Mobile-only: activity bell + sheet, and the stat-tiles scroll strip.
-  // None of this has any effect at md:+ (the bell is md:hidden, the activity
-  // aside renders as before, and the tiles are a grid not a scroll strip).
-  const [activitySheetOpen, setActivitySheetOpen] = useState(false)
+  // ── Mobile-only: the Activity tab's unseen dot + the stat-tiles scroll
+  // strip. None of this has any effect at md:+ (the activity aside renders
+  // as before, and the tiles are a grid not a scroll strip).
   const [activityTab, setActivityTab] = useState<'activity' | 'followups' | 'leadtimes'>('activity')
   const [activitySeenAt, setActivitySeenAt] = useState<string | null>(() => {
     try { return localStorage.getItem('dash.activity.seenAt') } catch { return null }
@@ -2293,20 +2297,19 @@ export default function DashboardPage() {
   const newestActivityAt = latestEvents[0]?.created_at ?? null
   const activityHasUnseen =
     newestActivityAt != null && (activitySeenAt == null || newestActivityAt > activitySeenAt)
-  function openActivitySheet() {
-    setActivitySheetOpen(true)
-    if (newestActivityAt) {
-      setActivitySeenAt(newestActivityAt)
-      try { localStorage.setItem('dash.activity.seenAt', newestActivityAt) } catch { /* */ }
-    }
-  }
-  // The mobile bottom-bar Activity tab, tapped from another page, lands here
-  // as /?activity=1 — open the sheet on arrival and clean the URL up.
+  // Visiting /activity marks the feed seen (clears the tab dot), exactly as
+  // opening the old sheet did.
+  useEffect(() => {
+    if (!activityView || !newestActivityAt) return
+    setActivitySeenAt(newestActivityAt)
+    try { localStorage.setItem('dash.activity.seenAt', newestActivityAt) } catch { /* */ }
+  }, [activityView, newestActivityAt])
+  // Legacy deep link: the tab used to land here as /?activity=1 and open a
+  // sheet. Activity is a real page now — forward old links there.
   const location = useLocation()
   useEffect(() => {
-    if (new URLSearchParams(location.search).get('activity') === '1') {
-      openActivitySheet()
-      navigate('/', { replace: true })
+    if (!activityView && new URLSearchParams(location.search).get('activity') === '1') {
+      navigate('/activity', { replace: true })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search])
@@ -2881,11 +2884,53 @@ export default function DashboardPage() {
 
   const noResults = !loading && sections.every((s) => s.projects.length === 0)
 
+  // ── /activity page mode: same data, page-shaped rendering. Placed after
+  // every hook so both modes run the identical hook sequence.
+  if (activityView) {
+    return (
+      <DesignerChrome active="activity">
+        <div className="mx-auto w-full max-w-3xl px-4 py-4 sm:px-6">
+          <SegmentedControl
+            value={activityTab}
+            onChange={setActivityTab}
+            options={[
+              { value: 'activity', label: 'Activity' },
+              { value: 'followups', label: 'Follow-ups' },
+              { value: 'leadtimes', label: 'Lead times' },
+            ]}
+          />
+          <div className="mt-3">
+            {loading ? (
+              <div className="flex justify-center py-16">
+                <div
+                  className="h-6 w-6 animate-spin rounded-full border-2 border-line motion-reduce:animate-none"
+                  style={{ borderTopColor: 'var(--c-ink)' }}
+                />
+              </div>
+            ) : (
+              <>
+                {activityTab === 'activity' && (
+                  <LatestActivityPanel events={latestEvents} navigate={navigate} />
+                )}
+                {activityTab === 'followups' && (
+                  <NudgeOutboxPanel projects={projects} onAfterSend={() => loadDashboard()} />
+                )}
+                {activityTab === 'leadtimes' && (
+                  <LeadTimesChart leadTimes={leadTimes} navigate={navigate} />
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </DesignerChrome>
+    )
+  }
+
   return (
     <DesignerChrome
       active="proofs"
       search={{ value: search, onChange: setSearch }}
-      mobileBell={{ onClick: openActivitySheet, hasUnseen: activityHasUnseen }}
+      activityUnseen={activityHasUnseen}
       onProfileSaved={() => {
         // Refetch dashboard rows so the designer-avatar columns on
         // every project tile pick up the new avatar/initials/colour
@@ -3366,34 +3411,6 @@ export default function DashboardPage() {
       </div>
     </div>
 
-    {/* Mobile activity sheet — the right-hand activity aside is hidden
-        below lg:, so the top-bar bell opens this sheet instead. A
-        segmented control swaps between the same three panels; no new
-        data. Self-gates to mobile via the Sheet primitive. */}
-    <Sheet
-      open={activitySheetOpen}
-      onClose={() => setActivitySheetOpen(false)}
-      title="Activity"
-      ariaLabel="Activity"
-      variant="fullscreen"
-    >
-      <div className="px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+16px)]">
-        <SegmentedControl
-          value={activityTab}
-          onChange={setActivityTab}
-          options={[
-            { value: 'activity', label: 'Activity' },
-            { value: 'followups', label: 'Follow-ups' },
-            { value: 'leadtimes', label: 'Lead times' },
-          ]}
-        />
-        <div className="mt-3">
-          {activityTab === 'activity' && <LatestActivityPanel events={latestEvents} navigate={navigate} />}
-          {activityTab === 'followups' && <NudgeOutboxPanel projects={projects} onAfterSend={() => loadDashboard()} />}
-          {activityTab === 'leadtimes' && <LeadTimesChart leadTimes={leadTimes} navigate={navigate} />}
-        </div>
-      </div>
-    </Sheet>
     </DesignerChrome>
   )
 }

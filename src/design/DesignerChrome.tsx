@@ -56,7 +56,7 @@ interface DesignerChromeProps {
   /** Optional controlled search field. Omit to hide. */
   search?: { value: string; onChange: (v: string) => void; placeholder?: string }
   /** Mobile-only bell button in the top bar (Dashboard activity rail). */
-  mobileBell?: { onClick: () => void; hasUnseen: boolean }
+  activityUnseen?: boolean
   /** Called after the EditProfileModal saves. Lets the host page
    *  refetch any data that depends on the profile (e.g. dashboard
    *  rows that show designer-avatar columns). */
@@ -68,7 +68,7 @@ export function DesignerChrome({
   active,
   actions,
   search,
-  mobileBell,
+  activityUnseen,
   onProfileSaved,
   children,
 }: DesignerChromeProps) {
@@ -232,7 +232,7 @@ export function DesignerChrome({
         }}
         search={search}
         actions={headerActions}
-        mobileBell={mobileBell}
+        activityUnseen={activityUnseen}
         // No badge while the user is on the chat itself — the page re-stamps
         // team_chat_seen_at on open and as messages arrive.
         chatUnread={active === 'chat' ? 0 : chatUnread}
