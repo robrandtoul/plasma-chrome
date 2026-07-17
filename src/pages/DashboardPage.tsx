@@ -11,6 +11,7 @@ import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Ey
 // react-virtualized-auto-sizer + a fixed pixel height on top.
 import { Virtuoso } from 'react-virtuoso'
 import { supabase } from '../lib/supabase'
+import { signThumbnails, type ThumbInfo } from '../lib/thumbnails'
 import { useAuth } from '../lib/auth'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
 import { getHotLeadsPanelEnabled } from '../lib/hotLeadsPanelEnabled'
@@ -948,11 +949,8 @@ function ThumbnailPopover({ anchor, imageUrl, projectName }: ThumbnailPopoverPro
 // designer can rest the cursor on the image without dismissing the
 // modal accidentally.
 
-// Signed-URL renditions for one project's first front image, produced by the
-// dashboard-thumbnails edge function: thumb_url (small row thumbnail),
-// preview_url (medium, for the hover popover) and full_url (the untransformed
-// original, for the click-through lightbox where detail matters).
-type ThumbInfo = { thumb_url: string; preview_url: string; full_url: string }
+// ThumbInfo (thumb_url / preview_url / full_url) + the batched signer live in
+// src/lib/thumbnails.ts, shared with the orders page so both read one contract.
 
 interface ThumbnailLightboxProps {
   imageUrl: string
@@ -2368,36 +2366,15 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [])
 
-  // Fetch + sign the row thumbnails for a list of dashboard projects.
-  // Returns a current_version_id → signed-URL Map. Designed to never
-  // throw — every failure path returns an empty Map so missing
-  // thumbnails fall through to the placeholder. The proof-images
-  // bucket is private, so signed URLs are required; createSignedUrls
-  // does the batch in one round-trip with a 1-hour expiry (long
-  // enough that a normally-engaged designer never sees stale URLs
-  // since the next visibility tick refetches the dashboard).
+  // Fetch + sign the row thumbnails for a list of dashboard projects. Returns a
+  // current_version_id → renditions Map (the dashboard rows look up by
+  // current_version_id). Delegates to the shared batched signer, which never
+  // throws — every failure path yields an empty Map so missing thumbnails fall
+  // through to the placeholder. See src/lib/thumbnails.ts.
   async function loadThumbnails(rows: DashboardProject[]): Promise<Map<string, ThumbInfo>> {
-    const versionIds = rows
-      .map((p) => p.current_version_id)
-      .filter((id): id is string => id != null)
-    if (versionIds.length === 0) return new Map()
-
-    // The dashboard-thumbnails edge function picks each version's first front
-    // image and signs three renditions (small thumb / medium preview / full
-    // original) server-side. It replaces the old client-side createSignedUrls()
-    // batch because the Storage SDK only supports image transforms on the
-    // single-URL sign call — so the row thumbnail can now be a ~200px rendition
-    // instead of the full ~200 KB original shrunk into a 72px box.
-    const { data, error } = await supabase.functions.invoke('dashboard-thumbnails', {
-      body: { versionIds },
-    })
-    if (error || !data?.thumbs) return new Map()
-
-    const byVersion = new Map<string, ThumbInfo>()
-    for (const [versionId, urls] of Object.entries(data.thumbs as Record<string, ThumbInfo>)) {
-      if (urls?.thumb_url) byVersion.set(versionId, urls)
-    }
-    return byVersion
+    return signThumbnails(
+      rows.map((p) => p.current_version_id).filter((id): id is string => id != null),
+    )
   }
 
   // Ordering tiles: read the ordering master switch + order counts once on

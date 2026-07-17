@@ -12,7 +12,7 @@ import { getOrderingEnabled } from '../lib/orderingEnabled'
 import { keepApprovedNoOrder, invalidateApprovedNoOrderCount } from '../lib/approvedNoOrder'
 import { materialNeedsStockColour, fetchStockColours, type StockColour } from '../lib/stockColours'
 import { downloadBlob } from '../lib/downloadFile'
-import type { GridImage } from '../components/ImageGrid'
+import { signThumbnails, type ThumbInfo } from '../lib/thumbnails'
 import type { Currency } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import OrdersPipelineCard from '../components/OrdersPipelineCard'
@@ -660,11 +660,11 @@ export default function OrdersPage() {
   // True when the 300-row fetch ceiling was hit, so the page can say so rather
   // than silently dropping older orders (the full history lives in the log).
   const [capped, setCapped] = useState(false)
-  const [thumbs, setThumbs] = useState<Record<string, GridImage | null>>({})
+  const [thumbs, setThumbs] = useState<Record<string, ThumbInfo | null>>({})
   // Newest artwork per material within a proof, keyed `${proofId}:${materialId}`.
   // Lets an order card show its OWN material's artwork when the proof's current
   // version is a different material (see thumbForOrder).
-  const [materialThumbs, setMaterialThumbs] = useState<Record<string, GridImage>>({})
+  const [materialThumbs, setMaterialThumbs] = useState<Record<string, ThumbInfo>>({})
   const [busyId, setBusyId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   // The awaiting-payment order being recorded as paid offline (bank transfer),
@@ -748,13 +748,11 @@ export default function OrdersPage() {
 
       // Representative thumbnail per proof — a recognition aid so a card can be
       // identified at a glance; the card links to the proof for the authoritative
-      // approved artwork. customer-proof-images returns EVERY version's images
-      // (the customer page has a version switcher), so scope the thumbnail to the
-      // CURRENT version — otherwise an earlier version's artwork shows (e.g. a v1
-      // plastic card for a proof now approved in wood). Falls back to the first
-      // non-QR image when the current version can't be resolved. Shared by every
-      // card type that shows a thumbnail: To order, Being revised, Awaiting
-      // payment, and the Links-to-send worklist.
+      // approved artwork. Scoped to the CURRENT version so an earlier version's
+      // artwork doesn't show (e.g. a v1 plastic card for a proof now approved in
+      // wood), falling back to the newest version when the current one has no
+      // artwork yet. Shared by every card type that shows a thumbnail: To order,
+      // Being revised, Awaiting payment, and the Links-to-send worklist.
       //
       // Alongside that, map each material appearing in the proof's versions to
       // its newest artwork (materialThumbs). A proof can carry orders in TWO
@@ -763,44 +761,82 @@ export default function OrdersPage() {
       // cards resolve by the ORDER's material first (thumbForOrder). The current
       // version wins for its own material, keeping today's thumbnail whenever
       // the materials agree.
+      //
+      // Performance (same approach as the dashboard): one query for every
+      // version across all the requested proofs, then ONE dashboard-thumbnails
+      // call that signs a small ~200px rendition per version server-side — not
+      // a per-proof customer-proof-images round trip each downloading the full
+      // originals. See src/lib/thumbnails.ts.
       const loadThumbs = async (proofIds: string[]) => {
-        await Promise.all(
-          proofIds.map(async (proofId) => {
-            try {
-              const [{ data: versionRows }, { data: imgData }] = await Promise.all([
-                supabase
-                  .from('proof_versions')
-                  .select('id, material_id, is_current')
-                  .eq('proof_id', proofId)
-                  .order('created_at', { ascending: false }),
-                supabase.functions.invoke<{ images: GridImage[] }>('customer-proof-images', { body: { proofId } }),
-              ])
-              const versions = (versionRows ?? []) as { id: string; material_id: string | null; is_current: boolean }[]
-              const currentVersion = versions.find((v) => v.is_current) ?? null
-              const nonQr = ((imgData?.images ?? []) as (GridImage & { proof_version_id?: string })[])
-                .filter((img) => img.is_qr_code !== true)
-              const firstOf = (versionId: string) => nonQr.find((img) => img.proof_version_id === versionId) ?? null
-              const current = (currentVersion ? firstOf(currentVersion.id) : null) ?? nonQr[0] ?? null
-              const byMaterial: Record<string, GridImage> = {}
-              if (currentVersion?.material_id && current) byMaterial[currentVersion.material_id] = current
-              for (const v of versions) {
-                if (!v.material_id || byMaterial[v.material_id]) continue
-                const img = firstOf(v.id)
-                if (img) byMaterial[v.material_id] = img
-              }
-              if (!cancelled) {
-                setThumbs((prev) => ({ ...prev, [proofId]: current }))
-                setMaterialThumbs((prev) => {
-                  const next = { ...prev }
-                  for (const [materialId, img] of Object.entries(byMaterial)) next[`${proofId}:${materialId}`] = img
-                  return next
-                })
-              }
-            } catch {
-              // ignore — card renders without a thumbnail
+        if (proofIds.length === 0) return
+        try {
+          const { data: versionRows } = await supabase
+            .from('proof_versions')
+            .select('id, proof_id, material_id, is_current')
+            .in('proof_id', proofIds)
+            .order('created_at', { ascending: false })
+          const versions = (versionRows ?? []) as {
+            id: string; proof_id: string; material_id: string | null; is_current: boolean
+          }[]
+
+          // Per proof, pick the versions we need a thumbnail for: the current
+          // one, the newest one overall (a belt-and-braces fallback for a proof
+          // whose current version predates its newest), and the newest version
+          // in each material. `versions` is newest-first, so the first entry
+          // seen for a proof / material is the newest.
+          const currentByProof = new Map<string, string>()
+          const newestByProof = new Map<string, string>()
+          const materialVersion = new Map<string, string>() // `${proofId}:${materialId}` -> versionId
+          for (const v of versions) {
+            if (!newestByProof.has(v.proof_id)) newestByProof.set(v.proof_id, v.id)
+            if (v.is_current && !currentByProof.has(v.proof_id)) currentByProof.set(v.proof_id, v.id)
+            if (v.material_id) {
+              const key = `${v.proof_id}:${v.material_id}`
+              if (!materialVersion.has(key)) materialVersion.set(key, v.id)
             }
-          }),
-        )
+          }
+
+          // One batched, server-side-transformed sign for every version we need.
+          const wanted = new Set<string>([
+            ...currentByProof.values(),
+            ...newestByProof.values(),
+            ...materialVersion.values(),
+          ])
+          const signed = await signThumbnails(Array.from(wanted))
+          if (cancelled) return
+
+          setThumbs((prev) => {
+            const next = { ...prev }
+            for (const proofId of proofIds) {
+              const currentId = currentByProof.get(proofId)
+              const newestId = newestByProof.get(proofId)
+              let info: ThumbInfo | undefined =
+                (currentId ? signed.get(currentId) : undefined) ??
+                (newestId ? signed.get(newestId) : undefined)
+              // Last resort: any material thumbnail we signed for this proof.
+              if (!info) {
+                for (const [key, versionId] of materialVersion) {
+                  if (key.startsWith(`${proofId}:`)) {
+                    const m = signed.get(versionId)
+                    if (m) { info = m; break }
+                  }
+                }
+              }
+              next[proofId] = info ?? null
+            }
+            return next
+          })
+          setMaterialThumbs((prev) => {
+            const next = { ...prev }
+            for (const [key, versionId] of materialVersion) {
+              const info = signed.get(versionId)
+              if (info) next[key] = info
+            }
+            return next
+          })
+        } catch {
+          // ignore — cards render without a thumbnail
+        }
       }
 
       // Approved-but-not-ordered proofs. Cross-reference every proof that has
@@ -1061,7 +1097,7 @@ export default function OrdersPage() {
   // steel order wears the letterpress artwork that happens to be current. The
   // Being-revised card deliberately does NOT use this: its job is to show the
   // artwork that will replace what was bought, i.e. always the current version.
-  function thumbForOrder(o: OrderRow): GridImage | null {
+  function thumbForOrder(o: OrderRow): ThumbInfo | null {
     return (o.material_id ? materialThumbs[`${o.proof_id}:${o.material_id}`] : undefined) ?? thumbs[o.proof_id] ?? null
   }
 
@@ -2163,7 +2199,7 @@ function OrderCard({
   proofMaterialCode,
 }: {
   order: OrderRow
-  thumb: GridImage | null
+  thumb: ThumbInfo | null
   route: 'in_house' | 'supplier' | null
   supplierLabels: string[]
   supplierCount: number
@@ -2384,7 +2420,7 @@ function OrderCard({
       <div className="flex flex-col gap-4 md:flex-row md:items-start">
         {thumb && (
           <img
-            src={thumb.signed_url}
+            src={thumb.thumb_url}
             alt="Proof artwork"
             className="h-20 w-20 shrink-0 rounded-lg object-cover ring-1 ring-line"
           />
@@ -2736,7 +2772,7 @@ function AwaitingPaymentCard({
   onRecordOffline,
 }: {
   order: OrderRow
-  thumb: GridImage | null
+  thumb: ThumbInfo | null
   expired: boolean
   busy: boolean
   copied: boolean
@@ -2827,7 +2863,7 @@ function AwaitingPaymentCard({
         )}
         {thumb && (
           <img
-            src={thumb.signed_url}
+            src={thumb.thumb_url}
             alt="Proof artwork"
             className="h-20 w-20 shrink-0 rounded-lg object-cover ring-1 ring-line"
           />
@@ -2951,7 +2987,7 @@ function LinkToSendCard({
   onClearNote,
 }: {
   item: ApprovedNoOrderItem
-  thumb: GridImage | null
+  thumb: ThumbInfo | null
   preparing: boolean
   canCreateOrder: boolean
   onCreate: () => void
@@ -2974,7 +3010,7 @@ function LinkToSendCard({
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         {thumb && (
           <img
-            src={thumb.signed_url}
+            src={thumb.thumb_url}
             alt="Proof artwork"
             className="h-20 w-20 shrink-0 rounded-lg object-cover ring-1 ring-line"
           />
