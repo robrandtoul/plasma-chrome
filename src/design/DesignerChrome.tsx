@@ -12,7 +12,15 @@ import { useAuth } from '../lib/auth'
 import { useTeamChat } from '../lib/teamChatStore'
 import EditProfileModal, { type EditProfileSavedPayload } from '../components/EditProfileModal'
 import PushNudge from '../components/PushNudge'
+import ViewportDebugOverlay from '../components/ViewportDebugOverlay'
 import { getFlaggedCount, peekFlaggedCount } from '../lib/flaggedCount'
+import {
+  describeTarget,
+  glueMode,
+  installDebugProbes,
+  viewportDebugEnabled,
+  vpLog,
+} from '../lib/viewportDebug'
 import { DesignerHeader, type DesignerNavId, type DesignerHeaderColour } from './DesignerHeader'
 
 // Shared chrome wrapper for every designer-facing page. Owns the
@@ -167,8 +175,26 @@ export function DesignerChrome({
   // the meta, innerHeight shrinks in step with the visual viewport, the
   // measured keyboard height stays ~0, and this never fires.
   const frameRef = useRef<HTMLDivElement | null>(null)
+  // TEMPORARY: passive diagnostics (touchstart / keyboard-presented /
+  // focused-node-integrity / programmatic-focus tripwire). No-op unless the
+  // debug overlay is enabled. Runs in EVERY glue mode — pure observation.
+  useEffect(() => installDebugProbes(), [])
   useEffect(() => {
     const vv = window.visualViewport
+    // TEMPORARY debug instrumentation (see src/lib/viewportDebug.ts). The
+    // glue can run in three modes so one Netlify preview can A/B the
+    // behaviour on-device without a rebuild:
+    //   main — exactly the behaviour main shipped (below, unchanged)
+    //   off  — install NOTHING: pure CSS h-dvh frame, no listeners at all
+    //   blur — hands-off while an editable element is focused (no height
+    //          write, no transform, no scroll snap, no nudge); restore only
+    //          when nothing is focused
+    // vpLog() calls are no-ops in effect (array push) unless the overlay is
+    // reading them; they exist so on-device screenshots show exactly which
+    // mutation fired when, relative to focus and the vv events.
+    const mode = glueMode()
+    vpLog('glue-init', `mode=${mode}`)
+    if (mode === 'off') return
     // Mobile viewport glue — the one-pass fix after every event-driven
     // approach failed on device. iOS gives three "viewport height" signals
     // (100dvh, window.innerHeight, visualViewport.height) that DISAGREE in
@@ -201,7 +227,7 @@ export function DesignerChrome({
         (el as HTMLElement).isContentEditable
       )
     }
-    const apply = () => {
+    const apply = (why: string) => {
       const el = frameRef.current
       if (!el) return
       if (!window.matchMedia('(max-width: 767px)').matches) {
@@ -209,19 +235,34 @@ export function DesignerChrome({
         el.style.removeProperty('transform')
         return
       }
-      if (editableFocused()) {
+      const focused = editableFocused()
+      // blur mode: while an editable element is focused, do NOTHING AT ALL —
+      // no height write, no transform, no scroll snap. The hypothesis under
+      // test is that ANY focus-time mutation is what makes iOS abandon
+      // keyboard presentation.
+      if (mode === 'blur' && focused) return
+      if (focused) {
         const h = Math.round(vv?.height ?? window.innerHeight)
         if (h > 0) {
           const next = `${h}px`
-          if (el.style.height !== next) el.style.height = next
+          if (el.style.height !== next) {
+            el.style.height = next
+            vpLog('height-write', `${next} (${why})`)
+          }
         }
         // NEVER counter-shift while a field is focused: during keyboard
         // open iOS pans legitimately to lift the input above the keyboard,
         // and compensating against that becomes a tug-of-war that ends with
         // iOS abandoning the keyboard entirely (Rob: "no keyboard at all").
-        if (el.style.transform) el.style.removeProperty('transform')
+        if (el.style.transform) {
+          el.style.removeProperty('transform')
+          vpLog('transform-clear', why)
+        }
       } else {
-        if (el.style.height) el.style.removeProperty('height')
+        if (el.style.height) {
+          el.style.removeProperty('height')
+          vpLog('height-release', why)
+        }
         // iOS sometimes leaves its keyboard pan behind after dismissal —
         // the entire rendered surface sits shifted up in a layer JS
         // scrolling cannot reach (the user can literally thumb-drag it
@@ -233,45 +274,91 @@ export function DesignerChrome({
         const pan = Math.round(vv?.offsetTop ?? 0)
         if (pan > 0) {
           const shift = `translateY(${pan}px)`
-          if (el.style.transform !== shift) el.style.transform = shift
+          if (el.style.transform !== shift) {
+            el.style.transform = shift
+            vpLog('counter-shift', `${pan}px (${why})`)
+          }
         } else if (el.style.transform) {
           el.style.removeProperty('transform')
+          vpLog('counter-shift-clear', why)
         }
       }
-      if (window.scrollY > 0) window.scrollTo(0, 0)
+      if (window.scrollY > 0) {
+        vpLog('scroll-snap', `scrollY=${Math.round(window.scrollY)} (${why})`)
+        window.scrollTo(0, 0)
+      }
     }
     // Focus / orientation / app-switch changes settle over a few frames
     // (keyboard animation, webview resize), so re-check shortly after too.
     // The 1px scroll nudge runs WebKit's clamp path, which un-sticks a
     // stranded visual pan even though the document itself can't scroll.
-    const settle = () => {
-      apply()
+    // (In blur mode the nudge is suppressed while a field is focused — a
+    // scroll during keyboard presentation is itself a prime suspect.)
+    const settle = (why: string) => {
+      apply(why)
       window.setTimeout(() => {
-        apply()
-        window.scrollTo(0, 1)
-        window.scrollTo(0, 0)
+        apply(`${why}+150ms`)
+        if (mode === 'main' || !editableFocused()) {
+          vpLog('scroll-nudge', why)
+          window.scrollTo(0, 1)
+          window.scrollTo(0, 0)
+        }
       }, 150)
-      window.setTimeout(apply, 450)
+      window.setTimeout(() => apply(`${why}+450ms`), 450)
     }
-    vv?.addEventListener('resize', apply)
-    vv?.addEventListener('scroll', apply)
-    window.addEventListener('resize', apply)
-    window.addEventListener('orientationchange', settle)
-    document.addEventListener('focusin', settle)
-    document.addEventListener('focusout', settle)
-    document.addEventListener('visibilitychange', settle)
-    window.addEventListener('pageshow', settle)
-    const tick = window.setInterval(apply, 1000)
-    apply()
+    const vals = () =>
+      `vv.h=${vv ? Math.round(vv.height) : '–'} vv.top=${vv ? Math.round(vv.offsetTop) : '–'} ih=${window.innerHeight} sy=${Math.round(window.scrollY)}`
+    const onVvResize = () => {
+      vpLog('vv-resize', vals())
+      apply('vv-resize')
+    }
+    const onVvScroll = () => {
+      vpLog('vv-scroll', vals())
+      apply('vv-scroll')
+    }
+    const onWinResize = () => {
+      vpLog('win-resize', vals())
+      apply('win-resize')
+    }
+    const onOrientation = () => {
+      vpLog('orientationchange', vals())
+      settle('orientation')
+    }
+    const onFocusIn = (e: FocusEvent) => {
+      vpLog('focusin', `${describeTarget(e.target)} ${vals()}`)
+      settle('focusin')
+    }
+    const onFocusOut = (e: FocusEvent) => {
+      vpLog('focusout', `${describeTarget(e.target)} ${vals()}`)
+      settle('focusout')
+    }
+    const onVisibility = () => {
+      vpLog('visibilitychange', document.visibilityState)
+      settle('visibility')
+    }
+    const onPageShow = () => {
+      vpLog('pageshow', vals())
+      settle('pageshow')
+    }
+    vv?.addEventListener('resize', onVvResize)
+    vv?.addEventListener('scroll', onVvScroll)
+    window.addEventListener('resize', onWinResize)
+    window.addEventListener('orientationchange', onOrientation)
+    document.addEventListener('focusin', onFocusIn)
+    document.addEventListener('focusout', onFocusOut)
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('pageshow', onPageShow)
+    const tick = window.setInterval(() => apply('tick'), 1000)
+    apply('mount')
     return () => {
-      vv?.removeEventListener('resize', apply)
-      vv?.removeEventListener('scroll', apply)
-      window.removeEventListener('resize', apply)
-      window.removeEventListener('orientationchange', settle)
-      document.removeEventListener('focusin', settle)
-      document.removeEventListener('focusout', settle)
-      document.removeEventListener('visibilitychange', settle)
-      window.removeEventListener('pageshow', settle)
+      vv?.removeEventListener('resize', onVvResize)
+      vv?.removeEventListener('scroll', onVvScroll)
+      window.removeEventListener('resize', onWinResize)
+      window.removeEventListener('orientationchange', onOrientation)
+      document.removeEventListener('focusin', onFocusIn)
+      document.removeEventListener('focusout', onFocusOut)
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pageshow', onPageShow)
       window.clearInterval(tick)
       frameRef.current?.style.removeProperty('height')
       frameRef.current?.style.removeProperty('transform')
@@ -293,6 +380,7 @@ export function DesignerChrome({
           desktop layout is byte-for-byte unchanged. */}
       <div
         ref={frameRef}
+        data-app-frame=""
         className="max-md:relative max-md:flex max-md:h-dvh max-md:flex-col max-md:overflow-hidden"
       >
         {/* The scroller is itself a flex column on mobile so a page can opt
@@ -350,6 +438,11 @@ export function DesignerChrome({
           when push is possible on this device and undecided). Staff chrome
           only; customers never see it. */}
       <PushNudge />
+      {/* TEMPORARY on-device viewport diagnostics — on by default on Netlify
+          deploy previews, off in production unless ?debug=1 was visited.
+          Portalled to document.body so the frame's inline styles never move
+          it. Removed once the keyboard fix is confirmed on-device. */}
+      {viewportDebugEnabled() && <ViewportDebugOverlay />}
       {/* Mobile-only bottom clearance so page content can scroll clear of
           the tab bar overlaying the frame's bottom edge. One spacer here
           covers every designer page; hidden at md:+ so the desktop layout

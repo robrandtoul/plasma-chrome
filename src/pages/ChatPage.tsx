@@ -5,6 +5,7 @@ import DesignerChrome from '../design/DesignerChrome'
 import { ButtonGhost } from '../design'
 import TeamChatPanel from '../components/TeamChatPanel'
 import { useTeamChat } from '../lib/teamChatStore'
+import { glueMode, vpLog } from '../lib/viewportDebug'
 
 // The full-page team chat. A thin shell around the shared TeamChatPanel (the
 // same body the header dropdown uses) — all the state lives in the
@@ -27,12 +28,17 @@ export default function ChatPage() {
   // viewport back to the top. Nothing on this page legitimately scrolls the
   // window, so the snap can never fight a real scroll position.
   useEffect(() => {
+    // Debug-mode gate (temporary, see src/lib/viewportDebug.ts): in the
+    // 'off'/'blur' experiment modes ALL viewport JS stands down so the
+    // on-device measurements aren't confounded by this older effect.
+    if (glueMode() !== 'main') return
     const vv = window.visualViewport
     if (!vv) return
     function snapBack() {
       if (!vv) return
       const keyboardClosed = vv.height >= window.innerHeight - 50
       if (keyboardClosed && (window.scrollY > 0 || vv.offsetTop > 0)) {
+        vpLog('chat-snapback', `sy=${Math.round(window.scrollY)} vv.top=${Math.round(vv.offsetTop)}`)
         window.scrollTo(0, 0)
       }
     }
