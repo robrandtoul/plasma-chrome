@@ -3369,10 +3369,11 @@ export default function DashboardPage() {
     <Sheet
       open={activitySheetOpen}
       onClose={() => setActivitySheetOpen(false)}
-      title="Latest activity"
-      ariaLabel="Latest activity"
+      title="Activity"
+      ariaLabel="Activity"
+      variant="fullscreen"
     >
-      <div className="px-4 pt-1">
+      <div className="px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+16px)]">
         <SegmentedControl
           value={activityTab}
           onChange={setActivityTab}
