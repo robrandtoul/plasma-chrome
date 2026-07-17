@@ -359,7 +359,11 @@ function BottomTabBar({
   return (
     <nav
       aria-label="Primary"
-      className="md:hidden fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-line bg-[rgba(255,255,255,0.94)] backdrop-blur-[14px]"
+      // absolute (not fixed): the containing block is DesignerChrome's
+      // viewport-locked app frame, which iOS can never pan — fixed tracked
+      // the layout viewport and visibly broke away from the screen edge
+      // whenever WebKit panned it (keyboard, short pages, overscroll).
+      className="md:hidden absolute inset-x-0 bottom-0 z-40 flex items-stretch border-t border-line bg-[rgba(255,255,255,0.94)] backdrop-blur-[14px]"
       style={{
         height: 'calc(64px + env(safe-area-inset-bottom))',
         paddingBottom: 'env(safe-area-inset-bottom)',

@@ -158,6 +158,22 @@ export function DesignerChrome({
 
   return (
     <DesignerProfileContext.Provider value={profile}>
+      {/* Mobile app frame. Below md the app becomes a locked, exactly
+          viewport-height flex column whose middle (#app-scroll) owns ALL
+          scrolling — the window itself can never scroll. This is the
+          comprehensive fix for the bottom tab bar detaching on iOS: WebKit
+          pans the layout viewport in several situations (keyboard, documents
+          shorter than a stale scroll offset, overscroll bounce) and
+          position:fixed elements ride the pan. Inside the frame the tab bar
+          is positioned against the frame element instead (absolute, see
+          BottomTabBar), and with zero window scrollability there is nothing
+          for WebKit to mis-pan. At md:+ every class here is inert and the
+          desktop layout is byte-for-byte unchanged. */}
+      <div className="max-md:relative max-md:flex max-md:h-dvh max-md:flex-col max-md:overflow-hidden">
+        <div
+          id="app-scroll"
+          className="max-md:min-h-0 max-md:flex-1 max-md:overflow-y-auto max-md:overscroll-contain"
+        >
       <DesignerHeader
         active={active}
         role={role}
@@ -206,13 +222,16 @@ export function DesignerChrome({
           only; customers never see it. */}
       <PushNudge />
       {/* Mobile-only bottom clearance so page content can scroll clear of
-          the fixed BottomTabBar. One spacer here covers every designer
-          page; hidden at md:+ so the desktop layout is untouched. */}
+          the tab bar overlaying the frame's bottom edge. One spacer here
+          covers every designer page; hidden at md:+ so the desktop layout
+          is untouched. */}
       <div
         aria-hidden="true"
         className="md:hidden"
         style={{ height: 'calc(64px + env(safe-area-inset-bottom))' }}
       />
+        </div>
+      </div>
     </DesignerProfileContext.Provider>
   )
 }

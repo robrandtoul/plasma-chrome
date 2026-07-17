@@ -5,26 +5,32 @@ import { useEffect, useState } from 'react'
 // tagline, drop a soft shadow). rAF-throttled so a fast scroll doesn't fire a
 // setState on every scroll event; `{ passive: true }` keeps scrolling smooth.
 //
-// The app scrolls the window/body (html,body { overflow-x: clip } in index.css,
-// no inner scroll container), so window.scrollY is the right signal — the same
-// scroll context the header's `sticky top-0` binds to.
+// Desktop scrolls the window/body; below md the app scrolls inside
+// DesignerChrome's #app-scroll frame instead (the tab-bar detach fix), so
+// both scroll contexts are observed — whichever one is actually moving
+// drives the header.
 export function useScrolled(threshold = 8): boolean {
   const [scrolled, setScrolled] = useState(false)
   useEffect(() => {
+    const frame = document.getElementById('app-scroll')
     let ticking = false
     const onScroll = () => {
       if (ticking) return
       ticking = true
       requestAnimationFrame(() => {
-        setScrolled(window.scrollY > threshold)
+        setScrolled(Math.max(window.scrollY, frame?.scrollTop ?? 0) > threshold)
         ticking = false
       })
     }
     window.addEventListener('scroll', onScroll, { passive: true })
+    frame?.addEventListener('scroll', onScroll, { passive: true })
     // Run once so a page that loads already-scrolled (back-nav, deep link)
     // starts in the correct state rather than waiting for the first scroll.
     onScroll()
-    return () => window.removeEventListener('scroll', onScroll)
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      frame?.removeEventListener('scroll', onScroll)
+    }
   }, [threshold])
   return scrolled
 }
