@@ -170,28 +170,72 @@ export function DesignerChrome({
   useEffect(() => {
     const vv = window.visualViewport
     if (!vv) return
+    // A single missed resize event (iOS drops them around app switches and
+    // fast keyboard dismissals) must never strand the frame at keyboard
+    // height — that reappeared as "the tab bar is floating mid-screen again".
+    // Three defences: the override only ever applies while an editable
+    // element is genuinely focused (no keyboard without one), focus changes
+    // re-evaluate directly, and a slow tick keeps re-checking while (and
+    // only while) an override is active, so a stale height self-heals within
+    // a second even with no events at all.
+    let tick: number | null = null
+    const editableFocused = () => {
+      const el = document.activeElement
+      if (!el) return false
+      const tag = el.tagName
+      return (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        (el as HTMLElement).isContentEditable
+      )
+    }
+    const stopTick = () => {
+      if (tick != null) {
+        window.clearInterval(tick)
+        tick = null
+      }
+    }
     const apply = () => {
       const el = frameRef.current
       if (!el) return
-      if (!window.matchMedia('(max-width: 767px)').matches) {
-        el.style.removeProperty('height')
-        return
-      }
       const keyboardHeight = window.innerHeight - vv.height
-      if (keyboardHeight > 80) {
+      const keyboardUp =
+        window.matchMedia('(max-width: 767px)').matches &&
+        keyboardHeight > 80 &&
+        editableFocused()
+      if (keyboardUp) {
         el.style.height = `${Math.round(vv.height)}px`
         // Nothing should stay panned while the frame tracks the keyboard.
         window.scrollTo(0, 0)
+        if (tick == null) tick = window.setInterval(apply, 700)
       } else {
         el.style.removeProperty('height')
+        stopTick()
       }
+    }
+    // Focus moves settle over a couple of frames (blur → keyboard retract),
+    // so re-check shortly after as well as immediately.
+    const onFocusChange = () => {
+      apply()
+      window.setTimeout(apply, 120)
+      window.setTimeout(apply, 450)
     }
     vv.addEventListener('resize', apply)
     window.addEventListener('resize', apply)
+    document.addEventListener('focusin', onFocusChange)
+    document.addEventListener('focusout', onFocusChange)
+    document.addEventListener('visibilitychange', apply)
+    window.addEventListener('pageshow', apply)
     apply()
     return () => {
       vv.removeEventListener('resize', apply)
       window.removeEventListener('resize', apply)
+      document.removeEventListener('focusin', onFocusChange)
+      document.removeEventListener('focusout', onFocusChange)
+      document.removeEventListener('visibilitychange', apply)
+      window.removeEventListener('pageshow', apply)
+      stopTick()
       frameRef.current?.style.removeProperty('height')
     }
   }, [])
