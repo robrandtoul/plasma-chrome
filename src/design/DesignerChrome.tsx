@@ -10,6 +10,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { useTeamChat } from '../lib/teamChatStore'
 import EditProfileModal, { type EditProfileSavedPayload } from '../components/EditProfileModal'
+import PushNudge from '../components/PushNudge'
 import { FEEDBACK_RESOLVED_STATUSES, isUnseenResolved } from '../lib/feedback'
 import { getApprovedNoOrderCount, peekApprovedNoOrderCount } from '../lib/approvedNoOrder'
 import { getFlaggedCount, peekFlaggedCount } from '../lib/flaggedCount'
@@ -227,6 +228,10 @@ export function DesignerChrome({
         />
       )}
       {children}
+      {/* One-time "turn on notifications?" nudge (self-gating — shows only
+          when push is possible on this device and undecided). Staff chrome
+          only; customers never see it. */}
+      <PushNudge />
       {/* Mobile-only bottom clearance so page content can scroll clear of
           the fixed BottomTabBar. One spacer here covers every designer
           page; hidden at md:+ so the desktop layout is untouched. */}
