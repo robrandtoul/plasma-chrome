@@ -2212,6 +2212,11 @@ export default function DashboardPage() {
   const navigate = useNavigate()
   const { session, role } = useAuth()
   const userId = session?.user.id ?? null
+  // When chat is docked it OWNS the right rail (full-height, sticky). The
+  // activity/follow-up/lead-time panels are hidden while docked — otherwise
+  // those later siblings scroll up and paint over the sticky chat. They return
+  // the moment chat pops back out, and stay available on mobile via the sheet.
+  const { placement: chatPlacement } = useTeamChat()
   const [projects, setProjects]           = useState<DashboardProject[]>([])
   // Server-computed tile counts (migration 000202). Counted across every
   // proof in the DB, not the loaded `projects` subset, so the headline
@@ -3329,22 +3334,26 @@ export default function DashboardPage() {
               </div>
 
               <aside className="hidden lg:block space-y-6">
-                {/* Docked chat (Option A) — renders only when the user picks
-                    'docked' placement; sticky so it stays in view while the
-                    list scrolls. Only this card pins, not the whole rail (see
-                    the note below on why whole-aside sticky was dropped). */}
-                <DockedChat />
-                {/* lg:sticky lg:top-10 used to ride here so the panel
-                    locked to the viewport top while the project list
-                    scrolled. Dropped in PR 30 — the project list can
-                    run many pages and a static panel hovering over
-                    nothing related is more distracting than useful. */}
-                <LatestActivityPanel events={latestEvents} navigate={navigate} />
-                {/* Follow-up automation Outbox (Phase 1). Owns its own small
-                    nudge_runs / proof_nudges queries; the projects array is
-                    only passed for client-side contact/company labels. */}
-                <NudgeOutboxPanel projects={projects} onAfterSend={() => loadDashboard()} />
-                <LeadTimesChart leadTimes={leadTimes} navigate={navigate} />
+                {chatPlacement === 'docked' ? (
+                  /* Docked chat owns the rail (full-height, sticky). The panels
+                     below are intentionally not rendered here so nothing scrolls
+                     over the pinned chat; they come back when chat pops out. */
+                  <DockedChat />
+                ) : (
+                  <>
+                    {/* lg:sticky lg:top-10 used to ride here so the panel
+                        locked to the viewport top while the project list
+                        scrolled. Dropped in PR 30 — the project list can
+                        run many pages and a static panel hovering over
+                        nothing related is more distracting than useful. */}
+                    <LatestActivityPanel events={latestEvents} navigate={navigate} />
+                    {/* Follow-up automation Outbox (Phase 1). Owns its own small
+                        nudge_runs / proof_nudges queries; the projects array is
+                        only passed for client-side contact/company labels. */}
+                    <NudgeOutboxPanel projects={projects} onAfterSend={() => loadDashboard()} />
+                    <LeadTimesChart leadTimes={leadTimes} navigate={navigate} />
+                  </>
+                )}
               </aside>
             </div>
           </>
