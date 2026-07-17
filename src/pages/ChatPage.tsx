@@ -39,8 +39,8 @@ export default function ChatPage() {
             <div className="flex items-center gap-2.5">
               <MessagesSquare size={18} className="text-ink-mute" aria-hidden="true" />
               <div>
-                <h1 className="text-[15px] font-semibold leading-none text-ink">Team chat</h1>
-                <p className="mt-1 text-[12px] text-ink-mute">A shared channel for the team.</p>
+                <h1 className="text-[17px] font-semibold leading-none text-ink sm:text-[15px]">Team chat</h1>
+                <p className="mt-1 text-[13px] text-ink-mute sm:text-[12px]">A shared channel for the team.</p>
               </div>
             </div>
             {/* Desktop-only: "minimise back to the dropdown" means nothing on

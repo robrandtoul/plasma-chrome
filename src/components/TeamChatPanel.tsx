@@ -163,8 +163,8 @@ function ChatAttachments({ files }: { files: ChatAttachment[] }) {
             >
               <Icon size={22} aria-hidden="true" className="flex-shrink-0 text-ink-mute" />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] font-medium text-ink sm:text-[12px]">{f.name || 'File'}</span>
-                {meta && <span className="block text-[12px] text-ink-mute sm:text-[11px]">{meta}</span>}
+                <span className="block truncate text-[14px] font-medium text-ink sm:text-[12px]">{f.name || 'File'}</span>
+                {meta && <span className="block text-[13px] text-ink-mute sm:text-[11px]">{meta}</span>}
               </span>
               <Download size={14} aria-hidden="true" className="flex-shrink-0 text-ink-dim" />
             </a>
@@ -292,7 +292,7 @@ function ThreadPill({
       onClick={onClick}
       aria-pressed={active}
       className={[
-        'flex h-8 flex-shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-colors sm:h-7 sm:px-2.5 sm:text-[12px]',
+        'flex h-9 flex-shrink-0 items-center gap-1.5 rounded-full border px-3 text-[14px] font-medium transition-colors sm:h-7 sm:px-2.5 sm:text-[12px]',
         active
           ? 'border-ink bg-ink text-on-ink'
           : 'border-line bg-surface text-ink-soft hover:bg-canvas hover:text-ink',
@@ -308,7 +308,7 @@ function ThreadPill({
       {label}
       {count > 0 && (
         <span
-          className="inline-flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-bold leading-none text-white"
+          className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-brand px-1 text-[11px] font-bold leading-none text-white sm:h-[16px] sm:min-w-[16px] sm:text-[10px]"
           aria-label={`${count} unread`}
         >
           {count > 9 ? '9+' : count}
@@ -348,12 +348,12 @@ function PresenceAvatar({ member }: { member: PresenceMember }) {
   const meta = CHAT_STATUS_META[member.status]
   return (
     <span
-      className="relative inline-flex h-7 w-7 items-center justify-center overflow-visible rounded-full font-mono text-[10px] font-medium text-white"
+      className="relative inline-flex h-9 w-9 items-center justify-center overflow-visible rounded-full font-mono text-[12px] font-medium text-white sm:h-7 sm:w-7 sm:text-[10px]"
       style={member.avatarUrl ? undefined : { backgroundColor: authorBadgeColour(member.colour) }}
       title={`${firstName(member.name)} — ${meta.label}`}
     >
       {member.avatarUrl ? (
-        <img src={member.avatarUrl} alt="" className="h-7 w-7 rounded-full object-cover" />
+        <img src={member.avatarUrl} alt="" className="h-9 w-9 rounded-full object-cover sm:h-7 sm:w-7" />
       ) : (
         (member.initials ?? '?').slice(0, 2)
       )}
@@ -393,7 +393,7 @@ function StatusPicker() {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface py-1 pl-2 pr-1.5 text-[13px] font-medium text-ink-soft hover:bg-canvas sm:text-[12px]"
+        className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface py-1 pl-2 pr-1.5 text-[14px] font-medium text-ink-soft hover:bg-canvas sm:text-[12px]"
       >
         <StatusDot status={myStatus} />
         {CHAT_STATUS_META[myStatus].label}
@@ -414,7 +414,7 @@ function StatusPicker() {
                 setManualStatus(s.value)
                 setOpen(false)
               }}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[14px] text-ink-soft hover:bg-canvas sm:text-[13px]"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[15px] text-ink-soft hover:bg-canvas sm:text-[13px]"
             >
               <StatusDot status={s.value} />
               <span className="flex-1">{s.label}</span>
@@ -903,7 +903,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
         <StatusPicker />
         <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
           {others.length === 0 ? (
-            <span className="truncate text-[13px] text-ink-mute sm:text-[12px]">No-one else here right now</span>
+            <span className="truncate text-[14px] text-ink-mute sm:text-[12px]">No-one else here right now</span>
           ) : (
             <>
               <div className="flex flex-shrink-0 items-center -space-x-1.5">
@@ -970,7 +970,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search messages…"
-            className="flex-1 bg-transparent text-[16px] text-ink outline-none placeholder:text-ink-dim sm:text-[13px]"
+            className="flex-1 bg-transparent text-[17px] text-ink outline-none placeholder:text-ink-dim sm:text-[13px]"
           />
           {search && (
             <button
@@ -1003,8 +1003,8 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
           </div>
         ) : threadMessages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-            <p className="text-[15px] text-ink-soft sm:text-[14px]">No messages yet.</p>
-            <p className="text-[14px] text-ink-mute sm:text-[13px]">
+            <p className="text-[17px] text-ink-soft sm:text-[14px]">No messages yet.</p>
+            <p className="text-[15px] text-ink-mute sm:text-[13px]">
               {activePeer
                 ? `This is a private conversation between you and ${firstName(activePeer.name)} — no-one else can see it.`
                 : 'Say hello to the team.'}
@@ -1013,11 +1013,11 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
         ) : shown.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
             {searchingRemote ? (
-              <p className="text-[14px] text-ink-mute sm:text-[13px]">Searching the full history…</p>
+              <p className="text-[15px] text-ink-mute sm:text-[13px]">Searching the full history…</p>
             ) : (
               <>
-                <p className="text-[15px] text-ink-soft sm:text-[14px]">No matches</p>
-                <p className="text-[14px] text-ink-mute sm:text-[13px]">Nothing matches “{search.trim()}”.</p>
+                <p className="text-[17px] text-ink-soft sm:text-[14px]">No matches</p>
+                <p className="text-[15px] text-ink-mute sm:text-[13px]">Nothing matches “{search.trim()}”.</p>
               </>
             )}
           </div>
@@ -1031,14 +1031,14 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                   type="button"
                   onClick={() => void onLoadEarlier()}
                   disabled={historyFor(activeThread) === 'loading'}
-                  className="rounded-full border border-line bg-surface px-3 py-1 text-[13px] font-medium text-ink-soft transition-colors hover:bg-canvas hover:text-ink disabled:opacity-60 sm:text-[12px]"
+                  className="rounded-full border border-line bg-surface px-3 py-1 text-[14px] font-medium text-ink-soft transition-colors hover:bg-canvas hover:text-ink disabled:opacity-60 sm:text-[12px]"
                 >
                   {historyFor(activeThread) === 'loading' ? 'Loading…' : 'Show earlier messages'}
                 </button>
               </div>
             )}
             {searchQuery && searchingRemote && (
-              <p className="pb-2 text-center text-[12px] text-ink-mute sm:text-[11px]">
+              <p className="pb-2 text-center text-[13px] text-ink-mute sm:text-[11px]">
                 Searching the full history…
               </p>
             )}
@@ -1058,7 +1058,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                   {showDay && (
                     <div className="my-3 flex items-center gap-3">
                       <span className="h-px flex-1 bg-line-soft" />
-                      <span className="text-[12px] font-medium uppercase tracking-wide text-ink-mute sm:text-[11px]">
+                      <span className="text-[13px] font-medium uppercase tracking-wide text-ink-mute sm:text-[11px]">
                         {dayLabel(m.created_at)}
                       </span>
                       <span className="h-px flex-1 bg-line-soft" />
@@ -1077,18 +1077,18 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                     ].join(' ')}
                   >
                     {!mine && (
-                      <div className="w-7 flex-shrink-0">
+                      <div className="w-9 flex-shrink-0 sm:w-7">
                         {!grouped &&
                           (authorAvatar ? (
                             <img
                               src={authorAvatar}
                               alt=""
-                              className="h-7 w-7 rounded-full object-cover"
+                              className="h-9 w-9 rounded-full object-cover sm:h-7 sm:w-7"
                               aria-hidden="true"
                             />
                           ) : (
                             <span
-                              className="inline-flex h-7 w-7 items-center justify-center rounded-full font-mono text-[10px] font-medium text-white"
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-full font-mono text-[12px] font-medium text-white sm:h-7 sm:w-7 sm:text-[10px]"
                               style={{ backgroundColor: authorBadgeColour(m.author_colour) }}
                               aria-hidden="true"
                             >
@@ -1105,12 +1105,12 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                     >
                       {!grouped && (
                         <div className="flex items-baseline gap-2 px-1">
-                          <span className="text-[12px] text-ink-mute sm:text-[11px]">{messageTime(m.created_at)}</span>
+                          <span className="text-[13px] text-ink-mute sm:text-[11px]">{messageTime(m.created_at)}</span>
                           {/* Your own bubbles and DM threads don't need a name —
                               you know who you are, and a private thread has
                               exactly one other person. */}
                           {!mine && activeThread === 'team' && (
-                            <span className="text-[14px] font-semibold text-ink sm:text-[13px]">
+                            <span className="text-[15px] font-semibold text-ink sm:text-[13px]">
                               {firstName(m.author_name)}
                             </span>
                           )}
@@ -1124,7 +1124,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                           ].join(' ')}
                         >
                           {m.body && (
-                            <p className="whitespace-pre-wrap break-words text-[15px] leading-snug text-ink-soft sm:text-[14px]">
+                            <p className="whitespace-pre-wrap break-words text-[17px] leading-snug text-ink-soft sm:text-[14px]">
                               {buildMessageSegments(m.body, memberNames).map((seg, si) =>
                                 seg.type === 'link' ? (
                                   <a
@@ -1161,7 +1161,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                                   onClick={() => toggleReaction(m.id, g.emoji)}
                                   title={g.names.map((n) => firstName(n)).join(', ')}
                                   className={[
-                                    'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[13px] leading-none transition-colors sm:text-[12px]',
+                                    'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[14px] leading-none transition-colors sm:text-[12px]',
                                     g.mine
                                       ? 'border-brand bg-brand-50 text-ink'
                                       : 'border-line bg-surface text-ink-soft hover:bg-canvas',
@@ -1210,7 +1210,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
         ].join(' ')}
       >
         {typingUsers.length > 0 && (
-          <div className="mb-1.5 text-[13px] italic text-ink-mute sm:text-[12px]" aria-live="polite">
+          <div className="mb-1.5 text-[14px] italic text-ink-mute sm:text-[12px]" aria-live="polite">
             {typingLabel(typingUsers)}
           </div>
         )}
@@ -1228,7 +1228,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                 }}
                 onMouseEnter={() => setMentionIndex(i)}
                 className={[
-                  'flex w-full items-center gap-2 px-3 py-2 text-left text-[14px] sm:text-[13px]',
+                  'flex w-full items-center gap-2 px-3 py-2 text-left text-[15px] sm:text-[13px]',
                   i === mentionIndex ? 'bg-canvas' : 'hover:bg-canvas',
                 ].join(' ')}
               >
@@ -1236,12 +1236,12 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                   <img
                     src={m.avatarUrl}
                     alt=""
-                    className="h-6 w-6 rounded-full object-cover"
+                    className="h-8 w-8 rounded-full object-cover sm:h-6 sm:w-6"
                     aria-hidden="true"
                   />
                 ) : (
                   <span
-                    className="inline-flex h-6 w-6 items-center justify-center rounded-full font-mono text-[9px] font-medium text-white"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full font-mono text-[11px] font-medium text-white sm:h-6 sm:w-6 sm:text-[9px]"
                     style={{ backgroundColor: authorBadgeColour(m.colour) }}
                     aria-hidden="true"
                   >
@@ -1322,7 +1322,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             // 16px on phones: anything smaller makes iOS Safari zoom the whole
             // page when the composer is focused. (! outranks the component's
             // own text-sm.)
-            className="flex-1 max-sm:text-[16px]!"
+            className="flex-1 max-sm:text-[17px]!"
           />
           <button
             type="button"
@@ -1346,7 +1346,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             e.target.value = ''
           }}
         />
-        <p className="mt-1.5 text-[12px] text-ink-dim sm:text-[11px]">
+        <p className="mt-1.5 text-[13px] text-ink-dim sm:text-[11px]">
           {activePeer
             ? `Private to ${firstName(activePeer.name)} · paste or drop any file (up to ${MAX_MB} MB) · Enter to send`
             : `@ to mention · paste or drop any file (up to ${MAX_MB} MB) · Enter to send · Shift + Enter for a new line`}
