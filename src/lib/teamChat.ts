@@ -1,6 +1,16 @@
 // Types + pure helpers for the internal team chat (migration 000319). No React
 // here so it stays a plain, testable module; the ChatPage renders the segments.
 
+// One chat attachment's metadata (000323). The storage key is a random uuid,
+// so `name` / `type` / `size` are carried here to give the download a real
+// filename and let the UI chip non-images by kind.
+export interface ChatAttachment {
+  path: string
+  name: string
+  type: string
+  size: number
+}
+
 export interface TeamMessage {
   id: string
   author_id: string | null
@@ -16,7 +26,36 @@ export interface TeamMessage {
   mentioned_user_ids?: string[] | null
   // Storage keys in the chat-attachments bucket (000322). Read via signed URL.
   attachment_paths?: string[] | null
+  // Richer per-attachment metadata (000323). Empty on pre-000323 image
+  // messages, which fall back to attachment_paths via attachmentsOf().
+  attachment_files?: ChatAttachment[] | null
   created_at: string
+}
+
+// The attachments to render for a message. Prefer the rich 000323 metadata;
+// fall back to the legacy image-only paths so old messages still show.
+export function attachmentsOf(m: TeamMessage): ChatAttachment[] {
+  if (m.attachment_files && m.attachment_files.length > 0) return m.attachment_files
+  return (m.attachment_paths ?? []).map((path) => ({
+    path,
+    name: 'Image',
+    type: 'image/*',
+    size: 0,
+  }))
+}
+
+// "1.2 MB" / "834 KB" for an attachment chip. Empty for unknown/zero sizes.
+export function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return ''
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = n
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  const rounded = value >= 10 || unit === 0 ? Math.round(value) : Math.round(value * 10) / 10
+  return `${rounded} ${units[unit]}`
 }
 
 // Map the four legacy designer-colour names to design tokens for the author

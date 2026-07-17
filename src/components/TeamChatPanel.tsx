@@ -8,7 +8,10 @@ import {
   VolumeX,
   Search as SearchIcon,
   X,
-  ImagePlus,
+  Paperclip,
+  FileText,
+  File as FileIcon,
+  Download,
   Smile,
 } from 'lucide-react'
 import { Textarea } from '../design'
@@ -25,30 +28,62 @@ import {
   type ReactionRow,
 } from '../lib/teamChatStore'
 import {
+  attachmentsOf,
   authorBadgeColour,
   buildMessageSegments,
   dayKey,
   dayLabel,
+  formatBytes,
   isGroupedWithPrevious,
   messageTime,
+  type ChatAttachment,
 } from '../lib/teamChat'
 
 const CHAT_BUCKET = 'chat-attachments'
 const EMOJI_CHOICES = ['👍', '❤️', '😂', '🎉', '👀', '✅', '🙏']
 const MAX_ATTACHMENTS = 6
-const MAX_BYTES = 10 * 1024 * 1024 // 10 MB — matches the bucket cap
+const MAX_MB = 25
+const MAX_BYTES = MAX_MB * 1024 * 1024 // matches the 000323 bucket cap
 
 interface StagedAttachment {
   id: string
   blob: Blob
+  // Object URL for the composer thumbnail (images only; harmless for others).
   url: string
+  // Original filename + mime, preserved onto the stored attachment metadata.
+  name: string
+  type: string
 }
 
-function extFor(type: string): string {
+function isImageType(type: string): boolean {
+  return (type ?? '').startsWith('image/')
+}
+
+// Extension for the storage key: prefer the real filename's, fall back to a
+// sensible image extension from the mime. Cosmetic — the download filename
+// comes from the stored `name`, not the key.
+function extForFile(name: string, type: string): string {
+  const fromName = (name.split('.').pop() ?? '').toLowerCase()
+  if (fromName && fromName !== name.toLowerCase() && /^[a-z0-9]{1,8}$/.test(fromName)) return fromName
   if (type === 'image/jpeg') return 'jpg'
   if (type === 'image/webp') return 'webp'
   if (type === 'image/gif') return 'gif'
-  return 'png'
+  if (type === 'image/png') return 'png'
+  return ''
+}
+
+// A short kind label ("PDF", "AI", "TTF") for a non-image chip.
+function kindLabel(name: string, type: string): string {
+  const ext = (name.split('.').pop() ?? '').toLowerCase()
+  if (ext && ext !== name.toLowerCase() && ext.length <= 5) return ext.toUpperCase()
+  return (type.split('/').pop() ?? '').toUpperCase()
+}
+
+// Lucide icon for a non-image attachment chip.
+function fileKindIcon(name: string, type: string) {
+  const ext = (name.split('.').pop() ?? '').toLowerCase()
+  if (type === 'application/pdf' || ext === 'pdf') return FileText
+  return FileIcon
 }
 
 // Group a message's reaction rows by emoji, tracking count / whether I reacted /
@@ -65,18 +100,21 @@ function groupReactions(rows: ReactionRow[], userId: string | null) {
   return [...map.values()]
 }
 
-// Renders a message's image attachments (private bucket → signed URLs) with a
-// full-screen viewer on click.
-function ChatImages({ paths }: { paths: string[] }) {
+// Renders a message's attachments: images preview as thumbnails (private
+// bucket → signed URLs, full-screen on click); any other file shows a
+// downloadable chip carrying its original name / kind / size (000323).
+function ChatAttachments({ files }: { files: ChatAttachment[] }) {
   const [urls, setUrls] = useState<string[]>([])
   const [lightbox, setLightbox] = useState<string | null>(null)
-  const key = paths.join(',')
+  const key = files.map((f) => f.path).join(',')
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const { data } = await supabase.storage.from(CHAT_BUCKET).createSignedUrls(paths, 3600)
+      const { data } = await supabase.storage
+        .from(CHAT_BUCKET)
+        .createSignedUrls(files.map((f) => f.path), 3600)
       if (cancelled) return
-      setUrls((data ?? []).map((d) => d.signedUrl).filter((u): u is string => !!u))
+      setUrls((data ?? []).map((d) => d.signedUrl ?? ''))
     })()
     return () => {
       cancelled = true
@@ -88,16 +126,49 @@ function ChatImages({ paths }: { paths: string[] }) {
   return (
     <>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
-        {urls.map((u, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={() => setLightbox(u)}
-            className="overflow-hidden rounded-lg border border-line"
-          >
-            <img src={u} alt="Attachment" loading="lazy" className="h-36 w-36 object-cover" />
-          </button>
-        ))}
+        {files.map((f, i) => {
+          const url = urls[i]
+          if (!url) return null
+          if (isImageType(f.type)) {
+            return (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setLightbox(url)}
+                className="overflow-hidden rounded-lg border border-line"
+              >
+                <img
+                  src={url}
+                  alt={f.name || 'Attachment'}
+                  loading="lazy"
+                  className="h-36 w-36 object-cover"
+                />
+              </button>
+            )
+          }
+          // Force a download with the real filename via the signed URL's
+          // ?download param (the stored key is a random uuid).
+          const href = `${url}${url.includes('?') ? '&' : '?'}download=${encodeURIComponent(f.name || 'file')}`
+          const Icon = fileKindIcon(f.name, f.type)
+          const meta = [kindLabel(f.name, f.type), formatBytes(f.size)].filter(Boolean).join(' · ')
+          return (
+            <a
+              key={i}
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`Download ${f.name}`}
+              className="flex max-w-[240px] items-center gap-2.5 rounded-lg border border-line bg-canvas px-3 py-2 transition-colors hover:bg-surface"
+            >
+              <Icon size={22} aria-hidden="true" className="flex-shrink-0 text-ink-mute" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[12px] font-medium text-ink">{f.name || 'File'}</span>
+                {meta && <span className="block text-[11px] text-ink-mute">{meta}</span>}
+              </span>
+              <Download size={14} aria-hidden="true" className="flex-shrink-0 text-ink-dim" />
+            </a>
+          )
+        })}
       </div>
       {lightbox && (
         <div
@@ -373,18 +444,19 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
   )
 
   function addFiles(files: File[]) {
-    const images = files.filter((f) => f.type.startsWith('image/'))
-    if (images.length === 0) return
-    const sized = images.filter((f) => f.size <= MAX_BYTES)
+    if (files.length === 0) return
+    const sized = files.filter((f) => f.size <= MAX_BYTES)
     const room = Math.max(0, MAX_ATTACHMENTS - attachmentsRef.current.length)
-    const additions = sized.slice(0, room).map((f) => ({
+    const additions: StagedAttachment[] = sized.slice(0, room).map((f) => ({
       id: crypto.randomUUID(),
       blob: f as Blob,
       url: URL.createObjectURL(f),
+      name: f.name || 'file',
+      type: f.type || '',
     }))
     let message: string | null = null
-    if (sized.length < images.length) message = 'Each image must be 10 MB or smaller.'
-    if (sized.length > room) message = `You can attach up to ${MAX_ATTACHMENTS} images.`
+    if (sized.length < files.length) message = `Each file must be ${MAX_MB} MB or smaller.`
+    if (sized.length > room) message = `You can attach up to ${MAX_ATTACHMENTS} files.`
     if (message) setError(message)
     if (additions.length > 0) setAttachments((prev) => [...prev, ...additions])
   }
@@ -394,7 +466,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
   function handlePaste(e: ClipboardEvent) {
     const items = Array.from(e.clipboardData?.items ?? [])
     const files = items
-      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+      .filter((it) => it.kind === 'file')
       .map((it) => it.getAsFile())
       .filter((f): f is File => f != null)
     if (files.length > 0) {
@@ -489,20 +561,23 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     setSending(true)
     setError(null)
 
-    // Upload any staged images first; collect their storage keys.
-    const uploaded: string[] = []
+    // Upload any staged files first; collect their storage keys + metadata.
+    const uploaded: ChatAttachment[] = []
     for (const a of attachments) {
-      const path = `${userId}/${crypto.randomUUID()}.${extFor(a.blob.type)}`
+      const ext = extForFile(a.name, a.type)
+      const path = `${userId}/${crypto.randomUUID()}${ext ? '.' + ext : ''}`
       const { error: upErr } = await supabase.storage
         .from(CHAT_BUCKET)
-        .upload(path, a.blob, { contentType: a.blob.type || 'image/png', upsert: false })
+        .upload(path, a.blob, { contentType: a.type || 'application/octet-stream', upsert: false })
       if (upErr) {
-        if (uploaded.length > 0) await supabase.storage.from(CHAT_BUCKET).remove(uploaded)
+        if (uploaded.length > 0) {
+          await supabase.storage.from(CHAT_BUCKET).remove(uploaded.map((u) => u.path))
+        }
         setSending(false)
-        setError(upErr.message || 'Could not upload an image. Please try again.')
+        setError(upErr.message || 'Could not upload a file. Please try again.')
         return
       }
-      uploaded.push(path)
+      uploaded.push({ path, name: a.name, type: a.type, size: a.blob.size })
     }
 
     // Push targets are computed from the text against known member names, so
@@ -518,7 +593,9 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     const res = await send(text, mentionedIds, uploaded)
     setSending(false)
     if (!res.ok) {
-      if (uploaded.length > 0) await supabase.storage.from(CHAT_BUCKET).remove(uploaded)
+      if (uploaded.length > 0) {
+        await supabase.storage.from(CHAT_BUCKET).remove(uploaded.map((u) => u.path))
+      }
       setError(res.error || 'Could not send your message. Please try again.')
       return
     }
@@ -713,8 +790,8 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                               )}
                             </p>
                           )}
-                          {m.attachment_paths && m.attachment_paths.length > 0 && (
-                            <ChatImages paths={m.attachment_paths} />
+                          {attachmentsOf(m).length > 0 && (
+                            <ChatAttachments files={attachmentsOf(m)} />
                           )}
                           {msgReactions.length > 0 && (
                             <div className="mt-1 flex flex-wrap gap-1">
@@ -808,19 +885,43 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
 
         {attachments.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
-            {attachments.map((a) => (
-              <div key={a.id} className="relative h-14 w-14 overflow-hidden rounded-lg border border-line">
-                <img src={a.url} alt="" className="h-full w-full object-cover" />
-                <button
-                  type="button"
-                  onClick={() => removeAttachment(a.id)}
-                  aria-label="Remove image"
-                  className="absolute right-0.5 top-0.5 rounded-full bg-black/55 p-0.5 text-white hover:bg-black/75"
+            {attachments.map((a) => {
+              const Icon = fileKindIcon(a.name, a.type)
+              const meta = [kindLabel(a.name, a.type), formatBytes(a.blob.size)]
+                .filter(Boolean)
+                .join(' · ')
+              return (
+                <div
+                  key={a.id}
+                  className={[
+                    'relative overflow-hidden rounded-lg border border-line',
+                    isImageType(a.type)
+                      ? 'h-14 w-14'
+                      : 'flex h-14 max-w-[180px] items-center gap-2 bg-canvas pl-2 pr-6',
+                  ].join(' ')}
                 >
-                  <X size={11} aria-hidden="true" />
-                </button>
-              </div>
-            ))}
+                  {isImageType(a.type) ? (
+                    <img src={a.url} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <>
+                      <Icon size={18} aria-hidden="true" className="flex-shrink-0 text-ink-mute" />
+                      <span className="min-w-0">
+                        <span className="block truncate text-[11px] font-medium text-ink">{a.name}</span>
+                        {meta && <span className="block text-[10px] text-ink-mute">{meta}</span>}
+                      </span>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(a.id)}
+                    aria-label="Remove attachment"
+                    className="absolute right-0.5 top-0.5 rounded-full bg-black/55 p-0.5 text-white hover:bg-black/75"
+                  >
+                    <X size={11} aria-hidden="true" />
+                  </button>
+                </div>
+              )
+            })}
           </div>
         )}
         {error && (
@@ -833,11 +934,11 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             type="button"
             onClick={() => fileRef.current?.click()}
             disabled={attachments.length >= MAX_ATTACHMENTS}
-            aria-label="Add image"
-            title="Add image"
+            aria-label="Attach a file"
+            title="Attach a file"
             className="inline-flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-[8px] border border-line bg-surface text-ink-soft transition-colors hover:bg-canvas disabled:opacity-40"
           >
-            <ImagePlus size={18} aria-hidden="true" />
+            <Paperclip size={18} aria-hidden="true" />
           </button>
           <Textarea
             ref={textareaRef}
@@ -862,7 +963,6 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
         <input
           ref={fileRef}
           type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
           multiple
           className="sr-only"
           tabIndex={-1}
@@ -873,7 +973,8 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
           }}
         />
         <p className="mt-1.5 text-[11px] text-ink-dim">
-          @ to mention · paste or drop an image · Enter to send · Shift + Enter for a new line
+          @ to mention · paste or drop any file (up to {MAX_MB} MB) · Enter to send · Shift + Enter for a
+          new line
         </p>
       </div>
     </div>

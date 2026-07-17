@@ -8,7 +8,7 @@ import {
 } from 'react'
 import { supabase } from './supabase'
 import { useAuth } from './auth'
-import type { TeamMessage } from './teamChat'
+import type { TeamMessage, ChatAttachment } from './teamChat'
 import { playChatSound } from './chatSound'
 
 // Shared "engine" for the team chat: one live connection (message realtime +
@@ -86,7 +86,7 @@ interface TeamChatValue {
   send: (
     body: string,
     mentionedUserIds?: string[],
-    attachmentPaths?: string[],
+    attachments?: ChatAttachment[],
   ) => Promise<{ ok: boolean; error?: string }>
   remove: (id: string) => Promise<void>
   /** Clear the unread badge and stamp "seen up to now". */
@@ -523,17 +523,20 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       }
     },
     myStatus,
-    send: async (body: string, mentionedUserIds: string[] = [], attachmentPaths: string[] = []) => {
+    send: async (body: string, mentionedUserIds: string[] = [], attachments: ChatAttachment[] = []) => {
       const uid = userIdRef.current
       const text = body.trim()
-      if ((!text && attachmentPaths.length === 0) || !uid) return { ok: false }
+      if ((!text && attachments.length === 0) || !uid) return { ok: false }
       const { data, error } = await supabase
         .from('team_messages')
         .insert({
           author_id: uid,
           body: text,
           mentioned_user_ids: mentionedUserIds,
-          attachment_paths: attachmentPaths,
+          // attachment_paths stays populated (lockstep) for backward compat;
+          // attachment_files carries the original filename/type/size (000323).
+          attachment_paths: attachments.map((a) => a.path),
+          attachment_files: attachments,
         })
         .select('*')
         .single()
