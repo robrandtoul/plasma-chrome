@@ -3419,8 +3419,12 @@ function DockedChat() {
        below the card (pb-5, cancelled by -mb-5 so the at-rest rail rhythm is
        unchanged). Panels sliding up vanish behind the apron a clear gap
        before they reach the card, and the card casts a soft drop shadow onto
-       them — the visible divider that keeps the slide-under looking tidy. */
-    <div className="lg:sticky lg:top-20 z-10 -mb-5 pb-5" style={{ background: 'var(--c-bg)' }}>
+       them — the visible divider that keeps the slide-under looking tidy.
+       Pinned at top-14 (~the condensed header's height) so there is no slit
+       above the card for passing panels to re-emerge through; z-[4] keeps the
+       card BELOW the z-[5] page header (any overlap tucks under it) while
+       still above the z-auto rail panels. */
+    <div className="lg:sticky lg:top-14 z-[4] -mb-5 pb-5" style={{ background: 'var(--c-bg)' }}>
       <div
         id="team-chat-dock"
         className="flex h-[min(560px,calc(100vh-112px))] flex-col overflow-hidden rounded-[14px] border border-line bg-surface shadow-[0_14px_28px_-18px_rgba(22,19,17,0.35)]"
