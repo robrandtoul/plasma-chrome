@@ -206,6 +206,7 @@ export function DesignerChrome({
       if (!el) return
       if (!window.matchMedia('(max-width: 767px)').matches) {
         el.style.removeProperty('height')
+        el.style.removeProperty('transform')
         return
       }
       if (editableFocused()) {
@@ -218,6 +219,21 @@ export function DesignerChrome({
         el.style.removeProperty('height')
       }
       if (window.scrollY > 0) window.scrollTo(0, 0)
+      // iOS sometimes leaves its own keyboard pan behind after dismissal —
+      // the entire rendered surface sits shifted up in a layer JS scrolling
+      // cannot reach (the user can literally thumb-drag it back; Rob did).
+      // We can't move that layer, but we CAN measure it: visualViewport
+      // .offsetTop is exactly the leftover pan. Counter-shift the frame by
+      // it so the app stays aligned with the visible area; when iOS (or a
+      // thumb drag) restores the pan, the offset reads 0 and the shift
+      // comes straight off. The vv 'scroll' listener keeps this live.
+      const pan = Math.round(vv?.offsetTop ?? 0)
+      if (pan > 0) {
+        const shift = `translateY(${pan}px)`
+        if (el.style.transform !== shift) el.style.transform = shift
+      } else if (el.style.transform) {
+        el.style.removeProperty('transform')
+      }
     }
     // Focus / orientation / app-switch changes settle over a few frames
     // (keyboard animation, webview resize), so re-check shortly after too.
@@ -253,6 +269,7 @@ export function DesignerChrome({
       window.removeEventListener('pageshow', settle)
       window.clearInterval(tick)
       frameRef.current?.style.removeProperty('height')
+      frameRef.current?.style.removeProperty('transform')
     }
   }, [])
 
