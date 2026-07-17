@@ -163,8 +163,8 @@ function ChatAttachments({ files }: { files: ChatAttachment[] }) {
             >
               <Icon size={22} aria-hidden="true" className="flex-shrink-0 text-ink-mute" />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[12px] font-medium text-ink">{f.name || 'File'}</span>
-                {meta && <span className="block text-[11px] text-ink-mute">{meta}</span>}
+                <span className="block truncate text-[13px] font-medium text-ink sm:text-[12px]">{f.name || 'File'}</span>
+                {meta && <span className="block text-[12px] text-ink-mute sm:text-[11px]">{meta}</span>}
               </span>
               <Download size={14} aria-hidden="true" className="flex-shrink-0 text-ink-dim" />
             </a>
@@ -292,7 +292,7 @@ function ThreadPill({
       onClick={onClick}
       aria-pressed={active}
       className={[
-        'flex h-7 flex-shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-medium transition-colors',
+        'flex h-8 flex-shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-colors sm:h-7 sm:px-2.5 sm:text-[12px]',
         active
           ? 'border-ink bg-ink text-on-ink'
           : 'border-line bg-surface text-ink-soft hover:bg-canvas hover:text-ink',
@@ -393,7 +393,7 @@ function StatusPicker() {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface py-1 pl-2 pr-1.5 text-[12px] font-medium text-ink-soft hover:bg-canvas"
+        className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface py-1 pl-2 pr-1.5 text-[13px] font-medium text-ink-soft hover:bg-canvas sm:text-[12px]"
       >
         <StatusDot status={myStatus} />
         {CHAT_STATUS_META[myStatus].label}
@@ -414,7 +414,7 @@ function StatusPicker() {
                 setManualStatus(s.value)
                 setOpen(false)
               }}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-ink-soft hover:bg-canvas"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[14px] text-ink-soft hover:bg-canvas sm:text-[13px]"
             >
               <StatusDot status={s.value} />
               <span className="flex-1">{s.label}</span>
@@ -903,7 +903,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
         <StatusPicker />
         <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
           {others.length === 0 ? (
-            <span className="truncate text-[12px] text-ink-mute">No-one else here right now</span>
+            <span className="truncate text-[13px] text-ink-mute sm:text-[12px]">No-one else here right now</span>
           ) : (
             <>
               <div className="flex flex-shrink-0 items-center -space-x-1.5">
@@ -970,7 +970,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search messages…"
-            className="flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-dim"
+            className="flex-1 bg-transparent text-[16px] text-ink outline-none placeholder:text-ink-dim sm:text-[13px]"
           />
           {search && (
             <button
@@ -1003,8 +1003,8 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
           </div>
         ) : threadMessages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-            <p className="text-[14px] text-ink-soft">No messages yet.</p>
-            <p className="text-[13px] text-ink-mute">
+            <p className="text-[15px] text-ink-soft sm:text-[14px]">No messages yet.</p>
+            <p className="text-[14px] text-ink-mute sm:text-[13px]">
               {activePeer
                 ? `This is a private conversation between you and ${firstName(activePeer.name)} — no-one else can see it.`
                 : 'Say hello to the team.'}
@@ -1013,11 +1013,11 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
         ) : shown.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
             {searchingRemote ? (
-              <p className="text-[13px] text-ink-mute">Searching the full history…</p>
+              <p className="text-[14px] text-ink-mute sm:text-[13px]">Searching the full history…</p>
             ) : (
               <>
-                <p className="text-[14px] text-ink-soft">No matches</p>
-                <p className="text-[13px] text-ink-mute">Nothing matches “{search.trim()}”.</p>
+                <p className="text-[15px] text-ink-soft sm:text-[14px]">No matches</p>
+                <p className="text-[14px] text-ink-mute sm:text-[13px]">Nothing matches “{search.trim()}”.</p>
               </>
             )}
           </div>
@@ -1031,14 +1031,14 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                   type="button"
                   onClick={() => void onLoadEarlier()}
                   disabled={historyFor(activeThread) === 'loading'}
-                  className="rounded-full border border-line bg-surface px-3 py-1 text-[12px] font-medium text-ink-soft transition-colors hover:bg-canvas hover:text-ink disabled:opacity-60"
+                  className="rounded-full border border-line bg-surface px-3 py-1 text-[13px] font-medium text-ink-soft transition-colors hover:bg-canvas hover:text-ink disabled:opacity-60 sm:text-[12px]"
                 >
                   {historyFor(activeThread) === 'loading' ? 'Loading…' : 'Show earlier messages'}
                 </button>
               </div>
             )}
             {searchQuery && searchingRemote && (
-              <p className="pb-2 text-center text-[11px] text-ink-mute">
+              <p className="pb-2 text-center text-[12px] text-ink-mute sm:text-[11px]">
                 Searching the full history…
               </p>
             )}
@@ -1058,7 +1058,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                   {showDay && (
                     <div className="my-3 flex items-center gap-3">
                       <span className="h-px flex-1 bg-line-soft" />
-                      <span className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">
+                      <span className="text-[12px] font-medium uppercase tracking-wide text-ink-mute sm:text-[11px]">
                         {dayLabel(m.created_at)}
                       </span>
                       <span className="h-px flex-1 bg-line-soft" />
@@ -1105,12 +1105,12 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                     >
                       {!grouped && (
                         <div className="flex items-baseline gap-2 px-1">
-                          <span className="text-[11px] text-ink-mute">{messageTime(m.created_at)}</span>
+                          <span className="text-[12px] text-ink-mute sm:text-[11px]">{messageTime(m.created_at)}</span>
                           {/* Your own bubbles and DM threads don't need a name —
                               you know who you are, and a private thread has
                               exactly one other person. */}
                           {!mine && activeThread === 'team' && (
-                            <span className="text-[13px] font-semibold text-ink">
+                            <span className="text-[14px] font-semibold text-ink sm:text-[13px]">
                               {firstName(m.author_name)}
                             </span>
                           )}
@@ -1124,7 +1124,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                           ].join(' ')}
                         >
                           {m.body && (
-                            <p className="whitespace-pre-wrap break-words text-[14px] leading-snug text-ink-soft">
+                            <p className="whitespace-pre-wrap break-words text-[15px] leading-snug text-ink-soft sm:text-[14px]">
                               {buildMessageSegments(m.body, memberNames).map((seg, si) =>
                                 seg.type === 'link' ? (
                                   <a
@@ -1161,7 +1161,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                                   onClick={() => toggleReaction(m.id, g.emoji)}
                                   title={g.names.map((n) => firstName(n)).join(', ')}
                                   className={[
-                                    'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[12px] leading-none transition-colors',
+                                    'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[13px] leading-none transition-colors sm:text-[12px]',
                                     g.mine
                                       ? 'border-brand bg-brand-50 text-ink'
                                       : 'border-line bg-surface text-ink-soft hover:bg-canvas',
@@ -1210,7 +1210,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
         ].join(' ')}
       >
         {typingUsers.length > 0 && (
-          <div className="mb-1.5 text-[12px] italic text-ink-mute" aria-live="polite">
+          <div className="mb-1.5 text-[13px] italic text-ink-mute sm:text-[12px]" aria-live="polite">
             {typingLabel(typingUsers)}
           </div>
         )}
@@ -1228,7 +1228,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                 }}
                 onMouseEnter={() => setMentionIndex(i)}
                 className={[
-                  'flex w-full items-center gap-2 px-3 py-2 text-left text-[13px]',
+                  'flex w-full items-center gap-2 px-3 py-2 text-left text-[14px] sm:text-[13px]',
                   i === mentionIndex ? 'bg-canvas' : 'hover:bg-canvas',
                 ].join(' ')}
               >
@@ -1277,8 +1277,8 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                     <>
                       <Icon size={18} aria-hidden="true" className="flex-shrink-0 text-ink-mute" />
                       <span className="min-w-0">
-                        <span className="block truncate text-[11px] font-medium text-ink">{a.name}</span>
-                        {meta && <span className="block text-[10px] text-ink-mute">{meta}</span>}
+                        <span className="block truncate text-[12px] font-medium text-ink sm:text-[11px]">{a.name}</span>
+                        {meta && <span className="block text-[11px] text-ink-mute sm:text-[10px]">{meta}</span>}
                       </span>
                     </>
                   )}
@@ -1319,7 +1319,10 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             onPaste={handlePaste}
             rows={variant === 'page' ? 2 : 1}
             placeholder={activePeer ? `Message ${firstName(activePeer.name)}…` : 'Message the team…'}
-            className="flex-1"
+            // 16px on phones: anything smaller makes iOS Safari zoom the whole
+            // page when the composer is focused. (! outranks the component's
+            // own text-sm.)
+            className="flex-1 max-sm:text-[16px]!"
           />
           <button
             type="button"
@@ -1343,7 +1346,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             e.target.value = ''
           }}
         />
-        <p className="mt-1.5 text-[11px] text-ink-dim">
+        <p className="mt-1.5 text-[12px] text-ink-dim sm:text-[11px]">
           {activePeer
             ? `Private to ${firstName(activePeer.name)} · paste or drop any file (up to ${MAX_MB} MB) · Enter to send`
             : `@ to mention · paste or drop any file (up to ${MAX_MB} MB) · Enter to send · Shift + Enter for a new line`}

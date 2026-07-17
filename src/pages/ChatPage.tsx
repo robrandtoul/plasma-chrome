@@ -43,7 +43,10 @@ export default function ChatPage() {
                 <p className="mt-1 text-[12px] text-ink-mute">A shared channel for the team.</p>
               </div>
             </div>
-            <ButtonGhost size="sm" icon={Minimize2} onClick={minimise}>
+            {/* Desktop-only: "minimise back to the dropdown" means nothing on
+                a phone, where this page IS the chat and the tab bar is the way
+                out. */}
+            <ButtonGhost size="sm" icon={Minimize2} onClick={minimise} className="max-md:hidden">
               Minimise
             </ButtonGhost>
           </div>
