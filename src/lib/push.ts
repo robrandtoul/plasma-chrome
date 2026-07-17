@@ -43,6 +43,22 @@ export function isStandalone(): boolean {
   return Boolean(mql?.matches) || iosStandalone
 }
 
+/** iPhone / iPad detection. Modern iPadOS masquerades as macOS in the user
+ *  agent, so the touch check tells an iPad apart from a real Mac. */
+export function isIosDevice(): boolean {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent
+  if (/iPad|iPhone|iPod/.test(ua)) return true
+  return ua.includes('Macintosh') && typeof document !== 'undefined' && 'ontouchend' in document
+}
+
+/** Whether this device must install the app before push can work. Only iOS
+ *  requires the Home-Screen install — desktop Chrome/Edge/Firefox, macOS
+ *  Safari 16.1+ and Android can all push from a normal browser tab. */
+export function needsInstallFirst(): boolean {
+  return isIosDevice() && !isStandalone()
+}
+
 /** Whether the VAPID key is configured in this build. */
 export function isPushConfigured(): boolean {
   return typeof VAPID_PUBLIC_KEY === 'string' && VAPID_PUBLIC_KEY.length > 0
@@ -106,7 +122,8 @@ async function persistSubscription(sub: PushSubscription): Promise<void> {
  */
 export async function enablePush(): Promise<EnableResult> {
   if (!isPushSupported()) return { ok: false, reason: 'unsupported' }
-  if (!isStandalone()) return { ok: false, reason: 'not_installed' }
+  // Install-first is an iOS rule only — desktop browsers subscribe from a tab.
+  if (needsInstallFirst()) return { ok: false, reason: 'not_installed' }
   if (!isPushConfigured()) return { ok: false, reason: 'not_configured' }
 
   try {
@@ -159,7 +176,7 @@ export async function disablePushOnThisDevice(): Promise<void> {
  */
 export async function reconcileSubscription(): Promise<void> {
   try {
-    if (!isPushSupported() || !isStandalone() || !isPushConfigured()) return
+    if (!isPushSupported() || needsInstallFirst() || !isPushConfigured()) return
     if (Notification.permission !== 'granted') return
     const reg = await navigator.serviceWorker.ready
     const sub = await reg.pushManager.getSubscription()

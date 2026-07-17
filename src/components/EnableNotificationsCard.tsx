@@ -5,18 +5,21 @@ import { ButtonInk, ButtonGhost } from '../design/Button'
 import {
   enablePush,
   disablePushOnThisDevice,
+  isIosDevice,
   isPushConfigured,
   isPushSupported,
-  isStandalone,
+  needsInstallFirst,
   notificationPermission,
   type EnableResult,
 } from '../lib/push'
 
 // The gesture-gated "Enable notifications on this device" card. Feature-detects
-// and shows the iOS-correct guidance for each state rather than a button that
+// and shows platform-correct guidance for each state rather than a button that
 // silently fails:
-//   * not the installed app      -> "Add to Home Screen first"
-//   * permission previously denied -> "turn back on in iOS Settings"
+//   * iOS, not the installed app -> "Add to Home Screen first" (iOS-only rule;
+//     desktop Chrome/Edge/Firefox and macOS Safari push from a normal tab)
+//   * permission previously denied -> where to turn it back on (iOS Settings
+//     vs the browser's site settings)
 //   * already on                 -> confirmation + per-device "turn off"
 //   * ready                      -> the enable button
 //
@@ -28,7 +31,9 @@ type DeviceState = 'loading' | 'unsupported' | 'not_configured' | 'not_installed
 function reasonMessage(r: Exclude<EnableResult, { ok: true }>['reason']): string {
   switch (r) {
     case 'denied':
-      return 'Notifications are blocked for this app. Turn them back on in iOS Settings → Notifications → Proof Viewer.'
+      return isIosDevice()
+        ? 'Notifications are blocked for this app. Turn them back on in iOS Settings → Notifications → Proof Viewer.'
+        : 'Notifications are blocked for this site. Turn them back on in your browser’s site settings (the icon by the address bar), then try again.'
     case 'dismissed':
       return 'No problem — tap Enable again whenever you’re ready.'
     case 'not_installed':
@@ -56,7 +61,8 @@ export default function EnableNotificationsCard({ onChange }: { onChange?: () =>
       setState('not_configured')
       return
     }
-    if (!isStandalone()) {
+    // Only iOS needs the Home-Screen install; desktop browsers enable in-tab.
+    if (needsInstallFirst()) {
       setState('not_installed')
       return
     }
