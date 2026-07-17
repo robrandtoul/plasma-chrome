@@ -1,22 +1,38 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { MessagesSquare, Maximize2, X } from 'lucide-react'
+import { MessagesSquare, Maximize2, X, Pin } from 'lucide-react'
 import { useTeamChat } from '../lib/teamChatStore'
 import TeamChatPanel from './TeamChatPanel'
 
 // The desktop header chat control: the speech-bubble icon + unread badge that
-// opens the shared chat panel as a dropdown, so you can glance and reply without
-// leaving the page. Mobile keeps the full /chat page via the account sheet.
-// Opening the dropdown mounts TeamChatPanel, which marks the chat seen (clearing
-// the badge) for as long as it's open.
+// opens the shared chat panel as a dropdown. A pin keeps it open across pages
+// (and reloads) so you can keep chatting while working elsewhere; unpinned it's
+// a transient popover that closes on outside-click / navigation. Desktop only —
+// mobile uses the full /chat page via the account sheet.
+
+function useIsDesktop() {
+  const [isDesktop, setIsDesktop] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(min-width: 768px)').matches : true,
+  )
+  useEffect(() => {
+    const mql = window.matchMedia('(min-width: 768px)')
+    const onChange = () => setIsDesktop(mql.matches)
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }, [])
+  return isDesktop
+}
 
 export default function ChatMenu({ active = false }: { active?: boolean }) {
-  const { unread } = useTeamChat()
-  const [open, setOpen] = useState(false)
+  const { unread, dropdownPinned, setDropdownPinned } = useTeamChat()
+  const isDesktop = useIsDesktop()
+  // Seed open from the pinned preference so a pinned panel is already open on
+  // every page (no closed→open flicker as this remounts on navigation). Never
+  // auto-open on the /chat page itself — that page *is* the chat.
+  const [open, setOpen] = useState(() => dropdownPinned && !active)
   const ref = useRef<HTMLDivElement>(null)
 
-  // Re-open the dropdown when the full /chat page "minimises" back to it. The
-  // page sets this flag then navigates here; we consume it once on mount.
+  // Re-open when the full /chat page "minimises" back to the dropdown.
   useEffect(() => {
     try {
       if (sessionStorage.getItem('pv:reopen-chat') === '1') {
@@ -28,8 +44,10 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
     }
   }, [])
 
+  // Outside-click / Escape close — only when NOT pinned. A pinned panel is meant
+  // to stay put while you work on other pages.
   useEffect(() => {
-    if (!open) return
+    if (!open || dropdownPinned) return
     function onDoc(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
@@ -42,15 +60,24 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
       document.removeEventListener('mousedown', onDoc)
       document.removeEventListener('keydown', onKey)
     }
-  }, [open])
+  }, [open, dropdownPinned])
+
+  if (!isDesktop) return null
+
+  // Any direct close also releases the pin, so a "kept open" panel can't linger
+  // closed on this page yet reappear on the next.
+  function close() {
+    setOpen(false)
+    if (dropdownPinned) setDropdownPinned(false)
+  }
 
   const highlighted = open || active
 
   return (
-    <div ref={ref} className="relative hidden md:block">
+    <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => (open ? close() : setOpen(true))}
         aria-label={unread > 0 ? `Team chat — ${unread} new` : 'Team chat'}
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -83,6 +110,21 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
           <div className="flex flex-shrink-0 items-center justify-between border-b border-line-soft px-3 py-2">
             <span className="text-[13px] font-semibold text-ink">Team chat</span>
             <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => setDropdownPinned(!dropdownPinned)}
+                aria-pressed={dropdownPinned}
+                aria-label={dropdownPinned ? 'Unpin chat' : 'Keep chat open across pages'}
+                title={dropdownPinned ? 'Unpin — stop keeping open' : 'Keep open across pages'}
+                className={[
+                  'flex h-7 w-7 items-center justify-center rounded-full transition-colors',
+                  dropdownPinned
+                    ? 'bg-brand-50 text-brand'
+                    : 'text-ink-mute hover:bg-canvas hover:text-ink',
+                ].join(' ')}
+              >
+                <Pin size={15} aria-hidden="true" fill={dropdownPinned ? 'currentColor' : 'none'} />
+              </button>
               <Link
                 to="/chat"
                 onClick={() => setOpen(false)}
@@ -94,7 +136,7 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
               </Link>
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={close}
                 aria-label="Close chat"
                 className="flex h-7 w-7 items-center justify-center rounded-full text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
               >

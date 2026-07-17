@@ -66,6 +66,21 @@ interface TeamChatValue {
   /** Set your manual status. 'online' clears the manual override (back to auto
    *  online/idle); 'away' / 'busy' pin it until you change it. */
   setManualStatus: (status: 'online' | 'away' | 'busy') => void
+  /** Whether the header chat dropdown is "kept open" across pages + reloads
+   *  (persisted to localStorage). When true it survives navigation and ignores
+   *  outside-clicks, so you can keep chatting while working elsewhere. */
+  dropdownPinned: boolean
+  setDropdownPinned: (pinned: boolean) => void
+}
+
+const PINNED_KEY = 'pv:chat-pinned'
+
+function readPinned(): boolean {
+  try {
+    return localStorage.getItem(PINNED_KEY) === '1'
+  } catch {
+    return false
+  }
 }
 
 // Inert default so consumers (e.g. the header) don't crash if they render
@@ -81,6 +96,8 @@ const DEFAULT: TeamChatValue = {
   markSeen: () => {},
   setViewing: () => {},
   setManualStatus: () => {},
+  dropdownPinned: false,
+  setDropdownPinned: () => {},
 }
 
 const TeamChatContext = createContext<TeamChatValue>(DEFAULT)
@@ -128,6 +145,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   const [unread, setUnread] = useState(0)
   const [presence, setPresence] = useState<PresenceMember[]>([])
   const [myStatus, setMyStatus] = useState<ChatStatus>('online')
+  const [dropdownPinned, setDropdownPinnedState] = useState<boolean>(readPinned)
 
   // Refs the realtime handlers / timers read so the channel never has to be torn
   // down and rebuilt just to see fresh values.
@@ -343,6 +361,16 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       manualRef.current = status === 'online' ? null : status
       lastActivityRef.current = Date.now()
       refreshStatus()
+    },
+    dropdownPinned,
+    setDropdownPinned: (pinned: boolean) => {
+      setDropdownPinnedState(pinned)
+      try {
+        if (pinned) localStorage.setItem(PINNED_KEY, '1')
+        else localStorage.removeItem(PINNED_KEY)
+      } catch {
+        /* localStorage unavailable — pin still works for this session */
+      }
     },
   }
 
