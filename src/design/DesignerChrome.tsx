@@ -169,73 +169,60 @@ export function DesignerChrome({
   const frameRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     const vv = window.visualViewport
-    if (!vv) return
-    // A single missed resize event (iOS drops them around app switches and
-    // fast keyboard dismissals) must never strand the frame at keyboard
-    // height — that reappeared as "the tab bar is floating mid-screen again".
-    // Three defences: the override only ever applies while an editable
-    // element is genuinely focused (no keyboard without one), focus changes
-    // re-evaluate directly, and a slow tick keeps re-checking while (and
-    // only while) an override is active, so a stale height self-heals within
-    // a second even with no events at all.
-    let tick: number | null = null
-    const editableFocused = () => {
-      const el = document.activeElement
-      if (!el) return false
-      const tag = el.tagName
-      return (
-        tag === 'INPUT' ||
-        tag === 'TEXTAREA' ||
-        tag === 'SELECT' ||
-        (el as HTMLElement).isContentEditable
-      )
-    }
-    const stopTick = () => {
-      if (tick != null) {
-        window.clearInterval(tick)
-        tick = null
-      }
-    }
+    // Mobile viewport glue — the one-pass fix after every event-driven
+    // approach failed on device. iOS gives three "viewport height" signals
+    // (100dvh, window.innerHeight, visualViewport.height) that DISAGREE in
+    // the standalone PWA: when the soft keyboard opens the webview resizes
+    // but dvh does not follow, so a dvh-sized frame kept extending
+    // underneath the keyboard (composer + tab bar hidden behind it), and
+    // iOS's caret-chasing pan then stranded the layout when the keyboard
+    // closed. The only signal that always matches what the user can see is
+    // visualViewport.height — so below md the frame's height is driven from
+    // it directly AT ALL TIMES: on every viewport/focus/visibility event,
+    // and verified by a permanent 1s tick so a missed event can never
+    // strand a stale height. Any stray window pan is snapped back in the
+    // same pass. The h-dvh class remains only as the pre-JS first paint.
     const apply = () => {
       const el = frameRef.current
       if (!el) return
-      const keyboardHeight = window.innerHeight - vv.height
-      const keyboardUp =
-        window.matchMedia('(max-width: 767px)').matches &&
-        keyboardHeight > 80 &&
-        editableFocused()
-      if (keyboardUp) {
-        el.style.height = `${Math.round(vv.height)}px`
-        // Nothing should stay panned while the frame tracks the keyboard.
-        window.scrollTo(0, 0)
-        if (tick == null) tick = window.setInterval(apply, 700)
-      } else {
+      if (!window.matchMedia('(max-width: 767px)').matches) {
         el.style.removeProperty('height')
-        stopTick()
+        return
       }
+      const h = Math.round(vv?.height ?? window.innerHeight)
+      if (h > 0) {
+        const next = `${h}px`
+        if (el.style.height !== next) el.style.height = next
+      }
+      if (window.scrollY > 0) window.scrollTo(0, 0)
     }
-    // Focus moves settle over a couple of frames (blur → keyboard retract),
-    // so re-check shortly after as well as immediately.
-    const onFocusChange = () => {
+    // Focus / orientation / app-switch changes settle over a few frames
+    // (keyboard animation, webview resize), so re-check shortly after too.
+    const settle = () => {
       apply()
       window.setTimeout(apply, 120)
-      window.setTimeout(apply, 450)
+      window.setTimeout(apply, 400)
     }
-    vv.addEventListener('resize', apply)
+    vv?.addEventListener('resize', apply)
+    vv?.addEventListener('scroll', apply)
     window.addEventListener('resize', apply)
-    document.addEventListener('focusin', onFocusChange)
-    document.addEventListener('focusout', onFocusChange)
-    document.addEventListener('visibilitychange', apply)
-    window.addEventListener('pageshow', apply)
+    window.addEventListener('orientationchange', settle)
+    document.addEventListener('focusin', settle)
+    document.addEventListener('focusout', settle)
+    document.addEventListener('visibilitychange', settle)
+    window.addEventListener('pageshow', settle)
+    const tick = window.setInterval(apply, 1000)
     apply()
     return () => {
-      vv.removeEventListener('resize', apply)
+      vv?.removeEventListener('resize', apply)
+      vv?.removeEventListener('scroll', apply)
       window.removeEventListener('resize', apply)
-      document.removeEventListener('focusin', onFocusChange)
-      document.removeEventListener('focusout', onFocusChange)
-      document.removeEventListener('visibilitychange', apply)
-      window.removeEventListener('pageshow', apply)
-      stopTick()
+      window.removeEventListener('orientationchange', settle)
+      document.removeEventListener('focusin', settle)
+      document.removeEventListener('focusout', settle)
+      document.removeEventListener('visibilitychange', settle)
+      window.removeEventListener('pageshow', settle)
+      window.clearInterval(tick)
       frameRef.current?.style.removeProperty('height')
     }
   }, [])
