@@ -11,8 +11,6 @@ import { useAuth } from '../lib/auth'
 import { useTeamChat } from '../lib/teamChatStore'
 import EditProfileModal, { type EditProfileSavedPayload } from '../components/EditProfileModal'
 import PushNudge from '../components/PushNudge'
-import { FEEDBACK_RESOLVED_STATUSES, isUnseenResolved } from '../lib/feedback'
-import { getApprovedNoOrderCount, peekApprovedNoOrderCount } from '../lib/approvedNoOrder'
 import { getFlaggedCount, peekFlaggedCount } from '../lib/flaggedCount'
 import { DesignerHeader, type DesignerNavId, type DesignerHeaderColour } from './DesignerHeader'
 
@@ -41,14 +39,11 @@ export function useDesignerProfile(): DesignerProfile | null {
   return useContext(DesignerProfileContext)
 }
 
-// Module-level cache of the signed-in user's feedback-unread count so the badge
-// on the header's Feedback icon doesn't reset to 0 and flash back in on every
-// navigation (each page remounts this chrome). Same seed-from-warm-cache idea
-// as the Orders / Flagged nav badges, but this count is derived from the
-// profile + feedback fetch in the effect below rather than a standalone cached
-// helper, so the tiny cache lives here. Keyed by user id; the effect refreshes
-// it on every mount, so it's stale-while-revalidate like the other badges.
-let feedbackUnreadCache: { userId: string; value: number } | null = null
+// Module-level cache of the signed-in user's unseen-paid-orders count so the
+// Orders nav badge doesn't reset to 0 and flash back in on every navigation
+// (each page remounts this chrome). Keyed by user id; the effect refreshes it
+// on every mount, so it's stale-while-revalidate like the other badges.
+let ordersUnreadCache: { userId: string; value: number } | null = null
 
 interface DesignerChromeProps {
   /** Which nav pill in the header is highlighted. Pass null to
@@ -81,39 +76,33 @@ export function DesignerChrome({
   const userId = session?.user.id ?? null
   const [profile, setProfile] = useState<DesignerProfile | null>(null)
   const [editProfileOpen, setEditProfileOpen] = useState(false)
-  // Count of the signed-in user's own feedback items resolved (done/wont_do)
-  // since they last opened the board — drives the header's Feedback badge. Seed
-  // from the warm module cache (keyed by user) so a page switch doesn't blank
-  // the badge and flash it back in; the effect below refreshes + re-caches it.
-  const [feedbackUnread, setFeedbackUnread] = useState(() =>
-    feedbackUnreadCache?.userId === userId ? feedbackUnreadCache.value : 0,
-  )
   // Team-chat unread comes from the shared chat engine (one live connection for
   // the whole app), so the badge here, the header dropdown and the /chat page
   // never disagree. mention + DM counts make the mobile Chat tab badge coral.
   const { unread: chatUnread, mentionUnread, dmUnread } = useTeamChat()
-  // Count of approved proofs with no order link sent yet — badges the Orders
-  // nav pill so the "Links to send" worklist is reachable from any page. Cached
-  // (60s) in the helper so it doesn't re-query on every navigation. Seed the
-  // initial state from the warm cache (peek*) so the badge doesn't flash 0 → N
-  // and widen the pill on every page switch — the async refresh below still
-  // runs, but a cache hit means the first paint already carries the count.
-  const [ordersUnread, setOrdersUnread] = useState(() => peekApprovedNoOrderCount() ?? 0)
+  // Payments received since this person last opened /orders — an event signal,
+  // deliberately NOT the links-to-send worklist (jobs sit there intentionally
+  // for a long time, which kept the old badge permanently lit). Computed in the
+  // profile effect below against profiles.orders_seen_at (000325); seeded from
+  // the warm module cache so a page switch doesn't blank-and-flash the badge.
+  const [ordersUnread, setOrdersUnread] = useState(() =>
+    ordersUnreadCache?.userId === userId ? ordersUnreadCache.value : 0,
+  )
   // Count of open items on the Flagged board — badges the Flagged nav pill from
   // any page. Same cached-helper + seeded-initial-state pattern as ordersUnread.
   const [flaggedUnread, setFlaggedUnread] = useState(() => peekFlaggedCount() ?? 0)
 
   // Fetch the signed-in designer's profile for the header avatar +
   // any consumer that reads via useDesignerProfile(); the same fetch
-  // also pulls feedback_seen_at so we can compute the Feedback badge in
-  // one round trip.
+  // also pulls orders_seen_at so the Orders badge (payments received
+  // since that stamp) computes in one follow-up head-count query.
   useEffect(() => {
     if (!userId) return
     let cancelled = false
     void (async () => {
       const { data } = await supabase
         .from('profiles')
-        .select('designer_initials, designer_colour, full_name, avatar_url, feedback_seen_at')
+        .select('designer_initials, designer_colour, full_name, avatar_url, orders_seen_at')
         .eq('id', userId)
         .single()
       if (cancelled || !data) return
@@ -128,37 +117,25 @@ export function DesignerChrome({
         firstName: data.full_name?.split(' ')[0] ?? null,
       })
 
-      // The user's own resolved items, compared client-side against the
-      // seen baseline via the same predicate the board uses, so the badge
-      // and the on-board "new to you" highlight can never disagree.
-      const seenAt = (data.feedback_seen_at as string | null) ?? null
-      const { data: resolved } = await supabase
-        .from('feedback_items')
-        .select('created_by, status, status_changed_at')
-        .eq('created_by', userId)
-        .in('status', FEEDBACK_RESOLVED_STATUSES)
+      // Payments received since the stamp. Head-count only — no rows.
+      const seenAt = (data.orders_seen_at as string | null) ?? null
+      if (!seenAt) return
+      const { count } = await supabase
+        .from('orders')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'paid')
+        .gt('paid_at', seenAt)
       if (cancelled) return
-      const count = (resolved ?? []).filter((it) =>
-        isUnseenResolved(it as Parameters<typeof isUnseenResolved>[0], userId, seenAt),
-      ).length
+      const value = count ?? 0
       // Cache before setting state so the next navigation seeds from this value
       // (userId is non-null here — the effect early-returns otherwise).
-      feedbackUnreadCache = { userId, value: count }
-      setFeedbackUnread(count)
+      ordersUnreadCache = { userId, value }
+      setOrdersUnread(value)
     })()
     return () => {
       cancelled = true
     }
   }, [userId])
-
-  // The Orders badge count is independent of the profile fetch (no userId
-  // dependency), so it gets its own effect. Runs once per chrome mount (i.e.
-  // per navigation); the helper's 60s cache absorbs the repeats.
-  useEffect(() => {
-    let cancelled = false
-    void getApprovedNoOrderCount().then((n) => { if (!cancelled) setOrdersUnread(n) })
-    return () => { cancelled = true }
-  }, [])
 
   // Flagged-board open count for the nav badge. Independent of the profile
   // fetch; the helper's 60s cache absorbs per-navigation repeats.
@@ -193,18 +170,13 @@ export function DesignerChrome({
         search={search}
         actions={headerActions}
         mobileBell={mobileBell}
-        // No badge while the user is already on the board — they're looking
-        // at it; the board itself re-stamps feedback_seen_at on open.
-        feedbackUnread={active === 'feedback' ? 0 : feedbackUnread}
         // No badge while the user is on the chat itself — the page re-stamps
         // team_chat_seen_at on open and as messages arrive.
         chatUnread={active === 'chat' ? 0 : chatUnread}
         chatMentionUnread={active === 'chat' ? 0 : mentionUnread + dmUnread}
-        // Both counts stay visible when their own tab is active — they simply
-        // invert on the coral pill (see DesignerHeader). Hiding a badge on
-        // navigation would shrink that pill and shove the pills to its right
-        // sideways, so the count persists rather than clearing on arrival.
-        ordersUnread={ordersUnread}
+        // No badge while the user is on the Orders page — it stamps
+        // orders_seen_at on open, so they're looking at the payments now.
+        ordersUnread={active === 'orders' ? 0 : ordersUnread}
         flaggedCount={flaggedUnread}
         onEditProfile={() => setEditProfileOpen(true)}
         onSignOut={handleSignOut}

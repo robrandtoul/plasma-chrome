@@ -110,17 +110,14 @@ interface DesignerHeaderProps {
    *  other pages it navigates to the dashboard with ?activity=1 instead.
    *  hasUnseen dots the Activity tab. */
   mobileBell?: { onClick: () => void; hasUnseen: boolean }
-  /** Count of the user's own feedback items resolved since they last
-   *  opened the board. Badges the Feedback row / More tab when > 0. */
-  feedbackUnread?: number
   /** Count of team-chat messages from others since the user last opened the
    *  chat. Badges the Chat icon / Chat tab when > 0. */
   chatUnread?: number
   /** Of chatUnread, how many are personal (@mentions + DMs). Makes the
    *  mobile Chat tab badge coral instead of ink. */
   chatMentionUnread?: number
-  /** Count of approved proofs with no order link sent yet. Badges the Orders
-   *  nav pill (desktop) and the Orders bottom tab (mobile) when > 0. */
+  /** Payments received since the user last opened the Orders page. Badges the
+   *  Orders nav pill (desktop) and the Orders bottom tab (mobile) when > 0. */
   ordersUnread?: number
   /** Count of open items on the Flagged board. Badges the Flagged nav pill
    *  when > 0, inverting on the active (coral) pill so it stays legible. */
@@ -136,7 +133,6 @@ export function DesignerHeader({
   search,
   actions,
   mobileBell,
-  feedbackUnread = 0,
   chatUnread = 0,
   chatMentionUnread = 0,
   ordersUnread = 0,
@@ -213,7 +209,7 @@ export function DesignerHeader({
               const badgeAria =
                 badge > 0
                   ? n.id === 'orders'
-                    ? `${n.label} — ${badge} approved, no order link sent`
+                    ? `${n.label} — ${badge} paid since you last looked`
                     : `${n.label} — ${badge} open`
                   : undefined
               const cls = [
@@ -285,10 +281,9 @@ export function DesignerHeader({
 
           {/* Feedback used to sit here as its own icon, but it read as a twin
               of the chat icon. It now lives inside the account menu (UserPill),
-              with a dot on the pill when there's an unseen resolution. */}
+              deliberately without any notification indicator. */}
           <UserPill
             user={user}
-            feedbackUnread={feedbackUnread}
             feedbackActive={active === 'feedback'}
             onEditProfile={onEditProfile}
             onSignOut={onSignOut}
@@ -306,7 +301,6 @@ export function DesignerHeader({
       <BottomTabBar
         active={active}
         orderingEnabled={orderingEnabled}
-        feedbackUnread={feedbackUnread}
         chatUnread={chatUnread}
         chatMentionUnread={chatMentionUnread}
         ordersUnread={ordersUnread}
@@ -325,7 +319,6 @@ export function DesignerHeader({
         onClose={() => setAccountOpen(false)}
         user={user}
         role={role}
-        feedbackUnread={feedbackUnread}
         flaggedCount={flaggedCount}
         onEditProfile={onEditProfile}
         onSignOut={onSignOut}
@@ -345,7 +338,6 @@ export function DesignerHeader({
 function BottomTabBar({
   active,
   orderingEnabled,
-  feedbackUnread,
   chatUnread,
   chatMentionUnread,
   ordersUnread,
@@ -355,7 +347,6 @@ function BottomTabBar({
 }: {
   active: DesignerNavId | null
   orderingEnabled: boolean
-  feedbackUnread: number
   chatUnread: number
   chatMentionUnread: number
   ordersUnread: number
@@ -425,7 +416,7 @@ function BottomTabBar({
         aria-current={moreActive ? 'page' : undefined}
         aria-label="More"
       >
-        <TabInner label="More" Icon={MoreHorizontal} active={moreActive} showDot={feedbackUnread > 0} />
+        <TabInner label="More" Icon={MoreHorizontal} active={moreActive} />
       </button>
     </nav>
   )
@@ -490,7 +481,6 @@ function AccountSheet({
   onClose,
   user,
   role,
-  feedbackUnread,
   flaggedCount,
   onEditProfile,
   onSignOut,
@@ -499,7 +489,6 @@ function AccountSheet({
   onClose: () => void
   user: UserProps
   role: 'admin' | 'designer' | null
-  feedbackUnread: number
   flaggedCount: number
   onEditProfile?: () => void
   onSignOut?: () => void
@@ -560,11 +549,6 @@ function AccountSheet({
           >
             <MessageSquare size={18} aria-hidden="true" className="text-ink-mute" />
             Feedback
-            {feedbackUnread > 0 && (
-              <span className="ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-brand px-1.5 text-[11px] font-semibold leading-none text-white">
-                {feedbackUnread > 9 ? '9+' : feedbackUnread}
-              </span>
-            )}
           </Link>
           {role === 'admin' && (
             <Link
@@ -662,13 +646,11 @@ function MobileSearchField({
 
 function UserPill({
   user,
-  feedbackUnread,
   feedbackActive,
   onEditProfile,
   onSignOut,
 }: {
   user: UserProps
-  feedbackUnread: number
   feedbackActive: boolean
   onEditProfile?: () => void
   onSignOut?: () => void
@@ -720,15 +702,6 @@ function UserPill({
         </span>
         <span className="hidden sm:inline">{user.name ?? 'Account'}</span>
       </button>
-      {/* Feedback now lives in this menu; a dot on the pill keeps its unseen
-          signal visible without a second header icon. */}
-      {feedbackUnread > 0 && !open && (
-        <span
-          className="pointer-events-none absolute -right-0.5 -top-0.5 z-10 h-2.5 w-2.5 rounded-full bg-brand"
-          style={{ boxShadow: '0 0 0 2px var(--c-surface)' }}
-          aria-hidden="true"
-        />
-      )}
       {open && (
         <div
           role="menu"
@@ -751,11 +724,6 @@ function UserPill({
           >
             <MessageSquare size={15} aria-hidden="true" className="text-ink-mute" />
             Feedback
-            {feedbackUnread > 0 && (
-              <span className="ml-auto inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-semibold leading-none text-white">
-                {feedbackUnread > 9 ? '9+' : feedbackUnread}
-              </span>
-            )}
           </Link>
           <div className="mx-3 my-1 border-t border-line-soft" />
           {onEditProfile && (
