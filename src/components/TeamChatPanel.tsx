@@ -251,11 +251,64 @@ function ReactButton({ messageId }: { messageId: string }) {
   )
 }
 
-// The shared chat body — presence strip + message list + composer — used by
-// the header dropdown (variant="dropdown"), the full /chat page
-// (variant="page") and the dashboard rail dock (variant="docked"). It reads
-// everything from the TeamChatProvider, so every surface stays perfectly in
-// sync. The parent sizes it (it fills its height).
+function firstName(name: string | null | undefined): string {
+  const n = (name ?? '').trim()
+  return n ? n.split(/\s+/)[0] : 'Teammate'
+}
+
+// One pill in the thread switcher: the Team room or a teammate's private
+// thread. Carries that thread's unread count and (for people) a presence dot.
+function ThreadPill({
+  label,
+  active,
+  count,
+  status,
+  onClick,
+}: {
+  label: string
+  active: boolean
+  count: number
+  /** Presence dot: a ChatStatus, null = offline, undefined = no dot (Team). */
+  status?: ChatStatus | null
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={[
+        'flex h-7 flex-shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-medium transition-colors',
+        active
+          ? 'border-ink bg-ink text-on-ink'
+          : 'border-line bg-surface text-ink-soft hover:bg-canvas hover:text-ink',
+      ].join(' ')}
+    >
+      {status !== undefined && (
+        <span
+          className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
+          style={{ backgroundColor: status ? CHAT_STATUS_META[status].dot : 'var(--c-line)' }}
+          aria-hidden="true"
+        />
+      )}
+      {label}
+      {count > 0 && (
+        <span
+          className="inline-flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-bold leading-none text-white"
+          aria-label={`${count} unread`}
+        >
+          {count > 9 ? '9+' : count}
+        </span>
+      )}
+    </button>
+  )
+}
+
+// The shared chat body — presence strip + thread switcher + message list +
+// composer — used by the header dropdown (variant="dropdown"), the full /chat
+// page (variant="page") and the dashboard rail dock (variant="docked"). It
+// reads everything from the TeamChatProvider, so every surface stays perfectly
+// in sync (including which thread is open). The parent sizes it.
 
 interface TeamChatPanelProps {
   variant: 'dropdown' | 'page' | 'docked'
@@ -414,6 +467,9 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     notifyTyping,
     reactions,
     toggleReaction,
+    activeThread,
+    setActiveThread,
+    threadUnread,
   } = useTeamChat()
 
   const [draft, setDraft] = useState('')
@@ -497,15 +553,35 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     () => members.map((m) => m.name ?? '').filter(Boolean),
     [members],
   )
+  // The DM peer when a private thread is open; null in the team room.
+  const activePeer = useMemo(
+    () => (activeThread === 'team' ? null : members.find((m) => m.id === activeThread) ?? null),
+    [activeThread, members],
+  )
+  const presenceByUser = useMemo(
+    () => new Map(presence.map((p) => [p.userId, p.status])),
+    [presence],
+  )
+  // Messages for the active thread: the shared room, or my DM pair with the
+  // selected peer (both directions). RLS already scopes what arrives; this
+  // just splits it into conversations.
+  const threadMessages = useMemo(() => {
+    if (activeThread === 'team') return messages.filter((m) => !m.recipient_id)
+    return messages.filter(
+      (m) =>
+        (m.author_id === activeThread && m.recipient_id === userId) ||
+        (m.author_id === userId && m.recipient_id === activeThread),
+    )
+  }, [messages, activeThread, userId])
   const searchQuery = search.trim().toLowerCase()
   const shown = useMemo(() => {
-    if (!searchQuery) return messages
-    return messages.filter(
+    if (!searchQuery) return threadMessages
+    return threadMessages.filter(
       (m) =>
         m.body.toLowerCase().includes(searchQuery) ||
         (m.author_name ?? '').toLowerCase().includes(searchQuery),
     )
-  }, [messages, searchQuery])
+  }, [threadMessages, searchQuery])
   const filtered = useMemo(() => {
     if (mentionQuery === null) return []
     const q = mentionQuery.toLowerCase()
@@ -521,14 +597,20 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [messages.length, loading])
+  }, [messages.length, loading, activeThread])
+
+  // Switching thread dismisses any half-open @mention autocomplete (mentions
+  // are a team-room thing; a DM already targets its one recipient).
+  useEffect(() => {
+    setMentionQuery(null)
+  }, [activeThread])
 
   function onDraftChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const value = e.target.value
     setDraft(value)
     if (value.trim()) notifyTyping()
     const caret = e.target.selectionStart ?? value.length
-    const det = detectMention(value, caret)
+    const det = activeThread === 'team' ? detectMention(value, caret) : null
     if (det) {
       setMentionQuery(det.query)
       setMentionAnchor(det.at)
@@ -583,14 +665,18 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
 
     // Push targets are computed from the text against known member names, so
     // both picking from the list and typing "@Full Name" register a mention.
+    // DMs never carry mentions — the DM push already targets the recipient.
     const lower = text.toLowerCase()
-    const mentionedIds = [
-      ...new Set(
-        mentionCandidates
-          .filter((m) => m.name && lower.includes('@' + m.name.toLowerCase()))
-          .map((m) => m.id),
-      ),
-    ]
+    const mentionedIds =
+      activeThread === 'team'
+        ? [
+            ...new Set(
+              mentionCandidates
+                .filter((m) => m.name && lower.includes('@' + m.name.toLowerCase()))
+                .map((m) => m.id),
+            ),
+          ]
+        : []
     const res = await send(text, mentionedIds, uploaded)
     setSending(false)
     if (!res.ok) {
@@ -680,6 +766,28 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
         <SoundToggle />
       </div>
 
+      {/* Thread switcher: the shared room + a private thread per teammate.
+          Lives in the shared engine, so the dropdown / dock / page all show
+          the same conversation. */}
+      <div className="flex flex-shrink-0 items-center gap-1.5 overflow-x-auto border-b border-line-soft px-3 py-2">
+        <ThreadPill
+          label="Team"
+          active={activeThread === 'team'}
+          count={threadUnread.team ?? 0}
+          onClick={() => setActiveThread('team')}
+        />
+        {mentionCandidates.map((m) => (
+          <ThreadPill
+            key={m.id}
+            label={firstName(m.name)}
+            active={activeThread === m.id}
+            count={threadUnread[m.id] ?? 0}
+            status={presenceByUser.get(m.id) ?? null}
+            onClick={() => setActiveThread(m.id)}
+          />
+        ))}
+      </div>
+
       {searchOpen && (
         <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2">
           <SearchIcon size={14} className="text-ink-mute" aria-hidden="true" />
@@ -716,10 +824,14 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
               style={{ borderTopColor: 'var(--c-ink)' }}
             />
           </div>
-        ) : messages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center text-center">
+        ) : threadMessages.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center px-6 text-center">
             <p className="text-[14px] text-ink-soft">No messages yet.</p>
-            <p className="text-[13px] text-ink-mute">Say hello to the team.</p>
+            <p className="text-[13px] text-ink-mute">
+              {activePeer
+                ? `This is a private conversation between you and ${activePeer.name ?? 'your teammate'} — no-one else can see it.`
+                : 'Say hello to the team.'}
+            </p>
           </div>
         ) : shown.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
@@ -951,7 +1063,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             onKeyDown={onKeyDown}
             onPaste={handlePaste}
             rows={variant === 'page' ? 2 : 1}
-            placeholder="Message the team…"
+            placeholder={activePeer ? `Message ${firstName(activePeer.name)}…` : 'Message the team…'}
             className="flex-1"
           />
           <button
@@ -977,8 +1089,9 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
           }}
         />
         <p className="mt-1.5 text-[11px] text-ink-dim">
-          @ to mention · paste or drop any file (up to {MAX_MB} MB) · Enter to send · Shift + Enter for a
-          new line
+          {activePeer
+            ? `Private to ${activePeer.name ?? 'your teammate'} · paste or drop any file (up to ${MAX_MB} MB) · Enter to send`
+            : `@ to mention · paste or drop any file (up to ${MAX_MB} MB) · Enter to send · Shift + Enter for a new line`}
         </p>
       </div>
     </div>

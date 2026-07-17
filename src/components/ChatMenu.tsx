@@ -61,7 +61,7 @@ function useIsLarge() {
 }
 
 export default function ChatMenu({ active = false }: { active?: boolean }) {
-  const { unread, mentionUnread, dropdownPinned, setDropdownPinned, placement, setPlacement } =
+  const { unread, mentionUnread, dmUnread, dropdownPinned, setDropdownPinned, placement, setPlacement } =
     useTeamChat()
   const isDesktop = useIsDesktop()
   const isLarge = useIsLarge()
@@ -179,7 +179,8 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
 
   const current = open || active
   const hasUnread = unread > 0
-  const hasMention = mentionUnread > 0
+  // DMs are personal, so they get the same loud coral treatment as @mentions.
+  const hasMention = mentionUnread > 0 || dmUnread > 0
 
   return (
     <div ref={ref} className="relative">
@@ -195,11 +196,13 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
           open ? close() : setOpen(true)
         }}
         aria-label={
-          hasMention
-            ? `Team chat — ${unread} new, you were mentioned`
-            : hasUnread
-              ? `Team chat — ${unread} new`
-              : 'Team chat'
+          dmUnread > 0
+            ? `Team chat — ${unread} new, including a private message for you`
+            : hasMention
+              ? `Team chat — ${unread} new, you were mentioned`
+              : hasUnread
+                ? `Team chat — ${unread} new`
+                : 'Team chat'
         }
         aria-haspopup="dialog"
         aria-expanded={open}

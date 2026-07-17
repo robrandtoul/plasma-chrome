@@ -63,7 +63,8 @@ interface Body {
   source_kind: 'proof_event' | 'order' | 'proof_finalize' | 'condition' | 'chat'
   source_event_id: string
   actor_user_id?: string | null
-  // Explicit recipients for team_chat_mention (the @mentioned users). Other
+  // Explicit recipients for the chat events — team_chat_mention (the
+  // @mentioned users) and team_chat_dm (the DM recipient, 000324). Other
   // event codes resolve recipients from ownership + prefs instead.
   recipient_user_ids?: string[] | null
   vars?: Record<string, string | null | undefined>
@@ -125,9 +126,9 @@ Deno.serve(async (req) => {
   const fulfilmentIds = new Set((settings.fulfilment_user_ids as string[] | null) ?? [])
   const copyMap = (settings.notification_copy as Record<string, { title: string; body: string }> | null) ?? {}
 
-  // Team-chat @mention: the recipients are explicit (the mentioned users), so
-  // this bypasses the proof-ownership recipient machinery entirely.
-  if (eventCode === 'team_chat_mention') {
+  // Team-chat events: the recipients are explicit (the mentioned users, or the
+  // DM recipient), so these bypass the proof-ownership recipient machinery.
+  if (eventCode === 'team_chat_mention' || eventCode === 'team_chat_dm') {
     return await handleChatMention(admin, body, copyMap)
   }
 
@@ -294,21 +295,27 @@ function deepLink(event: string, proofId: string | null): string {
   return proofId ? `/proofs/${proofId}` : '/'
 }
 
-// Team-chat @mention fan-out. Recipients are the explicit mentioned users (not
-// derived from any proof), so this is self-contained: for each, respect an
-// account-wide pause or an explicit "mentions off", dedup via the outbox, send
-// to every device, prune dead subscriptions. Deep-links to /chat.
+// Team-chat fan-out for the explicit-recipient events: team_chat_mention (the
+// @mentioned users) and team_chat_dm (the DM recipient, 000324). Not derived
+// from any proof, so this is self-contained: for each recipient, respect an
+// account-wide pause or an explicit per-event "off", dedup via the outbox,
+// send to every device, prune dead subscriptions. Deep-links to /chat.
 async function handleChatMention(
   admin: SupabaseClient,
   body: Body,
   copyMap: Record<string, { title: string; body: string }>,
 ): Promise<Response> {
+  const eventCode = body.event_code
   const recipientIds = Array.from(
     new Set((body.recipient_user_ids ?? []).filter((id): id is string => !!id)),
   ).filter((id) => id !== body.actor_user_id)
   if (recipientIds.length === 0) return json({ status: 'skipped', reason: 'no_recipients' })
 
-  const copy = copyMap['team_chat_mention'] ?? { title: '{actor} mentioned you', body: '{snippet}' }
+  const copy =
+    copyMap[eventCode] ??
+    (eventCode === 'team_chat_dm'
+      ? { title: '{actor} sent you a message', body: '{snippet}' }
+      : { title: '{actor} mentioned you', body: '{snippet}' })
   const vars = { ...(body.vars ?? {}) }
   const payload: PushPayload = {
     title: clip(interpolate(copy.title, vars), 30),
@@ -336,13 +343,13 @@ async function handleChatMention(
       .eq('user_id', recipientId)
       .maybeSingle()
     const prefs = (prefRow as { prefs?: Record<string, unknown> } | null)?.prefs ?? {}
-    if (prefs._muted === true || prefs['team_chat_mention'] === 'off') {
+    if (prefs._muted === true || prefs[eventCode] === 'off') {
       skipped++
       continue
     }
 
     const { error: insErr } = await admin.from('notification_outbox').insert({
-      event_code: 'team_chat_mention',
+      event_code: eventCode,
       source_kind: 'chat',
       source_event_id: body.source_event_id,
       proof_id: null,
@@ -368,7 +375,7 @@ async function handleChatMention(
       .eq('user_id', recipientId)
     const devices = (subs ?? []) as Array<{ id: string; endpoint: string; p256dh: string; auth: string }>
     if (devices.length === 0) {
-      await setOutcome(admin, 'team_chat_mention', body, recipientId, 'no_subscription')
+      await setOutcome(admin, eventCode, body, recipientId, 'no_subscription')
       continue
     }
 
@@ -386,7 +393,7 @@ async function handleChatMention(
           .eq('id', d.id)
       }
     }
-    await setOutcome(admin, 'team_chat_mention', body, recipientId, anySent ? 'sent' : 'failed')
+    await setOutcome(admin, eventCode, body, recipientId, anySent ? 'sent' : 'failed')
     if (anySent) sent++
   }
 

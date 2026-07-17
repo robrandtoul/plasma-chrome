@@ -23,6 +23,18 @@ export type ChatStatus = 'online' | 'idle' | 'away' | 'busy'
 // dashboard right rail. Persisted per browser.
 export type ChatPlacement = 'floating' | 'docked'
 
+// Which conversation is showing: the shared team room, or a private
+// person-to-person thread keyed by the peer's user id (000324).
+export type ChatThread = 'team' | string
+
+// Which thread a message belongs to, from my point of view: team-room rows to
+// 'team'; a DM to the OTHER participant's id (their thread key), whether I
+// sent or received it.
+function threadOf(m: TeamMessage, myId: string | null): ChatThread {
+  if (!m.recipient_id) return 'team'
+  return m.author_id === myId ? m.recipient_id : (m.author_id ?? m.recipient_id)
+}
+
 // Traffic-light status colours. Deliberately literal (not design tokens) — these
 // read as universal presence signals and should look the same everywhere.
 export const CHAT_STATUS_META: Record<ChatStatus, { label: string; dot: string }> = {
@@ -73,10 +85,23 @@ interface PresenceMeta {
 interface TeamChatValue {
   messages: TeamMessage[]
   loading: boolean
+  /** Total unread across every thread (team room + all DMs). */
   unread: number
-  /** Of `unread`, how many @mention me. Drives the louder mention badge so a
-   *  direct tag reads differently from ordinary chatter. */
+  /** Of the team room's unread, how many @mention me. Drives the louder
+   *  mention badge so a direct tag reads differently from ordinary chatter. */
   mentionUnread: number
+  /** Total unread across the private DM threads. DMs are personal, so this
+   *  gets the same loud badge treatment as mentions. */
+  dmUnread: number
+  /** Per-thread unread counts, keyed 'team' or the peer's user id. Missing
+   *  key = zero. Drives the thread-switcher badges. */
+  threadUnread: Record<string, number>
+  /** The conversation every chat surface is showing (they stay in sync via
+   *  this shared engine): 'team' or a peer's user id. */
+  activeThread: ChatThread
+  /** Switch thread. If a chat surface is open, the new thread is immediately
+   *  marked read. */
+  setActiveThread: (thread: ChatThread) => void
   /** Everyone currently present, including yourself. */
   presence: PresenceMember[]
   /** Active team members, for the @mention picker + highlighting. */
@@ -159,6 +184,10 @@ const DEFAULT: TeamChatValue = {
   loading: false,
   unread: 0,
   mentionUnread: 0,
+  dmUnread: 0,
+  threadUnread: {},
+  activeThread: 'team',
+  setActiveThread: () => {},
   presence: [],
   members: [],
   reactions: [],
@@ -221,8 +250,10 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
 
   const [messages, setMessages] = useState<TeamMessage[]>([])
   const [loading, setLoading] = useState(true)
-  const [unread, setUnread] = useState(0)
+  // Unread per thread ('team' or peer id). Totals are derived at render.
+  const [threadUnread, setThreadUnread] = useState<Record<string, number>>({})
   const [mentionUnread, setMentionUnread] = useState(0)
+  const [activeThread, setActiveThreadState] = useState<ChatThread>('team')
   const [presence, setPresence] = useState<PresenceMember[]>([])
   const [members, setMembers] = useState<TeamMember[]>([])
   const [reactions, setReactions] = useState<ReactionRow[]>([])
@@ -239,7 +270,9 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   const soundEnabledRef = useRef(soundEnabled)
   soundEnabledRef.current = soundEnabled
   const lastGeneralSoundRef = useRef(0)
-  const typingMapRef = useRef<Map<string, { name: string | null; expiresAt: number }>>(new Map())
+  const typingMapRef = useRef<Map<string, { name: string | null; expiresAt: number; thread: ChatThread }>>(
+    new Map(),
+  )
   const lastTypingSentRef = useRef(0)
   const reactionsRef = useRef<ReactionRow[]>([])
   reactionsRef.current = reactions
@@ -247,6 +280,9 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   const manualRef = useRef<'away' | 'busy' | null>(null)
   const lastActivityRef = useRef(Date.now())
   const seenAtRef = useRef<string | null>(null)
+  // Per-peer DM "last read" stamps (team_chat_dm_reads), keyed by peer id.
+  const dmReadsRef = useRef<Record<string, string>>({})
+  const activeThreadRef = useRef<ChatThread>('team')
   const myStatusRef = useRef<ChatStatus>('online')
   const profileRef = useRef<{ name: string | null; initials: string | null; colour: string | null }>({
     name: null,
@@ -282,21 +318,41 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     if (ch) void ch.track(presencePayload())
   }
 
-  function stampSeen() {
+  // Mark one thread read: persist the stamp (profiles.team_chat_seen_at for
+  // the room, team_chat_dm_reads for a DM) and zero its unread count.
+  function stampSeen(thread: ChatThread) {
     const uid = userIdRef.current
     if (!uid) return
     const nowIso = new Date().toISOString()
-    seenAtRef.current = nowIso
-    void supabase.from('profiles').update({ team_chat_seen_at: nowIso }).eq('id', uid)
+    if (thread === 'team') {
+      seenAtRef.current = nowIso
+      void supabase.from('profiles').update({ team_chat_seen_at: nowIso }).eq('id', uid)
+      setMentionUnread(0)
+    } else {
+      dmReadsRef.current[thread] = nowIso
+      void supabase
+        .from('team_chat_dm_reads')
+        .upsert({ user_id: uid, peer_id: thread, seen_at: nowIso }, { onConflict: 'user_id,peer_id' })
+    }
+    setThreadUnread((prev) => {
+      if (!prev[thread]) return prev
+      const next = { ...prev }
+      delete next[thread]
+      return next
+    })
   }
 
-  // Rebuild the typing-users list from the ref, dropping any that have expired.
+  // Rebuild the typing-users list from the ref, dropping any that have expired
+  // and showing only entries for the thread currently on screen.
   function recomputeTyping() {
     const now = Date.now()
     const arr: { userId: string; name: string | null }[] = []
     for (const [uid, v] of typingMapRef.current) {
-      if (v.expiresAt > now) arr.push({ userId: uid, name: v.name })
-      else typingMapRef.current.delete(uid)
+      if (v.expiresAt <= now) {
+        typingMapRef.current.delete(uid)
+        continue
+      }
+      if (v.thread === activeThreadRef.current) arr.push({ userId: uid, name: v.name })
     }
     setTypingUsers(arr)
   }
@@ -305,7 +361,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!userId) {
       setMessages([])
-      setUnread(0)
+      setThreadUnread({})
       setMentionUnread(0)
       setPresence([])
       setMembers([])
@@ -317,12 +373,13 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     setLoading(true)
 
     void (async () => {
-      const [{ data: prof }, { data: msgs }, { data: mem }] = await Promise.all([
+      const [{ data: prof }, { data: msgs }, { data: mem }, { data: dmReads }] = await Promise.all([
         supabase
           .from('profiles')
           .select('full_name, designer_initials, designer_colour, team_chat_seen_at')
           .eq('id', userId)
           .single(),
+        // RLS scopes this to the team room + my own DM threads (000324).
         supabase
           .from('team_messages')
           .select('*')
@@ -333,8 +390,16 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
           .select('id, full_name, designer_initials, designer_colour')
           .is('deactivated_at', null)
           .order('full_name'),
+        supabase.from('team_chat_dm_reads').select('peer_id, seen_at').eq('user_id', userId),
       ])
       if (cancelled) return
+
+      dmReadsRef.current = Object.fromEntries(
+        ((dmReads ?? []) as Array<{ peer_id: string; seen_at: string }>).map((r) => [
+          r.peer_id,
+          r.seen_at,
+        ]),
+      )
 
       setMembers(
         ((mem ?? []) as Array<{
@@ -359,16 +424,28 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
 
       const list = ((msgs ?? []) as TeamMessage[]).slice().reverse()
       setMessages(list)
-      const seen = seenAtRef.current
-      const unseenFromOthers = list.filter(
-        (m) => m.author_id !== userId && (!seen || m.created_at > seen),
-      )
-      setUnread(unseenFromOthers.length)
-      setMentionUnread(
-        unseenFromOthers.filter(
-          (m) => Array.isArray(m.mentioned_user_ids) && m.mentioned_user_ids.includes(userId),
-        ).length,
-      )
+      // Per-thread unread: the team room measures against team_chat_seen_at,
+      // each DM thread against its own team_chat_dm_reads stamp.
+      const counts: Record<string, number> = {}
+      let mentions = 0
+      for (const m of list) {
+        if (m.author_id === userId) continue
+        const thread = threadOf(m, userId)
+        if (thread === 'team') {
+          const seen = seenAtRef.current
+          if (!seen || m.created_at > seen) {
+            counts.team = (counts.team ?? 0) + 1
+            if (Array.isArray(m.mentioned_user_ids) && m.mentioned_user_ids.includes(userId)) {
+              mentions++
+            }
+          }
+        } else {
+          const seen = dmReadsRef.current[thread]
+          if (!seen || m.created_at > seen) counts[thread] = (counts[thread] ?? 0) + 1
+        }
+      }
+      setThreadUnread(counts)
+      setMentionUnread(mentions)
       setLoading(false)
 
       const messageIds = list.map((m) => m.id)
@@ -392,24 +469,28 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
             const row = payload.new as TeamMessage
             setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]))
             if (row.author_id !== userIdRef.current) {
-              // Does this message @mention me? Drives both the unread badge's
-              // mention state and the audio cue.
+              // Which thread, and is it personal? A DM or an @mention of me
+              // gets the loud treatment (badge + chime); room chatter stays
+              // subtle. RLS means a DM row only ever reaches its participants.
+              const thread = threadOf(row, userIdRef.current)
+              const isDm = thread !== 'team'
               const mentions = (payload.new as { mentioned_user_ids?: string[] | null })
                 .mentioned_user_ids
               const mentioned =
+                !isDm &&
                 Array.isArray(mentions) &&
                 !!userIdRef.current &&
                 mentions.includes(userIdRef.current)
-              if (viewingRef.current) {
-                stampSeen()
+              if (viewingRef.current && activeThreadRef.current === thread) {
+                stampSeen(thread)
               } else {
-                setUnread((n) => n + 1)
+                setThreadUnread((prev) => ({ ...prev, [thread]: (prev[thread] ?? 0) + 1 }))
                 if (mentioned) setMentionUnread((n) => n + 1)
               }
-              // Audio cue: a brighter chime if it @mentions me, else a subtle
-              // blip (throttled so a burst doesn't machine-gun).
+              // Audio cue: a brighter chime for a DM or an @mention, else a
+              // subtle blip (throttled so a burst doesn't machine-gun).
               if (soundEnabledRef.current) {
-                if (mentioned) {
+                if (mentioned || isDm) {
                   playChatSound('mention')
                 } else {
                   const now = Date.now()
@@ -451,9 +532,20 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
           setPresence(reducePresence(state))
         })
         .on('broadcast', { event: 'typing' }, ({ payload }) => {
-          const p = payload as { userId?: string; name?: string | null }
+          const p = payload as { userId?: string; name?: string | null; to?: string | null }
           if (!p.userId || p.userId === userIdRef.current) return
-          typingMapRef.current.set(p.userId, { name: p.name ?? null, expiresAt: Date.now() + 4500 })
+          // Route to a thread: room typing to 'team'; DM typing only to its
+          // recipient (thread = the sender's id); anyone else's DM typing is
+          // none of our business.
+          let thread: ChatThread | null = null
+          if (!p.to) thread = 'team'
+          else if (p.to === userIdRef.current) thread = p.userId
+          if (!thread) return
+          typingMapRef.current.set(p.userId, {
+            name: p.name ?? null,
+            expiresAt: Date.now() + 4500,
+            thread,
+          })
           recomputeTyping()
         })
         .subscribe((status) => {
@@ -513,11 +605,25 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId])
 
+  // Totals derived from the per-thread map (tiny arrays; no memo needed).
+  const unread = Object.values(threadUnread).reduce((a, b) => a + b, 0)
+  const dmUnread = unread - (threadUnread.team ?? 0)
+
   const value: TeamChatValue = {
     messages,
     loading,
     unread,
     mentionUnread,
+    dmUnread,
+    threadUnread,
+    activeThread,
+    setActiveThread: (thread: ChatThread) => {
+      activeThreadRef.current = thread
+      setActiveThreadState(thread)
+      // If a chat surface is open, landing on the thread reads it.
+      if (viewingRef.current) stampSeen(thread)
+      recomputeTyping()
+    },
     presence,
     members,
     reactions,
@@ -549,12 +655,17 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       const uid = userIdRef.current
       const text = body.trim()
       if ((!text && attachments.length === 0) || !uid) return { ok: false }
+      // The message goes to whichever thread is on screen. DMs carry the
+      // recipient and never carry mentions (the DM push already targets the
+      // recipient; a mention array on a private row is meaningless).
+      const thread = activeThreadRef.current
       const { data, error } = await supabase
         .from('team_messages')
         .insert({
           author_id: uid,
           body: text,
-          mentioned_user_ids: mentionedUserIds,
+          recipient_id: thread === 'team' ? null : thread,
+          mentioned_user_ids: thread === 'team' ? mentionedUserIds : [],
           // attachment_paths stays populated (lockstep) for backward compat;
           // attachment_files carries the original filename/type/size (000323).
           attachment_paths: attachments.map((a) => a.path),
@@ -566,7 +677,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       const row = data as TeamMessage
       setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]))
       lastActivityRef.current = Date.now()
-      if (viewingRef.current) stampSeen()
+      if (viewingRef.current) stampSeen(thread)
       return { ok: true }
     },
     remove: async (id: string) => {
@@ -579,17 +690,11 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       if (error) setMessages(snapshot)
     },
     markSeen: () => {
-      setUnread(0)
-      setMentionUnread(0)
-      stampSeen()
+      stampSeen(activeThreadRef.current)
     },
     setViewing: (viewing: boolean) => {
       viewingRef.current = viewing
-      if (viewing) {
-        setUnread(0)
-        setMentionUnread(0)
-        stampSeen()
-      }
+      if (viewing) stampSeen(activeThreadRef.current)
     },
     setManualStatus: (status: 'online' | 'away' | 'busy') => {
       manualRef.current = status === 'online' ? null : status
@@ -636,7 +741,13 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       void ch.send({
         type: 'broadcast',
         event: 'typing',
-        payload: { userId: userIdRef.current, name: profileRef.current.name },
+        payload: {
+          userId: userIdRef.current,
+          name: profileRef.current.name,
+          // Room typing broadcasts to everyone; DM typing is shown only by
+          // its recipient (the receive handler drops anyone else's).
+          to: activeThreadRef.current === 'team' ? null : activeThreadRef.current,
+        },
       })
     },
   }

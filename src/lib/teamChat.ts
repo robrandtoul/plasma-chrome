@@ -24,6 +24,9 @@ export interface TeamMessage {
   // push and the header's louder mention badge; purely cosmetic highlighting
   // still matches on name text.
   mentioned_user_ids?: string[] | null
+  // NULL = the shared team room; set = a direct message visible only to
+  // author + recipient (000324, RLS-enforced — admins excluded too).
+  recipient_id?: string | null
   // Storage keys in the chat-attachments bucket (000322). Read via signed URL.
   attachment_paths?: string[] | null
   // Richer per-attachment metadata (000323). Empty on pre-000323 image
