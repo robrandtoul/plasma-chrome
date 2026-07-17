@@ -198,8 +198,16 @@ function ChatAttachments({ files }: { files: ChatAttachment[] }) {
   )
 }
 
-// The hover "react" button + its emoji picker.
-function ReactButton({ messageId }: { messageId: string }) {
+// The hover "react" button + its emoji picker. `pickerAnchor` sets which edge
+// the popover hangs from so it always opens over the bubble (where there's
+// room) rather than off the panel edge.
+function ReactButton({
+  messageId,
+  pickerAnchor,
+}: {
+  messageId: string
+  pickerAnchor: 'left' | 'right'
+}) {
   const { toggleReaction } = useTeamChat()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -231,7 +239,12 @@ function ReactButton({ messageId }: { messageId: string }) {
         <Smile size={14} aria-hidden="true" />
       </button>
       {open && (
-        <div className="absolute right-0 top-7 z-30 flex gap-0.5 rounded-full border border-line bg-surface p-1 shadow-md">
+        <div
+          className={[
+            'absolute top-7 z-30 flex gap-0.5 rounded-full border border-line bg-surface p-1 shadow-md',
+            pickerAnchor === 'left' ? 'left-0' : 'right-0',
+          ].join(' ')}
+        >
           {EMOJI_CHOICES.map((e) => (
             <button
               key={e}
@@ -1034,6 +1047,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
               const prev = shown[i - 1]
               const grouped = isGroupedWithPrevious(prev, m)
               const showDay = !prev || dayKey(prev.created_at) !== dayKey(m.created_at)
+              const mine = userId !== null && m.author_id === userId
               const canDelete = m.author_id === userId || isAdmin
               const msgReactions = groupReactions(reactionsByMessage.get(m.id) ?? [], userId)
               const authorAvatar = m.author_id
@@ -1050,37 +1064,65 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                       <span className="h-px flex-1 bg-line-soft" />
                     </div>
                   )}
-                  <div className={['group flex items-start gap-2.5', grouped ? 'mt-0.5' : 'mt-2.5'].join(' ')}>
-                    <div className="w-7 flex-shrink-0">
-                      {!grouped &&
-                        (authorAvatar ? (
-                          <img
-                            src={authorAvatar}
-                            alt=""
-                            className="h-7 w-7 rounded-full object-cover"
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          <span
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-full font-mono text-[10px] font-medium text-white"
-                            style={{ backgroundColor: authorBadgeColour(m.author_colour) }}
-                            aria-hidden="true"
-                          >
-                            {(m.author_initials ?? '?').slice(0, 2)}
-                          </span>
-                        ))}
-                    </div>
-                    <div className="min-w-0 flex-1">
+                  {/* Messenger-style split: your own messages sit on the left,
+                      everyone else's on the right with their avatar on the
+                      outer edge. flex-row-reverse flips a row without changing
+                      the DOM order, so grouping/hover logic is identical on
+                      both sides. */}
+                  <div
+                    className={[
+                      'group flex items-start gap-2.5',
+                      mine ? '' : 'flex-row-reverse',
+                      grouped ? 'mt-0.5' : 'mt-2.5',
+                    ].join(' ')}
+                  >
+                    {!mine && (
+                      <div className="w-7 flex-shrink-0">
+                        {!grouped &&
+                          (authorAvatar ? (
+                            <img
+                              src={authorAvatar}
+                              alt=""
+                              className="h-7 w-7 rounded-full object-cover"
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <span
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-full font-mono text-[10px] font-medium text-white"
+                              style={{ backgroundColor: authorBadgeColour(m.author_colour) }}
+                              aria-hidden="true"
+                            >
+                              {(m.author_initials ?? '?').slice(0, 2)}
+                            </span>
+                          ))}
+                      </div>
+                    )}
+                    <div
+                      className={[
+                        'flex min-w-0 max-w-[85%] flex-col',
+                        mine ? 'items-start' : 'items-end',
+                      ].join(' ')}
+                    >
                       {!grouped && (
-                        <div className="flex items-baseline gap-2">
-                          <span className="text-[13px] font-semibold text-ink">
-                            {firstName(m.author_name)}
-                          </span>
+                        <div className="flex items-baseline gap-2 px-1">
                           <span className="text-[11px] text-ink-mute">{messageTime(m.created_at)}</span>
+                          {/* Your own bubbles and DM threads don't need a name —
+                              you know who you are, and a private thread has
+                              exactly one other person. */}
+                          {!mine && activeThread === 'team' && (
+                            <span className="text-[13px] font-semibold text-ink">
+                              {firstName(m.author_name)}
+                            </span>
+                          )}
                         </div>
                       )}
-                      <div className="flex items-start gap-2">
-                        <div className="min-w-0 flex-1">
+                      <div className={['flex items-start gap-2', mine ? '' : 'flex-row-reverse'].join(' ')}>
+                        <div
+                          className={[
+                            'min-w-0 rounded-[14px] bg-canvas px-3 py-1.5',
+                            !grouped ? (mine ? 'rounded-tl-[5px]' : 'rounded-tr-[5px]') : '',
+                          ].join(' ')}
+                        >
                           {m.body && (
                             <p className="whitespace-pre-wrap break-words text-[14px] leading-snug text-ink-soft">
                               {buildMessageSegments(m.body, memberNames).map((seg, si) =>
@@ -1133,7 +1175,9 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                           )}
                         </div>
                         <div className="mt-0.5 flex flex-shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
-                          <ReactButton messageId={m.id} />
+                          {/* The picker opens over the bubble side, where
+                              there's guaranteed room inside the panel. */}
+                          <ReactButton messageId={m.id} pickerAnchor={mine ? 'right' : 'left'} />
                           {canDelete && (
                             <button
                               type="button"
