@@ -53,7 +53,12 @@ function writeFlag(key: string, value: boolean): void {
   }
 }
 
-export function lazyWithRetry<T extends ComponentType<unknown>>(
+// ComponentType<any> (not <unknown>) mirrors React.lazy's own typing —
+// function-parameter contravariance means a component with typed props is
+// not assignable to ComponentType<unknown>, which broke the first page to
+// take a prop (DashboardPage's activityView).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function lazyWithRetry<T extends ComponentType<any>>(
   importer: () => Promise<{ default: T }>,
   key: string,
 ): LazyExoticComponent<T> {

@@ -145,6 +145,9 @@ function AppShell() {
 
         {/* Authenticated */}
         <Route path="/" element={<RequireAuth><DashboardPage /></RequireAuth>} />
+        {/* The mobile tab bar's Activity destination — the dashboard's data
+            rendered as a page (was a full-screen sheet over the dashboard). */}
+        <Route path="/activity" element={<RequireAuth><DashboardPage activityView /></RequireAuth>} />
         <Route path="/quote" element={<RequireAuth><QuotePage /></RequireAuth>} />
         <Route path="/orders" element={<RequireAuth><OrdersPage /></RequireAuth>} />
         <Route path="/orders/:id/place" element={<RequireAuth><OrderReviewPage /></RequireAuth>} />
