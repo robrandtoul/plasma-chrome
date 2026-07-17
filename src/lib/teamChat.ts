@@ -10,6 +10,8 @@ export interface TeamMessage {
   author_initials: string | null
   author_colour: string | null
   body: string
+  // Storage keys in the chat-attachments bucket (000322). Read via signed URL.
+  attachment_paths?: string[] | null
   created_at: string
 }
 

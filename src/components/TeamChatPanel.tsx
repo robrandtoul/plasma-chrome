@@ -1,7 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Send, Trash2, ChevronDown, Check, Volume2, VolumeX, Search as SearchIcon, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react'
+import {
+  Send,
+  Trash2,
+  ChevronDown,
+  Check,
+  Volume2,
+  VolumeX,
+  Search as SearchIcon,
+  X,
+  ImagePlus,
+  Smile,
+} from 'lucide-react'
 import { Textarea } from '../design'
+import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
+import { useImageFileDrop } from '../lib/useImageFileDrop'
 import { playChatSound } from '../lib/chatSound'
 import {
   useTeamChat,
@@ -9,6 +22,7 @@ import {
   type ChatStatus,
   type PresenceMember,
   type TeamMember,
+  type ReactionRow,
 } from '../lib/teamChatStore'
 import {
   authorBadgeColour,
@@ -18,6 +32,153 @@ import {
   isGroupedWithPrevious,
   messageTime,
 } from '../lib/teamChat'
+
+const CHAT_BUCKET = 'chat-attachments'
+const EMOJI_CHOICES = ['👍', '❤️', '😂', '🎉', '👀', '✅', '🙏']
+const MAX_ATTACHMENTS = 6
+const MAX_BYTES = 10 * 1024 * 1024 // 10 MB — matches the bucket cap
+
+interface StagedAttachment {
+  id: string
+  blob: Blob
+  url: string
+}
+
+function extFor(type: string): string {
+  if (type === 'image/jpeg') return 'jpg'
+  if (type === 'image/webp') return 'webp'
+  if (type === 'image/gif') return 'gif'
+  return 'png'
+}
+
+// Group a message's reaction rows by emoji, tracking count / whether I reacted /
+// who reacted (for the tooltip).
+function groupReactions(rows: ReactionRow[], userId: string | null) {
+  const map = new Map<string, { emoji: string; count: number; mine: boolean; names: string[] }>()
+  for (const r of rows) {
+    const g = map.get(r.emoji) ?? { emoji: r.emoji, count: 0, mine: false, names: [] }
+    g.count += 1
+    if (r.user_id === userId) g.mine = true
+    if (r.user_name) g.names.push(r.user_name)
+    map.set(r.emoji, g)
+  }
+  return [...map.values()]
+}
+
+// Renders a message's image attachments (private bucket → signed URLs) with a
+// full-screen viewer on click.
+function ChatImages({ paths }: { paths: string[] }) {
+  const [urls, setUrls] = useState<string[]>([])
+  const [lightbox, setLightbox] = useState<string | null>(null)
+  const key = paths.join(',')
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase.storage.from(CHAT_BUCKET).createSignedUrls(paths, 3600)
+      if (cancelled) return
+      setUrls((data ?? []).map((d) => d.signedUrl).filter((u): u is string => !!u))
+    })()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+
+  if (urls.length === 0) return null
+  return (
+    <>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {urls.map((u, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => setLightbox(u)}
+            className="overflow-hidden rounded-lg border border-line"
+          >
+            <img src={u} alt="Attachment" loading="lazy" className="h-36 w-36 object-cover" />
+          </button>
+        ))}
+      </div>
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setLightbox(null)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <img
+            src={lightbox}
+            alt="Attachment"
+            className="max-h-full max-w-full rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            type="button"
+            onClick={() => setLightbox(null)}
+            aria-label="Close image"
+            className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+          >
+            <X size={20} aria-hidden="true" />
+          </button>
+        </div>
+      )}
+    </>
+  )
+}
+
+// The hover "react" button + its emoji picker.
+function ReactButton({ messageId }: { messageId: string }) {
+  const { toggleReaction } = useTeamChat()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label="Add reaction"
+        title="React"
+        className="flex h-6 w-6 items-center justify-center rounded text-ink-mute hover:bg-canvas hover:text-ink"
+      >
+        <Smile size={14} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-7 z-30 flex gap-0.5 rounded-full border border-line bg-surface p-1 shadow-md">
+          {EMOJI_CHOICES.map((e) => (
+            <button
+              key={e}
+              type="button"
+              onClick={() => {
+                toggleReaction(messageId, e)
+                setOpen(false)
+              }}
+              aria-label={`React ${e}`}
+              className="rounded-full px-1 text-[16px] leading-none hover:bg-canvas"
+            >
+              {e}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // The shared chat body — presence strip + message list + composer — used by
 // both the header dropdown (variant="dropdown") and the full /chat page
@@ -169,14 +330,86 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
   const { session, role } = useAuth()
   const userId = session?.user.id ?? null
   const isAdmin = role === 'admin'
-  const { messages, loading, presence, members, send, remove, setViewing, typingUsers, notifyTyping } =
-    useTeamChat()
+  const {
+    messages,
+    loading,
+    presence,
+    members,
+    send,
+    remove,
+    setViewing,
+    typingUsers,
+    notifyTyping,
+    reactions,
+    toggleReaction,
+  } = useTeamChat()
 
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
+  const [attachments, setAttachments] = useState<StagedAttachment[]>([])
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const reactionsByMessage = useMemo(() => {
+    const map = new Map<string, ReactionRow[]>()
+    for (const r of reactions) {
+      const arr = map.get(r.message_id) ?? []
+      arr.push(r)
+      map.set(r.message_id, arr)
+    }
+    return map
+  }, [reactions])
+
+  // Revoke object URLs on unmount.
+  const attachmentsRef = useRef(attachments)
+  attachmentsRef.current = attachments
+  useEffect(
+    () => () => {
+      for (const a of attachmentsRef.current) URL.revokeObjectURL(a.url)
+    },
+    [],
+  )
+
+  function addFiles(files: File[]) {
+    const images = files.filter((f) => f.type.startsWith('image/'))
+    if (images.length === 0) return
+    const sized = images.filter((f) => f.size <= MAX_BYTES)
+    const room = Math.max(0, MAX_ATTACHMENTS - attachmentsRef.current.length)
+    const additions = sized.slice(0, room).map((f) => ({
+      id: crypto.randomUUID(),
+      blob: f as Blob,
+      url: URL.createObjectURL(f),
+    }))
+    let message: string | null = null
+    if (sized.length < images.length) message = 'Each image must be 10 MB or smaller.'
+    if (sized.length > room) message = `You can attach up to ${MAX_ATTACHMENTS} images.`
+    if (message) setError(message)
+    if (additions.length > 0) setAttachments((prev) => [...prev, ...additions])
+  }
+
+  const { isZoneDragOver, zoneProps } = useImageFileDrop({ onFiles: addFiles })
+
+  function handlePaste(e: ClipboardEvent) {
+    const items = Array.from(e.clipboardData?.items ?? [])
+    const files = items
+      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => f != null)
+    if (files.length > 0) {
+      e.preventDefault()
+      addFiles(files)
+    }
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((prev) => {
+      const found = prev.find((a) => a.id === id)
+      if (found) URL.revokeObjectURL(found.url)
+      return prev.filter((a) => a.id !== id)
+    })
+  }
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -251,7 +484,27 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
 
   async function handleSend() {
     const text = draft.trim()
-    if (!text || sending) return
+    if ((!text && attachments.length === 0) || sending) return
+    if (!userId) return
+    setSending(true)
+    setError(null)
+
+    // Upload any staged images first; collect their storage keys.
+    const uploaded: string[] = []
+    for (const a of attachments) {
+      const path = `${userId}/${crypto.randomUUID()}.${extFor(a.blob.type)}`
+      const { error: upErr } = await supabase.storage
+        .from(CHAT_BUCKET)
+        .upload(path, a.blob, { contentType: a.blob.type || 'image/png', upsert: false })
+      if (upErr) {
+        if (uploaded.length > 0) await supabase.storage.from(CHAT_BUCKET).remove(uploaded)
+        setSending(false)
+        setError(upErr.message || 'Could not upload an image. Please try again.')
+        return
+      }
+      uploaded.push(path)
+    }
+
     // Push targets are computed from the text against known member names, so
     // both picking from the list and typing "@Full Name" register a mention.
     const lower = text.toLowerCase()
@@ -262,14 +515,15 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
           .map((m) => m.id),
       ),
     ]
-    setSending(true)
-    setError(null)
-    const res = await send(text, mentionedIds)
+    const res = await send(text, mentionedIds, uploaded)
     setSending(false)
     if (!res.ok) {
+      if (uploaded.length > 0) await supabase.storage.from(CHAT_BUCKET).remove(uploaded)
       setError(res.error || 'Could not send your message. Please try again.')
       return
     }
+    for (const a of attachments) URL.revokeObjectURL(a.url)
+    setAttachments([])
     setDraft('')
     setMentionQuery(null)
   }
@@ -398,6 +652,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
               const grouped = isGroupedWithPrevious(prev, m)
               const showDay = !prev || dayKey(prev.created_at) !== dayKey(m.created_at)
               const canDelete = m.author_id === userId || isAdmin
+              const msgReactions = groupReactions(reactionsByMessage.get(m.id) ?? [], userId)
               return (
                 <li key={m.id}>
                   {showDay && (
@@ -431,41 +686,72 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                         </div>
                       )}
                       <div className="flex items-start gap-2">
-                        <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[14px] leading-snug text-ink-soft">
-                          {buildMessageSegments(m.body, memberNames).map((seg, si) =>
-                            seg.type === 'link' ? (
-                              <a
-                                key={si}
-                                href={seg.value}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="break-all text-brand underline underline-offset-2 hover:text-brand-600"
-                              >
-                                {seg.value}
-                              </a>
-                            ) : seg.type === 'mention' ? (
-                              <span
-                                key={si}
-                                className="rounded bg-brand-50 px-1 font-medium text-brand"
-                              >
-                                {seg.value}
-                              </span>
-                            ) : (
-                              <span key={si}>{seg.value}</span>
-                            ),
+                        <div className="min-w-0 flex-1">
+                          {m.body && (
+                            <p className="whitespace-pre-wrap break-words text-[14px] leading-snug text-ink-soft">
+                              {buildMessageSegments(m.body, memberNames).map((seg, si) =>
+                                seg.type === 'link' ? (
+                                  <a
+                                    key={si}
+                                    href={seg.value}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="break-all text-brand underline underline-offset-2 hover:text-brand-600"
+                                  >
+                                    {seg.value}
+                                  </a>
+                                ) : seg.type === 'mention' ? (
+                                  <span
+                                    key={si}
+                                    className="rounded bg-brand-50 px-1 font-medium text-brand"
+                                  >
+                                    {seg.value}
+                                  </span>
+                                ) : (
+                                  <span key={si}>{seg.value}</span>
+                                ),
+                              )}
+                            </p>
                           )}
-                        </p>
-                        {canDelete && (
-                          <button
-                            type="button"
-                            onClick={() => void remove(m.id)}
-                            aria-label="Delete message"
-                            title="Delete"
-                            className="mt-0.5 flex-shrink-0 rounded p-1 text-ink-mute opacity-0 transition-opacity hover:bg-canvas hover:text-out focus-visible:opacity-100 group-hover:opacity-100"
-                          >
-                            <Trash2 size={14} aria-hidden="true" />
-                          </button>
-                        )}
+                          {m.attachment_paths && m.attachment_paths.length > 0 && (
+                            <ChatImages paths={m.attachment_paths} />
+                          )}
+                          {msgReactions.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {msgReactions.map((g) => (
+                                <button
+                                  key={g.emoji}
+                                  type="button"
+                                  onClick={() => toggleReaction(m.id, g.emoji)}
+                                  title={g.names.join(', ')}
+                                  className={[
+                                    'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[12px] leading-none transition-colors',
+                                    g.mine
+                                      ? 'border-brand bg-brand-50 text-ink'
+                                      : 'border-line bg-surface text-ink-soft hover:bg-canvas',
+                                  ].join(' ')}
+                                >
+                                  <span>{g.emoji}</span>
+                                  <span className="font-medium">{g.count}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <div className="mt-0.5 flex flex-shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                          <ReactButton messageId={m.id} />
+                          {canDelete && (
+                            <button
+                              type="button"
+                              onClick={() => void remove(m.id)}
+                              aria-label="Delete message"
+                              title="Delete"
+                              className="flex h-6 w-6 items-center justify-center rounded text-ink-mute hover:bg-canvas hover:text-out"
+                            >
+                              <Trash2 size={14} aria-hidden="true" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -477,7 +763,13 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
       </div>
 
       {/* Composer */}
-      <div className="relative border-t border-line-soft p-2.5">
+      <div
+        {...zoneProps}
+        className={[
+          'relative border-t border-line-soft p-2.5 transition-colors',
+          isZoneDragOver ? 'bg-brand-50' : '',
+        ].join(' ')}
+      >
         {typingUsers.length > 0 && (
           <div className="mb-1.5 text-[12px] italic text-ink-mute" aria-live="polite">
             {typingLabel(typingUsers)}
@@ -514,17 +806,45 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
           </div>
         )}
 
+        {attachments.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {attachments.map((a) => (
+              <div key={a.id} className="relative h-14 w-14 overflow-hidden rounded-lg border border-line">
+                <img src={a.url} alt="" className="h-full w-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(a.id)}
+                  aria-label="Remove image"
+                  className="absolute right-0.5 top-0.5 rounded-full bg-black/55 p-0.5 text-white hover:bg-black/75"
+                >
+                  <X size={11} aria-hidden="true" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         {error && (
           <p role="alert" className="mb-2 rounded-lg bg-out-soft px-3 py-1.5 text-[12px] text-out">
             {error}
           </p>
         )}
         <div className="flex items-end gap-2">
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={attachments.length >= MAX_ATTACHMENTS}
+            aria-label="Add image"
+            title="Add image"
+            className="inline-flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-[8px] border border-line bg-surface text-ink-soft transition-colors hover:bg-canvas disabled:opacity-40"
+          >
+            <ImagePlus size={18} aria-hidden="true" />
+          </button>
           <Textarea
             ref={textareaRef}
             value={draft}
             onChange={onDraftChange}
             onKeyDown={onKeyDown}
+            onPaste={handlePaste}
             rows={variant === 'dropdown' ? 1 : 2}
             placeholder="Message the team… @ to mention"
             className="flex-1"
@@ -532,15 +852,28 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
           <button
             type="button"
             onClick={() => void handleSend()}
-            disabled={!draft.trim() || sending}
+            disabled={(!draft.trim() && attachments.length === 0) || sending}
             aria-label="Send message"
             className="inline-flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-[8px] bg-ink text-on-ink transition-colors hover:bg-ink-soft disabled:opacity-40"
           >
             <Send size={18} aria-hidden="true" />
           </button>
         </div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          multiple
+          className="sr-only"
+          tabIndex={-1}
+          aria-hidden
+          onChange={(e) => {
+            addFiles(Array.from(e.target.files ?? []))
+            e.target.value = ''
+          }}
+        />
         <p className="mt-1.5 text-[11px] text-ink-dim">
-          @ to mention (they get a phone alert) · Enter to send · Shift + Enter for a new line
+          @ to mention · paste or drop an image · Enter to send · Shift + Enter for a new line
         </p>
       </div>
     </div>

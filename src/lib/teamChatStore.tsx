@@ -48,6 +48,15 @@ export interface TeamMember {
   colour: string | null
 }
 
+// A single emoji reaction on a message (one row per message + user + emoji).
+export interface ReactionRow {
+  id: string
+  message_id: string
+  user_id: string | null
+  user_name: string | null
+  emoji: string
+}
+
 // What each client broadcasts about itself on the presence channel.
 interface PresenceMeta {
   user_id: string
@@ -65,9 +74,17 @@ interface TeamChatValue {
   presence: PresenceMember[]
   /** Active team members, for the @mention picker + highlighting. */
   members: TeamMember[]
+  /** All loaded emoji reactions (flat; group by message_id in the view). */
+  reactions: ReactionRow[]
+  /** Add your reaction to a message, or remove it if you've already reacted. */
+  toggleReaction: (messageId: string, emoji: string) => void
   /** Your own effective status (auto idle unless you've set Away/Busy). */
   myStatus: ChatStatus
-  send: (body: string, mentionedUserIds?: string[]) => Promise<{ ok: boolean; error?: string }>
+  send: (
+    body: string,
+    mentionedUserIds?: string[],
+    attachmentPaths?: string[],
+  ) => Promise<{ ok: boolean; error?: string }>
   remove: (id: string) => Promise<void>
   /** Clear the unread badge and stamp "seen up to now". */
   markSeen: () => void
@@ -121,6 +138,8 @@ const DEFAULT: TeamChatValue = {
   unread: 0,
   presence: [],
   members: [],
+  reactions: [],
+  toggleReaction: () => {},
   myStatus: 'online',
   send: async () => ({ ok: false }),
   remove: async () => {},
@@ -180,6 +199,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   const [unread, setUnread] = useState(0)
   const [presence, setPresence] = useState<PresenceMember[]>([])
   const [members, setMembers] = useState<TeamMember[]>([])
+  const [reactions, setReactions] = useState<ReactionRow[]>([])
   const [myStatus, setMyStatus] = useState<ChatStatus>('online')
   const [dropdownPinned, setDropdownPinnedState] = useState<boolean>(readPinned)
   const [soundEnabled, setSoundEnabledState] = useState<boolean>(readSound)
@@ -194,6 +214,8 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   const lastGeneralSoundRef = useRef(0)
   const typingMapRef = useRef<Map<string, { name: string | null; expiresAt: number }>>(new Map())
   const lastTypingSentRef = useRef(0)
+  const reactionsRef = useRef<ReactionRow[]>([])
+  reactionsRef.current = reactions
   const viewingRef = useRef(false)
   const manualRef = useRef<'away' | 'busy' | null>(null)
   const lastActivityRef = useRef(Date.now())
@@ -259,6 +281,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       setUnread(0)
       setPresence([])
       setMembers([])
+      setReactions([])
       setLoading(false)
       return
     }
@@ -314,6 +337,18 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       )
       setLoading(false)
 
+      const messageIds = list.map((m) => m.id)
+      if (messageIds.length > 0) {
+        const { data: reactData } = await supabase
+          .from('team_message_reactions')
+          .select('*')
+          .in('message_id', messageIds)
+        if (cancelled) return
+        setReactions((reactData ?? []) as ReactionRow[])
+      } else {
+        setReactions([])
+      }
+
       const channel = supabase
         .channel('team-chat', { config: { presence: { key: userId } } })
         .on(
@@ -353,6 +388,22 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
           (payload) => {
             const old = payload.old as { id?: string }
             if (old?.id) setMessages((prev) => prev.filter((m) => m.id !== old.id))
+          },
+        )
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'proofs', table: 'team_message_reactions' },
+          (payload) => {
+            const row = payload.new as ReactionRow
+            setReactions((prev) => (prev.some((r) => r.id === row.id) ? prev : [...prev, row]))
+          },
+        )
+        .on(
+          'postgres_changes',
+          { event: 'DELETE', schema: 'proofs', table: 'team_message_reactions' },
+          (payload) => {
+            const old = payload.old as { id?: string }
+            if (old?.id) setReactions((prev) => prev.filter((r) => r.id !== old.id))
           },
         )
         .on('presence', { event: 'sync' }, () => {
@@ -428,14 +479,43 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     unread,
     presence,
     members,
+    reactions,
+    toggleReaction: (messageId: string, emoji: string) => {
+      const uid = userIdRef.current
+      if (!uid) return
+      const existing = reactionsRef.current.find(
+        (r) => r.message_id === messageId && r.user_id === uid && r.emoji === emoji,
+      )
+      if (existing) {
+        setReactions((prev) => prev.filter((r) => r.id !== existing.id))
+        void supabase.from('team_message_reactions').delete().eq('id', existing.id)
+      } else {
+        void (async () => {
+          const { data } = await supabase
+            .from('team_message_reactions')
+            .insert({ message_id: messageId, user_id: uid, emoji })
+            .select('*')
+            .single()
+          if (data) {
+            const row = data as ReactionRow
+            setReactions((prev) => (prev.some((r) => r.id === row.id) ? prev : [...prev, row]))
+          }
+        })()
+      }
+    },
     myStatus,
-    send: async (body: string, mentionedUserIds: string[] = []) => {
+    send: async (body: string, mentionedUserIds: string[] = [], attachmentPaths: string[] = []) => {
       const uid = userIdRef.current
       const text = body.trim()
-      if (!text || !uid) return { ok: false }
+      if ((!text && attachmentPaths.length === 0) || !uid) return { ok: false }
       const { data, error } = await supabase
         .from('team_messages')
-        .insert({ author_id: uid, body: text, mentioned_user_ids: mentionedUserIds })
+        .insert({
+          author_id: uid,
+          body: text,
+          mentioned_user_ids: mentionedUserIds,
+          attachment_paths: attachmentPaths,
+        })
         .select('*')
         .single()
       if (error || !data) return { ok: false, error: error?.message }
