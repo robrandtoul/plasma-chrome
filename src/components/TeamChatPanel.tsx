@@ -252,12 +252,13 @@ function ReactButton({ messageId }: { messageId: string }) {
 }
 
 // The shared chat body — presence strip + message list + composer — used by
-// both the header dropdown (variant="dropdown") and the full /chat page
-// (variant="page"). It reads everything from the TeamChatProvider, so the two
-// surfaces stay perfectly in sync. The parent sizes it (it fills its height).
+// the header dropdown (variant="dropdown"), the full /chat page
+// (variant="page") and the dashboard rail dock (variant="docked"). It reads
+// everything from the TeamChatProvider, so every surface stays perfectly in
+// sync. The parent sizes it (it fills its height).
 
 interface TeamChatPanelProps {
-  variant: 'dropdown' | 'page'
+  variant: 'dropdown' | 'page' | 'docked'
 }
 
 const SETTABLE: { value: 'online' | 'away' | 'busy'; label: string }[] = [
@@ -946,7 +947,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             onChange={onDraftChange}
             onKeyDown={onKeyDown}
             onPaste={handlePaste}
-            rows={variant === 'dropdown' ? 1 : 2}
+            rows={variant === 'page' ? 2 : 1}
             placeholder="Message the team… @ to mention"
             className="flex-1"
           />

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Link } from 'react-router-dom'
-import { MessagesSquare, Maximize2, X, Pin, AtSign } from 'lucide-react'
+import { Link, useLocation } from 'react-router-dom'
+import { MessagesSquare, Maximize2, X, Pin, AtSign, PanelRight } from 'lucide-react'
 import { useTeamChat } from '../lib/teamChatStore'
 import TeamChatPanel from './TeamChatPanel'
 
@@ -45,13 +45,37 @@ function useIsDesktop() {
   return isDesktop
 }
 
+// lg breakpoint (1024px) — where the dashboard right rail (and thus the chat
+// dock) exists. Docking is only offered at this width.
+function useIsLarge() {
+  const [isLarge, setIsLarge] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(min-width: 1024px)').matches : true,
+  )
+  useEffect(() => {
+    const mql = window.matchMedia('(min-width: 1024px)')
+    const onChange = () => setIsLarge(mql.matches)
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }, [])
+  return isLarge
+}
+
 export default function ChatMenu({ active = false }: { active?: boolean }) {
-  const { unread, mentionUnread, dropdownPinned, setDropdownPinned } = useTeamChat()
+  const { unread, mentionUnread, dropdownPinned, setDropdownPinned, placement, setPlacement } =
+    useTeamChat()
   const isDesktop = useIsDesktop()
+  const isLarge = useIsLarge()
+  const location = useLocation()
+  const onDashboard = location.pathname === '/'
+  // When the docked panel is showing (dashboard rail, lg+), the header icon
+  // shouldn't open a redundant floating copy, and "Dock to sidebar" is only
+  // offered while chat is still floating.
+  const dockVisible = placement === 'docked' && onDashboard && isLarge
+  const canDock = placement === 'floating' && onDashboard && isLarge
   // Seed open from the pinned preference so a pinned panel is already open on
   // every page (no closed→open flicker as this remounts on navigation). Never
-  // auto-open on the /chat page itself — that page *is* the chat.
-  const [open, setOpen] = useState(() => dropdownPinned && !active)
+  // auto-open on the /chat page itself, nor when the docked panel is visible.
+  const [open, setOpen] = useState(() => dropdownPinned && !active && !dockVisible)
   const ref = useRef<HTMLDivElement>(null)
   // User-resizable dropdown. `size` drives the box; `sizeRef` lets the drag's
   // pointerup persist the latest size without re-subscribing listeners.
@@ -64,12 +88,25 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
     try {
       if (sessionStorage.getItem('pv:reopen-chat') === '1') {
         sessionStorage.removeItem('pv:reopen-chat')
-        setOpen(true)
+        if (!dockVisible) setOpen(true)
       }
     } catch {
       /* sessionStorage unavailable — ignore */
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // React to docking: close the floating dropdown when chat moves to the rail,
+  // and re-open it when chat pops back out (so it doesn't vanish). Guarded on a
+  // real transition so the initial mount doesn't force anything.
+  const prevPlacementRef = useRef(placement)
+  useEffect(() => {
+    const prev = prevPlacementRef.current
+    prevPlacementRef.current = placement
+    if (prev === placement) return
+    if (placement === 'docked') setOpen(false)
+    else if (prev === 'docked') setOpen(true)
+  }, [placement])
 
   // Outside-click / Escape close — only when NOT pinned. A pinned panel is meant
   // to stay put while you work on other pages.
@@ -148,7 +185,15 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
     <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => (open ? close() : setOpen(true))}
+        onClick={() => {
+          if (dockVisible) {
+            document
+              .getElementById('team-chat-dock')
+              ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            return
+          }
+          open ? close() : setOpen(true)
+        }}
         aria-label={
           hasMention
             ? `Team chat — ${unread} new, you were mentioned`
@@ -204,6 +249,21 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
           <div className="flex flex-shrink-0 items-center justify-between border-b border-line-soft px-3 py-2">
             <span className="text-[13px] font-semibold text-ink">Team chat</span>
             <div className="flex items-center gap-0.5">
+              {canDock && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPlacement('docked')
+                    setDropdownPinned(false)
+                    setOpen(false)
+                  }}
+                  aria-label="Dock chat to the dashboard sidebar"
+                  title="Dock to sidebar"
+                  className="flex h-7 w-7 items-center justify-center rounded-full text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
+                >
+                  <PanelRight size={15} aria-hidden="true" />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setDropdownPinned(!dropdownPinned)}

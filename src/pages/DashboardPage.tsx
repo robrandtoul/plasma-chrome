@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import { DesignerChrome, useDesignerProfile, useIsMobile, Sheet, ButtonCoral, ButtonInk, ProofStatusPill, HelpTip } from '../design'
-import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Link as LinkIcon, ThumbsDown } from 'lucide-react'
+import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Link as LinkIcon, ThumbsDown, PictureInPicture2 } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -30,6 +30,8 @@ import CollapsibleSidebarPanel from '../components/CollapsibleSidebarPanel'
 import HotLeadsCard from '../components/HotLeadsCard'
 import AnnouncementsBanner from '../components/AnnouncementsBanner'
 import SharedDesignerAvatar from '../components/DesignerAvatar'
+import TeamChatPanel from '../components/TeamChatPanel'
+import { useTeamChat } from '../lib/teamChatStore'
 // QuoteLink imported + rendered inside DesignerChrome (PR 31) so
 // every designer page surfaces the same new-tab "phone rings"
 // affordance without re-importing.
@@ -3327,6 +3329,11 @@ export default function DashboardPage() {
               </div>
 
               <aside className="hidden lg:block space-y-6">
+                {/* Docked chat (Option A) — renders only when the user picks
+                    'docked' placement; sticky so it stays in view while the
+                    list scrolls. Only this card pins, not the whole rail (see
+                    the note below on why whole-aside sticky was dropped). */}
+                <DockedChat />
                 {/* lg:sticky lg:top-10 used to ride here so the panel
                     locked to the viewport top while the project list
                     scrolled. Dropped in PR 30 — the project list can
@@ -3373,6 +3380,67 @@ export default function DashboardPage() {
       </div>
     </Sheet>
     </DesignerChrome>
+  )
+}
+
+// lg breakpoint (1024px) — the width at which the dashboard right rail exists.
+// The dock only mounts here so it never runs hidden (which would suppress the
+// unread badge while the rail is display:none below lg).
+function useIsLargeScreen() {
+  const [lg, setLg] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(min-width: 1024px)').matches : false,
+  )
+  useEffect(() => {
+    const mql = window.matchMedia('(min-width: 1024px)')
+    const onChange = () => setLg(mql.matches)
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }, [])
+  return lg
+}
+
+// The dashboard-rail chat dock (Option A). Renders only when the user has
+// chosen 'docked' placement, at lg+ where the rail exists. A sticky,
+// viewport-tall card pinned to the top of the right rail so chat stays in view
+// while the project list scrolls. Reuses the shared TeamChatPanel — same live
+// engine as the header dropdown and the /chat page.
+function DockedChat() {
+  const navigate = useNavigate()
+  const isLarge = useIsLargeScreen()
+  const { placement, setPlacement } = useTeamChat()
+  if (placement !== 'docked' || !isLarge) return null
+  return (
+    <div
+      id="team-chat-dock"
+      className="lg:sticky lg:top-20 flex h-[calc(100vh-96px)] flex-col overflow-hidden rounded-[14px] border border-line bg-surface shadow-sm"
+    >
+      <div className="flex flex-shrink-0 items-center justify-between border-b border-line-soft px-3 py-2">
+        <span className="text-[13px] font-semibold text-ink">Team chat</span>
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => navigate('/chat')}
+            aria-label="Open full chat page"
+            title="Open full page"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
+          >
+            <Maximize2 size={15} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setPlacement('floating')}
+            aria-label="Pop chat out to a floating window"
+            title="Pop out to floating window"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
+          >
+            <PictureInPicture2 size={15} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1">
+        <TeamChatPanel variant="docked" />
+      </div>
+    </div>
   )
 }
 

@@ -19,6 +19,10 @@ import { playChatSound } from './chatSound'
 
 export type ChatStatus = 'online' | 'idle' | 'away' | 'busy'
 
+// Where the chat lives: the header dropdown (floating) or docked into the
+// dashboard right rail. Persisted per browser.
+export type ChatPlacement = 'floating' | 'docked'
+
 // Traffic-light status colours. Deliberately literal (not design tokens) — these
 // read as universal presence signals and should look the same everywhere.
 export const CHAT_STATUS_META: Record<ChatStatus, { label: string; dot: string }> = {
@@ -106,6 +110,11 @@ interface TeamChatValue {
    *  blip for a general message, a brighter chime when you're @mentioned. */
   soundEnabled: boolean
   setSoundEnabled: (enabled: boolean) => void
+  /** Where the chat lives: 'floating' (header dropdown) or 'docked' (in the
+   *  dashboard right rail). Only the dashboard renders the docked panel; the
+   *  floating dropdown stays available everywhere. Persisted. */
+  placement: ChatPlacement
+  setPlacement: (placement: ChatPlacement) => void
   /** Other people currently typing a message (auto-expires ~4.5s after their
    *  last keystroke). Never includes yourself. */
   typingUsers: { userId: string; name: string | null }[]
@@ -133,6 +142,16 @@ function readSound(): boolean {
   }
 }
 
+const PLACEMENT_KEY = 'pv:chat-placement'
+// Placement defaults to floating; only an explicit 'docked' opts in.
+function readPlacement(): ChatPlacement {
+  try {
+    return localStorage.getItem(PLACEMENT_KEY) === 'docked' ? 'docked' : 'floating'
+  } catch {
+    return 'floating'
+  }
+}
+
 // Inert default so consumers (e.g. the header) don't crash if they render
 // outside the provider (the design-system preview harness, signed-out routes).
 const DEFAULT: TeamChatValue = {
@@ -154,6 +173,8 @@ const DEFAULT: TeamChatValue = {
   setDropdownPinned: () => {},
   soundEnabled: true,
   setSoundEnabled: () => {},
+  placement: 'floating',
+  setPlacement: () => {},
   typingUsers: [],
   notifyTyping: () => {},
 }
@@ -208,6 +229,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   const [myStatus, setMyStatus] = useState<ChatStatus>('online')
   const [dropdownPinned, setDropdownPinnedState] = useState<boolean>(readPinned)
   const [soundEnabled, setSoundEnabledState] = useState<boolean>(readSound)
+  const [placement, setPlacementState] = useState<ChatPlacement>(readPlacement)
   const [typingUsers, setTypingUsers] = useState<{ userId: string; name: string | null }[]>([])
 
   // Refs the realtime handlers / timers read so the channel never has to be torn
@@ -590,6 +612,16 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       try {
         if (enabled) localStorage.removeItem(SOUND_KEY)
         else localStorage.setItem(SOUND_KEY, '0')
+      } catch {
+        /* localStorage unavailable — still works for this session */
+      }
+    },
+    placement,
+    setPlacement: (next: ChatPlacement) => {
+      setPlacementState(next)
+      try {
+        if (next === 'docked') localStorage.setItem(PLACEMENT_KEY, 'docked')
+        else localStorage.removeItem(PLACEMENT_KEY)
       } catch {
         /* localStorage unavailable — still works for this session */
       }
