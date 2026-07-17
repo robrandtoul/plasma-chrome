@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MessagesSquare, Minimize2 } from 'lucide-react'
 import DesignerChrome from '../design/DesignerChrome'
@@ -17,6 +18,27 @@ export default function ChatPage() {
   // looking at instead of always claiming the shared channel.
   const peer = activeThread === 'team' ? null : members.find((m) => m.id === activeThread) ?? null
   const peerFirstName = (peer?.name ?? '').trim().split(/\s+/)[0] || 'a teammate'
+
+  // iOS keyboard pan fix. Focusing the composer makes iOS pan the whole web
+  // view upward to reveal the input; the "fixed" bottom tab bar rides up with
+  // it, and on dismiss iOS sometimes fails to pan back — leaving the tab bar
+  // stranded mid-screen with dead space below (Rob's screenshot). When the
+  // visual viewport returns to full height (keyboard closed), snap the layout
+  // viewport back to the top. Nothing on this page legitimately scrolls the
+  // window, so the snap can never fight a real scroll position.
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    function snapBack() {
+      if (!vv) return
+      const keyboardClosed = vv.height >= window.innerHeight - 50
+      if (keyboardClosed && (window.scrollY > 0 || vv.offsetTop > 0)) {
+        window.scrollTo(0, 0)
+      }
+    }
+    vv.addEventListener('resize', snapBack)
+    return () => vv.removeEventListener('resize', snapBack)
+  }, [])
 
   // "Minimise" returns you to where you came from and, on desktop, re-opens the
   // compact dropdown there (ChatMenu consumes the flag on mount). Falls back to
