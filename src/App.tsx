@@ -90,7 +90,13 @@ function ScrollToTopOnNavigate() {
   const { pathname } = useLocation()
   const navigationType = useNavigationType()
   useLayoutEffect(() => {
-    if (navigationType !== 'POP') window.scrollTo(0, 0)
+    if (navigationType !== 'POP') {
+      window.scrollTo(0, 0)
+      // Below md the app scrolls inside DesignerChrome's frame, not the
+      // window — reset that scroller too.
+      const frame = document.getElementById('app-scroll')
+      if (frame) frame.scrollTop = 0
+    }
   }, [pathname, navigationType])
   return null
 }
