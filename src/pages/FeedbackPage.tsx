@@ -199,10 +199,15 @@ export default function FeedbackPage() {
       setSeenBaseline((prof?.feedback_seen_at as string | null) ?? null)
       setMyResolved((mine ?? []) as FeedbackItem[])
       setSeenLoaded(true)
+      // .then makes the lazy builder actually execute (see teamChatStore's
+      // stampSeen note) — without it this stamp silently never persisted.
       void supabase
         .from('profiles')
         .update({ feedback_seen_at: new Date().toISOString() })
         .eq('id', userId)
+        .then(({ error }) => {
+          if (error) console.error('[feedback] seen stamp failed:', error.message)
+        })
     })()
     return () => {
       cancelled = true

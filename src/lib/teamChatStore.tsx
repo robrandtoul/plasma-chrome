@@ -354,15 +354,29 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     const uid = userIdRef.current
     if (!uid) return
     const nowIso = new Date().toISOString()
+    // ⚠ supabase-js builders are lazy — the request only fires once .then()
+    // is invoked (i.e. on await). A bare `void builder` never hits the
+    // network, which is exactly how these stamps shipped broken: unread
+    // counts cleared locally but resurrected on every reload. Fire-and-forget
+    // writes must attach .then to execute (and surface failures).
     if (thread === 'team') {
       seenAtRef.current = nowIso
-      void supabase.from('profiles').update({ team_chat_seen_at: nowIso }).eq('id', uid)
+      void supabase
+        .from('profiles')
+        .update({ team_chat_seen_at: nowIso })
+        .eq('id', uid)
+        .then(({ error }) => {
+          if (error) console.error('[chat] team seen stamp failed:', error.message)
+        })
       setMentionUnread(0)
     } else {
       dmReadsRef.current[thread] = nowIso
       void supabase
         .from('team_chat_dm_reads')
         .upsert({ user_id: uid, peer_id: thread, seen_at: nowIso }, { onConflict: 'user_id,peer_id' })
+        .then(({ error }) => {
+          if (error) console.error('[chat] DM read stamp failed:', error.message)
+        })
     }
     setThreadUnread((prev) => {
       if (!prev[thread]) return prev
@@ -752,7 +766,18 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       )
       if (existing) {
         setReactions((prev) => prev.filter((r) => r.id !== existing.id))
-        void supabase.from('team_message_reactions').delete().eq('id', existing.id)
+        void supabase
+          .from('team_message_reactions')
+          .delete()
+          .eq('id', existing.id)
+          .then(({ error }) => {
+            // Lazy-builder rule (see stampSeen): .then makes the delete real.
+            // If it fails, put the optimistically-removed reaction back.
+            if (error)
+              setReactions((prev) =>
+                prev.some((r) => r.id === existing.id) ? prev : [...prev, existing],
+              )
+          })
       } else {
         void (async () => {
           const { data } = await supabase

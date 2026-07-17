@@ -140,7 +140,13 @@ export default function SetReviewPage() {
   useEffect(() => {
     if (!id || !token || !payload || isPreview || session) return
     const t = setTimeout(() => {
-      void supabase.rpc('record_proof_set_opened', { p_set_id: id, p_token: token })
+      // .then makes the lazy builder actually execute (see teamChatStore's
+      // stampSeen note) — mirrors record_order_pay_link_opened on OrderPayPage.
+      void supabase
+        .rpc('record_proof_set_opened', { p_set_id: id, p_token: token })
+        .then(({ error }) => {
+          if (error) console.error('[SetReviewPage] record open failed:', error.message)
+        })
     }, 1500)
     return () => clearTimeout(t)
   }, [id, token, payload, isPreview, session])
