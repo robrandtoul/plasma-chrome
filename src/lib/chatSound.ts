@@ -3,10 +3,20 @@
 //   • 'general' — a soft, low single blip for an ordinary message.
 //   • 'mention' — a brighter two-note rising chime when you're @mentioned.
 //
-// Browsers require a user gesture before audio can play. Designers are
-// constantly interacting with the app, so we lazily create the AudioContext and
-// resume it on the first pointer/key event; if it still can't start, playback is
-// a silent no-op (never throws).
+// Browsers require a user gesture before audio can play, and iOS/iPadOS is the
+// strictest about it, so the unlock here is deliberately belt-and-braces:
+//   * Listeners stay armed on every gesture type (touchend is the one iPads
+//     reliably honour) and KEEP trying until the context is actually running —
+//     the old code removed them after the first attempt, so one failed unlock
+//     meant permanent silence.
+//   * A silent one-frame buffer is played inside the gesture (the classic iOS
+//     unlock) alongside resume().
+//   * Returning to the tab re-resumes a context iPadOS suspended in the
+//     background.
+//   * Where the Audio Session API exists (Safari 17+), the page's audio is
+//     declared 'transient' — short notification-type sound that mixes with
+//     other media and isn't muted by the Silent switch.
+// If none of that lands, playback stays a silent no-op (never throws).
 
 let ctx: AudioContext | null = null
 
@@ -26,16 +36,67 @@ function ensureContext(): AudioContext | null {
   return ctx
 }
 
-// Resume the context on the first user gesture (module-load, runs once).
+// Declare the page's audio as short, mixable notification sound (Safari 17+).
+// On iPhone/iPad this is what lets the chime through the Silent switch and
+// stops it interrupting music the user has playing. Harmless no-op elsewhere.
+function configureAudioSession(): void {
+  try {
+    const session = (navigator as { audioSession?: { type: string } }).audioSession
+    if (session) session.type = 'transient'
+  } catch {
+    /* unsupported — fine */
+  }
+}
+
 if (typeof window !== 'undefined') {
+  configureAudioSession()
+
+  // Unlock on user gesture. Listeners persist until the context is RUNNING —
+  // each tap/keypress is another chance, so a rejected first attempt (common
+  // on iPadOS, which honours touchend rather than pointerdown for audio
+  // activation) doesn't disable sound for the whole session.
+  const GESTURES = ['touchend', 'pointerdown', 'mousedown', 'keydown', 'click'] as const
   const onGesture = () => {
     const c = ensureContext()
-    if (c && c.state === 'suspended') void c.resume()
-    window.removeEventListener('pointerdown', onGesture)
-    window.removeEventListener('keydown', onGesture)
+    if (!c) {
+      GESTURES.forEach((e) => window.removeEventListener(e, onGesture))
+      return
+    }
+    if (c.state === 'running') {
+      GESTURES.forEach((e) => window.removeEventListener(e, onGesture))
+      return
+    }
+    try {
+      // The classic iOS unlock: start a silent one-frame buffer from inside
+      // the gesture. Combined with resume(), one of the two always lands on
+      // WebKit versions that reject the other.
+      const buffer = c.createBuffer(1, 1, 22050)
+      const source = c.createBufferSource()
+      source.buffer = buffer
+      source.connect(c.destination)
+      source.start(0)
+    } catch {
+      /* ignore */
+    }
+    void c
+      .resume()
+      .then(() => {
+        if (c.state === 'running') {
+          GESTURES.forEach((e) => window.removeEventListener(e, onGesture))
+        }
+      })
+      .catch(() => {
+        /* keep the listeners armed — the next gesture retries */
+      })
   }
-  window.addEventListener('pointerdown', onGesture)
-  window.addEventListener('keydown', onGesture)
+  GESTURES.forEach((e) => window.addEventListener(e, onGesture, { passive: true }))
+
+  // iPadOS suspends the context when the tab is backgrounded; a context the
+  // user has already activated may be resumed programmatically on return.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return
+    if (ctx && ctx.state === 'suspended') void ctx.resume().catch(() => {})
+  })
 }
 
 function tone(
@@ -61,11 +122,7 @@ function tone(
 
 export type ChatSoundKind = 'general' | 'mention'
 
-export function playChatSound(kind: ChatSoundKind): void {
-  const c = ensureContext()
-  if (!c) return
-  if (c.state === 'suspended') void c.resume()
-  if (c.state !== 'running') return // no gesture yet → skip silently
+function playNow(c: AudioContext, kind: ChatSoundKind): void {
   const now = c.currentTime
   if (kind === 'mention') {
     // Two rising notes, a touch louder — "this one's for you".
@@ -75,4 +132,22 @@ export function playChatSound(kind: ChatSoundKind): void {
     // One gentle low blip.
     tone(c, 600, now, 0.11, 0.05, 'sine')
   }
+}
+
+export function playChatSound(kind: ChatSoundKind): void {
+  const c = ensureContext()
+  if (!c) return
+  if (c.state === 'running') {
+    playNow(c, kind)
+    return
+  }
+  // Suspended (e.g. just returned to the tab): try to wake it and play a
+  // beat late rather than dropping the cue. If the browser refuses (no
+  // gesture yet), stay silent — never throw.
+  void c
+    .resume()
+    .then(() => {
+      if (c.state === 'running') playNow(c, kind)
+    })
+    .catch(() => {})
 }
