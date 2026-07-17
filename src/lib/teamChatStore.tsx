@@ -53,6 +53,7 @@ export interface PresenceMember {
   name: string | null
   initials: string | null
   colour: string | null
+  avatarUrl: string | null
   status: ChatStatus
 }
 
@@ -62,6 +63,7 @@ export interface TeamMember {
   name: string | null
   initials: string | null
   colour: string | null
+  avatarUrl: string | null
 }
 
 // A single emoji reaction on a message (one row per message + user + emoji).
@@ -79,6 +81,7 @@ interface PresenceMeta {
   name: string | null
   initials: string | null
   colour: string | null
+  avatar_url?: string | null
   status: ChatStatus
 }
 
@@ -238,6 +241,7 @@ function reducePresence(state: Record<string, PresenceMeta[]>): PresenceMember[]
         name: meta.name ?? null,
         initials: meta.initials ?? null,
         colour: meta.colour ?? null,
+        avatarUrl: meta.avatar_url ?? null,
         status: meta.status ?? 'online',
       }
       const existing = byUser.get(cand.userId)
@@ -303,10 +307,16 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   // already loaded and no thread has anything earlier to fetch.
   const initialFullRef = useRef(false)
   const myStatusRef = useRef<ChatStatus>('online')
-  const profileRef = useRef<{ name: string | null; initials: string | null; colour: string | null }>({
+  const profileRef = useRef<{
+    name: string | null
+    initials: string | null
+    colour: string | null
+    avatarUrl: string | null
+  }>({
     name: null,
     initials: null,
     colour: null,
+    avatarUrl: null,
   })
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
@@ -323,6 +333,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       name: profileRef.current.name,
       initials: profileRef.current.initials,
       colour: profileRef.current.colour,
+      avatar_url: profileRef.current.avatarUrl,
       status: myStatusRef.current,
     }
   }
@@ -397,7 +408,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       const [{ data: prof }, { data: msgs }, { data: mem }, { data: dmReads }] = await Promise.all([
         supabase
           .from('profiles')
-          .select('full_name, designer_initials, designer_colour, team_chat_seen_at')
+          .select('full_name, designer_initials, designer_colour, avatar_url, team_chat_seen_at')
           .eq('id', userId)
           .single(),
         // RLS scopes this to the team room + my own DM threads (000324).
@@ -408,7 +419,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
           .limit(INITIAL_LIMIT),
         supabase
           .from('profiles')
-          .select('id, full_name, designer_initials, designer_colour')
+          .select('id, full_name, designer_initials, designer_colour, avatar_url')
           .is('deactivated_at', null)
           .order('full_name'),
         supabase.from('team_chat_dm_reads').select('peer_id, seen_at').eq('user_id', userId),
@@ -428,11 +439,13 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
           full_name: string | null
           designer_initials: string | null
           designer_colour: string | null
+          avatar_url: string | null
         }>).map((m) => ({
           id: m.id,
           name: m.full_name,
           initials: m.designer_initials,
           colour: m.designer_colour,
+          avatarUrl: m.avatar_url,
         })),
       )
 
@@ -441,6 +454,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
         name: prof?.full_name ?? null,
         initials: prof?.designer_initials ?? null,
         colour: prof?.designer_colour ?? null,
+        avatarUrl: prof?.avatar_url ?? null,
       }
 
       const list = ((msgs ?? []) as TeamMessage[]).slice().reverse()
