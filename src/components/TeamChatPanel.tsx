@@ -335,11 +335,15 @@ function PresenceAvatar({ member }: { member: PresenceMember }) {
   const meta = CHAT_STATUS_META[member.status]
   return (
     <span
-      className="relative inline-flex h-7 w-7 items-center justify-center rounded-full font-mono text-[10px] font-medium text-white"
-      style={{ backgroundColor: authorBadgeColour(member.colour) }}
-      title={`${member.name ?? 'Someone'} — ${meta.label}`}
+      className="relative inline-flex h-7 w-7 items-center justify-center overflow-visible rounded-full font-mono text-[10px] font-medium text-white"
+      style={member.avatarUrl ? undefined : { backgroundColor: authorBadgeColour(member.colour) }}
+      title={`${firstName(member.name)} — ${meta.label}`}
     >
-      {(member.initials ?? '?').slice(0, 2)}
+      {member.avatarUrl ? (
+        <img src={member.avatarUrl} alt="" className="h-7 w-7 rounded-full object-cover" />
+      ) : (
+        (member.initials ?? '?').slice(0, 2)
+      )}
       <span
         className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full"
         style={{ backgroundColor: meta.dot, boxShadow: '0 0 0 2px var(--c-surface)' }}
@@ -435,7 +439,7 @@ function SoundToggle() {
 }
 
 function typingLabel(users: { name: string | null }[]): string {
-  const names = users.map((u) => u.name ?? 'Someone')
+  const names = users.map((u) => firstName(u.name))
   if (names.length === 1) return `${names[0]} is typing…`
   if (names.length === 2) return `${names[0]} and ${names[1]} are typing…`
   return 'Several people are typing…'
@@ -561,6 +565,9 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     () => (activeThread === 'team' ? null : members.find((m) => m.id === activeThread) ?? null),
     [activeThread, members],
   )
+  // Author → profile lookup, so message avatars can use uploaded profile
+  // pictures (avatar_url isn't denormalised on the message rows).
+  const membersById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members])
   const presenceByUser = useMemo(
     () => new Map(presence.map((p) => [p.userId, p.status])),
     [presence],
@@ -986,7 +993,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             <p className="text-[14px] text-ink-soft">No messages yet.</p>
             <p className="text-[13px] text-ink-mute">
               {activePeer
-                ? `This is a private conversation between you and ${activePeer.name ?? 'your teammate'} — no-one else can see it.`
+                ? `This is a private conversation between you and ${firstName(activePeer.name)} — no-one else can see it.`
                 : 'Say hello to the team.'}
             </p>
           </div>
@@ -1029,6 +1036,9 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
               const showDay = !prev || dayKey(prev.created_at) !== dayKey(m.created_at)
               const canDelete = m.author_id === userId || isAdmin
               const msgReactions = groupReactions(reactionsByMessage.get(m.id) ?? [], userId)
+              const authorAvatar = m.author_id
+                ? membersById.get(m.author_id)?.avatarUrl ?? null
+                : null
               return (
                 <li key={m.id}>
                   {showDay && (
@@ -1042,21 +1052,29 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                   )}
                   <div className={['group flex items-start gap-2.5', grouped ? 'mt-0.5' : 'mt-2.5'].join(' ')}>
                     <div className="w-7 flex-shrink-0">
-                      {!grouped && (
-                        <span
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-full font-mono text-[10px] font-medium text-white"
-                          style={{ backgroundColor: authorBadgeColour(m.author_colour) }}
-                          aria-hidden="true"
-                        >
-                          {(m.author_initials ?? '?').slice(0, 2)}
-                        </span>
-                      )}
+                      {!grouped &&
+                        (authorAvatar ? (
+                          <img
+                            src={authorAvatar}
+                            alt=""
+                            className="h-7 w-7 rounded-full object-cover"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <span
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-full font-mono text-[10px] font-medium text-white"
+                            style={{ backgroundColor: authorBadgeColour(m.author_colour) }}
+                            aria-hidden="true"
+                          >
+                            {(m.author_initials ?? '?').slice(0, 2)}
+                          </span>
+                        ))}
                     </div>
                     <div className="min-w-0 flex-1">
                       {!grouped && (
                         <div className="flex items-baseline gap-2">
                           <span className="text-[13px] font-semibold text-ink">
-                            {m.author_name ?? 'Someone'}
+                            {firstName(m.author_name)}
                           </span>
                           <span className="text-[11px] text-ink-mute">{messageTime(m.created_at)}</span>
                         </div>
@@ -1099,7 +1117,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                                   key={g.emoji}
                                   type="button"
                                   onClick={() => toggleReaction(m.id, g.emoji)}
-                                  title={g.names.join(', ')}
+                                  title={g.names.map((n) => firstName(n)).join(', ')}
                                   className={[
                                     'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[12px] leading-none transition-colors',
                                     g.mine
@@ -1170,13 +1188,22 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                   i === mentionIndex ? 'bg-canvas' : 'hover:bg-canvas',
                 ].join(' ')}
               >
-                <span
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-full font-mono text-[9px] font-medium text-white"
-                  style={{ backgroundColor: authorBadgeColour(m.colour) }}
-                  aria-hidden="true"
-                >
-                  {(m.initials ?? '?').slice(0, 2)}
-                </span>
+                {m.avatarUrl ? (
+                  <img
+                    src={m.avatarUrl}
+                    alt=""
+                    className="h-6 w-6 rounded-full object-cover"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <span
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-full font-mono text-[9px] font-medium text-white"
+                    style={{ backgroundColor: authorBadgeColour(m.colour) }}
+                    aria-hidden="true"
+                  >
+                    {(m.initials ?? '?').slice(0, 2)}
+                  </span>
+                )}
                 <span className="font-medium text-ink">{m.name ?? 'Someone'}</span>
               </button>
             ))}
@@ -1274,7 +1301,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
         />
         <p className="mt-1.5 text-[11px] text-ink-dim">
           {activePeer
-            ? `Private to ${activePeer.name ?? 'your teammate'} · paste or drop any file (up to ${MAX_MB} MB) · Enter to send`
+            ? `Private to ${firstName(activePeer.name)} · paste or drop any file (up to ${MAX_MB} MB) · Enter to send`
             : `@ to mention · paste or drop any file (up to ${MAX_MB} MB) · Enter to send · Shift + Enter for a new line`}
         </p>
       </div>
