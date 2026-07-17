@@ -1,0 +1,25 @@
+# Netlify build configuration.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# `pnpm build` produces THREE things, not one:
+#   1. dist/                     — the main proof-viewer SPA
+#   2. dist/price-list/price-list.js   — the script the Squarespace
+#      marketing price-list pages embed to render the pricing tables
+#      from the database (GBP / EUR / USD)
+#   3. dist/contact-form/contact-form.js — the script the Squarespace
+#      support page embeds for the contact form
+#
+# Without this file, Netlify auto-detects a Vite project and can run just
+# `vite build`, which only produces (1). When that happens the two
+# embedded bundles are never emitted, so their <script src> URLs fall
+# through to the SPA and return a blank page — which is exactly how the
+# marketing-site pricing tables silently went blank (they load fine in
+# the database; the script that draws them just wasn't being deployed).
+#
+# Pinning the command here forces the full build every time and takes
+# precedence over the Netlify UI build setting, so this can't regress
+# again.
+[build]
+  command = "pnpm build"
+  publish = "dist"
