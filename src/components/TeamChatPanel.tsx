@@ -704,8 +704,11 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
         </div>
       )}
 
-      {/* Messages */}
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+      {/* Messages. flex-col + the list's mt-auto bottom-anchors the thread, so
+          a few messages sit just above the composer (history grows upward) —
+          otherwise a tall panel (e.g. the docked rail) shows a big empty gap
+          between the messages and the composer. */}
+      <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-3">
         {loading ? (
           <div className="flex h-full items-center justify-center">
             <div
@@ -724,7 +727,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             <p className="text-[13px] text-ink-mute">Nothing matches “{search.trim()}”.</p>
           </div>
         ) : (
-          <ul className="space-y-0">
+          <ul className="mt-auto space-y-0">
             {shown.map((m, i) => {
               const prev = shown[i - 1]
               const grouped = isGroupedWithPrevious(prev, m)
