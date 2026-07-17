@@ -31,7 +31,7 @@ export function authorBadgeColour(colour: string | null | undefined): string {
 // text-only while a pasted link (e.g. a /proofs/:id URL — "can someone look at
 // this?") renders clickable. The trailing-punctuation exclusion keeps a URL at
 // the end of a sentence from swallowing the full stop.
-export type MessageSegment = { type: 'text' | 'link'; value: string }
+export type MessageSegment = { type: 'text' | 'link' | 'mention'; value: string }
 
 const URL_RE = /(https?:\/\/[^\s<]+[^\s<.,:;!?)\]}'"])/gi
 
@@ -46,6 +46,40 @@ export function splitLinkifiedText(body: string): MessageSegment[] {
   }
   if (lastIndex < body.length) segments.push({ type: 'text', value: body.slice(lastIndex) })
   return segments
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// Split a message into text / link / mention runs. Links come first (via
+// splitLinkifiedText); then within plain text, any "@<known member name>" is
+// pulled out as a mention run so it can be highlighted. Names are matched
+// longest-first so "@Rob Randtoul" wins over "@Rob". Purely cosmetic — the push
+// targets the ids the sender picked, not this text match.
+export function buildMessageSegments(body: string, memberNames: string[]): MessageSegment[] {
+  const linkSegs = splitLinkifiedText(body)
+  const names = memberNames.filter((n): n is string => !!n && n.trim().length > 0)
+  if (names.length === 0) return linkSegs
+  const pattern = [...names].sort((a, b) => b.length - a.length).map(escapeRegExp).join('|')
+  const re = new RegExp('@(?:' + pattern + ')', 'g')
+
+  const out: MessageSegment[] = []
+  for (const seg of linkSegs) {
+    if (seg.type !== 'text') {
+      out.push(seg)
+      continue
+    }
+    let last = 0
+    for (const m of seg.value.matchAll(re)) {
+      const start = m.index ?? 0
+      if (start > last) out.push({ type: 'text', value: seg.value.slice(last, start) })
+      out.push({ type: 'mention', value: m[0] })
+      last = start + m[0].length
+    }
+    if (last < seg.value.length) out.push({ type: 'text', value: seg.value.slice(last) })
+  }
+  return out
 }
 
 // "Today" / "Yesterday" / "Tue 8 Jul" for the day divider between messages.

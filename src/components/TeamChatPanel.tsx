@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Send, Trash2, ChevronDown, Check } from 'lucide-react'
 import { Textarea } from '../design'
 import { useAuth } from '../lib/auth'
@@ -7,14 +7,15 @@ import {
   CHAT_STATUS_META,
   type ChatStatus,
   type PresenceMember,
+  type TeamMember,
 } from '../lib/teamChatStore'
 import {
   authorBadgeColour,
+  buildMessageSegments,
   dayKey,
   dayLabel,
   isGroupedWithPrevious,
   messageTime,
-  splitLinkifiedText,
 } from '../lib/teamChat'
 
 // The shared chat body — presence strip + message list + composer — used by
@@ -26,25 +27,22 @@ interface TeamChatPanelProps {
   variant: 'dropdown' | 'page'
 }
 
-// The three statuses a person can set for themselves. "Idle" isn't here — it's
-// applied automatically when you go quiet.
 const SETTABLE: { value: 'online' | 'away' | 'busy'; label: string }[] = [
   { value: 'online', label: 'Online' },
   { value: 'away', label: 'Away' },
   { value: 'busy', label: 'Busy' },
 ]
 
-function StatusDot({ status, ring }: { status: ChatStatus; ring?: string }) {
+function StatusDot({ status }: { status: ChatStatus }) {
   return (
     <span
       className="inline-block h-2.5 w-2.5 rounded-full"
-      style={{ backgroundColor: CHAT_STATUS_META[status].dot, boxShadow: ring ? `0 0 0 2px ${ring}` : undefined }}
+      style={{ backgroundColor: CHAT_STATUS_META[status].dot }}
       aria-hidden="true"
     />
   )
 }
 
-// A small avatar with a status dot, for the "who's around" strip.
 function PresenceAvatar({ member }: { member: PresenceMember }) {
   const meta = CHAT_STATUS_META[member.status]
   return (
@@ -124,22 +122,49 @@ function StatusPicker() {
   )
 }
 
+// Is the caret sitting in an "@query" the composer should autocomplete?
+function detectMention(text: string, caret: number): { at: number; query: string } | null {
+  const before = text.slice(0, caret)
+  const at = before.lastIndexOf('@')
+  if (at < 0) return null
+  if (at > 0 && !/\s/.test(before[at - 1])) return null // must start the token
+  const query = before.slice(at + 1)
+  if (/[\n@]/.test(query) || query.length > 40) return null
+  return { at, query }
+}
+
 export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
   const { session, role } = useAuth()
   const userId = session?.user.id ?? null
   const isAdmin = role === 'admin'
-  const { messages, loading, presence, send, remove, setViewing } = useTeamChat()
+  const { messages, loading, presence, members, send, remove, setViewing } = useTeamChat()
 
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // While this panel is visible, incoming messages shouldn't accrue unread.
+  // @mention autocomplete state.
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  const [mentionAnchor, setMentionAnchor] = useState(0)
+  const [mentionCaret, setMentionCaret] = useState(0)
+  const [mentionIndex, setMentionIndex] = useState(0)
+
+  const mentionCandidates = useMemo(() => members.filter((m) => m.id !== userId), [members, userId])
+  const memberNames = useMemo(
+    () => members.map((m) => m.name ?? '').filter(Boolean),
+    [members],
+  )
+  const filtered = useMemo(() => {
+    if (mentionQuery === null) return []
+    const q = mentionQuery.toLowerCase()
+    return mentionCandidates.filter((m) => (m.name ?? '').toLowerCase().includes(q)).slice(0, 6)
+  }, [mentionQuery, mentionCandidates])
+
   useEffect(() => {
     setViewing(true)
     return () => setViewing(false)
-    // setViewing only flips a ref in the provider; safe to run once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -148,21 +173,91 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     if (el) el.scrollTop = el.scrollHeight
   }, [messages.length, loading])
 
+  function onDraftChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    const value = e.target.value
+    setDraft(value)
+    const caret = e.target.selectionStart ?? value.length
+    const det = detectMention(value, caret)
+    if (det) {
+      setMentionQuery(det.query)
+      setMentionAnchor(det.at)
+      setMentionCaret(caret)
+      setMentionIndex(0)
+    } else {
+      setMentionQuery(null)
+    }
+  }
+
+  function selectMention(member: TeamMember) {
+    const insert = '@' + (member.name ?? '') + ' '
+    const next = draft.slice(0, mentionAnchor) + insert + draft.slice(mentionCaret)
+    setDraft(next)
+    setMentionQuery(null)
+    setMentionIndex(0)
+    const pos = mentionAnchor + insert.length
+    requestAnimationFrame(() => {
+      const el = textareaRef.current
+      if (el) {
+        el.focus()
+        el.setSelectionRange(pos, pos)
+      }
+    })
+  }
+
   async function handleSend() {
     const text = draft.trim()
     if (!text || sending) return
+    // Push targets are computed from the text against known member names, so
+    // both picking from the list and typing "@Full Name" register a mention.
+    const lower = text.toLowerCase()
+    const mentionedIds = [
+      ...new Set(
+        mentionCandidates
+          .filter((m) => m.name && lower.includes('@' + m.name.toLowerCase()))
+          .map((m) => m.id),
+      ),
+    ]
     setSending(true)
     setError(null)
-    const res = await send(text)
+    const res = await send(text, mentionedIds)
     setSending(false)
     if (!res.ok) {
       setError(res.error || 'Could not send your message. Please try again.')
       return
     }
     setDraft('')
+    setMentionQuery(null)
   }
 
-  // "Who's around" — everyone present except me.
+  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (mentionQuery !== null && filtered.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setMentionIndex((i) => (i + 1) % filtered.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setMentionIndex((i) => (i - 1 + filtered.length) % filtered.length)
+        return
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault()
+        selectMention(filtered[Math.min(mentionIndex, filtered.length - 1)])
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setMentionQuery(null)
+        return
+      }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      void handleSend()
+    }
+  }
+
   const others = presence.filter((m) => m.userId !== userId)
 
   return (
@@ -243,7 +338,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                       )}
                       <div className="flex items-start gap-2">
                         <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[14px] leading-snug text-ink-soft">
-                          {splitLinkifiedText(m.body).map((seg, si) =>
+                          {buildMessageSegments(m.body, memberNames).map((seg, si) =>
                             seg.type === 'link' ? (
                               <a
                                 key={si}
@@ -254,6 +349,13 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                               >
                                 {seg.value}
                               </a>
+                            ) : seg.type === 'mention' ? (
+                              <span
+                                key={si}
+                                className="rounded bg-brand-50 px-1 font-medium text-brand"
+                              >
+                                {seg.value}
+                              </span>
                             ) : (
                               <span key={si}>{seg.value}</span>
                             ),
@@ -281,7 +383,38 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
       </div>
 
       {/* Composer */}
-      <div className="border-t border-line-soft p-2.5">
+      <div className="relative border-t border-line-soft p-2.5">
+        {/* @mention autocomplete — opens upward above the composer. */}
+        {mentionQuery !== null && filtered.length > 0 && (
+          <div className="absolute inset-x-2.5 bottom-full z-10 mb-1 max-h-52 overflow-y-auto rounded-[10px] border border-line bg-surface shadow-lg">
+            {filtered.map((m, i) => (
+              <button
+                key={m.id}
+                type="button"
+                // onMouseDown (not onClick) so selecting doesn't blur the textarea first.
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  selectMention(m)
+                }}
+                onMouseEnter={() => setMentionIndex(i)}
+                className={[
+                  'flex w-full items-center gap-2 px-3 py-2 text-left text-[13px]',
+                  i === mentionIndex ? 'bg-canvas' : 'hover:bg-canvas',
+                ].join(' ')}
+              >
+                <span
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-full font-mono text-[9px] font-medium text-white"
+                  style={{ backgroundColor: authorBadgeColour(m.colour) }}
+                  aria-hidden="true"
+                >
+                  {(m.initials ?? '?').slice(0, 2)}
+                </span>
+                <span className="font-medium text-ink">{m.name ?? 'Someone'}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {error && (
           <p role="alert" className="mb-2 rounded-lg bg-out-soft px-3 py-1.5 text-[12px] text-out">
             {error}
@@ -289,17 +422,13 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
         )}
         <div className="flex items-end gap-2">
           <Textarea
+            ref={textareaRef}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={onDraftChange}
+            onKeyDown={onKeyDown}
             rows={variant === 'dropdown' ? 1 : 2}
-            placeholder="Message the team…"
+            placeholder="Message the team… @ to mention"
             className="flex-1"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                void handleSend()
-              }
-            }}
           />
           <button
             type="button"
@@ -311,7 +440,9 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             <Send size={18} aria-hidden="true" />
           </button>
         </div>
-        <p className="mt-1.5 text-[11px] text-ink-dim">Enter to send · Shift + Enter for a new line</p>
+        <p className="mt-1.5 text-[11px] text-ink-dim">
+          @ to mention (they get a phone alert) · Enter to send · Shift + Enter for a new line
+        </p>
       </div>
     </div>
   )

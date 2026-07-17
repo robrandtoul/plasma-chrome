@@ -39,6 +39,14 @@ export interface PresenceMember {
   status: ChatStatus
 }
 
+// An active team member, for the @mention picker + message highlighting.
+export interface TeamMember {
+  id: string
+  name: string | null
+  initials: string | null
+  colour: string | null
+}
+
 // What each client broadcasts about itself on the presence channel.
 interface PresenceMeta {
   user_id: string
@@ -54,9 +62,11 @@ interface TeamChatValue {
   unread: number
   /** Everyone currently present, including yourself. */
   presence: PresenceMember[]
+  /** Active team members, for the @mention picker + highlighting. */
+  members: TeamMember[]
   /** Your own effective status (auto idle unless you've set Away/Busy). */
   myStatus: ChatStatus
-  send: (body: string) => Promise<{ ok: boolean; error?: string }>
+  send: (body: string, mentionedUserIds?: string[]) => Promise<{ ok: boolean; error?: string }>
   remove: (id: string) => Promise<void>
   /** Clear the unread badge and stamp "seen up to now". */
   markSeen: () => void
@@ -90,6 +100,7 @@ const DEFAULT: TeamChatValue = {
   loading: false,
   unread: 0,
   presence: [],
+  members: [],
   myStatus: 'online',
   send: async () => ({ ok: false }),
   remove: async () => {},
@@ -144,6 +155,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [unread, setUnread] = useState(0)
   const [presence, setPresence] = useState<PresenceMember[]>([])
+  const [members, setMembers] = useState<TeamMember[]>([])
   const [myStatus, setMyStatus] = useState<ChatStatus>('online')
   const [dropdownPinned, setDropdownPinnedState] = useState<boolean>(readPinned)
 
@@ -204,6 +216,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       setMessages([])
       setUnread(0)
       setPresence([])
+      setMembers([])
       setLoading(false)
       return
     }
@@ -211,7 +224,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     setLoading(true)
 
     void (async () => {
-      const [{ data: prof }, { data: msgs }] = await Promise.all([
+      const [{ data: prof }, { data: msgs }, { data: mem }] = await Promise.all([
         supabase
           .from('profiles')
           .select('full_name, designer_initials, designer_colour, team_chat_seen_at')
@@ -222,8 +235,27 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
           .select('*')
           .order('created_at', { ascending: false })
           .limit(INITIAL_LIMIT),
+        supabase
+          .from('profiles')
+          .select('id, full_name, designer_initials, designer_colour')
+          .is('deactivated_at', null)
+          .order('full_name'),
       ])
       if (cancelled) return
+
+      setMembers(
+        ((mem ?? []) as Array<{
+          id: string
+          full_name: string | null
+          designer_initials: string | null
+          designer_colour: string | null
+        }>).map((m) => ({
+          id: m.id,
+          name: m.full_name,
+          initials: m.designer_initials,
+          colour: m.designer_colour,
+        })),
+      )
 
       seenAtRef.current = (prof?.team_chat_seen_at as string | null) ?? null
       profileRef.current = {
@@ -320,14 +352,15 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     loading,
     unread,
     presence,
+    members,
     myStatus,
-    send: async (body: string) => {
+    send: async (body: string, mentionedUserIds: string[] = []) => {
       const uid = userIdRef.current
       const text = body.trim()
       if (!text || !uid) return { ok: false }
       const { data, error } = await supabase
         .from('team_messages')
-        .insert({ author_id: uid, body: text })
+        .insert({ author_id: uid, body: text, mentioned_user_ids: mentionedUserIds })
         .select('*')
         .single()
       if (error || !data) return { ok: false, error: error?.message }

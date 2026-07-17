@@ -60,9 +60,12 @@ interface Body {
   proof_id?: string | null
   proof_version_id?: string | null
   order_id?: string | null
-  source_kind: 'proof_event' | 'order' | 'proof_finalize' | 'condition'
+  source_kind: 'proof_event' | 'order' | 'proof_finalize' | 'condition' | 'chat'
   source_event_id: string
   actor_user_id?: string | null
+  // Explicit recipients for team_chat_mention (the @mentioned users). Other
+  // event codes resolve recipients from ownership + prefs instead.
+  recipient_user_ids?: string[] | null
   vars?: Record<string, string | null | undefined>
 }
 
@@ -121,6 +124,12 @@ Deno.serve(async (req) => {
     (settings.notification_role_defaults as Record<string, Record<string, PrefValue>> | null) ?? {}
   const fulfilmentIds = new Set((settings.fulfilment_user_ids as string[] | null) ?? [])
   const copyMap = (settings.notification_copy as Record<string, { title: string; body: string }> | null) ?? {}
+
+  // Team-chat @mention: the recipients are explicit (the mentioned users), so
+  // this bypasses the proof-ownership recipient machinery entirely.
+  if (eventCode === 'team_chat_mention') {
+    return await handleChatMention(admin, body, copyMap)
+  }
 
   // Money events stay silent until ordering is actually live, so test orders
   // don't ping like real sales.
@@ -283,6 +292,105 @@ function deepLink(event: string, proofId: string | null): string {
   if (FULFILMENT_EVENTS.has(event)) return '/orders'
   if (event === 'project_flagged') return '/flagged'
   return proofId ? `/proofs/${proofId}` : '/'
+}
+
+// Team-chat @mention fan-out. Recipients are the explicit mentioned users (not
+// derived from any proof), so this is self-contained: for each, respect an
+// account-wide pause or an explicit "mentions off", dedup via the outbox, send
+// to every device, prune dead subscriptions. Deep-links to /chat.
+async function handleChatMention(
+  admin: SupabaseClient,
+  body: Body,
+  copyMap: Record<string, { title: string; body: string }>,
+): Promise<Response> {
+  const recipientIds = Array.from(
+    new Set((body.recipient_user_ids ?? []).filter((id): id is string => !!id)),
+  ).filter((id) => id !== body.actor_user_id)
+  if (recipientIds.length === 0) return json({ status: 'skipped', reason: 'no_recipients' })
+
+  const copy = copyMap['team_chat_mention'] ?? { title: '{actor} mentioned you', body: '{snippet}' }
+  const vars = { ...(body.vars ?? {}) }
+  const payload: PushPayload = {
+    title: clip(interpolate(copy.title, vars), 30),
+    body: clip(interpolate(copy.body, vars), 120),
+    url: '/chat',
+    tag: `chat:${body.source_event_id}`,
+  }
+
+  let sent = 0
+  let skipped = 0
+  for (const recipientId of recipientIds) {
+    const { data: prof } = await admin
+      .from('profiles')
+      .select('id')
+      .eq('id', recipientId)
+      .is('deactivated_at', null)
+      .maybeSingle()
+    if (!prof) {
+      skipped++
+      continue
+    }
+    const { data: prefRow } = await admin
+      .from('notification_preferences')
+      .select('prefs')
+      .eq('user_id', recipientId)
+      .maybeSingle()
+    const prefs = (prefRow as { prefs?: Record<string, unknown> } | null)?.prefs ?? {}
+    if (prefs._muted === true || prefs['team_chat_mention'] === 'off') {
+      skipped++
+      continue
+    }
+
+    const { error: insErr } = await admin.from('notification_outbox').insert({
+      event_code: 'team_chat_mention',
+      source_kind: 'chat',
+      source_event_id: body.source_event_id,
+      proof_id: null,
+      order_id: null,
+      recipient_user_id: recipientId,
+      title: payload.title,
+      body: payload.body,
+      url: payload.url,
+      status: 'queued',
+    })
+    if (insErr) {
+      if ((insErr as { code?: string }).code === '23505') {
+        skipped++
+        continue
+      }
+      console.error('[send-push] mention outbox insert failed', insErr)
+      continue
+    }
+
+    const { data: subs } = await admin
+      .from('push_subscriptions')
+      .select('id, endpoint, p256dh, auth')
+      .eq('user_id', recipientId)
+    const devices = (subs ?? []) as Array<{ id: string; endpoint: string; p256dh: string; auth: string }>
+    if (devices.length === 0) {
+      await setOutcome(admin, 'team_chat_mention', body, recipientId, 'no_subscription')
+      continue
+    }
+
+    let anySent = false
+    for (const d of devices) {
+      const outcome = await sendPush({ endpoint: d.endpoint, p256dh: d.p256dh, auth: d.auth }, payload)
+      if (outcome.ok) {
+        anySent = true
+      } else if (outcome.status === 404 || outcome.status === 410) {
+        await admin.from('push_subscriptions').delete().eq('id', d.id)
+      } else {
+        await admin
+          .from('push_subscriptions')
+          .update({ last_failure_code: outcome.status ?? null })
+          .eq('id', d.id)
+      }
+    }
+    await setOutcome(admin, 'team_chat_mention', body, recipientId, anySent ? 'sent' : 'failed')
+    if (anySent) sent++
+  }
+
+  return json({ status: 'ok', recipients: recipientIds.length, sent, skipped })
 }
 
 async function setOutcome(
