@@ -1,8 +1,30 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { MessagesSquare, Maximize2, X, Pin } from 'lucide-react'
 import { useTeamChat } from '../lib/teamChatStore'
 import TeamChatPanel from './TeamChatPanel'
+
+const SIZE_KEY = 'pv:chat-size'
+const DEFAULT_SIZE = { w: 380, h: 460 }
+const MIN_W = 320
+const MIN_H = 300
+
+// The dropdown's saved size (per browser). Clamped on read so a stale value
+// can't be smaller than the minimum; the render also caps it to the viewport.
+function readChatSize(): { w: number; h: number } {
+  try {
+    const raw = localStorage.getItem(SIZE_KEY)
+    if (raw) {
+      const p = JSON.parse(raw) as { w?: unknown; h?: unknown }
+      if (typeof p.w === 'number' && typeof p.h === 'number') {
+        return { w: Math.max(MIN_W, p.w), h: Math.max(MIN_H, p.h) }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return DEFAULT_SIZE
+}
 
 // The desktop header chat control: the speech-bubble icon + unread badge that
 // opens the shared chat panel as a dropdown. A pin keeps it open across pages
@@ -31,6 +53,11 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
   // auto-open on the /chat page itself — that page *is* the chat.
   const [open, setOpen] = useState(() => dropdownPinned && !active)
   const ref = useRef<HTMLDivElement>(null)
+  // User-resizable dropdown. `size` drives the box; `sizeRef` lets the drag's
+  // pointerup persist the latest size without re-subscribing listeners.
+  const [size, setSize] = useState(readChatSize)
+  const sizeRef = useRef(size)
+  sizeRef.current = size
 
   // Re-open when the full /chat page "minimises" back to the dropdown.
   useEffect(() => {
@@ -71,6 +98,37 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
     if (dropdownPinned) setDropdownPinned(false)
   }
 
+  // Drag the bottom-left corner to resize. The panel is anchored top-right, so
+  // width grows leftward (right edge pinned) and height grows downward. Window
+  // listeners rather than pointer-capture so the drag survives the cursor
+  // leaving the small handle; the final size is saved to localStorage on
+  // pointerup (sizeRef holds the latest committed value).
+  function onResizeStart(e: ReactPointerEvent) {
+    e.preventDefault()
+    const startX = e.clientX
+    const startY = e.clientY
+    const startW = sizeRef.current.w
+    const startH = sizeRef.current.h
+    const maxW = Math.min(760, window.innerWidth - 16)
+    const maxH = window.innerHeight - 96
+    function onMove(ev: PointerEvent) {
+      const w = Math.min(maxW, Math.max(MIN_W, startW - (ev.clientX - startX)))
+      const h = Math.min(maxH, Math.max(MIN_H, startH + (ev.clientY - startY)))
+      setSize({ w, h })
+    }
+    function onUp() {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      try {
+        localStorage.setItem(SIZE_KEY, JSON.stringify(sizeRef.current))
+      } catch {
+        /* ignore */
+      }
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
   const highlighted = open || active
 
   return (
@@ -105,7 +163,13 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
         <div
           role="dialog"
           aria-label="Team chat"
-          className="absolute right-0 top-11 z-40 flex h-[460px] max-h-[calc(100vh-6rem)] w-[380px] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-[14px] border border-line bg-surface shadow-xl"
+          className="absolute right-0 top-11 z-40 flex flex-col overflow-hidden rounded-[14px] border border-line bg-surface shadow-xl"
+          style={{
+            width: size.w,
+            height: size.h,
+            maxWidth: 'calc(100vw - 1rem)',
+            maxHeight: 'calc(100vh - 6rem)',
+          }}
         >
           <div className="flex flex-shrink-0 items-center justify-between border-b border-line-soft px-3 py-2">
             <span className="text-[13px] font-semibold text-ink">Team chat</span>
@@ -147,6 +211,26 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
           <div className="min-h-0 flex-1">
             <TeamChatPanel variant="dropdown" />
           </div>
+          <button
+            type="button"
+            onPointerDown={onResizeStart}
+            aria-label="Resize chat window"
+            title="Drag to resize"
+            className="absolute bottom-0 left-0 z-10 flex h-5 w-5 cursor-nesw-resize items-end justify-start p-1 text-ink-mute/50 transition-colors hover:text-ink-mute"
+          >
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              strokeLinecap="round"
+              aria-hidden="true"
+            >
+              <path d="M9 2 L2 9 M9 6 L6 9" />
+            </svg>
+          </button>
         </div>
       )}
     </div>
