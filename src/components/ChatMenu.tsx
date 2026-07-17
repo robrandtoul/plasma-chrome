@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { MessagesSquare, Maximize2, X, Pin } from 'lucide-react'
+import { MessagesSquare, Maximize2, X, Pin, AtSign } from 'lucide-react'
 import { useTeamChat } from '../lib/teamChatStore'
 import TeamChatPanel from './TeamChatPanel'
 
@@ -46,7 +46,7 @@ function useIsDesktop() {
 }
 
 export default function ChatMenu({ active = false }: { active?: boolean }) {
-  const { unread, dropdownPinned, setDropdownPinned } = useTeamChat()
+  const { unread, mentionUnread, dropdownPinned, setDropdownPinned } = useTeamChat()
   const isDesktop = useIsDesktop()
   // Seed open from the pinned preference so a pinned panel is already open on
   // every page (no closed→open flicker as this remounts on navigation). Never
@@ -140,31 +140,50 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
     handle.addEventListener('pointercancel', onEnd)
   }
 
-  const highlighted = open || active
+  const current = open || active
+  const hasUnread = unread > 0
+  const hasMention = mentionUnread > 0
 
   return (
     <div ref={ref} className="relative">
       <button
         type="button"
         onClick={() => (open ? close() : setOpen(true))}
-        aria-label={unread > 0 ? `Team chat — ${unread} new` : 'Team chat'}
+        aria-label={
+          hasMention
+            ? `Team chat — ${unread} new, you were mentioned`
+            : hasUnread
+              ? `Team chat — ${unread} new`
+              : 'Team chat'
+        }
         aria-haspopup="dialog"
         aria-expanded={open}
         title="Team chat"
         className={[
-          'relative flex h-9 w-9 items-center justify-center rounded-full transition-colors',
-          highlighted
-            ? 'text-ink bg-canvas border border-line'
-            : 'text-ink-mute hover:text-ink hover:bg-canvas',
+          'relative inline-flex h-9 items-center justify-center rounded-full border text-[13px] font-semibold transition-colors',
+          // Icon-only on tablets; grows a "Chat" label at lg+ where there's room.
+          'w-9 lg:w-auto lg:justify-start lg:gap-1.5 lg:pl-2.5 lg:pr-3.5',
+          current
+            ? 'border-line bg-canvas text-ink'
+            : hasMention
+              ? 'border-[var(--c-brand)] bg-brand-50 text-brand hover:bg-brand-50'
+              : hasUnread
+                ? 'border-line bg-canvas text-ink hover:bg-canvas'
+                : 'border-line bg-surface text-ink-soft hover:bg-canvas hover:text-ink',
         ].join(' ')}
       >
-        <MessagesSquare size={18} aria-hidden="true" />
-        {unread > 0 && (
+        <MessagesSquare size={17} aria-hidden="true" />
+        <span className="hidden lg:inline">Chat</span>
+        {hasUnread && (
           <span
-            className="absolute -right-1 -top-1 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-semibold leading-none text-white"
+            className={[
+              'absolute -right-1.5 -top-1.5 inline-flex h-[18px] min-w-[18px] items-center justify-center gap-0.5 rounded-full px-1 text-[10px] font-bold leading-none text-white',
+              hasMention ? 'bg-brand' : 'bg-ink',
+            ].join(' ')}
             style={{ boxShadow: '0 0 0 2px var(--c-surface)' }}
             aria-hidden="true"
           >
+            {hasMention && <AtSign size={10} strokeWidth={2.5} aria-hidden="true" />}
             {unread > 9 ? '9+' : unread}
           </span>
         )}

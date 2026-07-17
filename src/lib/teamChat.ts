@@ -10,6 +10,10 @@ export interface TeamMessage {
   author_initials: string | null
   author_colour: string | null
   body: string
+  // Ids picked from the @mention autocomplete (000320). Drives the mention
+  // push and the header's louder mention badge; purely cosmetic highlighting
+  // still matches on name text.
+  mentioned_user_ids?: string[] | null
   // Storage keys in the chat-attachments bucket (000322). Read via signed URL.
   attachment_paths?: string[] | null
   created_at: string

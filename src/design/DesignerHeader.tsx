@@ -289,31 +289,13 @@ export function DesignerHeader({
               page via the account sheet (below). */}
           <ChatMenu active={active === 'chat'} />
 
-          {/* Feedback — a right-aligned icon by the account button rather than
-              a text pill in the main nav. Desktop only; on mobile it lives in
-              the account sheet (below). */}
-          <Link
-            to="/feedback"
-            aria-label={
-              feedbackUnread > 0
-                ? `Feedback — ${feedbackUnread} of your suggestions resolved`
-                : 'Feedback'
-            }
-            title="Feedback"
-            aria-current={active === 'feedback' ? 'page' : undefined}
-            className={[
-              'relative hidden md:flex h-9 w-9 items-center justify-center rounded-full transition-colors',
-              active === 'feedback'
-                ? 'text-ink bg-canvas border border-line'
-                : 'text-ink-mute hover:text-ink hover:bg-canvas',
-            ].join(' ')}
-          >
-            <MessageSquare size={18} aria-hidden="true" />
-            {feedbackUnread > 0 && <CountBadge count={feedbackUnread} />}
-          </Link>
-
+          {/* Feedback used to sit here as its own icon, but it read as a twin
+              of the chat icon. It now lives inside the account menu (UserPill),
+              with a dot on the pill when there's an unseen resolution. */}
           <UserPill
             user={user}
+            feedbackUnread={feedbackUnread}
+            feedbackActive={active === 'feedback'}
             onEditProfile={onEditProfile}
             onSignOut={onSignOut}
           />
@@ -415,21 +397,6 @@ function BottomTabBar({
         />
       </button>
     </nav>
-  )
-}
-
-// Small numeric badge that rides the top-right of the desktop Feedback icon.
-// Caps at "9+" so it never blows out the 9×9 button. The ring (box-shadow in
-// the page background colour) lifts it off the icon like the mobileBell dot.
-function CountBadge({ count }: { count: number }) {
-  return (
-    <span
-      className="absolute -right-1 -top-1 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-semibold leading-none text-white"
-      style={{ boxShadow: '0 0 0 2px var(--c-surface)' }}
-      aria-hidden="true"
-    >
-      {count > 9 ? '9+' : count}
-    </span>
   )
 }
 
@@ -637,10 +604,14 @@ function MobileSearchField({
 
 function UserPill({
   user,
+  feedbackUnread,
+  feedbackActive,
   onEditProfile,
   onSignOut,
 }: {
   user: UserProps
+  feedbackUnread: number
+  feedbackActive: boolean
   onEditProfile?: () => void
   onSignOut?: () => void
 }) {
@@ -691,6 +662,15 @@ function UserPill({
         </span>
         <span className="hidden sm:inline">{user.name ?? 'Account'}</span>
       </button>
+      {/* Feedback now lives in this menu; a dot on the pill keeps its unseen
+          signal visible without a second header icon. */}
+      {feedbackUnread > 0 && !open && (
+        <span
+          className="pointer-events-none absolute -right-0.5 -top-0.5 z-10 h-2.5 w-2.5 rounded-full bg-brand"
+          style={{ boxShadow: '0 0 0 2px var(--c-surface)' }}
+          aria-hidden="true"
+        />
+      )}
       {open && (
         <div
           role="menu"
@@ -703,6 +683,21 @@ function UserPill({
             className="block w-full px-4 py-2 text-left text-[13px] text-ink-soft hover:bg-canvas"
           >
             Notifications
+          </Link>
+          <Link
+            to="/feedback"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            aria-current={feedbackActive ? 'page' : undefined}
+            className="flex w-full items-center gap-2 px-4 py-2 text-left text-[13px] text-ink-soft hover:bg-canvas"
+          >
+            <MessageSquare size={15} aria-hidden="true" className="text-ink-mute" />
+            Feedback
+            {feedbackUnread > 0 && (
+              <span className="ml-auto inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-semibold leading-none text-white">
+                {feedbackUnread > 9 ? '9+' : feedbackUnread}
+              </span>
+            )}
           </Link>
           <div className="mx-3 my-1 border-t border-line-soft" />
           {onEditProfile && (

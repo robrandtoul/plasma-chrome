@@ -70,6 +70,9 @@ interface TeamChatValue {
   messages: TeamMessage[]
   loading: boolean
   unread: number
+  /** Of `unread`, how many @mention me. Drives the louder mention badge so a
+   *  direct tag reads differently from ordinary chatter. */
+  mentionUnread: number
   /** Everyone currently present, including yourself. */
   presence: PresenceMember[]
   /** Active team members, for the @mention picker + highlighting. */
@@ -136,6 +139,7 @@ const DEFAULT: TeamChatValue = {
   messages: [],
   loading: false,
   unread: 0,
+  mentionUnread: 0,
   presence: [],
   members: [],
   reactions: [],
@@ -197,6 +201,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   const [messages, setMessages] = useState<TeamMessage[]>([])
   const [loading, setLoading] = useState(true)
   const [unread, setUnread] = useState(0)
+  const [mentionUnread, setMentionUnread] = useState(0)
   const [presence, setPresence] = useState<PresenceMember[]>([])
   const [members, setMembers] = useState<TeamMember[]>([])
   const [reactions, setReactions] = useState<ReactionRow[]>([])
@@ -279,6 +284,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     if (!userId) {
       setMessages([])
       setUnread(0)
+      setMentionUnread(0)
       setPresence([])
       setMembers([])
       setReactions([])
@@ -332,8 +338,14 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       const list = ((msgs ?? []) as TeamMessage[]).slice().reverse()
       setMessages(list)
       const seen = seenAtRef.current
-      setUnread(
-        list.filter((m) => m.author_id !== userId && (!seen || m.created_at > seen)).length,
+      const unseenFromOthers = list.filter(
+        (m) => m.author_id !== userId && (!seen || m.created_at > seen),
+      )
+      setUnread(unseenFromOthers.length)
+      setMentionUnread(
+        unseenFromOthers.filter(
+          (m) => Array.isArray(m.mentioned_user_ids) && m.mentioned_user_ids.includes(userId),
+        ).length,
       )
       setLoading(false)
 
@@ -358,17 +370,23 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
             const row = payload.new as TeamMessage
             setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]))
             if (row.author_id !== userIdRef.current) {
-              if (viewingRef.current) stampSeen()
-              else setUnread((n) => n + 1)
+              // Does this message @mention me? Drives both the unread badge's
+              // mention state and the audio cue.
+              const mentions = (payload.new as { mentioned_user_ids?: string[] | null })
+                .mentioned_user_ids
+              const mentioned =
+                Array.isArray(mentions) &&
+                !!userIdRef.current &&
+                mentions.includes(userIdRef.current)
+              if (viewingRef.current) {
+                stampSeen()
+              } else {
+                setUnread((n) => n + 1)
+                if (mentioned) setMentionUnread((n) => n + 1)
+              }
               // Audio cue: a brighter chime if it @mentions me, else a subtle
               // blip (throttled so a burst doesn't machine-gun).
               if (soundEnabledRef.current) {
-                const mentions = (payload.new as { mentioned_user_ids?: string[] | null })
-                  .mentioned_user_ids
-                const mentioned =
-                  Array.isArray(mentions) &&
-                  !!userIdRef.current &&
-                  mentions.includes(userIdRef.current)
                 if (mentioned) {
                   playChatSound('mention')
                 } else {
@@ -477,6 +495,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     messages,
     loading,
     unread,
+    mentionUnread,
     presence,
     members,
     reactions,
@@ -536,12 +555,14 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     },
     markSeen: () => {
       setUnread(0)
+      setMentionUnread(0)
       stampSeen()
     },
     setViewing: (viewing: boolean) => {
       viewingRef.current = viewing
       if (viewing) {
         setUnread(0)
+        setMentionUnread(0)
         stampSeen()
       }
     },
