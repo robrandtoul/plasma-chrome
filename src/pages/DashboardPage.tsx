@@ -3409,10 +3409,13 @@ function useIsLargeScreen() {
 }
 
 // The dashboard-rail chat dock (Option A). Renders only when the user has
-// chosen 'docked' placement, at lg+ where the rail exists. A sticky,
-// viewport-tall card pinned to the top of the right rail so chat stays in view
-// while the project list scrolls. Reuses the shared TeamChatPanel — same live
-// engine as the header dropdown and the /chat page.
+// chosen 'docked' placement, at lg+ where the rail exists. A sticky card
+// pinned to the top of the right rail so chat stays in view while the project
+// list scrolls. Height is CAPPED (not viewport-tall) so the whole card —
+// header, messages, composer — sits comfortably in view with empty rail below;
+// a full-height panel glued to the screen bottom read as an infinite wall and
+// hid the composer below the fold at page top. Reuses the shared
+// TeamChatPanel — same live engine as the header dropdown and the /chat page.
 function DockedChat() {
   const navigate = useNavigate()
   const isLarge = useIsLargeScreen()
@@ -3421,7 +3424,7 @@ function DockedChat() {
   return (
     <div
       id="team-chat-dock"
-      className="lg:sticky lg:top-20 flex h-[calc(100vh-96px)] flex-col overflow-hidden rounded-[14px] border border-line bg-surface shadow-sm"
+      className="lg:sticky lg:top-20 flex h-[min(560px,calc(100vh-112px))] flex-col overflow-hidden rounded-[14px] border border-line bg-surface shadow-sm"
     >
       <div className="flex flex-shrink-0 items-center justify-between border-b border-line-soft px-3 py-2">
         <span className="text-[13px] font-semibold text-ink">Team chat</span>
