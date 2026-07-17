@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { DesignerChrome, useDesignerProfile, useIsMobile, Sheet, ButtonCoral, ButtonInk, ProofStatusPill, HelpTip } from '../design'
 import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Link as LinkIcon, ThumbsDown, PictureInPicture2 } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
@@ -2300,6 +2300,16 @@ export default function DashboardPage() {
       try { localStorage.setItem('dash.activity.seenAt', newestActivityAt) } catch { /* */ }
     }
   }
+  // The mobile bottom-bar Activity tab, tapped from another page, lands here
+  // as /?activity=1 — open the sheet on arrival and clean the URL up.
+  const location = useLocation()
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('activity') === '1') {
+      openActivitySheet()
+      navigate('/', { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search])
   function handleTilesScroll(e: React.UIEvent<HTMLDivElement>) {
     const x = e.currentTarget.scrollLeft
     if (tilesSaveTimer.current) window.clearTimeout(tilesSaveTimer.current)

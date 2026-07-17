@@ -90,8 +90,8 @@ export function DesignerChrome({
   )
   // Team-chat unread comes from the shared chat engine (one live connection for
   // the whole app), so the badge here, the header dropdown and the /chat page
-  // never disagree.
-  const { unread: chatUnread } = useTeamChat()
+  // never disagree. mention + DM counts make the mobile Chat tab badge coral.
+  const { unread: chatUnread, mentionUnread, dmUnread } = useTeamChat()
   // Count of approved proofs with no order link sent yet — badges the Orders
   // nav pill so the "Links to send" worklist is reachable from any page. Cached
   // (60s) in the helper so it doesn't re-query on every navigation. Seed the
@@ -199,6 +199,7 @@ export function DesignerChrome({
         // No badge while the user is on the chat itself — the page re-stamps
         // team_chat_seen_at on open and as messages arrive.
         chatUnread={active === 'chat' ? 0 : chatUnread}
+        chatMentionUnread={active === 'chat' ? 0 : mentionUnread + dmUnread}
         // Both counts stay visible when their own tab is active — they simply
         // invert on the coral pill (see DesignerHeader). Hiding a badge on
         // navigation would shrink that pill and shove the pills to its right

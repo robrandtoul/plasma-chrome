@@ -5,7 +5,7 @@ import {
   type ChangeEvent,
   type ReactNode,
 } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   Search,
   Bell,
@@ -18,6 +18,7 @@ import {
   Settings,
   MessageSquare,
   MessagesSquare,
+  MoreHorizontal,
   type LucideIcon,
 } from 'lucide-react'
 import { PlasmaWordmark } from './PlasmaWordmark'
@@ -104,15 +105,20 @@ interface DesignerHeaderProps {
   /** Optional content placed to the left of the user pill. Use for
    *  page-specific CTAs like the dashboard's "New proof" button. */
   actions?: ReactNode
-  /** Mobile-only bell button in the top bar (Dashboard activity rail).
-   *  Hidden at md:+ where the activity aside is visible instead. */
+  /** Mobile Activity control (Dashboard activity rail). On the dashboard the
+   *  bottom-bar Activity tab calls onClick to open the sheet in place; on
+   *  other pages it navigates to the dashboard with ?activity=1 instead.
+   *  hasUnseen dots the Activity tab. */
   mobileBell?: { onClick: () => void; hasUnseen: boolean }
   /** Count of the user's own feedback items resolved since they last
-   *  opened the board. Badges the Feedback icon / Account tab when > 0. */
+   *  opened the board. Badges the Feedback row / More tab when > 0. */
   feedbackUnread?: number
   /** Count of team-chat messages from others since the user last opened the
-   *  chat. Badges the Chat icon / Account tab when > 0. */
+   *  chat. Badges the Chat icon / Chat tab when > 0. */
   chatUnread?: number
+  /** Of chatUnread, how many are personal (@mentions + DMs). Makes the
+   *  mobile Chat tab badge coral instead of ink. */
+  chatMentionUnread?: number
   /** Count of approved proofs with no order link sent yet. Badges the Orders
    *  nav pill (desktop) and the Orders bottom tab (mobile) when > 0. */
   ordersUnread?: number
@@ -132,11 +138,13 @@ export function DesignerHeader({
   mobileBell,
   feedbackUnread = 0,
   chatUnread = 0,
+  chatMentionUnread = 0,
   ordersUnread = 0,
   flaggedCount = 0,
   onEditProfile,
   onSignOut,
 }: DesignerHeaderProps) {
+  const navigate = useNavigate()
   // Ordering is OFF by default; the Orders nav pill stays hidden until an
   // admin turns the feature on. Fail-safe false (getOrderingEnabled) so a
   // settings outage never reveals the unfinished feature. Seed from the warm
@@ -267,23 +275,9 @@ export function DesignerHeader({
               <Search size={20} aria-hidden="true" />
             </button>
           )}
-          {mobileBell && (
-            <button
-              type="button"
-              onClick={mobileBell.onClick}
-              aria-label="Latest activity"
-              className="md:hidden relative flex h-11 w-11 items-center justify-center rounded-full text-ink-soft hover:bg-canvas"
-            >
-              <Bell size={20} aria-hidden="true" />
-              {mobileBell.hasUnseen && (
-                <span
-                  className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full bg-brand"
-                  style={{ boxShadow: '0 0 0 2px var(--c-bg)' }}
-                  aria-hidden="true"
-                />
-              )}
-            </button>
-          )}
+          {/* The mobile top-bar Activity bell moved to the bottom tab bar
+              (Proofs · Orders · Chat · Activity · More) — mobileBell now
+              drives that Activity tab instead of a button here. */}
 
           {/* Team chat — desktop dropdown from the icon; mobile uses the full
               page via the account sheet (below). */}
@@ -314,8 +308,16 @@ export function DesignerHeader({
         orderingEnabled={orderingEnabled}
         feedbackUnread={feedbackUnread}
         chatUnread={chatUnread}
+        chatMentionUnread={chatMentionUnread}
         ordersUnread={ordersUnread}
-        onAccount={() => setAccountOpen(true)}
+        activityUnseen={mobileBell?.hasUnseen ?? false}
+        onActivity={() => {
+          // On the dashboard the sheet opens in place; anywhere else, go to
+          // the dashboard and ask it to open the sheet on arrival.
+          if (mobileBell) mobileBell.onClick()
+          else navigate('/?activity=1')
+        }}
+        onMore={() => setAccountOpen(true)}
       />
 
       <AccountSheet
@@ -324,7 +326,7 @@ export function DesignerHeader({
         user={user}
         role={role}
         feedbackUnread={feedbackUnread}
-        chatUnread={chatUnread}
+        flaggedCount={flaggedCount}
         onEditProfile={onEditProfile}
         onSignOut={onSignOut}
       />
@@ -334,36 +336,35 @@ export function DesignerHeader({
 
 // ── Mobile bottom tab bar ──────────────────────────────────────────────
 //
-// Fixed bottom navigation, rendered only below md:. Four tabs drawn from
-// the same nav set the desktop pill strip uses: Proofs / Orders (only
-// when ordering is on) / Quote / Account. Admin folds into Account — the
-// Account tab opens the AccountSheet, which carries the Admin link for
-// admins plus Edit profile + Sign out. Active state is driven off the
-// same `active` prop the desktop pills read; the Account tab lights up on
-// admin routes (active === 'admin').
+// Fixed bottom navigation, rendered only below md:. The day-to-day
+// surfaces are first-class tabs — Proofs / Orders (only when ordering is
+// on) / Chat / Activity — and everything else (Quote, Flagged, Feedback,
+// Admin, profile, sign out) folds into More, which opens the sheet.
+// Chat carries a real count badge (coral when any of it is personal —
+// an @mention or a DM); Activity opens the dashboard activity sheet.
 function BottomTabBar({
   active,
   orderingEnabled,
   feedbackUnread,
   chatUnread,
+  chatMentionUnread,
   ordersUnread,
-  onAccount,
+  activityUnseen,
+  onActivity,
+  onMore,
 }: {
   active: DesignerNavId | null
   orderingEnabled: boolean
   feedbackUnread: number
   chatUnread: number
+  chatMentionUnread: number
   ordersUnread: number
-  onAccount: () => void
+  activityUnseen: boolean
+  onActivity: () => void
+  onMore: () => void
 }) {
-  const linkTabs: { id: DesignerNavId; label: string; to: string; Icon: LucideIcon }[] = [
-    { id: 'proofs', label: 'Proofs', to: '/', Icon: Layers },
-    ...(orderingEnabled
-      ? [{ id: 'orders' as DesignerNavId, label: 'Orders', to: '/orders', Icon: Package }]
-      : []),
-    { id: 'quote', label: 'Quote', to: '/quote', Icon: FileText },
-    { id: 'flagged', label: 'Flagged', to: '/flagged', Icon: Flag },
-  ]
+  const moreActive =
+    active === 'quote' || active === 'flagged' || active === 'admin' || active === 'feedback'
   return (
     <nav
       aria-label="Primary"
@@ -373,28 +374,58 @@ function BottomTabBar({
         paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >
-      {linkTabs.map(({ id, label, to, Icon }) => (
-        <Link
-          key={id}
-          to={to}
-          className="flex flex-1 items-center justify-center"
-          aria-current={active === id ? 'page' : undefined}
-        >
-          <TabInner label={label} Icon={Icon} active={active === id} showDot={id === 'orders' && ordersUnread > 0} />
-        </Link>
-      ))}
-      <button
-        type="button"
-        onClick={onAccount}
+      <Link
+        to="/"
         className="flex flex-1 items-center justify-center"
-        aria-current={active === 'admin' || active === 'feedback' || active === 'chat' ? 'page' : undefined}
+        aria-current={active === 'proofs' ? 'page' : undefined}
+      >
+        <TabInner label="Proofs" Icon={Layers} active={active === 'proofs'} />
+      </Link>
+      {orderingEnabled && (
+        <Link
+          to="/orders"
+          className="flex flex-1 items-center justify-center"
+          aria-current={active === 'orders' ? 'page' : undefined}
+        >
+          <TabInner label="Orders" Icon={Package} active={active === 'orders'} showDot={ordersUnread > 0} />
+        </Link>
+      )}
+      <Link
+        to="/chat"
+        className="flex flex-1 items-center justify-center"
+        aria-current={active === 'chat' ? 'page' : undefined}
+        aria-label={
+          chatMentionUnread > 0
+            ? `Chat — ${chatUnread} new, including a message for you`
+            : chatUnread > 0
+              ? `Chat — ${chatUnread} new`
+              : 'Chat'
+        }
       >
         <TabInner
-          label="Account"
-          Icon={UserCircle}
-          active={active === 'admin' || active === 'feedback' || active === 'chat'}
-          showDot={feedbackUnread > 0 || chatUnread > 0}
+          label="Chat"
+          Icon={MessagesSquare}
+          active={active === 'chat'}
+          badge={chatUnread}
+          badgeLoud={chatMentionUnread > 0}
         />
+      </Link>
+      <button
+        type="button"
+        onClick={onActivity}
+        className="flex flex-1 items-center justify-center"
+        aria-label="Latest activity"
+      >
+        <TabInner label="Activity" Icon={Bell} active={false} showDot={activityUnseen} />
+      </button>
+      <button
+        type="button"
+        onClick={onMore}
+        className="flex flex-1 items-center justify-center"
+        aria-current={moreActive ? 'page' : undefined}
+        aria-label="More"
+      >
+        <TabInner label="More" Icon={MoreHorizontal} active={moreActive} showDot={feedbackUnread > 0} />
       </button>
     </nav>
   )
@@ -405,11 +436,17 @@ function TabInner({
   Icon,
   active,
   showDot = false,
+  badge = 0,
+  badgeLoud = false,
 }: {
   label: string
   Icon: LucideIcon
   active: boolean
   showDot?: boolean
+  /** Count bubble on the icon (replaces the dot when > 0). */
+  badge?: number
+  /** Coral bubble instead of ink — for personal signals (@mention / DM). */
+  badgeLoud?: boolean
 }) {
   return (
     <span
@@ -419,29 +456,42 @@ function TabInner({
       ].join(' ')}
     >
       <Icon size={22} aria-hidden="true" />
-      {showDot && (
+      {badge > 0 ? (
         <span
-          className="absolute right-[18px] top-[6px] h-2 w-2 rounded-full bg-brand"
+          className={[
+            'absolute right-[10px] top-[2px] inline-flex h-[16px] min-w-[16px] items-center justify-center rounded-full px-1 text-[9px] font-bold leading-none text-white',
+            badgeLoud ? 'bg-brand' : 'bg-ink',
+          ].join(' ')}
           style={{ boxShadow: '0 0 0 2px var(--c-bg)' }}
           aria-hidden="true"
-        />
+        >
+          {badge > 9 ? '9+' : badge}
+        </span>
+      ) : (
+        showDot && (
+          <span
+            className="absolute right-[18px] top-[6px] h-2 w-2 rounded-full bg-brand"
+            style={{ boxShadow: '0 0 0 2px var(--c-bg)' }}
+            aria-hidden="true"
+          />
+        )
       )}
       <span className="text-[11px] font-medium leading-none">{label}</span>
     </span>
   )
 }
 
-// Mobile account sheet, opened from the Account bottom tab. Mirrors the
-// UserPill popover (Edit profile + Sign out) and adds the Admin entry for
-// admins — the desktop Admin pill has no bottom-tab equivalent, so it
-// lives here.
+// Mobile "More" sheet, opened from the More bottom tab. Carries everything
+// that isn't a first-class tab: Quote, Flagged, Notifications, Feedback, the
+// Admin entry for admins, plus Edit profile + Sign out. (Team chat left this
+// sheet when Chat became its own bottom tab.)
 function AccountSheet({
   open,
   onClose,
   user,
   role,
   feedbackUnread,
-  chatUnread,
+  flaggedCount,
   onEditProfile,
   onSignOut,
 }: {
@@ -450,12 +500,12 @@ function AccountSheet({
   user: UserProps
   role: 'admin' | 'designer' | null
   feedbackUnread: number
-  chatUnread: number
+  flaggedCount: number
   onEditProfile?: () => void
   onSignOut?: () => void
 }) {
   return (
-    <Sheet open={open} onClose={onClose} title="Account" ariaLabel="Account">
+    <Sheet open={open} onClose={onClose} title="More" ariaLabel="More">
       <div className="px-4">
         <div className="flex items-center gap-3 px-2 py-2">
           <span
@@ -475,25 +525,33 @@ function AccountSheet({
 
         <div className="mt-1 overflow-hidden rounded-[14px] border border-line bg-surface">
           <Link
+            to="/quote"
+            onClick={onClose}
+            className="flex min-h-[56px] items-center gap-3 border-b border-line-soft px-4 text-[15px] text-ink-soft hover:bg-canvas"
+          >
+            <FileText size={18} aria-hidden="true" className="text-ink-mute" />
+            Quote
+          </Link>
+          <Link
+            to="/flagged"
+            onClick={onClose}
+            className="flex min-h-[56px] items-center gap-3 border-b border-line-soft px-4 text-[15px] text-ink-soft hover:bg-canvas"
+          >
+            <Flag size={18} aria-hidden="true" className="text-ink-mute" />
+            Flagged
+            {flaggedCount > 0 && (
+              <span className="ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-brand px-1.5 text-[11px] font-semibold leading-none text-white">
+                {flaggedCount > 9 ? '9+' : flaggedCount}
+              </span>
+            )}
+          </Link>
+          <Link
             to="/settings/notifications"
             onClick={onClose}
             className="flex min-h-[56px] items-center gap-3 border-b border-line-soft px-4 text-[15px] text-ink-soft hover:bg-canvas"
           >
             <Bell size={18} aria-hidden="true" className="text-ink-mute" />
             Notifications
-          </Link>
-          <Link
-            to="/chat"
-            onClick={onClose}
-            className="flex min-h-[56px] items-center gap-3 border-b border-line-soft px-4 text-[15px] text-ink-soft hover:bg-canvas"
-          >
-            <MessagesSquare size={18} aria-hidden="true" className="text-ink-mute" />
-            Team chat
-            {chatUnread > 0 && (
-              <span className="ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-brand px-1.5 text-[11px] font-semibold leading-none text-white">
-                {chatUnread > 9 ? '9+' : chatUnread}
-              </span>
-            )}
           </Link>
           <Link
             to="/feedback"
