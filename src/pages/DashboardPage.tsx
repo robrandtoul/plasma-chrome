@@ -3415,35 +3415,42 @@ function DockedChat() {
   const { placement, setPlacement } = useTeamChat()
   if (placement !== 'docked' || !isLarge) return null
   return (
-    <div
-      id="team-chat-dock"
-      className="lg:sticky lg:top-20 z-10 flex h-[min(560px,calc(100vh-112px))] flex-col overflow-hidden rounded-[14px] border border-line bg-surface shadow-sm"
-    >
-      <div className="flex flex-shrink-0 items-center justify-between border-b border-line-soft px-3 py-2">
-        <span className="text-[13px] font-semibold text-ink">Team chat</span>
-        <div className="flex items-center gap-0.5">
-          <button
-            type="button"
-            onClick={() => navigate('/chat')}
-            aria-label="Open full chat page"
-            title="Open full page"
-            className="flex h-7 w-7 items-center justify-center rounded-full text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
-          >
-            <Maximize2 size={15} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setPlacement('floating')}
-            aria-label="Pop chat out to a floating window"
-            title="Pop out to floating window"
-            className="flex h-7 w-7 items-center justify-center rounded-full text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
-          >
-            <PictureInPicture2 size={15} aria-hidden="true" />
-          </button>
+    /* Sticky wrapper, opaque in the page background with a short "apron"
+       below the card (pb-5, cancelled by -mb-5 so the at-rest rail rhythm is
+       unchanged). Panels sliding up vanish behind the apron a clear gap
+       before they reach the card, and the card casts a soft drop shadow onto
+       them — the visible divider that keeps the slide-under looking tidy. */
+    <div className="lg:sticky lg:top-20 z-10 -mb-5 pb-5" style={{ background: 'var(--c-bg)' }}>
+      <div
+        id="team-chat-dock"
+        className="flex h-[min(560px,calc(100vh-112px))] flex-col overflow-hidden rounded-[14px] border border-line bg-surface shadow-[0_14px_28px_-18px_rgba(22,19,17,0.35)]"
+      >
+        <div className="flex flex-shrink-0 items-center justify-between border-b border-line-soft px-3 py-2">
+          <span className="text-[13px] font-semibold text-ink">Team chat</span>
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => navigate('/chat')}
+              aria-label="Open full chat page"
+              title="Open full page"
+              className="flex h-7 w-7 items-center justify-center rounded-full text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
+            >
+              <Maximize2 size={15} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setPlacement('floating')}
+              aria-label="Pop chat out to a floating window"
+              title="Pop out to floating window"
+              className="flex h-7 w-7 items-center justify-center rounded-full text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
+            >
+              <PictureInPicture2 size={15} aria-hidden="true" />
+            </button>
+          </div>
         </div>
-      </div>
-      <div className="min-h-0 flex-1">
-        <TeamChatPanel variant="docked" />
+        <div className="min-h-0 flex-1">
+          <TeamChatPanel variant="docked" />
+        </div>
       </div>
     </div>
   )
