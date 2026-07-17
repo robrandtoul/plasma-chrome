@@ -1,5 +1,12 @@
-import { Suspense } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { Suspense, useLayoutEffect } from 'react'
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  useLocation,
+  useNavigationType,
+} from 'react-router-dom'
 import { AuthProvider, useAuth } from './lib/auth'
 import { TeamChatProvider } from './lib/teamChatStore'
 import { lazyWithRetry } from './lib/lazyWithRetry'
@@ -73,6 +80,21 @@ function RouteFallback() {
 // router. Lives here rather than directly in App so the hook has
 // access to a Router context if it ever needs to navigate
 // programmatically; today it just window.opens a new tab.
+// Reset the window scroll on every forward navigation. Without this the old
+// page's scroll offset carries over; when the new page is SHORTER than that
+// offset (e.g. dashboard → /chat), iOS leaves the whole web view panned up —
+// the "fixed" bottom tab bar visibly breaks away from the screen edge and
+// stays there until a manual scroll forces a clamp. Back/forward (POP) is left
+// alone so the browser's own position restoration still works.
+function ScrollToTopOnNavigate() {
+  const { pathname } = useLocation()
+  const navigationType = useNavigationType()
+  useLayoutEffect(() => {
+    if (navigationType !== 'POP') window.scrollTo(0, 0)
+  }, [pathname, navigationType])
+  return null
+}
+
 function AppShell() {
   useQuoteShortcut()
   const { recovery } = useAuth()
@@ -91,6 +113,7 @@ function AppShell() {
   }
   return (
     <TeamChatProvider>
+      <ScrollToTopOnNavigate />
       <Suspense fallback={<RouteFallback />}>
         <Routes>
         {/* Public */}
