@@ -641,6 +641,15 @@ export default function OrdersPage() {
   // The signed-in staffer's id — stamped as the author when they write a
   // Links-to-send note (the table's RLS requires created_by = auth.uid()).
   const userId = session?.user.id ?? null
+  // Opening this page marks all payments "seen" — the Orders nav badge counts
+  // orders paid since this stamp (profiles.orders_seen_at, 000325).
+  useEffect(() => {
+    if (!userId) return
+    void supabase
+      .from('profiles')
+      .update({ orders_seen_at: new Date().toISOString() })
+      .eq('id', userId)
+  }, [userId])
   const [loading, setLoading] = useState(true)
   const [orders, setOrders] = useState<OrderRow[]>([])
   // True when the 300-row fetch ceiling was hit, so the page can say so rather
