@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -156,6 +157,45 @@ export function DesignerChrome({
   // globally in App.tsx via useQuoteShortcut(), not by this link.
   const headerActions = actions ?? null
 
+  // Keyboard-aware frame height. index.html already asks for
+  // interactive-widget=resizes-content, but iOS ignores it — so with the app
+  // frame locked at 100dvh, the soft keyboard would simply cover the bottom
+  // of the frame, including whatever field you're typing into (the chat
+  // composer). Fallback: while the keyboard is up, shrink the frame to the
+  // visual viewport's height so the focused field (and the tab bar) sit above
+  // the keyboard; restore 100dvh when it closes. On browsers that DO honour
+  // the meta, innerHeight shrinks in step with the visual viewport, the
+  // measured keyboard height stays ~0, and this never fires.
+  const frameRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    const apply = () => {
+      const el = frameRef.current
+      if (!el) return
+      if (!window.matchMedia('(max-width: 767px)').matches) {
+        el.style.removeProperty('height')
+        return
+      }
+      const keyboardHeight = window.innerHeight - vv.height
+      if (keyboardHeight > 80) {
+        el.style.height = `${Math.round(vv.height)}px`
+        // Nothing should stay panned while the frame tracks the keyboard.
+        window.scrollTo(0, 0)
+      } else {
+        el.style.removeProperty('height')
+      }
+    }
+    vv.addEventListener('resize', apply)
+    window.addEventListener('resize', apply)
+    apply()
+    return () => {
+      vv.removeEventListener('resize', apply)
+      window.removeEventListener('resize', apply)
+      frameRef.current?.style.removeProperty('height')
+    }
+  }, [])
+
   return (
     <DesignerProfileContext.Provider value={profile}>
       {/* Mobile app frame. Below md the app becomes a locked, exactly
@@ -169,10 +209,17 @@ export function DesignerChrome({
           BottomTabBar), and with zero window scrollability there is nothing
           for WebKit to mis-pan. At md:+ every class here is inert and the
           desktop layout is byte-for-byte unchanged. */}
-      <div className="max-md:relative max-md:flex max-md:h-dvh max-md:flex-col max-md:overflow-hidden">
+      <div
+        ref={frameRef}
+        className="max-md:relative max-md:flex max-md:h-dvh max-md:flex-col max-md:overflow-hidden"
+      >
+        {/* The scroller is itself a flex column on mobile so a page can opt
+            into filling the remaining height exactly (ChatPage does, with
+            flex-1) instead of guessing at viewport maths. Normal pages are
+            plain blocks inside it and scroll as before. */}
         <div
           id="app-scroll"
-          className="max-md:min-h-0 max-md:flex-1 max-md:overflow-y-auto max-md:overscroll-contain"
+          className="max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col max-md:overflow-y-auto max-md:overscroll-contain"
         >
       <DesignerHeader
         active={active}

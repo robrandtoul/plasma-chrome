@@ -61,13 +61,12 @@ export default function ChatPage() {
 
   return (
     <DesignerChrome active="chat">
-      <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
-        {/* Mobile height must clear the REAL chrome: header + page padding +
-            the fixed 64px tab bar, plus BOTH safe-area insets (notch above,
-            home indicator below) — a flat guess left the composer sliced off
-            behind the tab bar on iPhone. Underscores keep the calc spaces
-            Tailwind needs. */}
-        <div className="flex h-[calc(100dvh-8rem)] flex-col overflow-hidden rounded-[14px] border border-line bg-surface max-md:h-[calc(100dvh_-_12rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))]">
+      <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 max-md:flex max-md:min-h-0 max-md:w-full max-md:flex-1 max-md:flex-col max-md:py-3">
+        {/* On mobile the card flex-fills the app frame's scroller exactly —
+            no viewport maths. The frame itself shrinks above the soft
+            keyboard (DesignerChrome), so the composer always stays visible
+            while typing. Desktop keeps the calc against the window. */}
+        <div className="flex h-[calc(100dvh-8rem)] flex-col overflow-hidden rounded-[14px] border border-line bg-surface max-md:h-auto max-md:min-h-0 max-md:flex-1">
           {/* Desktop-only header: on a phone the Chat tab + thread pills
               already say where you are, and "Team chat / a shared channel"
               was plain wrong over a private thread — so the whole row hides
