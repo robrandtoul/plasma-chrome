@@ -992,7 +992,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
       <div
         ref={scrollRef}
         onScroll={onListScroll}
-        className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-3"
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-3 py-3"
       >
         {loading ? (
           <div className="flex h-full items-center justify-center">
