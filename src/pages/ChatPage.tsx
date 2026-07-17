@@ -34,7 +34,12 @@ export default function ChatPage() {
   return (
     <DesignerChrome active="chat">
       <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
-        <div className="flex h-[calc(100dvh-8rem)] flex-col overflow-hidden rounded-[14px] border border-line bg-surface max-md:h-[calc(100dvh-12rem)]">
+        {/* Mobile height must clear the REAL chrome: header + page padding +
+            the fixed 64px tab bar, plus BOTH safe-area insets (notch above,
+            home indicator below) — a flat guess left the composer sliced off
+            behind the tab bar on iPhone. Underscores keep the calc spaces
+            Tailwind needs. */}
+        <div className="flex h-[calc(100dvh-8rem)] flex-col overflow-hidden rounded-[14px] border border-line bg-surface max-md:h-[calc(100dvh_-_12rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))]">
           <div className="flex flex-shrink-0 items-center justify-between gap-2.5 border-b border-line-soft px-4 py-3">
             <div className="flex items-center gap-2.5">
               <MessagesSquare size={18} className="text-ink-mute" aria-hidden="true" />
