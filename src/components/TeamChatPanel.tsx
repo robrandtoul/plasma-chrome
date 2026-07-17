@@ -37,6 +37,7 @@ import {
   isGroupedWithPrevious,
   messageTime,
   type ChatAttachment,
+  type TeamMessage,
 } from '../lib/teamChat'
 
 const CHAT_BUCKET = 'chat-attachments'
@@ -470,6 +471,8 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     activeThread,
     setActiveThread,
     threadUnread,
+    loadEarlier,
+    historyFor,
   } = useTeamChat()
 
   const [draft, setDraft] = useState('')
@@ -574,14 +577,63 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     )
   }, [messages, activeThread, userId])
   const searchQuery = search.trim().toLowerCase()
+  // Full-history search: the instant local filter is merged with a debounced
+  // server search over the thread's ENTIRE history (RLS scopes DM reads), so
+  // matches older than the loaded window surface too.
+  const [remoteResults, setRemoteResults] = useState<TeamMessage[]>([])
+  const [searchingRemote, setSearchingRemote] = useState(false)
+  useEffect(() => {
+    if (!searchQuery || !userId) {
+      setRemoteResults([])
+      setSearchingRemote(false)
+      return
+    }
+    let cancelled = false
+    setSearchingRemote(true)
+    const timer = setTimeout(() => {
+      void (async () => {
+        // Escape LIKE wildcards so "50%" searches literally.
+        const pattern = '%' + searchQuery.replace(/[\\%_]/g, (c) => '\\' + c) + '%'
+        const base = () => {
+          let q = supabase.from('team_messages').select('*')
+          if (activeThread === 'team') q = q.is('recipient_id', null)
+          else
+            q = q.or(
+              `and(author_id.eq.${activeThread},recipient_id.eq.${userId}),and(author_id.eq.${userId},recipient_id.eq.${activeThread})`,
+            )
+          return q
+        }
+        // Two single-filter queries (body, author) rather than one .or() so the
+        // user's text never has to be escaped for the filter-list syntax.
+        const [byBody, byAuthor] = await Promise.all([
+          base().ilike('body', pattern).order('created_at', { ascending: false }).limit(50),
+          base().ilike('author_name', pattern).order('created_at', { ascending: false }).limit(50),
+        ])
+        if (cancelled) return
+        const merged = [...(byBody.data ?? []), ...(byAuthor.data ?? [])] as TeamMessage[]
+        setRemoteResults(merged)
+        setSearchingRemote(false)
+      })()
+    }, 350)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [searchQuery, activeThread, userId])
   const shown = useMemo(() => {
     if (!searchQuery) return threadMessages
-    return threadMessages.filter(
+    const local = threadMessages.filter(
       (m) =>
         m.body.toLowerCase().includes(searchQuery) ||
         (m.author_name ?? '').toLowerCase().includes(searchQuery),
     )
-  }, [threadMessages, searchQuery])
+    if (remoteResults.length === 0) return local
+    const byId = new Map<string, TeamMessage>()
+    for (const m of [...remoteResults, ...local]) byId.set(m.id, m)
+    return [...byId.values()].sort((a, b) =>
+      a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+    )
+  }, [threadMessages, searchQuery, remoteResults])
   const filtered = useMemo(() => {
     if (mentionQuery === null) return []
     const q = mentionQuery.toLowerCase()
@@ -594,10 +646,41 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Stick to the bottom on new messages / thread switch — EXCEPT after "Show
+  // earlier messages", where the viewport is re-anchored so the messages the
+  // user was reading stay put while history grows above them.
+  const preserveScrollRef = useRef<{ height: number; top: number } | null>(null)
   useEffect(() => {
     const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el) return
+    const keep = preserveScrollRef.current
+    if (keep) {
+      preserveScrollRef.current = null
+      el.scrollTop = el.scrollHeight - keep.height + keep.top
+      return
+    }
+    el.scrollTop = el.scrollHeight
   }, [messages.length, loading, activeThread])
+
+  async function onLoadEarlier() {
+    const el = scrollRef.current
+    if (el) preserveScrollRef.current = { height: el.scrollHeight, top: el.scrollTop }
+    const added = await loadEarlier(activeThread)
+    // Nothing added → no render → the anchor would leak into the next real
+    // message arrival. Clear it.
+    if (added === 0) preserveScrollRef.current = null
+  }
+
+  // A DM thread can look empty just because its history predates the loaded
+  // window — probe once for its most recent page so old conversations
+  // reappear on open instead of claiming "No messages yet".
+  useEffect(() => {
+    if (loading) return
+    if (threadMessages.length > 0) return
+    if (historyFor(activeThread) !== 'can-load') return
+    void loadEarlier(activeThread)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeThread, threadMessages.length, loading])
 
   // Switching thread dismisses any half-open @mention autocomplete (mentions
   // are a team-room thing; a DM already targets its one recipient).
@@ -835,11 +918,37 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
           </div>
         ) : shown.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
-            <p className="text-[14px] text-ink-soft">No matches</p>
-            <p className="text-[13px] text-ink-mute">Nothing matches “{search.trim()}”.</p>
+            {searchingRemote ? (
+              <p className="text-[13px] text-ink-mute">Searching the full history…</p>
+            ) : (
+              <>
+                <p className="text-[14px] text-ink-soft">No matches</p>
+                <p className="text-[13px] text-ink-mute">Nothing matches “{search.trim()}”.</p>
+              </>
+            )}
           </div>
         ) : (
-          <ul className="mt-auto space-y-0">
+          <div className="mt-auto">
+            {/* Older history pager. Hidden while searching (the search already
+                covers the full history server-side). */}
+            {!searchQuery && historyFor(activeThread) !== 'exhausted' && (
+              <div className="flex justify-center pb-2">
+                <button
+                  type="button"
+                  onClick={() => void onLoadEarlier()}
+                  disabled={historyFor(activeThread) === 'loading'}
+                  className="rounded-full border border-line bg-surface px-3 py-1 text-[12px] font-medium text-ink-soft transition-colors hover:bg-canvas hover:text-ink disabled:opacity-60"
+                >
+                  {historyFor(activeThread) === 'loading' ? 'Loading…' : 'Show earlier messages'}
+                </button>
+              </div>
+            )}
+            {searchQuery && searchingRemote && (
+              <p className="pb-2 text-center text-[11px] text-ink-mute">
+                Searching the full history…
+              </p>
+            )}
+          <ul className="space-y-0">
             {shown.map((m, i) => {
               const prev = shown[i - 1]
               const grouped = isGroupedWithPrevious(prev, m)
@@ -952,6 +1061,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
               )
             })}
           </ul>
+          </div>
         )}
       </div>
 

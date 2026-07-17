@@ -102,6 +102,12 @@ interface TeamChatValue {
   /** Switch thread. If a chat surface is open, the new thread is immediately
    *  marked read. */
   setActiveThread: (thread: ChatThread) => void
+  /** Fetch one older page (100) of a thread's history into the pool.
+   *  Resolves to the number of messages actually added. */
+  loadEarlier: (thread: ChatThread) => Promise<number>
+  /** Whether a thread may have more history to load: 'can-load' (show the
+   *  button), 'loading' (fetch in flight), or 'exhausted' (start reached). */
+  historyFor: (thread: ChatThread) => 'can-load' | 'loading' | 'exhausted'
   /** Everyone currently present, including yourself. */
   presence: PresenceMember[]
   /** Active team members, for the @mention picker + highlighting. */
@@ -188,6 +194,8 @@ const DEFAULT: TeamChatValue = {
   threadUnread: {},
   activeThread: 'team',
   setActiveThread: () => {},
+  loadEarlier: async () => 0,
+  historyFor: () => 'exhausted',
   presence: [],
   members: [],
   reactions: [],
@@ -215,6 +223,7 @@ export function useTeamChat(): TeamChatValue {
 }
 
 const INITIAL_LIMIT = 200
+const EARLIER_PAGE = 100 // "Show earlier messages" page size, per thread
 const IDLE_MS = 5 * 60 * 1000 // flip to "idle" after 5 minutes of no activity
 const ACTIVITY_THROTTLE_MS = 1000
 const STATUS_TICK_MS = 20_000
@@ -254,6 +263,9 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   const [threadUnread, setThreadUnread] = useState<Record<string, number>>({})
   const [mentionUnread, setMentionUnread] = useState(0)
   const [activeThread, setActiveThreadState] = useState<ChatThread>('team')
+  // Per-thread history pager: absent = unknown, 'loading' = fetch in flight,
+  // 'exhausted' = the start of that thread's history is loaded.
+  const [historyStatus, setHistoryStatus] = useState<Record<string, 'loading' | 'exhausted'>>({})
   const [presence, setPresence] = useState<PresenceMember[]>([])
   const [members, setMembers] = useState<TeamMember[]>([])
   const [reactions, setReactions] = useState<ReactionRow[]>([])
@@ -283,6 +295,13 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   // Per-peer DM "last read" stamps (team_chat_dm_reads), keyed by peer id.
   const dmReadsRef = useRef<Record<string, string>>({})
   const activeThreadRef = useRef<ChatThread>('team')
+  const messagesRef = useRef<TeamMessage[]>([])
+  messagesRef.current = messages
+  const historyStatusRef = useRef(historyStatus)
+  historyStatusRef.current = historyStatus
+  // Whether the initial window came back full — if not, the entire history is
+  // already loaded and no thread has anything earlier to fetch.
+  const initialFullRef = useRef(false)
   const myStatusRef = useRef<ChatStatus>('online')
   const profileRef = useRef<{ name: string | null; initials: string | null; colour: string | null }>({
     name: null,
@@ -366,6 +385,8 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       setPresence([])
       setMembers([])
       setReactions([])
+      setHistoryStatus({})
+      initialFullRef.current = false
       setLoading(false)
       return
     }
@@ -424,6 +445,8 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
 
       const list = ((msgs ?? []) as TeamMessage[]).slice().reverse()
       setMessages(list)
+      initialFullRef.current = list.length >= INITIAL_LIMIT
+      setHistoryStatus({})
       // Per-thread unread: the team room measures against team_chat_seen_at,
       // each DM thread against its own team_chat_dm_reads stamp.
       const counts: Record<string, number> = {}
@@ -623,6 +646,86 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
       // If a chat surface is open, landing on the thread reads it.
       if (viewingRef.current) stampSeen(thread)
       recomputeTyping()
+    },
+    loadEarlier: async (thread: ChatThread) => {
+      const uid = userIdRef.current
+      if (!uid) return 0
+      const status = historyStatusRef.current[thread]
+      if (status === 'loading' || status === 'exhausted') return 0
+      setHistoryStatus((prev) => ({ ...prev, [thread]: 'loading' }))
+
+      // Anchor on the oldest loaded message of THIS thread (the pool is
+      // sorted ascending, so the first match is the oldest). No anchor means
+      // the thread has nothing loaded yet — fetch its latest page instead
+      // (an old DM thread can sit entirely outside the initial window).
+      let anchor: string | null = null
+      for (const m of messagesRef.current) {
+        if (threadOf(m, uid) === thread) {
+          anchor = m.created_at
+          break
+        }
+      }
+
+      let q = supabase.from('team_messages').select('*')
+      if (thread === 'team') q = q.is('recipient_id', null)
+      else
+        q = q.or(
+          `and(author_id.eq.${thread},recipient_id.eq.${uid}),and(author_id.eq.${uid},recipient_id.eq.${thread})`,
+        )
+      if (anchor) q = q.lt('created_at', anchor)
+      const { data, error } = await q
+        .order('created_at', { ascending: false })
+        .limit(EARLIER_PAGE)
+
+      if (error) {
+        // Transient failure — go back to "can load" so the button retries.
+        setHistoryStatus((prev) => {
+          const next = { ...prev }
+          delete next[thread]
+          return next
+        })
+        return 0
+      }
+
+      const older = ((data ?? []) as TeamMessage[]).slice().reverse()
+      const have = new Set(messagesRef.current.map((m) => m.id))
+      const fresh = older.filter((m) => !have.has(m.id))
+      const reachedStart = older.length < EARLIER_PAGE
+      setHistoryStatus((prev) => {
+        const next = { ...prev }
+        if (reachedStart) next[thread] = 'exhausted'
+        else delete next[thread]
+        return next
+      })
+      if (fresh.length > 0) {
+        setMessages((prev) => {
+          const seen = new Set(prev.map((m) => m.id))
+          const add = fresh.filter((m) => !seen.has(m.id))
+          if (add.length === 0) return prev
+          return [...add, ...prev].sort((a, b) =>
+            a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+          )
+        })
+        // Bring the reactions for the newly loaded page along too.
+        const { data: reactData } = await supabase
+          .from('team_message_reactions')
+          .select('*')
+          .in('message_id', fresh.map((m) => m.id))
+        const rows = (reactData ?? []) as ReactionRow[]
+        if (rows.length > 0) {
+          setReactions((prev) => {
+            const seen = new Set(prev.map((r) => r.id))
+            return [...prev, ...rows.filter((r) => !seen.has(r.id))]
+          })
+        }
+      }
+      return fresh.length
+    },
+    historyFor: (thread: ChatThread) => {
+      const s = historyStatus[thread]
+      if (s === 'loading') return 'loading'
+      if (s === 'exhausted') return 'exhausted'
+      return initialFullRef.current ? 'can-load' : 'exhausted'
     },
     presence,
     members,
