@@ -951,7 +951,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             onKeyDown={onKeyDown}
             onPaste={handlePaste}
             rows={variant === 'page' ? 2 : 1}
-            placeholder="Message the team… @ to mention"
+            placeholder="Message the team…"
             className="flex-1"
           />
           <button

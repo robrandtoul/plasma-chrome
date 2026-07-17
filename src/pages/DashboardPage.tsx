@@ -2212,11 +2212,6 @@ export default function DashboardPage() {
   const navigate = useNavigate()
   const { session, role } = useAuth()
   const userId = session?.user.id ?? null
-  // When chat is docked it OWNS the right rail (full-height, sticky). The
-  // activity/follow-up/lead-time panels are hidden while docked — otherwise
-  // those later siblings scroll up and paint over the sticky chat. They return
-  // the moment chat pops back out, and stay available on mobile via the sheet.
-  const { placement: chatPlacement } = useTeamChat()
   const [projects, setProjects]           = useState<DashboardProject[]>([])
   // Server-computed tile counts (migration 000202). Counted across every
   // proof in the DB, not the loaded `projects` subset, so the headline
@@ -3334,26 +3329,22 @@ export default function DashboardPage() {
               </div>
 
               <aside className="hidden lg:block space-y-6">
-                {chatPlacement === 'docked' ? (
-                  /* Docked chat owns the rail (full-height, sticky). The panels
-                     below are intentionally not rendered here so nothing scrolls
-                     over the pinned chat; they come back when chat pops out. */
-                  <DockedChat />
-                ) : (
-                  <>
-                    {/* lg:sticky lg:top-10 used to ride here so the panel
-                        locked to the viewport top while the project list
-                        scrolled. Dropped in PR 30 — the project list can
-                        run many pages and a static panel hovering over
-                        nothing related is more distracting than useful. */}
-                    <LatestActivityPanel events={latestEvents} navigate={navigate} />
-                    {/* Follow-up automation Outbox (Phase 1). Owns its own small
-                        nudge_runs / proof_nudges queries; the projects array is
-                        only passed for client-side contact/company labels. */}
-                    <NudgeOutboxPanel projects={projects} onAfterSend={() => loadDashboard()} />
-                    <LeadTimesChart leadTimes={leadTimes} navigate={navigate} />
-                  </>
-                )}
+                {/* Docked chat (when chosen) pins at the rail top; the panels
+                    below keep their normal order and slide BENEATH the pinned
+                    card while scrolling — the card is opaque with z-10, which
+                    is what fixes the earlier paint-over glitch. */}
+                <DockedChat />
+                {/* lg:sticky lg:top-10 used to ride here so the panel
+                    locked to the viewport top while the project list
+                    scrolled. Dropped in PR 30 — the project list can
+                    run many pages and a static panel hovering over
+                    nothing related is more distracting than useful. */}
+                <LatestActivityPanel events={latestEvents} navigate={navigate} />
+                {/* Follow-up automation Outbox (Phase 1). Owns its own small
+                    nudge_runs / proof_nudges queries; the projects array is
+                    only passed for client-side contact/company labels. */}
+                <NudgeOutboxPanel projects={projects} onAfterSend={() => loadDashboard()} />
+                <LeadTimesChart leadTimes={leadTimes} navigate={navigate} />
               </aside>
             </div>
           </>
@@ -3412,9 +3403,11 @@ function useIsLargeScreen() {
 // chosen 'docked' placement, at lg+ where the rail exists. A sticky card
 // pinned to the top of the right rail so chat stays in view while the project
 // list scrolls. Height is CAPPED (not viewport-tall) so the whole card —
-// header, messages, composer — sits comfortably in view with empty rail below;
-// a full-height panel glued to the screen bottom read as an infinite wall and
-// hid the composer below the fold at page top. Reuses the shared
+// header, messages, composer — sits comfortably in view; a full-height panel
+// glued to the screen bottom read as an infinite wall and hid the composer
+// below the fold at page top. z-10 + the opaque background make the rail
+// panels below slide cleanly BENEATH the pinned card instead of painting over
+// it (later DOM siblings otherwise win the paint order). Reuses the shared
 // TeamChatPanel — same live engine as the header dropdown and the /chat page.
 function DockedChat() {
   const navigate = useNavigate()
@@ -3424,7 +3417,7 @@ function DockedChat() {
   return (
     <div
       id="team-chat-dock"
-      className="lg:sticky lg:top-20 flex h-[min(560px,calc(100vh-112px))] flex-col overflow-hidden rounded-[14px] border border-line bg-surface shadow-sm"
+      className="lg:sticky lg:top-20 z-10 flex h-[min(560px,calc(100vh-112px))] flex-col overflow-hidden rounded-[14px] border border-line bg-surface shadow-sm"
     >
       <div className="flex flex-shrink-0 items-center justify-between border-b border-line-soft px-3 py-2">
         <span className="text-[13px] font-semibold text-ink">Team chat</span>
