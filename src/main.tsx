@@ -3,12 +3,6 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App'
 import { registerServiceWorker, reconcileSubscription } from './lib/push'
-import { initViewportDebug } from './lib/viewportDebug'
-
-// TEMPORARY (iOS keyboard debugging): capture ?debug=1 / ?glue=… from the URL
-// before the router mounts — a signed-out visit would otherwise lose the
-// params to the login redirect before any consumer reads them.
-initViewportDebug()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

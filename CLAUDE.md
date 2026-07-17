@@ -360,6 +360,15 @@ Supabase edge functions live under `supabase/functions/`; shared helpers in `_sh
 - `src/lib/labels.ts` — `pluralLabel("Finish") → "Finishes"`, `pluralLabel("Species") → "Species"` heuristic.
 - `src/components/PricingDisplay.tsx` — shared price grid, accepts optional `quantitySurcharges: Record<number, number>` that bakes into every cell; exposes "Show all / Show fewer quantities" row inside the table as a full-width accessible button.
 
+## iOS PWA viewport / soft keyboard (`DesignerChrome.tsx`)
+
+Staff use this app as an installed iOS home-screen PWA (standalone). Two hard-won rules live in `DesignerChrome.tsx`; the saga behind them (PRs #483–#494, plus the instrumentation PR #491) must not be re-derived — see memory:ios-keyboard-instrumentation for the full trail.
+
+- **The mobile app frame.** Below `md` the app is a locked `h-dvh` flex column with `overflow-hidden`; an inner `#app-scroll` div owns ALL scrolling and the bottom tab bar is `absolute` INSIDE the frame (never `position:fixed`). This is the fix for the tab bar detaching: iOS pans the layout viewport (keyboard, short docs, overscroll bounce) and `fixed` elements ride the pan, but a frame with zero window-scrollability has nothing to mis-pan. Every frame class is `max-md:` so desktop is byte-for-byte unchanged.
+- **The soft keyboard: hands-off while focused.** While ANY editable element is focused, the viewport effect does **nothing** — no height write, no scroll, no transform. iOS presents the keyboard and pans/scrolls to reveal the input natively (exactly like a native app); any JS that mutates layout mid-focus creates a tug-of-war that makes iOS abandon keyboard presentation entirely. Only AFTER `focusout` does it restore: snap `window.scrollY` to 0 and, if iOS stranded its pan (`visualViewport.offsetTop > 0` — an iOS-26.0-era bug leaving the bar floating, thumb-draggable because a compositor pan is unreachable from `window.scrollTo`), counter-shift the frame by that offset until the platform clears it. On iOS 27+ the pan restores itself so the counter-shift rarely fires; it's kept for staff still on iOS 26.x.
+
+Do NOT reintroduce, however tempting: keyboard-height "glue" that resizes the frame while typing; any `scrollTo`/`scrollIntoView` during keyboard presentation; a per-page `visualViewport` snap-back (a `vv.height >= innerHeight - N` check reads as "keyboard closed" *mid-typing* in the standalone PWA, because `innerHeight` shrinks with the keyboard there — this shipped as a real bug in ChatPage and scrolled the page while the user typed); or a permanent `setInterval` re-check. `interactive-widget=resizes-content` in the viewport meta is ignored by WebKit. Separately: the "keyboard won't appear AT ALL" symptom is a known iOS OS-level bug (installed PWAs stop presenting the keyboard until reinstalled/restarted), not an app bug — the cure is delete-and-reinstall the app or restart the phone, and it is NOT caused by anything in this code (confirmed on-device: the keyboard appears even with all viewport JS disabled).
+
 ## Still to build
 
 - Letterpress edge gilding prices

@@ -12,15 +12,7 @@ import { useAuth } from '../lib/auth'
 import { useTeamChat } from '../lib/teamChatStore'
 import EditProfileModal, { type EditProfileSavedPayload } from '../components/EditProfileModal'
 import PushNudge from '../components/PushNudge'
-import ViewportDebugOverlay from '../components/ViewportDebugOverlay'
 import { getFlaggedCount, peekFlaggedCount } from '../lib/flaggedCount'
-import {
-  describeTarget,
-  glueMode,
-  installDebugProbes,
-  viewportDebugEnabled,
-  vpLog,
-} from '../lib/viewportDebug'
 import { DesignerHeader, type DesignerNavId, type DesignerHeaderColour } from './DesignerHeader'
 
 // Shared chrome wrapper for every designer-facing page. Owns the
@@ -165,203 +157,79 @@ export function DesignerChrome({
   // globally in App.tsx via useQuoteShortcut(), not by this link.
   const headerActions = actions ?? null
 
-  // Keyboard-aware frame height. index.html already asks for
-  // interactive-widget=resizes-content, but iOS ignores it — so with the app
-  // frame locked at 100dvh, the soft keyboard would simply cover the bottom
-  // of the frame, including whatever field you're typing into (the chat
-  // composer). Fallback: while the keyboard is up, shrink the frame to the
-  // visual viewport's height so the focused field (and the tab bar) sit above
-  // the keyboard; restore 100dvh when it closes. On browsers that DO honour
-  // the meta, innerHeight shrinks in step with the visual viewport, the
-  // measured keyboard height stays ~0, and this never fires.
   const frameRef = useRef<HTMLDivElement | null>(null)
-  // TEMPORARY: passive diagnostics (touchstart / keyboard-presented /
-  // focused-node-integrity / programmatic-focus tripwire). No-op unless the
-  // debug overlay is enabled. Runs in EVERY glue mode — pure observation.
-  useEffect(() => installDebugProbes(), [])
+  // iOS soft-keyboard handling — deliberately minimal (the fix that ended the
+  // #483–#494 saga; see the "iOS PWA viewport" section in CLAUDE.md). Below md
+  // the app is a locked h-dvh frame with the bottom tab bar positioned
+  // absolutely inside it. The whole approach: while ANY field is focused we
+  // touch NOTHING — no height writes, no scrolling, no transforms — so iOS
+  // presents the keyboard and pans/scrolls to reveal the focused input
+  // natively, exactly like a native app, and can never be fought into
+  // abandoning the keyboard (every earlier attempt that mutated layout
+  // mid-focus caused a tug-of-war). When focus LEAVES, modern iOS restores its
+  // own viewport; as a safety net for iOS versions (26.0-era) that strand the
+  // keyboard pan after dismissal — the bar left floating mid-screen, draggable
+  // by thumb because window.scrollY can't reach a compositor pan — we snap the
+  // window scroll back to 0 and, only if a leftover visualViewport.offsetTop
+  // remains, counter-shift the frame down by it until the platform clears it.
+  // Desktop (md:+) never needs any of this: restore() early-returns there and
+  // the frame classes are inert, so the desktop layout is byte-for-byte the
+  // same. The h-dvh class stays as the always-correct first paint.
   useEffect(() => {
+    const el = frameRef.current
     const vv = window.visualViewport
-    // TEMPORARY debug instrumentation (see src/lib/viewportDebug.ts). The
-    // glue can run in three modes so one Netlify preview can A/B the
-    // behaviour on-device without a rebuild:
-    //   main — exactly the behaviour main shipped (below, unchanged)
-    //   off  — install NOTHING: pure CSS h-dvh frame, no listeners at all
-    //   blur — hands-off while an editable element is focused (no height
-    //          write, no transform, no scroll snap, no nudge); restore only
-    //          when nothing is focused
-    // vpLog() calls are no-ops in effect (array push) unless the overlay is
-    // reading them; they exist so on-device screenshots show exactly which
-    // mutation fired when, relative to focus and the vv events.
-    const mode = glueMode()
-    vpLog('glue-init', `mode=${mode}`)
-    if (mode === 'off') return
-    // Mobile viewport glue — the one-pass fix after every event-driven
-    // approach failed on device. iOS gives three "viewport height" signals
-    // (100dvh, window.innerHeight, visualViewport.height) that DISAGREE in
-    // the standalone PWA: when the soft keyboard opens the webview resizes
-    // but dvh does not follow, so a dvh-sized frame kept extending
-    // underneath the keyboard (composer + tab bar hidden behind it), and
-    // iOS's caret-chasing pan then stranded the layout when the keyboard
-    // closed. The only signal that always matches what the user can see is
-    // visualViewport.height — so below md the frame's height is driven from
-    // it directly AT ALL TIMES: on every viewport/focus/visibility event,
-    // and verified by a permanent 1s tick so a missed event can never
-    // strand a stale height. Any stray window pan is snapped back in the
-    // same pass. The h-dvh class remains only as the pre-JS first paint.
-    // Each height signal is only trusted where it's honest. While an editable
-    // element is focused (the only time a keyboard can be up), follow
-    // visualViewport.height — the true visible area during typing. The moment
-    // nothing is focused, hand the frame back to CSS h-dvh: after a
-    // dismissal iOS sometimes NEVER updates visualViewport/innerHeight (they
-    // keep reporting the keyboard's inset — Rob's bar floating at the old
-    // keyboard top), but dvh always reads the full screen in the PWA, so the
-    // release can't be lied to.
+    if (!el || !vv) return
+
+    const isMobile = () => window.matchMedia('(max-width: 767px)').matches
     const editableFocused = () => {
-      const el = document.activeElement
-      if (!el) return false
-      const tag = el.tagName
+      const a = document.activeElement
+      if (!a) return false
+      const tag = a.tagName
       return (
         tag === 'INPUT' ||
         tag === 'TEXTAREA' ||
         tag === 'SELECT' ||
-        (el as HTMLElement).isContentEditable
+        (a as HTMLElement).isContentEditable
       )
     }
-    const apply = (why: string) => {
-      const el = frameRef.current
-      if (!el) return
-      if (!window.matchMedia('(max-width: 767px)').matches) {
-        el.style.removeProperty('height')
+    const restore = () => {
+      if (!isMobile()) {
         el.style.removeProperty('transform')
         return
       }
-      const focused = editableFocused()
-      // blur mode: while an editable element is focused, do NOTHING AT ALL —
-      // no height write, no transform, no scroll snap. The hypothesis under
-      // test is that ANY focus-time mutation is what makes iOS abandon
-      // keyboard presentation.
-      if (mode === 'blur' && focused) return
-      if (focused) {
-        const h = Math.round(vv?.height ?? window.innerHeight)
-        if (h > 0) {
-          const next = `${h}px`
-          if (el.style.height !== next) {
-            el.style.height = next
-            vpLog('height-write', `${next} (${why})`)
-          }
-        }
-        // NEVER counter-shift while a field is focused: during keyboard
-        // open iOS pans legitimately to lift the input above the keyboard,
-        // and compensating against that becomes a tug-of-war that ends with
-        // iOS abandoning the keyboard entirely (Rob: "no keyboard at all").
-        if (el.style.transform) {
-          el.style.removeProperty('transform')
-          vpLog('transform-clear', why)
-        }
-      } else {
-        if (el.style.height) {
-          el.style.removeProperty('height')
-          vpLog('height-release', why)
-        }
-        // iOS sometimes leaves its keyboard pan behind after dismissal —
-        // the entire rendered surface sits shifted up in a layer JS
-        // scrolling cannot reach (the user can literally thumb-drag it
-        // back). With nothing focused the keyboard is gone, so ANY
-        // remaining visualViewport.offsetTop is exactly that stuck pan:
-        // counter-shift the frame by it so the app stays aligned with the
-        // visible area; the shift comes straight off when iOS (or a drag)
-        // restores the pan. The vv 'scroll' listener keeps this live.
-        const pan = Math.round(vv?.offsetTop ?? 0)
-        if (pan > 0) {
-          const shift = `translateY(${pan}px)`
-          if (el.style.transform !== shift) {
-            el.style.transform = shift
-            vpLog('counter-shift', `${pan}px (${why})`)
-          }
-        } else if (el.style.transform) {
-          el.style.removeProperty('transform')
-          vpLog('counter-shift-clear', why)
-        }
-      }
-      if (window.scrollY > 0) {
-        vpLog('scroll-snap', `scrollY=${Math.round(window.scrollY)} (${why})`)
-        window.scrollTo(0, 0)
+      // Hands off entirely while a field is focused — this is the whole fix.
+      // iOS owns the viewport during keyboard presentation.
+      if (editableFocused()) return
+      if (window.scrollY !== 0) window.scrollTo(0, 0)
+      const pan = Math.round(vv.offsetTop)
+      if (pan > 0) {
+        const shift = `translateY(${pan}px)`
+        if (el.style.transform !== shift) el.style.transform = shift
+      } else if (el.style.transform) {
+        el.style.removeProperty('transform')
       }
     }
-    // Focus / orientation / app-switch changes settle over a few frames
-    // (keyboard animation, webview resize), so re-check shortly after too.
-    // The 1px scroll nudge runs WebKit's clamp path, which un-sticks a
-    // stranded visual pan even though the document itself can't scroll.
-    // (In blur mode the nudge is suppressed while a field is focused — a
-    // scroll during keyboard presentation is itself a prime suspect.)
-    const settle = (why: string) => {
-      apply(why)
-      window.setTimeout(() => {
-        apply(`${why}+150ms`)
-        if (mode === 'main' || !editableFocused()) {
-          vpLog('scroll-nudge', why)
-          window.scrollTo(0, 1)
-          window.scrollTo(0, 0)
-        }
-      }, 150)
-      window.setTimeout(() => apply(`${why}+450ms`), 450)
+    // A dismissal settles over a few frames (keyboard animation + webview
+    // resize), and iOS may fire no further event once the pan is stranded, so
+    // re-check a couple of times after focus leaves as well as on the events.
+    const settle = () => {
+      restore()
+      window.setTimeout(restore, 150)
+      window.setTimeout(restore, 450)
     }
-    const vals = () =>
-      `vv.h=${vv ? Math.round(vv.height) : '–'} vv.top=${vv ? Math.round(vv.offsetTop) : '–'} ih=${window.innerHeight} sy=${Math.round(window.scrollY)}`
-    const onVvResize = () => {
-      vpLog('vv-resize', vals())
-      apply('vv-resize')
-    }
-    const onVvScroll = () => {
-      vpLog('vv-scroll', vals())
-      apply('vv-scroll')
-    }
-    const onWinResize = () => {
-      vpLog('win-resize', vals())
-      apply('win-resize')
-    }
-    const onOrientation = () => {
-      vpLog('orientationchange', vals())
-      settle('orientation')
-    }
-    const onFocusIn = (e: FocusEvent) => {
-      vpLog('focusin', `${describeTarget(e.target)} ${vals()}`)
-      settle('focusin')
-    }
-    const onFocusOut = (e: FocusEvent) => {
-      vpLog('focusout', `${describeTarget(e.target)} ${vals()}`)
-      settle('focusout')
-    }
-    const onVisibility = () => {
-      vpLog('visibilitychange', document.visibilityState)
-      settle('visibility')
-    }
-    const onPageShow = () => {
-      vpLog('pageshow', vals())
-      settle('pageshow')
-    }
-    vv?.addEventListener('resize', onVvResize)
-    vv?.addEventListener('scroll', onVvScroll)
-    window.addEventListener('resize', onWinResize)
-    window.addEventListener('orientationchange', onOrientation)
-    document.addEventListener('focusin', onFocusIn)
-    document.addEventListener('focusout', onFocusOut)
-    document.addEventListener('visibilitychange', onVisibility)
-    window.addEventListener('pageshow', onPageShow)
-    const tick = window.setInterval(() => apply('tick'), 1000)
-    apply('mount')
+    vv.addEventListener('resize', restore)
+    vv.addEventListener('scroll', restore)
+    document.addEventListener('focusout', settle)
+    window.addEventListener('orientationchange', settle)
+    window.addEventListener('pageshow', settle)
+    restore()
     return () => {
-      vv?.removeEventListener('resize', onVvResize)
-      vv?.removeEventListener('scroll', onVvScroll)
-      window.removeEventListener('resize', onWinResize)
-      window.removeEventListener('orientationchange', onOrientation)
-      document.removeEventListener('focusin', onFocusIn)
-      document.removeEventListener('focusout', onFocusOut)
-      document.removeEventListener('visibilitychange', onVisibility)
-      window.removeEventListener('pageshow', onPageShow)
-      window.clearInterval(tick)
-      frameRef.current?.style.removeProperty('height')
-      frameRef.current?.style.removeProperty('transform')
+      vv.removeEventListener('resize', restore)
+      vv.removeEventListener('scroll', restore)
+      document.removeEventListener('focusout', settle)
+      window.removeEventListener('orientationchange', settle)
+      window.removeEventListener('pageshow', settle)
+      el.style.removeProperty('transform')
     }
   }, [])
 
@@ -380,7 +248,6 @@ export function DesignerChrome({
           desktop layout is byte-for-byte unchanged. */}
       <div
         ref={frameRef}
-        data-app-frame=""
         className="max-md:relative max-md:flex max-md:h-dvh max-md:flex-col max-md:overflow-hidden"
       >
         {/* The scroller is itself a flex column on mobile so a page can opt
@@ -438,11 +305,6 @@ export function DesignerChrome({
           when push is possible on this device and undecided). Staff chrome
           only; customers never see it. */}
       <PushNudge />
-      {/* TEMPORARY on-device viewport diagnostics — on by default on Netlify
-          deploy previews, off in production unless ?debug=1 was visited.
-          Portalled to document.body so the frame's inline styles never move
-          it. Removed once the keyboard fix is confirmed on-device. */}
-      {viewportDebugEnabled() && <ViewportDebugOverlay />}
       {/* Mobile-only bottom clearance so page content can scroll clear of
           the tab bar overlaying the frame's bottom edge. One spacer here
           covers every designer page; hidden at md:+ so the desktop layout
