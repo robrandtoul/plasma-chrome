@@ -646,10 +646,59 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Stick to the bottom on new messages / thread switch — EXCEPT after "Show
-  // earlier messages", where the viewport is re-anchored so the messages the
-  // user was reading stay put while history grows above them.
+  // ── Scroll management ─────────────────────────────────────────────────
+  // Three behaviours, matching what a chat should do:
+  //   1. Each thread REMEMBERS where you left it — switch away and back and
+  //      you're on the same message ('bottom' = you were pinned to latest).
+  //   2. A thread you haven't left mid-read lands on the LATEST message, and
+  //      stays pinned there as new messages arrive — but never yanks you
+  //      down while you're reading history.
+  //   3. "Show earlier" re-anchors so the visible messages stay put.
+  // Late layout (an image or a wrapping file chip finishing after the first
+  // scroll) used to strand the view mid-history — the rAF double-set and the
+  // ResizeObserver below re-pin whenever content grows while pinned.
+  const scrollPositionsRef = useRef<Map<string, number | 'bottom'>>(new Map())
+  const stickToBottomRef = useRef(true)
   const preserveScrollRef = useRef<{ height: number; top: number } | null>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+
+  function nearBottom(el: HTMLDivElement): boolean {
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 120
+  }
+  function scrollToBottom(el: HTMLDivElement) {
+    el.scrollTop = el.scrollHeight
+    // Once more next frame — catches layout that settles just after render.
+    requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight
+    })
+  }
+  function onListScroll() {
+    const el = scrollRef.current
+    if (!el) return
+    stickToBottomRef.current = nearBottom(el)
+    scrollPositionsRef.current.set(
+      activeThread,
+      stickToBottomRef.current ? 'bottom' : el.scrollTop,
+    )
+  }
+
+  // Thread switch (and the initial load): restore where you left this thread,
+  // or land pinned to the latest message.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el || loading) return
+    const saved = scrollPositionsRef.current.get(activeThread)
+    if (typeof saved === 'number') {
+      el.scrollTop = saved
+      stickToBottomRef.current = nearBottom(el)
+    } else {
+      stickToBottomRef.current = true
+      scrollToBottom(el)
+    }
+  }, [activeThread, loading])
+
+  // New messages: follow the conversation only while pinned; after "Show
+  // earlier", re-anchor so what you were reading stays in place.
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
@@ -659,8 +708,23 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
       el.scrollTop = el.scrollHeight - keep.height + keep.top
       return
     }
-    el.scrollTop = el.scrollHeight
-  }, [messages.length, loading, activeThread])
+    if (stickToBottomRef.current) scrollToBottom(el)
+  }, [messages.length])
+
+  // Content that grows after render (image decode, chip wrapping, fonts)
+  // silently un-bottoms a pinned view — watch the list's size and re-pin.
+  useEffect(() => {
+    const el = scrollRef.current
+    const content = listRef.current
+    if (!el || !content || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => {
+      if (stickToBottomRef.current && !preserveScrollRef.current) {
+        el.scrollTop = el.scrollHeight
+      }
+    })
+    ro.observe(content)
+    return () => ro.disconnect()
+  }, [loading, activeThread, shown.length > 0])
 
   async function onLoadEarlier() {
     const el = scrollRef.current
@@ -773,6 +837,12 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     setAttachments([])
     setDraft('')
     setMentionQuery(null)
+    // Sending always returns you to the latest message, even if you'd
+    // scrolled up to re-read something before replying.
+    stickToBottomRef.current = true
+    scrollPositionsRef.current.set(activeThread, 'bottom')
+    const el = scrollRef.current
+    if (el) scrollToBottom(el)
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -899,7 +969,11 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
           a few messages sit just above the composer (history grows upward) —
           otherwise a tall panel (e.g. the docked rail) shows a big empty gap
           between the messages and the composer. */}
-      <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-3">
+      <div
+        ref={scrollRef}
+        onScroll={onListScroll}
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-3"
+      >
         {loading ? (
           <div className="flex h-full items-center justify-center">
             <div
@@ -928,7 +1002,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             )}
           </div>
         ) : (
-          <div className="mt-auto">
+          <div ref={listRef} className="mt-auto">
             {/* Older history pager. Hidden while searching (the search already
                 covers the full history server-side). */}
             {!searchQuery && historyFor(activeThread) !== 'exhausted' && (
