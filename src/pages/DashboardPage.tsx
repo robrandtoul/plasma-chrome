@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import { DesignerChrome, useDesignerProfile, useIsMobile, Sheet, ButtonCoral, ButtonInk, ProofStatusPill, HelpTip } from '../design'
@@ -3399,35 +3399,89 @@ function useIsLargeScreen() {
   return lg
 }
 
+// The docked card's saved height (per browser). Null = the default, which is
+// rem-based so it scales with the user's browser font size (bigger text gets
+// a taller window, not fewer visible messages).
+const DOCK_HEIGHT_KEY = 'pv:chat-dock-height'
+const DOCK_MIN_H = 360
+
+function readDockHeight(): number | null {
+  try {
+    const raw = localStorage.getItem(DOCK_HEIGHT_KEY)
+    if (!raw) return null
+    const n = Number(raw)
+    return Number.isFinite(n) && n >= DOCK_MIN_H ? Math.round(n) : null
+  } catch {
+    return null
+  }
+}
+
 // The dashboard-rail chat dock (Option A). Renders only when the user has
 // chosen 'docked' placement, at lg+ where the rail exists. A sticky card
 // pinned to the top of the right rail so chat stays in view while the project
 // list scrolls. Height is CAPPED (not viewport-tall) so the whole card —
 // header, messages, composer — sits comfortably in view; a full-height panel
 // glued to the screen bottom read as an infinite wall and hid the composer
-// below the fold at page top. z-10 + the opaque background make the rail
-// panels below slide cleanly BENEATH the pinned card instead of painting over
-// it (later DOM siblings otherwise win the paint order). Reuses the shared
+// below the fold at page top. The grip below the card drags the height
+// (persisted); the default is 42rem so it tracks browser font scaling.
+// z-[4] + the opaque background make the rail panels below slide cleanly
+// BENEATH the pinned card instead of painting over it. Reuses the shared
 // TeamChatPanel — same live engine as the header dropdown and the /chat page.
 function DockedChat() {
   const navigate = useNavigate()
   const isLarge = useIsLargeScreen()
   const { placement, setPlacement } = useTeamChat()
+  const [dockH, setDockH] = useState<number | null>(readDockHeight)
+  const dockHRef = useRef(dockH)
+  dockHRef.current = dockH
+
+  // Drag the grip under the card to change its height. Pointer capture +
+  // touch-action:none so it works by finger too; saved on release.
+  function onDockResizeStart(e: ReactPointerEvent<HTMLButtonElement>) {
+    e.preventDefault()
+    const handle = e.currentTarget
+    const card = document.getElementById('team-chat-dock')
+    const startH = card ? card.getBoundingClientRect().height : dockHRef.current ?? 560
+    const startY = e.clientY
+    const maxH = window.innerHeight - 112
+    try {
+      handle.setPointerCapture(e.pointerId)
+    } catch {
+      /* pointer capture unsupported — the listeners below still run */
+    }
+    function onMove(ev: PointerEvent) {
+      setDockH(Math.min(maxH, Math.max(DOCK_MIN_H, Math.round(startH + (ev.clientY - startY)))))
+    }
+    function onEnd() {
+      handle.removeEventListener('pointermove', onMove)
+      handle.removeEventListener('pointerup', onEnd)
+      handle.removeEventListener('pointercancel', onEnd)
+      try {
+        if (dockHRef.current != null) localStorage.setItem(DOCK_HEIGHT_KEY, String(dockHRef.current))
+      } catch {
+        /* ignore */
+      }
+    }
+    handle.addEventListener('pointermove', onMove)
+    handle.addEventListener('pointerup', onEnd)
+    handle.addEventListener('pointercancel', onEnd)
+  }
+
   if (placement !== 'docked' || !isLarge) return null
   return (
-    /* Sticky wrapper, opaque in the page background with a short "apron"
-       below the card (pb-5, cancelled by -mb-5 so the at-rest rail rhythm is
-       unchanged). Panels sliding up vanish behind the apron a clear gap
-       before they reach the card, and the card casts a soft drop shadow onto
-       them — the visible divider that keeps the slide-under looking tidy.
-       Pinned at top-14 (~the condensed header's height) so there is no slit
-       above the card for passing panels to re-emerge through; z-[4] keeps the
-       card BELOW the z-[5] page header (any overlap tucks under it) while
-       still above the z-auto rail panels. */
-    <div className="lg:sticky lg:top-14 z-[4] -mb-5 pb-5" style={{ background: 'var(--c-bg)' }}>
+    /* Sticky wrapper, opaque in the page background. The resize grip below
+       the card doubles as the "apron": panels sliding up vanish behind it a
+       clear gap before they reach the card, and the card casts a soft drop
+       shadow onto them — the visible divider that keeps the slide-under
+       looking tidy. Pinned at top-14 (~the condensed header's height) so
+       there is no slit above the card for passing panels to re-emerge
+       through; z-[4] keeps the card BELOW the z-[5] page header (any overlap
+       tucks under it) while still above the z-auto rail panels. */
+    <div className="lg:sticky lg:top-14 z-[4] -mb-5" style={{ background: 'var(--c-bg)' }}>
       <div
         id="team-chat-dock"
-        className="flex h-[min(560px,calc(100vh-112px))] flex-col overflow-hidden rounded-[14px] border border-line bg-surface shadow-[0_14px_28px_-18px_rgba(22,19,17,0.35)]"
+        className="flex h-[min(42rem,calc(100vh-112px))] flex-col overflow-hidden rounded-[14px] border border-line bg-surface shadow-[0_14px_28px_-18px_rgba(22,19,17,0.35)]"
+        style={dockH != null ? { height: dockH, maxHeight: 'calc(100vh - 112px)' } : undefined}
       >
         <div className="flex flex-shrink-0 items-center justify-between border-b border-line-soft px-3 py-2">
           <span className="text-[13px] font-semibold text-ink">Team chat</span>
@@ -3456,6 +3510,18 @@ function DockedChat() {
           <TeamChatPanel variant="docked" />
         </div>
       </div>
+      <button
+        type="button"
+        onPointerDown={onDockResizeStart}
+        aria-label="Drag to change chat height"
+        title="Drag to change chat height"
+        className="group flex h-5 w-full touch-none cursor-ns-resize items-center justify-center"
+      >
+        <span
+          aria-hidden="true"
+          className="h-1 w-10 rounded-full bg-line transition-colors group-hover:bg-ink-mute"
+        />
+      </button>
     </div>
   )
 }
