@@ -1,5 +1,7 @@
-import { MessagesSquare } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { MessagesSquare, Minimize2 } from 'lucide-react'
 import DesignerChrome from '../design/DesignerChrome'
+import { ButtonGhost } from '../design'
 import TeamChatPanel from '../components/TeamChatPanel'
 
 // The full-page team chat. A thin shell around the shared TeamChatPanel (the
@@ -8,16 +10,42 @@ import TeamChatPanel from '../components/TeamChatPanel'
 // primary chat surface on mobile (the dropdown is desktop-only).
 
 export default function ChatPage() {
+  const navigate = useNavigate()
+
+  // "Minimise" returns you to where you came from and, on desktop, re-opens the
+  // compact dropdown there (ChatMenu consumes the flag on mount). Falls back to
+  // the dashboard when there's no in-app history to go back to (direct link).
+  function minimise() {
+    try {
+      if (window.matchMedia('(min-width: 768px)').matches) {
+        sessionStorage.setItem('pv:reopen-chat', '1')
+      }
+    } catch {
+      /* sessionStorage / matchMedia unavailable — just navigate */
+    }
+    const idx =
+      window.history.state && typeof window.history.state.idx === 'number'
+        ? window.history.state.idx
+        : 0
+    if (idx > 0) navigate(-1)
+    else navigate('/')
+  }
+
   return (
     <DesignerChrome active="chat">
       <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
         <div className="flex h-[calc(100dvh-8rem)] flex-col overflow-hidden rounded-[14px] border border-line bg-surface max-md:h-[calc(100dvh-12rem)]">
-          <div className="flex flex-shrink-0 items-center gap-2.5 border-b border-line-soft px-4 py-3">
-            <MessagesSquare size={18} className="text-ink-mute" aria-hidden="true" />
-            <div>
-              <h1 className="text-[15px] font-semibold leading-none text-ink">Team chat</h1>
-              <p className="mt-1 text-[12px] text-ink-mute">A shared channel for the team.</p>
+          <div className="flex flex-shrink-0 items-center justify-between gap-2.5 border-b border-line-soft px-4 py-3">
+            <div className="flex items-center gap-2.5">
+              <MessagesSquare size={18} className="text-ink-mute" aria-hidden="true" />
+              <div>
+                <h1 className="text-[15px] font-semibold leading-none text-ink">Team chat</h1>
+                <p className="mt-1 text-[12px] text-ink-mute">A shared channel for the team.</p>
+              </div>
             </div>
+            <ButtonGhost size="sm" icon={Minimize2} onClick={minimise}>
+              Minimise
+            </ButtonGhost>
           </div>
           <div className="min-h-0 flex-1">
             <TeamChatPanel variant="page" />

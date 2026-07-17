@@ -15,6 +15,19 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
+  // Re-open the dropdown when the full /chat page "minimises" back to it. The
+  // page sets this flag then navigates here; we consume it once on mount.
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem('pv:reopen-chat') === '1') {
+        sessionStorage.removeItem('pv:reopen-chat')
+        setOpen(true)
+      }
+    } catch {
+      /* sessionStorage unavailable — ignore */
+    }
+  }, [])
+
   useEffect(() => {
     if (!open) return
     function onDoc(e: MouseEvent) {
