@@ -1874,27 +1874,35 @@ const ACTIVITY_VISUAL: Record<DashboardLatestEvent['event_type'], ActivityVisual
 function LatestActivityPanel({
   events,
   navigate,
+  fill = false,
 }: {
   events: DashboardLatestEvent[]
   navigate: (to: string) => void
+  // When true, render as a self-filling card (no collapse toggle) that
+  // grows to fill its flex parent's height and scrolls the list inside
+  // it. Used by the dedicated mobile Activity page so the events use the
+  // whole screen instead of a fixed ~420px card that half-fills an
+  // iPhone. Omitted (false) in the desktop sidebar, which keeps the
+  // collapsible fixed-height card.
+  fill?: boolean
 }) {
-  return (
-    <CollapsibleSidebarPanel
-      icon={Bell}
-      iconTint="var(--c-brand)"
-      eyebrow="Recent"
-      title="Latest activity"
-      storageKey="pv.sidebar.collapsed.activity"
-    >
-      {events.length === 0 ? (
-        <p className="px-5 py-8 text-center text-sm text-ink-mute">
-          No customer activity yet.
-        </p>
-      ) : (
-        // Cap the list to roughly six rows (~70px each) and let older
-        // entries scroll into view. The header above stays fixed; only
-        // the list scrolls. The fetch already pulls up to 20 events.
-        <ul className="max-h-[420px] overflow-y-auto divide-y divide-line-soft">
+  const body =
+    events.length === 0 ? (
+      <p className="px-5 py-8 text-center text-sm text-ink-mute">
+        No customer activity yet.
+      </p>
+    ) : (
+      // In the sidebar, cap the list to roughly six rows (~70px each) and
+      // let older entries scroll into view. In fill mode the list instead
+      // grows to fill the frame (flex-1) below md and scrolls inside it,
+      // capping at the same height from md up. The fetch already pulls up
+      // to 20 events, newest first.
+      <ul
+        className={[
+          'overflow-y-auto divide-y divide-line-soft',
+          fill ? 'max-md:min-h-0 max-md:flex-1 md:max-h-[420px]' : 'max-h-[420px]',
+        ].join(' ')}
+      >
           {events.map((e) => {
             const visual = ACTIVITY_VISUAL[e.event_type]
             const Icon = visual.icon
@@ -1994,7 +2002,47 @@ function LatestActivityPanel({
             )
           })}
         </ul>
-      )}
+      )
+
+  if (fill) {
+    return (
+      <section className="rounded-[14px] bg-surface border border-line overflow-hidden max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col">
+        {/* Static header — the same 32px tinted icon + eyebrow + display
+            heading as the sidebar card, but no collapse toggle: on a
+            dedicated page, collapsing the only content would leave a
+            blank screen. */}
+        <div className="flex items-center gap-3 px-5 pt-5 pb-4 border-b border-line-soft">
+          <span
+            aria-hidden="true"
+            className="inline-flex items-center justify-center w-8 h-8 rounded-md shrink-0"
+            style={{
+              backgroundColor: 'color-mix(in srgb, var(--c-brand) 14%, transparent)',
+              color: 'var(--c-brand)',
+            }}
+          >
+            <Bell size={16} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="eyebrow text-ink-mute block">Recent</span>
+            <span className="block font-display font-medium tracking-[-0.02em] text-ink leading-tight text-[20px]">
+              Latest activity
+            </span>
+          </span>
+        </div>
+        {body}
+      </section>
+    )
+  }
+
+  return (
+    <CollapsibleSidebarPanel
+      icon={Bell}
+      iconTint="var(--c-brand)"
+      eyebrow="Recent"
+      title="Latest activity"
+      storageKey="pv.sidebar.collapsed.activity"
+    >
+      {body}
     </CollapsibleSidebarPanel>
   )
 }
@@ -2866,7 +2914,11 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   if (activityView) {
     return (
       <DesignerChrome active="activity">
-        <div className="mx-auto w-full max-w-3xl px-4 py-4 sm:px-6">
+        {/* Below md this column flex-fills the app frame's scroller (see
+            DesignerChrome) so the Activity tab can hand the events list the
+            whole screen instead of a half-height card. Desktop is unchanged
+            — the max-md: utilities are inert there. */}
+        <div className="mx-auto w-full max-w-3xl px-4 py-4 sm:px-6 max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col">
           <SegmentedControl
             value={activityTab}
             onChange={setActivityTab}
@@ -2876,7 +2928,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
               { value: 'leadtimes', label: 'Lead times' },
             ]}
           />
-          <div className="mt-3">
+          <div className="mt-3 max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col">
             {loading ? (
               <div className="flex justify-center py-16">
                 <div
@@ -2887,7 +2939,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
             ) : (
               <>
                 {activityTab === 'activity' && (
-                  <LatestActivityPanel events={latestEvents} navigate={navigate} />
+                  <LatestActivityPanel events={latestEvents} navigate={navigate} fill />
                 )}
                 {activityTab === 'followups' && (
                   <NudgeOutboxPanel projects={projects} onAfterSend={() => loadDashboard()} />
