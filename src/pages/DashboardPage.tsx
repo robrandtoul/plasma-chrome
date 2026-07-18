@@ -2105,9 +2105,15 @@ function leadTimeCategoryLabel(category: string): string {
 function LeadTimesChart({
   leadTimes,
   navigate,
+  fill = false,
 }: {
   leadTimes: LeadTime[]
   navigate: (to: string) => void
+  // Same as LatestActivityPanel's `fill`: on the dedicated mobile Activity
+  // page, render a self-filling card (no collapse toggle) whose grouped list
+  // grows to fill the frame below md and scrolls inside it, with the header
+  // and legend pinned. The desktop sidebar keeps the collapsible card.
+  fill?: boolean
 }) {
   // Longest max-days drives the scale. Guard against an all-zero /
   // empty set so the width maths never divides by zero.
@@ -2137,15 +2143,8 @@ function LeadTimesChart({
       )
     })
 
-  return (
-    <CollapsibleSidebarPanel
-      icon={Clock}
-      iconTint="var(--c-brand)"
-      eyebrow="Production"
-      title="Lead times"
-      storageKey="pv.sidebar.collapsed.lead-times"
-    >
-      {groups.length === 0 ? (
+  const body =
+    groups.length === 0 ? (
         <p className="px-5 py-8 text-center text-sm text-ink-mute">
           No lead times set yet.{' '}
           <button
@@ -2162,7 +2161,12 @@ function LeadTimesChart({
           {/* Grouped by family with a heading per family; the whole list
               scrolls so a long catalogue doesn't push the sidebar to an
               unwieldy height. */}
-          <div className="max-h-[360px] overflow-y-auto px-5 py-4 space-y-4">
+          <div
+            className={[
+              'overflow-y-auto px-5 py-4 space-y-4',
+              fill ? 'max-md:min-h-0 max-md:flex-1 md:max-h-[360px]' : 'max-h-[360px]',
+            ].join(' ')}
+          >
             {groups.map((group) => (
               <div key={group.label}>
                 <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-ink-mute">
@@ -2232,7 +2236,45 @@ function LeadTimesChart({
             <span className="ml-auto">business days</span>
           </div>
         </>
-      )}
+      )
+
+  if (fill) {
+    return (
+      <section className="rounded-[14px] bg-surface border border-line overflow-hidden max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col">
+        {/* Static header — same chrome as the sidebar card, no collapse
+            toggle. The list scrolls between this and the pinned legend. */}
+        <div className="flex items-center gap-3 px-5 pt-5 pb-4 border-b border-line-soft">
+          <span
+            aria-hidden="true"
+            className="inline-flex items-center justify-center w-8 h-8 rounded-md shrink-0"
+            style={{
+              backgroundColor: 'color-mix(in srgb, var(--c-brand) 14%, transparent)',
+              color: 'var(--c-brand)',
+            }}
+          >
+            <Clock size={16} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="eyebrow text-ink-mute block">Production</span>
+            <span className="block font-display font-medium tracking-[-0.02em] text-ink leading-tight text-[20px]">
+              Lead times
+            </span>
+          </span>
+        </div>
+        {body}
+      </section>
+    )
+  }
+
+  return (
+    <CollapsibleSidebarPanel
+      icon={Clock}
+      iconTint="var(--c-brand)"
+      eyebrow="Production"
+      title="Lead times"
+      storageKey="pv.sidebar.collapsed.lead-times"
+    >
+      {body}
     </CollapsibleSidebarPanel>
   )
 }
@@ -2945,7 +2987,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                   <NudgeOutboxPanel projects={projects} onAfterSend={() => loadDashboard()} />
                 )}
                 {activityTab === 'leadtimes' && (
-                  <LeadTimesChart leadTimes={leadTimes} navigate={navigate} />
+                  <LeadTimesChart leadTimes={leadTimes} navigate={navigate} fill />
                 )}
               </>
             )}
