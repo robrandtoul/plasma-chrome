@@ -2984,7 +2984,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                   <LatestActivityPanel events={latestEvents} navigate={navigate} fill />
                 )}
                 {activityTab === 'followups' && (
-                  <NudgeOutboxPanel projects={projects} onAfterSend={() => loadDashboard()} />
+                  <NudgeOutboxPanel projects={projects} onAfterSend={() => loadDashboard()} fill />
                 )}
                 {activityTab === 'leadtimes' && (
                   <LeadTimesChart leadTimes={leadTimes} navigate={navigate} fill />

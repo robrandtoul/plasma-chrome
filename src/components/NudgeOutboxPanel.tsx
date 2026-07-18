@@ -197,10 +197,17 @@ const REVIEW_SNOOZE_HOURS = 72
 export function NudgeOutboxPanel({
   projects,
   onAfterSend,
+  fill = false,
 }: {
   projects: DashboardProject[]
   /** Called after a review-queue reminder sends, so the dashboard refetches. */
   onAfterSend?: () => void
+  // When true, render as a self-filling card (no collapse toggle) that grows
+  // to fill its flex parent below md and scrolls its whole body inside it —
+  // for the dedicated mobile Activity page's Follow-ups tab. The desktop
+  // sidebar keeps the collapsible fixed-height card. Mirrors the `fill` prop
+  // on the dashboard's Latest activity / Lead times panels.
+  fill?: boolean
 }) {
   const [loadState, setLoadState] = useState<'loading' | 'error' | 'ready'>('loading')
   const [run, setRun] = useState<NudgeRun | null>(null)
@@ -493,15 +500,8 @@ export function NudgeOutboxPanel({
     }
   }
 
-  return (
-    <CollapsibleSidebarPanel
-      icon={Send}
-      iconTint="var(--c-allocated)"
-      eyebrow="Outbox"
-      title="Automated reminders"
-      storageKey="pv.sidebar.collapsed.outbox"
-    >
-      {loadState === 'loading' ? (
+  const content =
+    loadState === 'loading' ? (
         <p className="px-5 py-8 text-center text-sm text-ink-mute">Loading…</p>
       ) : loadState === 'error' ? (
         <p className="px-5 py-8 text-center text-sm text-ink-mute">
@@ -703,7 +703,16 @@ export function NudgeOutboxPanel({
                 No candidates in the latest run.
               </p>
             ) : (
-              <div className="max-h-[420px] overflow-y-auto">
+              <div
+                className={
+                  // In fill mode the whole card body scrolls as one region
+                  // below md, so this inner list must NOT cap/scroll there
+                  // (a nested scroll) — keep the 420px cap only from md up.
+                  fill
+                    ? 'md:max-h-[420px] md:overflow-y-auto'
+                    : 'max-h-[420px] overflow-y-auto'
+                }
+              >
                 {sendRows.length > 0 && (
                   <div className="border-b border-line-soft last:border-b-0">
                     <div className="flex items-center gap-2 px-5 pt-3.5 pb-1.5">
@@ -929,7 +938,50 @@ export function NudgeOutboxPanel({
             )
           )}
         </>
-      )}
+      )
+
+  if (fill) {
+    return (
+      <section className="rounded-[14px] bg-surface border border-line overflow-hidden max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col">
+        {/* Static header — same chrome as the sidebar card, no collapse
+            toggle. The whole body scrolls in one region below. */}
+        <div className="flex items-center gap-3 px-5 pt-5 pb-4 border-b border-line-soft">
+          <span
+            aria-hidden="true"
+            className="inline-flex items-center justify-center w-8 h-8 rounded-md shrink-0"
+            style={{
+              backgroundColor: 'color-mix(in srgb, var(--c-allocated) 14%, transparent)',
+              color: 'var(--c-allocated)',
+            }}
+          >
+            <Send size={16} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="eyebrow text-ink-mute block">Outbox</span>
+            <span className="block font-display font-medium tracking-[-0.02em] text-ink leading-tight text-[20px]">
+              Automated reminders
+            </span>
+          </span>
+        </div>
+        {/* Below md, one scroll region fills the frame; the inner run-rows
+            list drops its own 420px cap (fill) so there's a single scroll.
+            At md+ this is a plain block and the run-rows keep their cap. */}
+        <div className="max-md:min-h-0 max-md:flex-1 max-md:overflow-y-auto">
+          {content}
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <CollapsibleSidebarPanel
+      icon={Send}
+      iconTint="var(--c-allocated)"
+      eyebrow="Outbox"
+      title="Automated reminders"
+      storageKey="pv.sidebar.collapsed.outbox"
+    >
+      {content}
     </CollapsibleSidebarPanel>
   )
 }
