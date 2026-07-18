@@ -1124,7 +1124,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                           ].join(' ')}
                         >
                           {m.body && (
-                            <p className="whitespace-pre-wrap break-words text-[17px] leading-snug text-ink-soft sm:text-[14px]">
+                            <p className="whitespace-pre-wrap break-words text-[19px] leading-snug text-ink-soft sm:text-[14px]">
                               {buildMessageSegments(m.body, memberNames).map((seg, si) =>
                                 seg.type === 'link' ? (
                                   <a
