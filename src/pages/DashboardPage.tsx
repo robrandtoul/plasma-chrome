@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { DesignerChrome, useDesignerProfile, useIsMobile, Sheet, ButtonCoral, ButtonInk, ProofStatusPill, HelpTip } from '../design'
+import { DesignerChrome, useDesignerProfile, useIsMobile, Sheet, ButtonCoral, ButtonGhost, ButtonInk, ProofStatusPill, HelpTip } from '../design'
 import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Link as LinkIcon, ThumbsDown, PictureInPicture2 } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
@@ -2956,9 +2956,25 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                   </p>
                 </div>
                 <div className="flex items-center gap-2 max-md:w-full">
-                  <ButtonCoral icon={Plus} onClick={() => navigate('/proofs/new')} className="max-md:w-full max-md:h-11">
-                    New project
-                  </ButtonCoral>
+                  {/* New project is a desktop-weight action — starting a
+                      project is rarely done from a phone, so mobile gets
+                      the quiet ghost treatment instead of the full coral
+                      block that used to dominate the fold on iPhone. Each
+                      variant is wrapped rather than toggled via a `hidden`
+                      class on the button itself — the button's own base
+                      class already sets `inline-flex` at the same
+                      specificity, so `hidden` on the button can lose that
+                      fight depending on Tailwind's utility ordering. */}
+                  <span className="hidden md:inline-flex">
+                    <ButtonCoral icon={Plus} onClick={() => navigate('/proofs/new')}>
+                      New project
+                    </ButtonCoral>
+                  </span>
+                  <span className="w-full md:hidden">
+                    <ButtonGhost icon={Plus} onClick={() => navigate('/proofs/new')} className="w-full h-11">
+                      New project
+                    </ButtonGhost>
+                  </span>
                 </div>
               </div>
 
