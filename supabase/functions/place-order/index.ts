@@ -432,6 +432,13 @@ Deno.serve(async (req) => {
   // re-placed after a redesign, the OLD Stock Control job must be cancelled by a
   // human first — proof-viewer can't do it. The review page sends this ack.
   const oldJobCancelled = body.old_job_cancelled === true
+  // Spoilage overs (hybrid orders): extra cards added to the SUPPLIER order only,
+  // to cover foiling done in-house after the supplier makes the base cards. Set
+  // manually on the review screen (no automatic default). Pads the supplier
+  // `Qty:` line; the customer's quantity — their invoice AND the in-house
+  // finishing target — is unchanged. Ignored on the in-house route. Clamped to a
+  // sane non-negative integer so a stray value can't distort the order.
+  const supplierOvers = Math.min(1_000_000, Math.max(0, Math.floor(Number(body.supplier_overs) || 0)))
   if (!orderId) return json({ ok: false, error: 'order_id is required' }, 400)
   // Present-but-blank edited message = the reviewer cleared it; that's an error,
   // not a request to send the composed text they can no longer see.
@@ -608,6 +615,12 @@ Deno.serve(async (req) => {
   const packaging = destCountry ? (destCountry === 'GB' ? 'Domestic' : 'International') : null
   const dateRequiredStr = fmtDate(order.date_required)
 
+  // Supplier quantity = customer quantity + spoilage overs, but ONLY on the
+  // supplier route (overs are meaningless for an in-house job). This is the
+  // number the supplier is told to make; `qty` stays the customer's quantity
+  // everywhere else (invoice, in-house finishing target, per-person split).
+  const supplierQty = route === 'supplier' ? qty + supplierOvers : qty
+
   // Shared spec summary for the review page (same data the hand-off uses).
   const summary = {
     customer: customerName,
@@ -617,6 +630,8 @@ Deno.serve(async (req) => {
     inkFront: inks.front,
     inkBack: inks.back,
     quantity: qty,
+    supplierQuantity: supplierQty,
+    supplierOvers,
     split: splitLines,
     packaging,
     dateRequired: dateRequiredStr,
@@ -770,7 +785,11 @@ Deno.serve(async (req) => {
   // that dropped any of these lines, so the Stock Control import can't break.
   const detailLines: string[] = []
   if (isPrototype) detailLines.push(prototypeMarker)
-  detailLines.push(`Qty: ${qty}`)
+  // Supplier Qty is padded with the spoilage overs. The per-person split lines
+  // stay at the customer's allocation (summing to `qty`), so Qty > split sum when
+  // overs are added — Stock Control's outsourced importer already tolerates this
+  // (extra blanks are unallocated spares), matching how these orders look today.
+  detailLines.push(`Qty: ${supplierQty}`)
   if (splitLines.length) {
     detailLines.push('Per person:')
     for (const sl of splitLines) detailLines.push(sl)
@@ -898,6 +917,7 @@ Deno.serve(async (req) => {
     supplier_id: chosen.id,
     supplier_name: chosen.name,
     supplier_helpscout_conversation_id: newConvId,
+    supplier_overs: supplierOvers,
     ...(isReplace ? { old_job_cancelled: oldJobCancelled } : {}),
   })
   if (!placed.ok) {
@@ -929,7 +949,7 @@ async function markPlaced(
   orderId: string,
   callerId: string,
   snapshot: OrderSpecSnapshot,
-  detail: { route: string; subject: string; supplier_id?: string; supplier_name?: string; supplier_helpscout_conversation_id?: string | null; old_job_cancelled?: boolean },
+  detail: { route: string; subject: string; supplier_id?: string; supplier_name?: string; supplier_helpscout_conversation_id?: string | null; supplier_overs?: number; old_job_cancelled?: boolean },
 ): Promise<{ ok: boolean; error?: string }> {
   const nowIso = new Date().toISOString()
   // Conditional on status in (paid, revision) so a stale/concurrent re-entry
@@ -946,6 +966,7 @@ async function markPlaced(
       ...(detail.supplier_id ? { supplier_id: detail.supplier_id } : {}),
       ...(detail.supplier_name ? { supplier_name: detail.supplier_name } : {}),
       ...(detail.supplier_helpscout_conversation_id ? { supplier_helpscout_conversation_id: detail.supplier_helpscout_conversation_id } : {}),
+      ...(detail.supplier_overs != null ? { supplier_overs: detail.supplier_overs } : {}),
       updated_at: nowIso,
     })
     .eq('id', orderId)

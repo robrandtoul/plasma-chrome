@@ -22,6 +22,10 @@ interface PreviewSummary {
   inkFront: string | null
   inkBack: string | null
   quantity: number
+  // Supplier route: quantity the supplier is told to make = quantity + spoilage
+  // overs. Equals quantity when there are no overs (and on the in-house route).
+  supplierQuantity?: number
+  supplierOvers?: number
   split: string[]
   packaging: string | null
   dateRequired: string
@@ -111,6 +115,11 @@ export default function OrderReviewPage() {
   // Optional project-specific note appended to the supplier email (supplier
   // route). Re-previewed on blur so the reviewer sees exactly what's sent.
   const [note, setNote] = useState('')
+  // Spoilage overs (supplier route, hybrid foiling orders): extra cards added to
+  // the SUPPLIER order to cover foiling done in-house. Manual, starts at 0, no
+  // default. Padded onto the supplier Qty line only — the customer's quantity is
+  // unchanged. Re-previewed on blur so the message reflects the padded Qty.
+  const [overs, setOvers] = useState(0)
   // The reviewer can edit the whole hand-off message before sending. null = not
   // edited (the box mirrors the generated preview, incl. supplier/note changes);
   // a string = the reviewer owns the text and it's sent verbatim. Reset on
@@ -127,13 +136,13 @@ export default function OrderReviewPage() {
   // client-side too so the reviewer sees why, rather than a post-click error.
   const [revisionNeedsApproval, setRevisionNeedsApproval] = useState(false)
 
-  const loadPreview = useCallback(async (chosenSupplierId?: string | null, noteArg?: string) => {
+  const loadPreview = useCallback(async (chosenSupplierId?: string | null, noteArg?: string, oversArg?: number) => {
     if (!id) return
     setError(null)
     setPreviewBusy(true)
     try {
       const { data, error: fnErr } = await supabase.functions.invoke<PreviewResponse>('place-order', {
-        body: { order_id: id, mode: 'preview', ...(chosenSupplierId ? { supplier_id: chosenSupplierId } : {}), ...(noteArg ? { note: noteArg } : {}) },
+        body: { order_id: id, mode: 'preview', ...(chosenSupplierId ? { supplier_id: chosenSupplierId } : {}), ...(noteArg ? { note: noteArg } : {}), ...(oversArg ? { supplier_overs: oversArg } : {}) },
       })
       if (fnErr || !data?.ok) {
         const body = data ?? await readFnErrorBody(fnErr)
@@ -236,7 +245,7 @@ export default function OrderReviewPage() {
     setEditedMessage(null) // ship-by + template change — re-seed from the new preview
     setSupplierLoading(true)
     try {
-      await loadPreview(newId, note)
+      await loadPreview(newId, note, overs)
     } finally {
       setSupplierLoading(false)
     }
@@ -250,7 +259,7 @@ export default function OrderReviewPage() {
       const { data, error: fnErr } = await supabase.functions.invoke<{ ok: boolean; error?: string; code?: string; placed?: boolean }>('place-order', {
         // When the message has been edited it's sent verbatim (custom_message) and
         // the separate note is folded in there, so don't send both.
-        body: { order_id: id, mode: 'confirm', ...(supplierId ? { supplier_id: supplierId } : {}), ...(editedMessage !== null ? { custom_message: editedMessage } : (note ? { note } : {})), ...(revisionReplace ? { old_job_cancelled: oldJobCancelled } : {}) },
+        body: { order_id: id, mode: 'confirm', ...(supplierId ? { supplier_id: supplierId } : {}), ...(overs > 0 ? { supplier_overs: overs } : {}), ...(editedMessage !== null ? { custom_message: editedMessage } : (note ? { note } : {})), ...(revisionReplace ? { old_job_cancelled: oldJobCancelled } : {}) },
       })
       // On a non-2xx (which is how place-order returns sent_not_recorded AND its
       // other failures) supabase-js gives data:null + the body on error.context.
@@ -454,6 +463,30 @@ export default function OrderReviewPage() {
                         <span className="mt-1 block text-[12px] text-out">This supplier has no email configured in Stock Control.</span>
                       )}
                     </label>
+                    {/* Spoilage overs — hybrid foiling orders only. Extra blank
+                        cards the supplier makes so in-house foiling has spares.
+                        Pads the supplier Qty line ONLY; the customer's quantity
+                        (invoice + in-house finishing) is unchanged. Manual, no
+                        default. Re-previews on blur so the Qty above reflects it. */}
+                    <label className="mt-3 block">
+                      <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Spoilage overs (extra cards for the supplier)</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        inputMode="numeric"
+                        value={overs === 0 ? '' : overs}
+                        onChange={(e) => { setOvers(Math.max(0, Math.floor(Number(e.target.value) || 0))); setEditedMessage(null) }}
+                        onBlur={() => { void loadPreview(supplierId, note, overs) }}
+                        placeholder="0"
+                        className="mt-1 h-[38px] w-full max-w-[160px] rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                      />
+                      <span className="mt-1 block text-[12px] text-ink-mute">
+                        {overs > 0
+                          ? `Supplier makes ${(s.quantity + overs).toLocaleString()} cards (${s.quantity.toLocaleString()} + ${overs} overs). The customer is still invoiced for ${s.quantity.toLocaleString()}, and the in-house finishing job stays at ${s.quantity.toLocaleString()}.`
+                          : 'For hybrid foiling orders — extra blank cards so in-house foiling has spares. Leave at 0 when nothing is foiled in-house.'}
+                      </span>
+                    </label>
                     <p className="mt-3 text-[12px] text-ink-mute">Subject</p>
                     <p className="text-sm font-medium text-ink">{preview.subject}</p>
                     <p className="mt-3 text-[12px] text-ink-mute">Message</p>
@@ -526,7 +559,7 @@ export default function OrderReviewPage() {
                   <textarea
                     value={note}
                     onChange={(e) => setNote(e.target.value)}
-                    onBlur={() => { void loadPreview(supplierId, note) }}
+                    onBlur={() => { void loadPreview(supplierId, note, overs) }}
                     rows={3}
                     disabled={messageDirty}
                     placeholder="Project-specific instructions for this order."
