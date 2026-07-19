@@ -190,9 +190,17 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
         type="button"
         onClick={() => {
           if (dockVisible) {
+            // Chat already lives in the dashboard rail as a sticky card that
+            // stays in view while the list scrolls, so there is nothing to
+            // reveal — just drop the cursor into its composer. We deliberately
+            // do NOT scrollIntoView: the dock sits inside a position:sticky
+            // wrapper (top-14), so aligning its top to the viewport can never
+            // settle — the sticky re-pins the card every call, leaving the goal
+            // unmet, so each click nudged the page a little further down.
+            // preventScroll keeps the focus itself from scrolling too.
             document
-              .getElementById('team-chat-dock')
-              ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              .querySelector<HTMLTextAreaElement>('#team-chat-dock textarea')
+              ?.focus({ preventScroll: true })
             return
           }
           open ? close() : setOpen(true)
