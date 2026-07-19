@@ -293,13 +293,48 @@ Build:
 
 Squarespace side: each of the 16 tables per currency page is a `<div data-price-table="<key>">` placeholder; the page loads the script once via `<script src="https://proofs.plasmadesign.co.uk/price-list/price-list.js" defer></script>`. The script detects currency from the page URL, calls `public_get_price_list` once, and fills every placeholder it finds.
 
+## QR decoding and artwork scanning
+
+### The decoder (`src/lib/qrCodes.ts`)
+
+Third decoder in this slot, each swap driven by real uploads rather than taste: **jsQR** → **`@zxing/library`** (the JS port, after a stylised dotted QR broke jsQR) → **`zxing-wasm`** (zxing-cpp compiled to WebAssembly, July 2026). Don't trust older notes saying jsQR or ZXing-JS.
+
+The swap was measured, not assumed. A benchmark took the stored `qr_decoded_data` of **123 live QR rows** and tried to re-find each payload in that version's **artwork** images, counting exact string matches:
+
+| Decoder | Found |
+| --- | --- |
+| `@zxing/library` (old) | 94 / 123 — 76% |
+| `zxing-wasm` (current) | **117 / 123 — 95%** |
+| Native `BarcodeDetector` | 118 / 123 — 96% |
+
+Zero regressions (no case the old decoder won) and no extra false positives. The gain is concentrated exactly where it matters: dense vCards on ~800px proof exports went 62% → 100%. `BarcodeDetector` scored marginally higher but is absent from Firefox and Safari, so a native-first chain would make results differ per designer's browser — one code path was judged worth two percentage points.
+
+Notes for future work:
+- The `.wasm` is imported as a Vite `?url` asset so it ships **from our own origin** (`dist/assets/zxing_reader-*.wasm`). zxing-wasm otherwise resolves it against a CDN at runtime. Don't "simplify" this away.
+- The decoder module is still dynamically imported, so the wasm cost is only paid when a decode actually runs.
+- `decodeAllQrs(blob, max)` returns **every** QR in an image with corner `position`s; `decodeQrFromFile` is the single-result wrapper the manual upload path uses. Multi-code detection roughly doubled the hit rate on per-recipient rosters (7/14 → 12/14).
+- The old canvas + 2000px-downscale path is gone — `readBarcodes` takes the Blob directly, which also removed the "browser failed to read the image pixels" failure mode on large print exports.
+
+**Correction worth remembering:** an earlier analysis concluded the ~95%-vs-76% gap was a *source resolution* problem and recommended re-exporting proofs at higher resolution. That was wrong. The pixels were always sufficient; the JavaScript decoder was the bottleneck. Don't re-plumb the export pipeline on that basis.
+
+### Artwork QR scanning (`src/lib/qrArtworkScan.ts`)
+
+The designer used to upload a cropped copy of a QR that was already plainly visible in the artwork they'd just dropped. Now the QR section scans the artwork itself and offers each code it finds as a one-click suggestion — pre-cropped from the source pixels, with the recipient inherited from the image's `associated_name` and the side it was found on.
+
+- `scanArtworkForQrs(sources)` takes `{ id, url, associatedName, side, filename }`. Both version forms can feed it the same shape because `preview` is a blob URL for a freshly-dropped file and a signed URL for a saved row. NewVersionPage also passes the v1 images being carried forward; EditVersionPage passes everything in `editImagesByOption`.
+- Cropping uses the decoder's corner points, padded ~12% for a quiet zone, cropped from the **source** pixels (not a synthesised white border) so the stored image shows the code as it actually prints. Verified on real proofs: every crop re-decodes to the same payload, including photographs of physical cards shot at an angle.
+- Never auto-attaches. Every find is a suggestion the designer confirms, because the scan is ~95% reliable, not perfect, and because only the designer knows whether a code belongs on this version. **The manual upload path is untouched** — the worst case is exactly the old workflow.
+- Runs in the background, caps at 24 images, and fails silently. A failed scan means no suggestions, never an error in the designer's face.
+
+**The mismatch check** is the reason this is worth more than the saved keystrokes. The uploaded copy and the artwork have always been two independent artefacts with nothing forcing them to agree — and the benchmark found a live proof (Robert Olguin Realty, abandoned, never printed) whose artwork QR pointed at `hovqr.me` while the customer was shown a code for `robertolguin.wardleyre.com`. The check fires only on the unambiguous shape: exactly one code read off an image, exactly one attached entry covering that image, and the two disagree. Coverage is **directional** — a shared entry (no recipient) prints on every card so it covers every image, while a named entry covers only that person's artwork. That direction matters: the one real divergence in live data is a *shared* entry contradicted by a *named* card's artwork, which a naive same-slot comparison never sees. Anything ambiguous stays silent; "we couldn't decode it" is never treated as evidence of a mismatch.
+
 ## Plasma vCard QR integration
 
 Plasma's hosted vCard product (`https://qcrd.uk/<slug>`) prints a QR that decodes to a short URL only, not to a vCard payload. The proof viewer cross-references that with the vCard app so the customer verifies the actual contact details, not a blind URL.
 
-Two QR types live side by side in the version form's QR section, and the designer picks which one they're adding:
+Two QR types live side by side in the version form's QR section, and the designer picks which one they're adding (plus a third, zero-effort path — see **Artwork QR scanning** below):
 
-- **Customer-supplied QR** — drop a JPEG, jsQR decodes it, the existing eight `qr_kind` values handle the rest. Unchanged from 000168 / 000169.
+- **Customer-supplied QR** — drop an image, the decoder reads it, the existing eight `qr_kind` values handle the rest. Unchanged from 000168 / 000169 apart from the decoder swap below.
 - **Plasma vCard QR** — paste a `qcrd.uk` URL or slug, the form validates it against the vCard app via `lookup_card_by_slug`, generates the QR SVG client-side with `qrcode@1.5.4` (locked to the same options the vCard studio uses, see below), and offers a Download SVG button so the designer can drop the exact bytes into the print artwork. Stored as `qr_kind = 'hosted_vcard'`, `qr_vcard_slug = <slug>`, `qr_decoded_data = https://qcrd.uk/<slug>`, `image_path = <generated .svg>`.
 
 Customer side, `QrCodePanel` branches on `qr_kind === 'hosted_vcard'` and calls the vCard app's three anon RPCs (`lookup_card_by_slug`, `lookup_card_links_by_card_id`, `lookup_card_contact_methods_by_card_id`) to render contact fields live. Styling fields (photo, cover image, accent colour, font) are deliberately not shown — those are the customer's to personalise after the cards arrive. If the vCard app is unreachable, the panel quietly falls back to "contact details temporarily unavailable" plus the URL; the page never breaks.

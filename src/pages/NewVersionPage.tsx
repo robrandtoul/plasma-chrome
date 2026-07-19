@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, Fragment, type ChangeEvent, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, useRef, Fragment, type ChangeEvent, type CSSProperties } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { v4 as uuidv4 } from 'uuid'
 import { deriveCodes } from '../lib/variantSlug'
@@ -21,6 +21,7 @@ import { firstName } from '../lib/firstName'
 import { customerProofPath } from '../lib/customerProofUrl'
 import { DesignerChrome } from '../design'
 import { QrCodeUploadSection, type QrEntry } from '../components/QrCodeUploadSection'
+import type { ArtworkSource } from '../lib/qrArtworkScan'
 import type { QrKind } from '../lib/qrCodes'
 import type { Currency, LetterpressCoreColour, ProofNameApproval } from '../lib/types'
 import { usePersonalisationPricing } from '../lib/quote/usePersonalisationPricing'
@@ -4573,6 +4574,38 @@ export default function NewVersionPage() {
   // Once savedVersion is set the work is safely in the database and the page
   // has swapped to the send panel, so the guard stands down.
   const hasStagedImages = Object.values(imagesByOption).some((list) => list.length > 0)
+
+  // Artwork handed to the QR section's scanner. Covers both the
+  // images staged on this version and the v1 images being carried
+  // forward — a carried QR entry that no longer matches its carried
+  // artwork is exactly the drift the mismatch check exists to catch.
+  const qrArtworkSources = useMemo<ArtworkSource[]>(() => {
+    const out: ArtworkSource[] = []
+    for (const list of Object.values(imagesByOption)) {
+      for (const img of list) {
+        out.push({
+          id: img.localId,
+          url: img.preview,
+          associatedName: img.associated_name,
+          side: img.side,
+          filename: img.file.name,
+        })
+      }
+    }
+    for (const img of v1Carry?.images ?? []) {
+      // Undefined means "not yet toggled", which defaults to keep.
+      if (keepByV1RowId[img.v1RowId] === false) continue
+      out.push({
+        id: img.v1RowId,
+        url: img.preview,
+        associatedName: img.associated_name,
+        side: img.side,
+        filename: img.original_filename,
+      })
+    }
+    return out
+  }, [imagesByOption, v1Carry, keepByV1RowId])
+
   useUnsavedChangesGuard(
     !savedVersion && !submitting && (hasStagedImages || changeNotes.trim().length > 0),
     'This version hasn’t been saved yet. Your images and notes will be lost. Leave anyway?',
@@ -6639,6 +6672,7 @@ export default function NewVersionPage() {
               names={names.map((n) => n.trim()).filter(Boolean)}
               disabled={submitting}
               onKeepChange={handleQrKeepChange}
+              artwork={qrArtworkSources}
             />
           )}
 

@@ -20,13 +20,21 @@
 // dropdown defaults to whatever the parent passes via
 // `defaultRecipient`, falling back to 'shared'.
 
-import { useId, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import {
   decodeQrFromFile,
+  parseMecard,
+  parseVCard,
+  parseWifi,
   QrDecodeError,
   type QrKind,
 } from '../lib/qrCodes'
+import {
+  scanArtworkForQrs,
+  type ArtworkQrFind,
+  type ArtworkSource,
+} from '../lib/qrArtworkScan'
 import { lookupCardBySlug, VcardConfigError } from '../lib/vcardClient'
 import { generateVcardQrSvg, parseVcardSlugInput, vcardUrlForSlug } from '../lib/vcardQr'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
@@ -124,6 +132,42 @@ interface QrCodeUploadSectionProps {
    * which case no toggle is rendered and behaviour is unchanged.
    */
   onKeepChange?: (entryId: string, keep: boolean) => void
+  /**
+   * Artwork on the version being edited. When supplied, the section
+   * scans it for QR codes the designer hasn't attached yet and
+   * offers each as a one-click suggestion, pre-cropped and with the
+   * recipient inherited from the image it was found on.
+   *
+   * Omit to disable scanning entirely — the manual paths are
+   * unaffected either way, which is deliberate: the scan finds ~95%
+   * of codes that are really there, so it assists the existing flow
+   * rather than replacing it.
+   */
+  artwork?: ArtworkSource[]
+}
+
+/**
+ * One-line human summary of a decoded payload for the suggestion
+ * card. A raw vCard is 250 characters of BEGIN:VCARD noise — the
+ * designer needs to recognise the person at a glance, not read the
+ * encoding. Falls back to the raw payload (truncated by CSS) for
+ * kinds that are already readable, like a URL.
+ */
+function describeFind(find: ArtworkQrFind): string {
+  if (find.kind === 'vcard') {
+    const fields = parseVCard(find.decodedData)
+    const bits = [fields.formattedName, fields.org].filter(Boolean)
+    if (bits.length > 0) return bits.join(' · ')
+  }
+  if (find.kind === 'mecard') {
+    const fields = parseMecard(find.decodedData)
+    if (fields.name) return fields.name
+  }
+  if (find.kind === 'wifi') {
+    const fields = parseWifi(find.decodedData)
+    if (fields.ssid) return fields.ssid
+  }
+  return find.decodedData
 }
 
 const KIND_LABELS: Record<QrKind, string> = {
@@ -145,12 +189,161 @@ export function QrCodeUploadSection({
   defaultRecipient = null,
   disabled = false,
   onKeepChange,
+  artwork,
 }: QrCodeUploadSectionProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const inputId = useId()
   const vcardInputId = useId()
   const [dropError, setDropError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
+
+  // ── Artwork scan ──────────────────────────────────────────────────
+  //
+  // Runs in the background whenever the artwork set changes. Never
+  // blocks the form and never surfaces an error: a failed scan just
+  // means no suggestions, and the designer carries on exactly as
+  // they did before this existed.
+  const [finds, setFinds] = useState<ArtworkQrFind[]>([])
+  const [scanning, setScanning] = useState(false)
+  const [dismissedFindIds, setDismissedFindIds] = useState<string[]>([])
+
+  // Identity of the artwork set, so the effect re-runs when images
+  // are added/removed/reassigned but not on every unrelated render.
+  const artworkKey = useMemo(
+    () =>
+      (artwork ?? [])
+        .map((a) => `${a.id}|${a.url}|${a.associatedName ?? ''}|${a.side ?? ''}`)
+        .join(','),
+    [artwork],
+  )
+
+  useEffect(() => {
+    const sources = artwork ?? []
+    if (sources.length === 0) {
+      setFinds([])
+      return
+    }
+    const controller = new AbortController()
+    let cancelled = false
+    setScanning(true)
+    let produced: ArtworkQrFind[] = []
+    scanArtworkForQrs(sources, { signal: controller.signal })
+      .then((res) => {
+        produced = res
+        if (cancelled) return
+        setFinds(res)
+      })
+      .catch(() => {
+        if (!cancelled) setFinds([])
+      })
+      .finally(() => {
+        if (!cancelled) setScanning(false)
+      })
+    return () => {
+      cancelled = true
+      controller.abort()
+      // The scanner owns its preview URLs for their whole life —
+      // accepting a suggestion mints a fresh one for the entry — so
+      // these can always be released on rescan or unmount.
+      for (const f of produced) URL.revokeObjectURL(f.cropPreviewUrl)
+    }
+    // artworkKey is the stable identity of `artwork`; depending on the
+    // array itself would re-scan on every parent render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [artworkKey])
+
+  const attachedPayloads = useMemo(
+    () => new Set(value.map((e) => e.decodedData)),
+    [value],
+  )
+
+  // Codes on the artwork that aren't attached yet and haven't been
+  // waved away.
+  const suggestions = useMemo(
+    () =>
+      finds.filter(
+        (f) => !attachedPayloads.has(f.decodedData) && !dismissedFindIds.includes(f.id),
+      ),
+    [finds, attachedPayloads, dismissedFindIds],
+  )
+
+  /**
+   * Entries whose encoded data contradicts the code actually printed
+   * on the artwork they claim to be on.
+   *
+   * The rule is deliberately narrow, because a false accusation here
+   * is worse than a miss — it would train designers to ignore the
+   * warning. It fires only on the unambiguous shape:
+   *
+   *   · we read exactly ONE code off a given artwork image, and
+   *   · exactly ONE attached entry covers that image, and
+   *   · the two disagree.
+   *
+   * Anything ambiguous is skipped. A card carrying several codes, a
+   * slot claimed by several entries, or artwork too dense to decode
+   * all produce silence — "we couldn't read it" is never treated as
+   * evidence of a mismatch.
+   *
+   * Coverage is directional: a shared entry (no recipient) prints on
+   * every card, so it covers every image; a named entry covers only
+   * that person's artwork. This matters — the one real divergence in
+   * the live data is a SHARED entry contradicted by a NAMED card's
+   * artwork, which a naive same-slot comparison never sees.
+   */
+  const mismatchedEntries = useMemo(() => {
+    const out = new Map<string, ArtworkQrFind>()
+    if (finds.length === 0) return out
+
+    const byImage = new Map<string, ArtworkQrFind[]>()
+    for (const f of finds) {
+      byImage.set(f.sourceId, [...(byImage.get(f.sourceId) ?? []), f])
+    }
+
+    for (const imageFinds of byImage.values()) {
+      if (imageFinds.length !== 1) continue
+      const found = imageFinds[0]
+      const covering = value.filter(
+        (entry) =>
+          // Hosted vCard QRs are generated by us, so byte-identity is
+          // already guaranteed by the generation path — and the
+          // artwork may legitimately not carry them yet at v1.
+          entry.kind !== 'hosted_vcard' &&
+          (entry.associatedName === null ||
+            entry.associatedName === found.associatedName),
+      )
+      if (covering.length !== 1) continue
+      if (covering[0].decodedData !== found.decodedData) {
+        out.set(covering[0].id, found)
+      }
+    }
+    return out
+  }, [value, finds])
+
+  function acceptFind(find: ArtworkQrFind) {
+    // The recipient roster can have changed since the artwork was
+    // tagged; fall back rather than writing a name that no longer
+    // exists on this version.
+    const inheritedName =
+      find.associatedName && names.includes(find.associatedName)
+        ? find.associatedName
+        : defaultRecipient ?? null
+
+    onChange([
+      ...value,
+      {
+        id: uuidv4(),
+        source: 'new',
+        file: find.cropFile,
+        // Fresh URL so the entry's lifecycle is independent of the
+        // scanner's (which revokes its own on the next rescan).
+        previewUrl: URL.createObjectURL(find.cropFile),
+        decodedData: find.decodedData,
+        kind: find.kind,
+        associatedName: inheritedName,
+        originalFilename: find.cropFile.name,
+      },
+    ])
+  }
 
   // Plasma vCard add-form state. Lives here rather than inside a
   // sub-component because the validate→generate→add sequence
@@ -304,6 +497,92 @@ export function QrCodeUploadSection({
         Add each QR code that appears on the card so the customer can verify it before approving. Use the customer-supplied path for QRs the customer sent (vCard, URL, wifi, etc.), or the Plasma vCard path when the QR points at a hosted qcrd.uk card.
       </p>
 
+      {/* ── Found on the artwork ─────────────────────────────────────
+          Codes read straight out of the proof images. Each one is a
+          suggestion the designer confirms — never auto-attached —
+          because the scan is ~95% reliable, not perfect, and because
+          the designer is the one who knows whether a code belongs on
+          this version at all. */}
+      {(scanning || suggestions.length > 0) && (
+        <div className="mb-6 rounded-xl border border-brand/30 bg-brand-50/50 p-4">
+          <div className="mb-1 flex items-center gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-widest text-brand">
+              Found on the artwork
+            </span>
+            {scanning && (
+              <span className="text-[11px] text-ink-mute">checking…</span>
+            )}
+          </div>
+          {suggestions.length === 0 ? (
+            <p className="text-xs text-ink-soft">
+              Reading the proof images for QR codes.
+            </p>
+          ) : (
+            <>
+              <p className="mb-3 max-w-prose text-xs text-ink-soft">
+                {suggestions.length === 1
+                  ? 'This code is printed on the artwork but not attached yet.'
+                  : `${suggestions.length} codes are printed on the artwork but not attached yet.`}{' '}
+                Adding from here guarantees the customer verifies the code that's actually on the card.
+              </p>
+              <ul className="space-y-3">
+                {suggestions.map((find) => (
+                  <li
+                    key={find.id}
+                    className="grid gap-3 rounded-lg border border-line bg-surface p-3 sm:grid-cols-[72px_1fr_auto]"
+                  >
+                    <img
+                      src={find.cropPreviewUrl}
+                      alt="QR found on artwork"
+                      className="aspect-square w-full max-w-[72px] rounded border border-line bg-canvas object-contain"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center rounded-full bg-line px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-ink-soft">
+                          {KIND_LABELS[find.kind]}
+                        </span>
+                        <span className="text-[12px] text-ink-soft">
+                          {find.associatedName ?? 'Shared across all cards'}
+                          {find.side ? ` · ${find.side}` : ''}
+                        </span>
+                      </div>
+                      <p className="mt-1 truncate text-[12px] text-ink-mute" title={find.decodedData}>
+                        {describeFind(find)}
+                      </p>
+                      {!find.cropped && (
+                        <p className="mt-1 text-[11px] text-low">
+                          Couldn't isolate the code — this attaches the whole image. Check it before adding.
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => acceptFind(find)}
+                        className="rounded bg-brand px-3 py-1.5 text-xs font-semibold text-on-ink shadow-sm hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Add
+                      </button>
+                      <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() =>
+                          setDismissedFindIds((prev) => [...prev, find.id])
+                        }
+                        className="rounded border border-line px-3 py-1.5 text-xs font-medium text-ink-soft hover:bg-canvas focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Not this one
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-ink-dim">
         Customer-supplied QR
       </div>
@@ -431,12 +710,13 @@ export function QrCodeUploadSection({
             const effectiveKeep = entry.keep ?? true
             const ghosted = showKeepToggle && !effectiveKeep
             const showArtworkChangedNotice = entry.artworkChanged === true
+            const mismatchFind = mismatchedEntries.get(entry.id)
             return (
               <li
                 key={entry.id}
                 className={[
                   'grid gap-4 rounded-xl border p-4 sm:grid-cols-[120px_1fr_auto] transition-colors',
-                  showArtworkChangedNotice
+                  showArtworkChangedNotice || mismatchFind
                     ? 'border-low bg-low-soft'
                     : 'border-line bg-canvas',
                 ].join(' ')}
@@ -516,6 +796,34 @@ export function QrCodeUploadSection({
                     gate), so this is a designer-side prompt, not a
                     structural safety on its own.
                   */}
+                  {/*
+                    Mismatch notice. Fires only when we successfully
+                    read a QR off this recipient's own artwork and it
+                    decoded to something different from this entry —
+                    i.e. the code the customer would be asked to
+                    approve is not the code on the card. A failure to
+                    decode never triggers this (see mismatchedEntryIds),
+                    so it stays quiet rather than crying wolf on dense
+                    codes we simply couldn't read.
+                  */}
+                  {mismatchFind && (
+                    <div className="mt-3 rounded-lg border border-low bg-low-soft px-3 py-2 text-[12px] leading-snug text-low">
+                      <p className="font-medium">
+                        This doesn't match the QR code on the artwork.
+                      </p>
+                      <p className="mt-0.5">
+                        {mismatchFind.associatedName
+                          ? `${mismatchFind.associatedName}'s card`
+                          : 'The artwork'}{' '}
+                        carries a different code:{' '}
+                        <span className="font-medium break-all">
+                          {describeFind(mismatchFind)}
+                        </span>
+                        . Check which is right before sending — the customer approves what's
+                        attached here, but the card prints what's in the artwork.
+                      </p>
+                    </div>
+                  )}
                   {showArtworkChangedNotice && (
                     <div className="mt-3 rounded-lg border border-low bg-low-soft px-3 py-2 text-[12px] leading-snug text-low">
                       <p className="font-medium">

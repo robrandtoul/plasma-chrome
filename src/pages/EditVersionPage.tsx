@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useState, useRef, type ChangeEvent } from 'react'
 import { useUnsavedChangesGuard } from '../lib/useUnsavedChangesGuard'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { v4 as uuidv4 } from 'uuid'
@@ -27,6 +27,7 @@ import {
   type LayoutEditRow,
 } from '../components/LayoutsEditor'
 import { QrCodeUploadSection, type QrEntry } from '../components/QrCodeUploadSection'
+import type { ArtworkSource } from '../lib/qrArtworkScan'
 import type { QrKind } from '../lib/qrCodes'
 import { LAYER_COLOUR_MATERIAL_CODES } from '../lib/letterpress'
 import VersionPreviewGate from '../components/VersionPreviewGate'
@@ -210,6 +211,25 @@ export default function EditVersionPage() {
   const [availableOptions, setAvailableOptions] = useState<MaterialOption[]>([])
   const [selectedOptions, setSelectedOptions] = useState<string[]>([])
   const [editImagesByOption, setEditImagesByOption] = useState<Record<string, EditImage[]>>({ '': [] })
+  // Artwork handed to the QR section's scanner. Both EditImage
+  // variants carry a usable `preview` — a blob URL for a freshly
+  // dropped file, a signed URL for an already-saved row — so the
+  // scanner needs no knowledge of which is which.
+  const qrArtworkSources = useMemo<ArtworkSource[]>(() => {
+    const out: ArtworkSource[] = []
+    for (const list of Object.values(editImagesByOption)) {
+      for (const img of list) {
+        out.push({
+          id: entryId(img),
+          url: img.preview,
+          associatedName: img.associated_name,
+          side: img.side,
+          filename: img.kind === 'existing' ? img.original_filename : img.file.name,
+        })
+      }
+    }
+    return out
+  }, [editImagesByOption])
   const [activeImageOption, setActiveImageOption] = useState('')
   const [originalImageIds, setOriginalImageIds] = useState<Set<string>>(new Set())
   // Snapshot of each existing artwork image's associated_name at load
@@ -2380,6 +2400,7 @@ export default function EditVersionPage() {
               onChange={setQrEntries}
               names={names.map((n) => n.trim()).filter(Boolean)}
               disabled={submitting}
+              artwork={qrArtworkSources}
             />
           )}
 
