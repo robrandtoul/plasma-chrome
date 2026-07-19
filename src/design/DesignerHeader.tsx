@@ -25,6 +25,7 @@ import { PlasmaWordmark } from './PlasmaWordmark'
 import { Sheet } from './Sheet'
 import { useScrolled } from './useScrolled'
 import { getOrderingEnabled, peekOrderingEnabled } from '../lib/orderingEnabled'
+import { openCommandPalette } from '../lib/useQuoteShortcut'
 import ChatMenu from '../components/ChatMenu'
 
 // Shared chrome for every designer-facing page. Sticky top bar with
@@ -600,7 +601,7 @@ function AccountSheet({
 
 function SearchField({ value, onChange, placeholder }: SearchProps) {
   return (
-    <label className="hidden md:flex flex-1 max-w-[420px] ml-auto items-center gap-2 h-8 px-2.5 rounded-[8px] border border-line bg-surface focus-within:border-[var(--c-brand)] focus-within:outline focus-within:outline-2 focus-within:outline-offset-[-1px] focus-within:outline-[var(--c-brand)]">
+    <label className="hidden md:flex flex-1 max-w-[420px] ml-auto items-center gap-2 h-8 px-2.5 rounded-[8px] border border-line bg-surface focus-within:border-[var(--c-brand)] focus-within:outline focus-within:outline-2 focus-within:outline-offset-[-1px] focus-within:outline-[var(--c-focus)]">
       <Search size={14} aria-hidden="true" className="text-ink-mute flex-shrink-0" />
       <input
         type="search"
@@ -609,13 +610,26 @@ function SearchField({ value, onChange, placeholder }: SearchProps) {
         placeholder={placeholder ?? 'Search by customer or company…'}
         className="flex-1 bg-transparent text-[13px] text-ink placeholder:text-ink-dim outline-none"
       />
-      <span
-        aria-hidden="true"
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[4px] bg-canvas border border-line-soft font-mono text-[10px] text-ink-mute"
+      {/* This badge used to be a plain <span>, and ⌘K opened the quote
+          compiler in a new tab — so the one hint the header gave about
+          keyboard shortcuts pointed at the wrong thing. ⌘K now opens the
+          command palette, and the badge is a real button that does the same,
+          so clicking and pressing it agree. preventDefault stops the wrapping
+          <label> focusing the input instead. */}
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={(e) => {
+          e.preventDefault()
+          openCommandPalette()
+        }}
+        title="Search everything (⌘K)"
+        aria-label="Open the search palette"
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[4px] bg-canvas border border-line-soft font-mono text-[10px] text-ink-mute hover:text-ink hover:border-line focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)]"
         style={{ letterSpacing: '0.06em' }}
       >
         ⌘ K
-      </span>
+      </button>
     </label>
   )
 }
@@ -632,7 +646,7 @@ function MobileSearchField({
   onClose,
 }: SearchProps & { onClose: () => void }) {
   return (
-    <label className="flex h-[46px] items-center gap-2 rounded-[10px] border border-line bg-surface px-3 focus-within:border-[var(--c-brand)] focus-within:outline focus-within:outline-2 focus-within:outline-offset-[-1px] focus-within:outline-[var(--c-brand)]">
+    <label className="flex h-[46px] items-center gap-2 rounded-[10px] border border-line bg-surface px-3 focus-within:border-[var(--c-brand)] focus-within:outline focus-within:outline-2 focus-within:outline-offset-[-1px] focus-within:outline-[var(--c-focus)]">
       <Search size={16} aria-hidden="true" className="text-ink-mute flex-shrink-0" />
       <input
         type="search"

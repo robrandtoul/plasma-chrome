@@ -22,6 +22,8 @@ import RecordOfflinePaymentModal from '../components/RecordOfflinePaymentModal'
 import EditOrderModal from '../components/EditOrderModal'
 import CardActionsMenu, { type CardMenuItem } from '../components/CardActionsMenu'
 import Modal from '../components/Modal'
+import { useConfirm } from '../components/ConfirmDialog'
+import SendPayLinkModal from '../components/SendPayLinkModal'
 import DesignerAvatar from '../components/DesignerAvatar'
 import ApprovedArtworkPanel from '../components/ApprovedArtworkPanel'
 import { ChevronDown, ChevronRight, StickyNote } from 'lucide-react'
@@ -638,6 +640,12 @@ function payDurationLabel(days: number): string {
 
 export default function OrdersPage() {
   const { session, role } = useAuth()
+  // Replaces the window.confirm / window.alert this page used to fire — a grey
+  // OS box in the middle of an otherwise carefully-built interface, and (for
+  // the alerts) the only way failures on the money path were ever reported.
+  const { confirm, alert: showAlert, dialog: confirmDialog } = useConfirm()
+  // The order whose pay link we're sending / re-sending, if any.
+  const [sendLinkFor, setSendLinkFor] = useState<OrderRow | null>(null)
   // The signed-in staffer's id — stamped as the author when they write a
   // Links-to-send note (the table's RLS requires created_by = auth.uid()).
   const userId = session?.user.id ?? null
@@ -1186,17 +1194,24 @@ export default function OrdersPage() {
         .update({ expires_at: nextExpiry, updated_at: new Date().toISOString() })
         .eq('id', o.id)
         .eq('status', 'sent')
-      if (!error) {
-        setOrders((prev) => prev.map((r) => (r.id === o.id ? { ...r, expires_at: nextExpiry } : r)))
-        void logAudit({
-          action: 'order.link_reactivated',
-          targetType: 'order',
-          targetId: o.id,
-          targetLabel: `Order ${o.payment_reference ?? o.id}`,
-          beforeValue: { expires_at: o.expires_at },
-          afterValue: { expires_at: nextExpiry },
-        })
+      if (error) {
+        void showAlert(`Could not reactivate the link: ${error.message}`)
+        return
       }
+      setOrders((prev) => prev.map((r) => (r.id === o.id ? { ...r, expires_at: nextExpiry } : r)))
+      void logAudit({
+        action: 'order.link_reactivated',
+        targetType: 'order',
+        targetId: o.id,
+        targetLabel: `Order ${o.payment_reference ?? o.id}`,
+        beforeValue: { expires_at: o.expires_at },
+        afterValue: { expires_at: nextExpiry },
+      })
+      // Reactivating only moved the expiry — the customer was never told, and
+      // a reactivated link has already spent its reminders, so nothing would
+      // chase it. Go straight into the send step so the live link actually
+      // reaches someone.
+      setSendLinkFor({ ...o, expires_at: nextExpiry })
     } finally {
       setBusyId(null)
     }
@@ -1284,7 +1299,7 @@ export default function OrdersPage() {
         { body: { action: 'release', group_id: o.order_group_id, order_id: o.id } },
       )
       if (error || !data?.ok) {
-        window.alert(`Could not release the order: ${data?.error ?? error?.message ?? 'unknown error'}`)
+        void showAlert(`Could not release the order: ${data?.error ?? error?.message ?? 'unknown error'}`)
         return
       }
       setReloadKey((k) => k + 1)
@@ -1295,7 +1310,11 @@ export default function OrdersPage() {
 
   // Unwind a whole unpaid group — every order back to its own pay link.
   async function dissolveGroup(g: OrderGroupRow) {
-    if (!window.confirm('Split this combined payment back into separate orders? Each will go back to its own pay link.')) return
+    if (!(await confirm({
+      title: 'Split this combined payment?',
+      message: 'Each order goes back to its own pay link.',
+      confirmLabel: 'Split them',
+    }))) return
     setBusyId(g.id)
     try {
       const { data, error } = await supabase.functions.invoke<{ ok?: boolean; released?: number; error?: string }>(
@@ -1303,7 +1322,7 @@ export default function OrdersPage() {
         { body: { action: 'dissolve', group_id: g.id } },
       )
       if (error || !data?.ok) {
-        window.alert(`Could not split the combined payment: ${data?.error ?? error?.message ?? 'unknown error'}`)
+        void showAlert(`Could not split the combined payment: ${data?.error ?? error?.message ?? 'unknown error'}`)
         return
       }
       setReloadKey((k) => k + 1)
@@ -1397,7 +1416,7 @@ export default function OrdersPage() {
         .eq('is_current', true)
         .maybeSingle()
       if (error || !v) {
-        window.alert('Could not load this proof to start an order. Open the proof and use Create order there.')
+        void showAlert('Could not load this proof to start an order. Open the proof and use Create order there.')
         return
       }
       const ver = v as {
@@ -1549,6 +1568,19 @@ export default function OrdersPage() {
 
   return (
     <DesignerChrome active="orders">
+      {confirmDialog}
+      {sendLinkFor && (
+        <SendPayLinkModal
+          open
+          order={{ id: sendLinkFor.id, proof_id: sendLinkFor.proof_id, token: sendLinkFor.token }}
+          customerLabel={customerLabel(sendLinkFor)}
+          // Every order on this list has had a link created; sent_at is
+          // stamped at creation, so anything here is a re-send.
+          resend
+          onSent={() => setReloadKey((k) => k + 1)}
+          onClose={() => setSendLinkFor(null)}
+        />
+      )}
       <div className="mx-auto max-w-[1320px] px-4 py-8 sm:px-7">
         <h1 className="text-xl font-semibold text-ink">Orders</h1>
         <p className="mt-1 text-sm text-ink-soft">
@@ -1817,6 +1849,7 @@ export default function OrdersPage() {
                               onRelease={() => void releaseFromGroup(o)}
                               onCopy={() => void copyLink(o)}
                               onReactivate={() => void reactivate(o)}
+                              onSendLink={() => setSendLinkFor(o)}
                               onEdit={() => setEditingOrder(o)}
                               onCancel={() => { setCancelNotify(true); setCancelError(null); setCancelTarget(o) }}
                               onRecordOffline={() => setRecordOffline(o)}
@@ -1847,6 +1880,7 @@ export default function OrdersPage() {
                         onRelease={() => void releaseFromGroup(o)}
                         onCopy={() => void copyLink(o)}
                         onReactivate={() => void reactivate(o)}
+                        onSendLink={() => setSendLinkFor(o)}
                         onEdit={() => setEditingOrder(o)}
                         onCancel={() => { setCancelNotify(true); setCancelError(null); setCancelTarget(o) }}
                         onRecordOffline={() => setRecordOffline(o)}
@@ -2537,18 +2571,41 @@ function OrderCard({
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             <label className="block">
               <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Date required</span>
+              {/* An unconfirmed lead-time suggestion is shown in an amber,
+                  clearly-provisional field rather than looking identical to a
+                  saved one. Before this, the input displayed a date, the
+                  readiness chip said "Date needed" and the button was disabled
+                  with no visible link between them — and the only way out was
+                  to re-pick the date already on screen. The "Use this date"
+                  button makes that one click instead of a date-picker round
+                  trip, while keeping Rob's rule that the designer has to
+                  actively confirm it. */}
               <input
                 type="date"
                 value={dateValue}
                 onChange={(e) => void handleDateChange(e.target.value)}
-                className="mt-1 h-[38px] max-md:h-12 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                aria-describedby={!datePersisted && dateValue ? `date-hint-${order.id}` : undefined}
+                className={`mt-1 h-[38px] max-md:h-12 w-full rounded-lg border bg-surface px-3 text-sm focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-focus)] ${
+                  !datePersisted && dateValue
+                    ? 'border-low text-ink-mute focus:border-[var(--c-focus)]'
+                    : 'border-line text-ink focus:border-[var(--c-focus)]'
+                }`}
               />
               <div className="mt-1 space-y-0.5 text-[11px]">
                 {dateSaving && <span className="block text-ink-mute">Saving…</span>}
                 {dateError && <span className="block text-out">Couldn’t save — try again</span>}
                 {dateSaved && !dateError && <span className="block text-in-stock">✓ Saved</span>}
                 {!dateSaving && !dateError && !dateSaved && !datePersisted && dateValue && (
-                  <span className="block text-low">Suggested from lead time — pick the date to confirm</span>
+                  <span id={`date-hint-${order.id}`} className="flex flex-wrap items-center gap-2 text-low">
+                    <span>Not confirmed yet — suggested from the lead time.</span>
+                    <button
+                      type="button"
+                      onClick={() => void handleDateChange(dateValue)}
+                      className="inline-flex h-[26px] max-md:min-h-[44px] items-center rounded-[4px] border border-low bg-surface px-2 text-[11px] font-medium text-ink-soft hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)]"
+                    >
+                      Use this date
+                    </button>
+                  </span>
                 )}
               </div>
             </label>
@@ -2767,6 +2824,7 @@ function AwaitingPaymentCard({
   onRelease,
   onCopy,
   onReactivate,
+  onSendLink,
   onEdit,
   onCancel,
   onRecordOffline,
@@ -2799,6 +2857,7 @@ function AwaitingPaymentCard({
   onRelease: () => void
   onCopy: () => void
   onReactivate: () => void
+  onSendLink: () => void
   onEdit: () => void
   onCancel: () => void
   onRecordOffline: () => void
@@ -2953,12 +3012,21 @@ function AwaitingPaymentCard({
             </ButtonGhost>
           ) : (
             <>
-              {expired && (
+              {expired ? (
                 <ButtonInk size="sm" onClick={onReactivate} disabled={busy} className="max-md:h-11 max-md:flex-1">
                   {busy ? 'Reactivating…' : 'Reactivate link'}
                 </ButtonInk>
+              ) : (
+                // The Orders page had no way to send anything: reactivating a
+                // link told the customer nothing, and the only route was copy
+                // → open Help Scout → find the thread → paste. A reactivated
+                // link has also spent its reminders, so nothing would chase
+                // it either.
+                <ButtonInk size="sm" onClick={onSendLink} disabled={busy || !order.token} className="max-md:h-11 max-md:flex-1">
+                  Re-send link
+                </ButtonInk>
               )}
-              <ButtonGhost size="sm" onClick={onCopy} className={`max-md:h-11 ${expired ? '' : 'max-md:flex-1'}`}>
+              <ButtonGhost size="sm" onClick={onCopy} className="max-md:h-11">
                 {copied ? 'Copied' : 'Copy link'}
               </ButtonGhost>
             </>

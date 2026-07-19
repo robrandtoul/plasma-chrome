@@ -21,6 +21,7 @@ import {
   type PillColour,
 } from '../design'
 import { supabase } from '../lib/supabase'
+import { useConfirm } from '../components/ConfirmDialog'
 import { useAuth } from '../lib/auth'
 import { logAudit } from '../lib/audit'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
@@ -122,6 +123,7 @@ function AuthorBadge({ initials, colour }: { initials: string | null; colour: st
 }
 
 export default function FeedbackPage() {
+  const { confirm, alert: showAlert, dialog: confirmDialog } = useConfirm()
   const { session, role } = useAuth()
   const userId = session?.user.id ?? null
   const isAdmin = role === 'admin'
@@ -308,13 +310,18 @@ export default function FeedbackPage() {
   }
 
   async function deleteItem(item: FeedbackItem) {
-    if (!window.confirm('Delete this feedback? This cannot be undone.')) return
+    if (!(await confirm({
+      title: 'Delete this feedback?',
+      message: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      confirmClass: 'bg-out text-white hover:opacity-90',
+    }))) return
     if (item.attachment_paths.length > 0) {
       await supabase.storage.from(FEEDBACK_BUCKET).remove(item.attachment_paths)
     }
     const { error } = await supabase.from('feedback_items').delete().eq('id', item.id)
     if (error) {
-      window.alert(`Could not delete: ${error.message}`)
+      void showAlert(`Could not delete: ${error.message}`)
       return
     }
     setItems((prev) => prev.filter((it) => it.id !== item.id))
@@ -407,6 +414,7 @@ export default function FeedbackPage() {
         </ButtonCoral>
       }
     >
+      {confirmDialog}
       <main className="mx-auto max-w-[900px] px-4 py-8 sm:px-7">
         <div className="flex items-start justify-between gap-4">
           <div>

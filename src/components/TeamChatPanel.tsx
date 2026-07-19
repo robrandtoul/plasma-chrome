@@ -1174,7 +1174,13 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                             </div>
                           )}
                         </div>
-                        <div className="mt-0.5 flex flex-shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                        {/* React / delete. These were hover-reveal only, so on
+                            a phone — where Chat is a first-class bottom tab and
+                            the primary chat surface — you could read and send
+                            but never react or delete your own message. Always
+                            visible below md (no hover exists to reveal them);
+                            hover/focus-reveal kept on desktop. */}
+                        <div className="mt-0.5 flex flex-shrink-0 items-center gap-0.5 transition-opacity max-md:opacity-100 md:opacity-0 focus-within:opacity-100 md:group-hover:opacity-100">
                           {/* The picker opens over the bubble side, where
                               there's guaranteed room inside the panel. */}
                           <ReactButton messageId={m.id} pickerAnchor={mine ? 'right' : 'left'} />
@@ -1184,7 +1190,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                               onClick={() => void remove(m.id)}
                               aria-label="Delete message"
                               title="Delete"
-                              className="flex h-6 w-6 items-center justify-center rounded text-ink-mute hover:bg-canvas hover:text-out"
+                              className="flex h-6 w-6 max-md:h-11 max-md:w-11 items-center justify-center rounded text-ink-mute hover:bg-canvas hover:text-out focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)]"
                             >
                               <Trash2 size={14} aria-hidden="true" />
                             </button>

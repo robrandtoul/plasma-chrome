@@ -59,12 +59,20 @@ export function Sheet({
     previouslyFocused.current = document.activeElement as HTMLElement | null
     const prevOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
+    // Below md the body doesn't scroll — #app-scroll does (DesignerChrome's
+    // locked frame), so locking the body alone let the page keep scrolling
+    // behind an open sheet. Sheets are a mobile-first surface, so this was the
+    // common case, not an edge one.
+    const frame = document.getElementById('app-scroll')
+    const prevFrameOverflow = frame?.style.overflow ?? ''
+    if (frame) frame.style.overflow = 'hidden'
     // Focus the panel so Escape / Tab land inside it, not on the page
     // behind. rAF so the element is painted first.
     const raf = requestAnimationFrame(() => panelRef.current?.focus())
     return () => {
       cancelAnimationFrame(raf)
       document.body.style.overflow = prevOverflow
+      if (frame) frame.style.overflow = prevFrameOverflow
       const target = previouslyFocused.current
       previouslyFocused.current = null
       if (target && typeof target.focus === 'function') {

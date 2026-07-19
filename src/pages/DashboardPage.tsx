@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { DesignerChrome, useDesignerProfile, useIsMobile, Sheet, ButtonCoral, ButtonGhost, ButtonInk, ProofStatusPill, HelpTip } from '../design'
 import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Link as LinkIcon, ThumbsDown, PictureInPicture2 } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
@@ -12,6 +12,7 @@ import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Ey
 import { Virtuoso } from 'react-virtuoso'
 import { supabase } from '../lib/supabase'
 import { signThumbnails, type ThumbInfo } from '../lib/thumbnails'
+import { setProofWorklist } from '../lib/proofWorklist'
 import { useAuth } from '../lib/auth'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
 import { getHotLeadsPanelEnabled } from '../lib/hotLeadsPanelEnabled'
@@ -72,6 +73,12 @@ import {
 type SortMode  = 'activity' | 'date' | 'name'
 type GroupMode = 'time' | 'company'
 type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved_this_week' | 'not_viewed' | 'customer_responded' | 'in_follow_up'
+// The same keys as a runtime list, so the ?tile= URL parameter can be
+// validated before it's trusted as a TileKey.
+const TILE_KEYS = [
+  'needs_attention', 'awaiting_customer', 'dormant', 'approved_this_week',
+  'not_viewed', 'customer_responded', 'in_follow_up',
+] as const satisfies readonly TileKey[]
 // Server-side tile counts (migration 000213) — one number per TileKey.
 type TileCounts = Record<TileKey, number>
 type ChipKey   = 'all' | 'metal' | 'paper' | 'plastic' | 'carbon' | 'wood' | 'acrylic'
@@ -2294,6 +2301,43 @@ function HeroGreeting() {
   return <>{greetingFor(new Date())}, {profile?.firstName ?? 'there'}</>
 }
 
+// ── Session snapshot ─────────────────────────────────────────────────────────
+//
+// Module-level (so it survives this page unmounting and remounting) cache of
+// the last successful load, keyed by the server search term. Opening a proof
+// and coming back used to mean a full cold load behind a spinner; now the last
+// view paints immediately and the refetch corrects it underneath.
+//
+// Deliberately module-level rather than localStorage: it must not outlive the
+// tab, and it holds signed URLs that expire. Bounded to one entry per search
+// term with a hard age limit so it can't serve anything genuinely stale.
+interface DashboardSnapshot {
+  searchTerm: string
+  savedAt: number
+  projects: DashboardProject[]
+  latestEvents: DashboardLatestEvent[]
+  leadTimes: LeadTime[]
+  tileCounts: TileCounts | null
+  flaggedOpenCount: number
+  minePinAt: Map<string, string>
+  teamPinAt: Map<string, string>
+  thumbnailUrls: Map<string, ThumbInfo>
+}
+
+// Five minutes. Long enough to cover a designer working through a batch of
+// proofs, short enough that a snapshot is never meaningfully out of date — and
+// a refetch always runs on top of it anyway.
+const SNAPSHOT_MAX_AGE_MS = 5 * 60 * 1000
+let dashboardSnapshot: DashboardSnapshot | null = null
+
+function readDashboardSnapshot(searchTerm: string): DashboardSnapshot | null {
+  const snap = dashboardSnapshot
+  if (!snap) return null
+  if (snap.searchTerm !== searchTerm) return null
+  if (Date.now() - snap.savedAt > SNAPSHOT_MAX_AGE_MS) return null
+  return snap
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 // activityView: render the dashboard's data in "Activity page" mode instead —
@@ -2350,12 +2394,56 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   // Count of un-resolved cards on the Flagged board — drives the Flagged tile.
   const [flaggedOpenCount, setFlaggedOpenCount] = useState(0)
   const [loading, setLoading]             = useState(true)
-  const [search, setSearch]               = useState('')
-  // statusFilter state was wired through the now-removed Status
-  // dropdown (dropped in PR 21). Tile clicks + chip filter cover
-  // the same use cases and the Abandoned checkbox handles the rare
-  // dedicated abandoned filter.
-  const [tileFilter, setTileFilter]       = useState<TileKey | null>(null)
+  // Non-null when the last dashboard_list call failed. Rendered as a banner
+  // above the list so a broken fetch can never masquerade as an empty account.
+  const [loadError, setLoadError]         = useState<string | null>(null)
+  // Transient failure message for the small writes (pin, snooze, unsnooze)
+  // that previously failed to console only — the designer clicked, nothing
+  // happened, and nothing said why.
+  const [actionError, setActionError]     = useState<string | null>(null)
+  // Search + tile filter live in the URL, not component state.
+  //
+  // WHY. Opening a proof unmounts this page; coming back remounts it. As plain
+  // useState both were lost, so the designer returned from every single proof
+  // to an empty search box and an unfiltered list — the most-repeated loop in
+  // the app. In the query string the browser restores them for free on Back,
+  // and a filtered view becomes a shareable/bookmarkable link.
+  //
+  // Written with replace:true so typing doesn't push a history entry per
+  // keystroke; the entry is updated in place, which is exactly what Back
+  // should return to. Everything else (sort, group, show-abandoned) stays in
+  // localStorage — those are durable preferences, not "where I am right now".
+  const [searchParams, setSearchParams] = useSearchParams()
+  const search = searchParams.get('q') ?? ''
+  // Validated against the known keys so a hand-edited ?tile=nonsense simply
+  // falls back to "no filter" instead of silently filtering everything out.
+  const tileParam = searchParams.get('tile')
+  const tileFilter: TileKey | null =
+    tileParam && (TILE_KEYS as readonly string[]).includes(tileParam) ? (tileParam as TileKey) : null
+
+  const setSearch = useCallback((value: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (value) next.set('q', value)
+      else next.delete('q')
+      return next
+    }, { replace: true })
+  }, [setSearchParams])
+
+  const setTileFilter = useCallback((
+    value: TileKey | null | ((prev: TileKey | null) => TileKey | null),
+  ) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      const current = prev.get('tile')
+      const currentKey: TileKey | null =
+        current && (TILE_KEYS as readonly string[]).includes(current) ? (current as TileKey) : null
+      const resolved = typeof value === 'function' ? value(currentKey) : value
+      if (resolved) next.set('tile', resolved)
+      else next.delete('tile')
+      return next
+    }, { replace: true })
+  }, [setSearchParams])
   const [sort, setSort]                   = useState<SortMode>(readSort)
   const [group, setGroup]                 = useState<GroupMode>(readGroup)
   const [showAbandoned, setShowAbandoned] = useState<boolean>(readShowAbandoned)
@@ -2421,7 +2509,29 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     } catch { /* */ }
   }, [loading])
 
-  useEffect(() => { loadDashboard() }, [])
+  // Mount. If we have a recent snapshot from earlier in this session, paint it
+  // immediately and revalidate behind it; otherwise show the spinner.
+  //
+  // WHY. Opening a proof unmounts this page, so coming back was a cold start:
+  // loading=true, ten queries, full-page spinner, every time — and it is the
+  // most-repeated loop in the app. The snapshot makes Back feel instant while
+  // the refetch (which still always runs) corrects anything stale. Same idea
+  // as DesignerChrome's module-level badge cache, for the same reason.
+  useEffect(() => {
+    const snap = readDashboardSnapshot(serverSearchRef.current)
+    if (snap) {
+      setProjects(snap.projects)
+      setLatestEvents(snap.latestEvents)
+      setLeadTimes(snap.leadTimes)
+      setTileCounts(snap.tileCounts)
+      setFlaggedOpenCount(snap.flaggedOpenCount)
+      setMinePinAt(snap.minePinAt)
+      setTeamPinAt(snap.teamPinAt)
+      setThumbnailUrls(snap.thumbnailUrls)
+      setLoading(false)
+    }
+    loadDashboard()
+  }, [])
 
   // Server-side search (scaling C). The `search` box filters the loaded
   // list client-side for instant feedback; this debounced effect also
@@ -2597,7 +2707,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
       .limit(50)
 
     const [
-      { data: projectRows },
+      { data: projectRows, error: projectsError },
       { data: events },
       { data: pinRows },
       { data: leadTimeRows },
@@ -2608,6 +2718,19 @@ export default function DashboardPage({ activityView = false }: { activityView?:
       { data: feedbackRows },
       { count: flaggedCount },
     ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise, countsPromise, payLinkOpensPromise, payLinkSentsPromise, orderRemindersPromise, feedbackPromise, flaggedCountPromise])
+
+    // dashboard_list IS the page. If it failed, say so — the old code
+    // destructured `data` only, so an expired JWT, an RLS change or a 500 all
+    // arrived as `null`, became `[]`, and rendered the cheerful "No projects
+    // yet. Create the first one." empty state. Keep whatever list was already
+    // on screen rather than blanking it, and let the banner explain.
+    if (projectsError) {
+      console.error('[DashboardPage] dashboard_list failed', projectsError)
+      setLoadError(projectsError.message || 'Could not load your projects.')
+      setLoading(false)
+      return
+    }
+    setLoadError(null)
 
     const typedProjects = (projectRows ?? []) as DashboardProject[]
     setProjects(typedProjects)
@@ -2644,7 +2767,12 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     // masquerade as the proof thumbnail. Fire-and-forget: errors are
     // tolerated silently — missing thumbnails fall through to the
     // dark-plate placeholder in ProjectRow.
-    void loadThumbnails(typedProjects).then(setThumbnailUrls)
+    void loadThumbnails(typedProjects).then((thumbs) => {
+      setThumbnailUrls(thumbs)
+      // Fold the resolved thumbnails into the snapshot so a return trip paints
+      // with its images rather than a grid of placeholders.
+      if (dashboardSnapshot) dashboardSnapshot.thumbnailUrls = thumbs
+    })
 
     // Split pins into the two scope-specific maps. Mine pins are
     // filtered to the current user (RLS lets every authenticated user
@@ -2662,56 +2790,88 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     setMinePinAt(mine)
     setTeamPinAt(team)
 
+    // Snapshot this successful load so remounting the page (returning from a
+    // proof) can paint instantly instead of spinning through a cold fetch.
+    // Thumbnails are folded in above once their signing resolves.
+    dashboardSnapshot = {
+      searchTerm: serverSearchRef.current,
+      savedAt: Date.now(),
+      projects: typedProjects,
+      latestEvents: mergedEvents,
+      leadTimes: (leadTimeRows ?? []) as LeadTime[],
+      tileCounts: (counts as TileCounts | null) ?? null,
+      flaggedOpenCount: flaggedCount ?? 0,
+      minePinAt: mine,
+      teamPinAt: team,
+      thumbnailUrls: dashboardSnapshot?.thumbnailUrls ?? new Map(),
+    }
+
     setLoading(false)
   }
 
   // ── Pin / unpin handlers ──────────────────────────────────────────────────
   //
-  // Both refresh the dashboard after the write so the sections re-bucket
-  // immediately. No optimistic UI — the data is small and refetches are
-  // fast enough that the trip is invisible. Audit logging on team
-  // pin/unpin is wired in the same place; mine pins are personal
-  // organisation and deliberately don't write to audit_log.
+  // These used to `await loadDashboard()` after the write, which is ten
+  // queries plus an edge-function call that mints FRESH signed thumbnail URLs
+  // — so every pin click re-downloaded every visible thumbnail and shifted the
+  // list under the cursor. The Pinned sections are derived from `projects`
+  // plus these two pin maps, so patching the map is sufficient and instant.
+  // Errors now surface instead of failing to console (or to nothing at all).
+  // Audit logging on team pin/unpin is wired in the same place; mine pins are
+  // personal organisation and deliberately don't write to audit_log.
   async function toggleMinePin(proofId: string) {
     if (!userId) return
-    if (minePinAt.has(proofId)) {
-      await supabase
-        .from('proof_pins')
-        .delete()
-        .eq('proof_id', proofId)
-        .eq('scope', 'mine')
-        .eq('user_id', userId)
-    } else {
-      await supabase
-        .from('proof_pins')
-        .insert({
-          proof_id: proofId,
-          scope: 'mine',
-          user_id: userId,
-          pinned_by: userId,
-        })
+    const wasPinned = minePinAt.has(proofId)
+    const { error } = wasPinned
+      ? await supabase
+          .from('proof_pins')
+          .delete()
+          .eq('proof_id', proofId)
+          .eq('scope', 'mine')
+          .eq('user_id', userId)
+      : await supabase
+          .from('proof_pins')
+          .insert({
+            proof_id: proofId,
+            scope: 'mine',
+            user_id: userId,
+            pinned_by: userId,
+          })
+    if (error) {
+      console.error('[DashboardPage] mine pin write failed', error)
+      setActionError(`Couldn’t ${wasPinned ? 'unpin' : 'pin'} that project: ${error.message}`)
+      return
     }
-    await loadDashboard()
+    setMinePinAt((prev) => {
+      const next = new Map(prev)
+      if (wasPinned) next.delete(proofId)
+      else next.set(proofId, new Date().toISOString())
+      if (dashboardSnapshot) dashboardSnapshot.minePinAt = next
+      return next
+    })
   }
 
   async function toggleTeamPin(proofId: string) {
     if (!userId) return
     const wasPinned = teamPinAt.has(proofId)
-    if (wasPinned) {
-      await supabase
-        .from('proof_pins')
-        .delete()
-        .eq('proof_id', proofId)
-        .eq('scope', 'team')
-    } else {
-      await supabase
-        .from('proof_pins')
-        .insert({
-          proof_id: proofId,
-          scope: 'team',
-          user_id: null,
-          pinned_by: userId,
-        })
+    const { error } = wasPinned
+      ? await supabase
+          .from('proof_pins')
+          .delete()
+          .eq('proof_id', proofId)
+          .eq('scope', 'team')
+      : await supabase
+          .from('proof_pins')
+          .insert({
+            proof_id: proofId,
+            scope: 'team',
+            user_id: null,
+            pinned_by: userId,
+          })
+    if (error) {
+      console.error('[DashboardPage] team pin write failed', error)
+      setActionError(`Couldn’t ${wasPinned ? 'remove the team pin' : 'add a team pin'}: ${error.message}`)
+      return
     }
     void logAudit({
       action: wasPinned ? 'setting.team_pin_removed' : 'setting.team_pin_added',
@@ -2719,7 +2879,13 @@ export default function DashboardPage({ activityView = false }: { activityView?:
       targetId: proofId,
       metadata: { proof_id: proofId },
     })
-    await loadDashboard()
+    setTeamPinAt((prev) => {
+      const next = new Map(prev)
+      if (wasPinned) next.delete(proofId)
+      else next.set(proofId, new Date().toISOString())
+      if (dashboardSnapshot) dashboardSnapshot.teamPinAt = next
+      return next
+    })
   }
 
   // ── Snooze handlers ───────────────────────────────────────────────────────
@@ -2746,6 +2912,10 @@ export default function DashboardPage({ activityView = false }: { activityView?:
       )
     if (error) {
       console.error('[handleSnooze] upsert error:', error)
+      // Surface it as well as rethrowing: the popover closes on its own, so a
+      // console-only failure read to the designer as "I snoozed it" when
+      // nothing had been written.
+      setActionError(`Couldn’t snooze that project: ${error.message}`)
       throw error
     }
     void logAudit({
@@ -2758,11 +2928,16 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   }
 
   async function handleUnsnooze(proofId: string, ruleCode: NeedsAttentionRule) {
-    await supabase
+    const { error } = await supabase
       .from('proof_attention_snoozes')
       .delete()
       .eq('proof_id', proofId)
       .eq('rule_code', ruleCode)
+    if (error) {
+      console.error('[handleUnsnooze] delete error:', error)
+      setActionError(`Couldn’t wake that project: ${error.message}`)
+      return
+    }
     void logAudit({
       action: 'proof.unsnoozed',
       targetType: 'proof',
@@ -2916,6 +3091,16 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     return arr
   }, [filteredProjects, sort])
 
+  // Publish the visible, ordered list so the proof detail page can offer
+  // ← / → navigation through it. This is the list as the designer sees it —
+  // already searched, filtered and sorted — so "next" means the next row down.
+  useEffect(() => {
+    setProofWorklist(sortedProjects.map((p) => ({
+      proofId: p.proof_id,
+      label: p.company_name ?? p.contact_name ?? 'Untitled project',
+    })))
+  }, [sortedProjects])
+
   // Snoozed projects are always excluded from the tail sections so
   // they don't appear twice. Whether the dedicated Snoozed section
   // itself is rendered is controlled by showSnoozed.
@@ -3019,6 +3204,41 @@ export default function DashboardPage({ activityView = false }: { activityView?:
           </div>
         ) : (
           <>
+            {loadError && (
+              <div
+                role="alert"
+                className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-out bg-out-soft px-4 py-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-out">Couldn’t load your projects</p>
+                  <p className="mt-0.5 text-[13px] text-ink-soft">
+                    This list may be out of date. {loadError}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setLoading(true); void loadDashboard() }}
+                  className="inline-flex h-[30px] max-md:min-h-[44px] flex-shrink-0 items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] font-medium text-ink-soft hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)]"
+                >
+                  Try again
+                </button>
+              </div>
+            )}
+            {actionError && (
+              <div
+                role="alert"
+                className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-out bg-out-soft px-4 py-3"
+              >
+                <p className="min-w-0 flex-1 text-[13px] text-ink-soft">{actionError}</p>
+                <button
+                  type="button"
+                  onClick={() => setActionError(null)}
+                  className="inline-flex h-[30px] max-md:min-h-[44px] flex-shrink-0 items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] font-medium text-ink-soft hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)]"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
             <AnnouncementsBanner />
 
             {/* Unified hero + tile panel. One bordered card spanning

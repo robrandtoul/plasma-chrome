@@ -34,7 +34,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   //   Arbitrary values sidestep that.
   const focusBorder = invalid
     ? 'focus:border-[var(--c-out)] focus:outline-[var(--c-out)]'
-    : 'focus:border-[var(--c-brand)] focus:outline-[var(--c-brand)]'
+    : 'focus:border-[var(--c-brand)] focus:outline-[var(--c-focus)]'
   const cls = [
     'w-full bg-surface text-ink font-sans border transition-colors',
     'focus:outline-2 focus:outline-offset-1',

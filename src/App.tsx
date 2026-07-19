@@ -1,4 +1,4 @@
-import { Suspense, useLayoutEffect } from 'react'
+import { Suspense, useCallback, useLayoutEffect, useState } from 'react'
 import {
   BrowserRouter,
   Routes,
@@ -10,9 +10,11 @@ import {
 import { AuthProvider, useAuth } from './lib/auth'
 import { TeamChatProvider } from './lib/teamChatStore'
 import { lazyWithRetry } from './lib/lazyWithRetry'
-import { useQuoteShortcut } from './lib/useQuoteShortcut'
+import { useDesignerShortcuts } from './lib/useQuoteShortcut'
 import RequireAuth from './components/RequireAuth'
 import RequireAdmin from './components/RequireAdmin'
+import ErrorBoundary from './components/ErrorBoundary'
+import DesignerSearch from './components/DesignerSearch'
 
 // Eager imports — the auth-critical path. LoginPage and SetNewPasswordPage
 // stay in the entry chunk so the sign-in / password-recovery flow renders
@@ -102,8 +104,13 @@ function ScrollToTopOnNavigate() {
 }
 
 function AppShell() {
-  useQuoteShortcut()
-  const { recovery } = useAuth()
+  const { recovery, session } = useAuth()
+  // The ⌘K command palette. Lives here rather than in DesignerChrome so it is
+  // available on every authenticated surface — including the admin shell,
+  // which renders its own chrome.
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const openPalette = useCallback(() => setPaletteOpen(true), [])
+  useDesignerShortcuts(openPalette, !!session)
   // A password-recovery link signs the user in, so without this they would land
   // on the dashboard and never be prompted. Take over the whole app until they
   // set a new password (or acknowledge an expired link).
@@ -120,6 +127,8 @@ function AppShell() {
   return (
     <TeamChatProvider>
       <ScrollToTopOnNavigate />
+      {session && <DesignerSearch open={paletteOpen} onClose={() => setPaletteOpen(false)} />}
+      <RouteErrorBoundary>
       <Suspense fallback={<RouteFallback />}>
         <Routes>
         {/* Public */}
@@ -212,8 +221,16 @@ function AppShell() {
         </Route>
       </Routes>
       </Suspense>
+      </RouteErrorBoundary>
     </TeamChatProvider>
   )
+}
+
+// Wraps the routes in the crash net, keyed on pathname so navigating away from
+// a page that threw clears the error and the app recovers without a reload.
+function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
+  const { pathname } = useLocation()
+  return <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>
 }
 
 export default function App() {

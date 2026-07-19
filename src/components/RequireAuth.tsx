@@ -1,9 +1,10 @@
-import { Navigate } from 'react-router-dom'
+import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { TrialModeBanner } from './TrialModeBanner'
 
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
+  const location = useLocation()
 
   if (loading) {
     return (
@@ -13,7 +14,11 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
     )
   }
 
-  if (!session) return <Navigate to="/login" replace />
+  // Carry where they were trying to go. A token refresh that fails mid-session
+  // lands here, and without `from` the designer signs back in and is dumped on
+  // the dashboard — `replace` means Back can't recover it either. LoginPage
+  // reads this and returns them to the page they were on.
+  if (!session) return <Navigate to="/login" replace state={{ from: location }} />
 
   // TrialModeBanner is always mounted; it self-renders nothing
   // when the global customer-replies feature is enabled, so the

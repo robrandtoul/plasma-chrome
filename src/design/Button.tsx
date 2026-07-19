@@ -22,13 +22,17 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 // paint the halo, only keyboard navigation. Colour references the
 // raw --c-brand custom property via arbitrary-value syntax for the
 // same cascade reasons documented on Input.
-const BASE = 'inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium font-sans transition-colors disabled:opacity-60 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]'
+const BASE = 'inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium font-sans transition-colors disabled:opacity-60 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)]'
 
 // 4px corners on both sizes — matches the 4px chips / inputs / cells
 // across the app for one consistent interactive-element radius.
+// Desktop keeps its 30/38px density. Below md: both sizes grow to the 44px
+// iOS minimum tap target — staff use this as an installed home-screen PWA and
+// a 30px control is a genuine mis-tap risk on a phone. Expressed as a
+// max-md: min-height so the desktop output is byte-for-byte unchanged.
 const SIZE_CLASS: Record<ButtonSize, string> = {
-  sm: 'h-[30px] px-[10px] text-[13px] rounded-[4px]',
-  md: 'h-[38px] px-4 text-sm rounded-[4px]',
+  sm: 'h-[30px] max-md:min-h-[44px] px-[10px] text-[13px] rounded-[4px]',
+  md: 'h-[38px] max-md:min-h-[44px] px-4 text-sm rounded-[4px]',
 }
 
 const VARIANT_CLASS: Record<ButtonVariant, string> = {

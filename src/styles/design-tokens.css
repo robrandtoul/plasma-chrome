@@ -43,10 +43,16 @@
   --c-line:      #ece4d3;  /* hairline */
   --c-line-soft: #f4ede0;  /* softer hairline */
 
-  --c-ink:       #161311;  /* primary text */
-  --c-ink-soft:  #3d342d;
-  --c-ink-mute:  #766b62;  /* eyebrows, helper copy */
-  --c-ink-dim:   #b6ac9f;  /* tertiary / disabled */
+  --c-ink:       #161311;  /* primary text — 17.3:1 on --c-bg */
+  --c-ink-soft:  #3d342d;  /* 11.4:1 */
+  --c-ink-mute:  #766b62;  /* eyebrows, helper copy — 4.86:1 */
+  /* Tertiary / disabled. Was #b6ac9f, which measured 2.09:1 on the cream
+     canvas — below every WCAG threshold — while being used ~380 times for
+     real content at 11-12px, not just placeholders. That is unreadable in a
+     bright studio. Lifted to 4.05:1: comfortably clears the 3:1 non-text and
+     large-text bars, near-AA for small text, and still a visible step lighter
+     than --c-ink-mute so the type hierarchy survives. */
+  --c-ink-dim:   #837868;
 
   /* ── Brand: electric coral ─────────────────────────────── */
   --c-brand-50:  #fff3ee;
@@ -62,6 +68,13 @@
   --c-brand:      var(--c-brand-500);
   --c-brand-soft: var(--c-brand-100);
   --c-brand-ink:  var(--c-brand-900);
+
+  /* Keyboard focus ring. Deliberately NOT --c-brand: the coral primary
+     measures 2.89:1 on the cream canvas, under WCAG 2.2's 3:1 minimum for
+     non-text, so keyboard focus was genuinely hard to spot. --c-brand-600
+     is the same hue one stop down at 3.76:1. Kept as its own token (rather
+     than darkening the brand) so fills, pills and wordmarks are untouched. */
+  --c-focus:      var(--c-brand-600);
 
   /* ── Stock statuses ───────────────────────────────────── */
   --c-in-stock:      #0e9b4e;
@@ -149,6 +162,10 @@
   --c-brand:      #58c59d;
   --c-brand-soft: #d8f0e7;
   --c-brand-ink:  #184436;
+  /* Focus ring, teal equivalent. brand-600 only reaches 2.71:1 against this
+     page's paler canvas, so the customer page steps down one further to
+     brand-700 (#32896a, 4.02:1). */
+  --c-focus:      var(--c-brand-700);
 
   /* Approved-signal trial: cyan family (customer page only), option B.
      The approved pill / status is coloured-text-on-soft-bg, so a

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { useNavigate, Navigate } from 'react-router-dom'
+import { useNavigate, Navigate, useLocation } from 'react-router-dom'
 import { KeyRound, Bell, Info, MailCheck } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
@@ -17,6 +17,19 @@ import {
 export default function LoginPage() {
   const { session, loading } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
+
+  // Where to land after signing in. RequireAuth stamps the page the designer
+  // was bounced off (a mid-session token refresh failure is the common case),
+  // so they come back to it instead of always the dashboard. Guarded to
+  // same-origin paths: the value is our own router state rather than user
+  // input, but a leading "//" would still read as protocol-relative.
+  const fromPath = (location.state as { from?: { pathname?: string; search?: string } } | null)?.from
+  const candidate = fromPath?.pathname ? `${fromPath.pathname}${fromPath.search ?? ''}` : null
+  const redirectTo =
+    candidate && candidate.startsWith('/') && !candidate.startsWith('//') && candidate !== '/login'
+      ? candidate
+      : '/'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -60,7 +73,7 @@ export default function LoginPage() {
   }, [])
 
   if (loading) return null
-  if (session) return <Navigate to="/" replace />
+  if (session) return <Navigate to={redirectTo} replace />
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -73,7 +86,7 @@ export default function LoginPage() {
       setError(error.message)
       setSubmitting(false)
     } else {
-      navigate('/')
+      navigate(redirectTo, { replace: true })
     }
   }
 

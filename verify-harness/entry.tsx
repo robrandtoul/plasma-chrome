@@ -11,6 +11,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import OrdersPage from '../src/pages/OrdersPage'
+import DesignerSearch from '../src/components/DesignerSearch'
 import AdminLayout from '../src/pages/admin/AdminLayout'
 import AdminHomePage from '../src/pages/admin/AdminHomePage'
 import AdminCatalogueDataPage from '../src/pages/admin/AdminCatalogueDataPage'
@@ -30,7 +31,15 @@ function Stub() {
 
 const requestedPath = new URLSearchParams(window.location.search).get('path')
 
-const tree = requestedPath?.startsWith('/admin') ? (
+// ?path=/palette mounts the ⌘K designer command palette on its own, open, so
+// its layout and the fixture-backed proof search can be checked headlessly.
+const tree = requestedPath === '/palette' ? (
+  <MemoryRouter initialEntries={['/']}>
+    <Routes>
+      <Route path="/" element={<DesignerSearch open onClose={() => {}} />} />
+    </Routes>
+  </MemoryRouter>
+) : requestedPath?.startsWith('/admin') ? (
   <MemoryRouter initialEntries={[requestedPath]}>
     <Routes>
       <Route path="/admin" element={<AdminLayout />}>

@@ -4,6 +4,8 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import JSZip from 'jszip'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
+import { getWorklistPosition } from '../lib/proofWorklist'
+import ConfirmDialog from '../components/ConfirmDialog'
 import VersionDetailModal, { type ModalVersion } from '../components/VersionDetailModal'
 import HelpScoutEditModal from '../components/HelpScoutEditModal'
 import Modal from '../components/Modal'
@@ -253,6 +255,9 @@ export default function ProofDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { role, session } = useAuth()
+  // Position in the dashboard's current list, for the ← / → controls in the
+  // breadcrumb. Null when this proof wasn't opened from that list.
+  const worklistPos = getWorklistPosition(id)
   const [proof, setProof] = useState<Proof | null>(null)
   // Workflow-bucket fields for this proof, read from public_dashboard_projects
   // so the status pill here matches the dashboard's pill + the headline tiles
@@ -1942,6 +1947,25 @@ export default function ProofDetailPage() {
   const isLocked    = isApproved || isAbandoned
 
   // ── Order state (Tier 2 in-context visibility + duplicate-order guard) ──────
+  // What "Delete project" will actually take with it. Orders cascade from the
+  // proof row, so a paid order and its Stock Control job go too — the designer
+  // needs to be told that before they confirm, not after.
+  const paidOrderCount = (orders ?? []).filter(
+    (o) => o.status === 'paid' || o.status === 'fulfilled' || o.status === 'revision',
+  ).length
+  const orderCount = (orders ?? []).length
+  const deleteImpactMessage = [
+    `Permanently delete this project and all ${versions.length} proof version${versions.length === 1 ? '' : 's'}?`,
+    orderCount > 0
+      ? `This also deletes ${orderCount} order${orderCount === 1 ? '' : 's'} attached to it${
+          paidOrderCount > 0
+            ? ` — including ${paidOrderCount} that ${paidOrderCount === 1 ? 'has' : 'have'} been PAID. Refund or credit ${paidOrderCount === 1 ? 'it' : 'them'} in Xero and cancel any Stock Control job first.`
+            : '.'
+        }`
+      : null,
+    'This cannot be undone.',
+  ].filter(Boolean).join(' ')
+
   const latestOrder = orders && orders.length > 0 ? orders[0] : null
   const latestExpired = latestOrder?.status === 'sent' && !!latestOrder.expires_at && Date.parse(latestOrder.expires_at) < Date.now()
   // "Open" = paid, placed, or a still-valid pay link — don't offer a fresh
@@ -2682,6 +2706,42 @@ export default function ProofDetailPage() {
               control there. */}
           <ChevronRight size={14} className="text-ink-dim max-md:hidden" aria-hidden="true" />
           <span className="text-ink-soft truncate max-md:hidden">{proof.contacts.full_name}</span>
+
+          {/* Step through the dashboard's current list without going back to
+              it each time. Only renders when this proof came from that list
+              (see lib/proofWorklist) — a proof opened from a link or a search
+              result simply has no arrows. */}
+          {worklistPos && (
+            <span className="ml-auto flex items-center gap-1">
+              <span className="mr-1 tabular-nums text-ink-mute max-md:hidden">
+                {worklistPos.index + 1} of {worklistPos.total}
+              </span>
+              <Link
+                to={worklistPos.prev ? `/proofs/${worklistPos.prev.proofId}` : '#'}
+                aria-disabled={!worklistPos.prev}
+                title={worklistPos.prev ? `Previous: ${worklistPos.prev.label}` : 'No previous project'}
+                onClick={(e) => { if (!worklistPos.prev) e.preventDefault() }}
+                className={`flex h-8 w-8 max-md:h-11 max-md:w-11 items-center justify-center rounded-[4px] border border-line transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)] ${
+                  worklistPos.prev ? 'text-ink-soft hover:bg-canvas' : 'pointer-events-none text-ink-dim opacity-50'
+                }`}
+              >
+                <ChevronLeft size={16} aria-hidden="true" />
+                <span className="sr-only">Previous project</span>
+              </Link>
+              <Link
+                to={worklistPos.next ? `/proofs/${worklistPos.next.proofId}` : '#'}
+                aria-disabled={!worklistPos.next}
+                title={worklistPos.next ? `Next: ${worklistPos.next.label}` : 'No next project'}
+                onClick={(e) => { if (!worklistPos.next) e.preventDefault() }}
+                className={`flex h-8 w-8 max-md:h-11 max-md:w-11 items-center justify-center rounded-[4px] border border-line transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)] ${
+                  worklistPos.next ? 'text-ink-soft hover:bg-canvas' : 'pointer-events-none text-ink-dim opacity-50'
+                }`}
+              >
+                <ChevronRight size={16} aria-hidden="true" />
+                <span className="sr-only">Next project</span>
+              </Link>
+            </span>
+          )}
         </nav>
 
         {/* Header card — bordered, status-rule on the left, customer
@@ -4097,7 +4157,13 @@ export default function ProofDetailPage() {
       {/* Delete confirm dialog */}
       {statusDialog === 'delete' && (
         <ConfirmDialog
-          message={`Permanently delete this project and all ${versions.length} proof version${versions.length === 1 ? '' : 's'}? This cannot be undone.`}
+          // Every FK to proofs.proofs is ON DELETE CASCADE, so this also
+          // destroys the project's ORDERS — including paid, invoiced ones,
+          // and any Stock Control job they created. The dialog used to
+          // mention only versions, which made a money-losing action look
+          // like tidying up. Name the orders explicitly and call out a paid
+          // one, since 000243 made this reachable by any designer.
+          message={deleteImpactMessage}
           confirmLabel="Delete project"
           confirmClass="bg-out hover:opacity-90 text-on-ink"
           working={statusWorking}
@@ -4680,80 +4746,4 @@ function VcardSnapshotEntryView({
   )
 }
 
-// Module-level counter so each ConfirmDialog instance gets a stable
-// unique id for the message paragraph (drives aria-describedby on
-// the panel). Counter is fine since ConfirmDialogs are short-lived
-// and there's at most one open at a time on this page.
-let confirmDialogIdCounter = 0
 
-function ConfirmDialog({
-  message,
-  confirmLabel,
-  confirmClass,
-  working,
-  errorMsg,
-  confirmDisabled,
-  checkbox,
-  onConfirm,
-  onCancel,
-}: {
-  message: string
-  confirmLabel: string
-  confirmClass: string
-  working: boolean
-  errorMsg?: string | null
-  // An independent pre-condition gate for the confirm button (separate from the
-  // double-click `working` guard). Used by the reopen dialog's "I've cancelled
-  // the Stock Control job" checkbox on a placed order.
-  confirmDisabled?: boolean
-  checkbox?: { label: string; checked: boolean; onChange: (v: boolean) => void }
-  onConfirm: () => void
-  onCancel: () => void
-}) {
-  // useState seed runs once per mount — gives a stable id for the
-  // lifetime of this particular dialog without depending on the
-  // global counter changing between renders.
-  const [messageId] = useState(() => `confirm-dialog-msg-${++confirmDialogIdCounter}`)
-  return (
-    <Modal
-      open
-      onClose={onCancel}
-      preventClose={working}
-      ariaLabel="Confirm action"
-      ariaDescribedBy={messageId}
-      panelClassName="w-full max-w-sm rounded-2xl bg-surface p-6 shadow-xl"
-    >
-      <p id={messageId} className="text-sm text-ink-soft">{message}</p>
-      {errorMsg && (
-        <p className="mt-3 rounded-lg bg-out-soft px-3 py-2 text-xs text-out">{errorMsg}</p>
-      )}
-      {checkbox && (
-        <label className="mt-4 flex items-start gap-2 text-sm text-ink-soft">
-          <input
-            type="checkbox"
-            checked={checkbox.checked}
-            onChange={(e) => checkbox.onChange(e.target.checked)}
-            className="mt-0.5"
-          />
-          <span>{checkbox.label}</span>
-        </label>
-      )}
-      <div className="mt-5 flex justify-end gap-2">
-        <button
-          onClick={onCancel}
-          disabled={working}
-          className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={onConfirm}
-          disabled={working || !!confirmDisabled}
-          className={`rounded px-4 py-2 text-sm font-semibold disabled:opacity-50 ${confirmClass}`}
-        >
-          {working ? 'Working…' : confirmLabel}
-        </button>
-      </div>
-    </Modal>
-  )
-}

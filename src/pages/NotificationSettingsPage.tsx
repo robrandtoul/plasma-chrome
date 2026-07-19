@@ -30,6 +30,17 @@ const ORDER_EVENTS: { code: string; label: string; hint: string }[] = [
   { code: 'project_reaches_to_order_status', label: 'Ready to order', hint: 'A project reaches the to-order stage.' },
 ]
 
+// Chat pushes had no controls at all, yet every direct message sends one —
+// easily the highest-volume push event for a team that chats all day. The only
+// escape was the account-wide Pause, which also silences "changes requested"
+// and "order paid": exactly the signals worth keeping. send-push already
+// honours `prefs[code] === 'off'` per event (migration 000320/000324), so
+// these rows just expose what the server could always do.
+const CHAT_EVENTS: { code: string; label: string; hint: string }[] = [
+  { code: 'team_chat_dm', label: 'Direct messages', hint: 'Someone sends you a private message.' },
+  { code: 'team_chat_mention', label: 'Mentions', hint: 'Someone @mentions you in the team room.' },
+]
+
 interface DeviceRow {
   id: string
   user_agent: string | null
@@ -139,6 +150,13 @@ export default function NotificationSettingsPage() {
     return roleDefaults[code] ?? 'own_projects'
   }
 
+  // Chat pushes default ON when unset, matching send-push (which only skips on
+  // an explicit 'off'), so this control reflects live behaviour rather than
+  // silently changing it.
+  function chatValue(code: string): 'on' | 'off' {
+    return prefs[code] === 'off' ? 'off' : 'on'
+  }
+
   function orderValue(code: string): 'on' | 'off' {
     const v = prefs[code]
     if (v === 'on') return 'on'
@@ -239,6 +257,31 @@ export default function NotificationSettingsPage() {
                   </div>
                 ))}
               </div>
+            </PanelShell>
+
+            <PanelShell title="Team chat" eyebrow="What to notify me about" icon={Bell}>
+              <div className="divide-y divide-line-soft">
+                {CHAT_EVENTS.map((ev) => (
+                  <div key={ev.code} className="flex items-center justify-between gap-4 py-2.5 first:pt-0 last:pb-0">
+                    <div className="min-w-0">
+                      <div className="text-[13px] text-ink">{ev.label}</div>
+                      <div className="text-[12px] text-ink-mute">{ev.hint}</div>
+                    </div>
+                    <Segmented
+                      value={chatValue(ev.code)}
+                      disabled={muted}
+                      onChange={(v) => setEvent(ev.code, v)}
+                      options={[
+                        { value: 'off', label: 'Off' },
+                        { value: 'on', label: 'On' },
+                      ]}
+                    />
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 text-[12px] text-ink-mute">
+                Ordinary messages in the team room never push — only mentions and direct messages do.
+              </p>
             </PanelShell>
 
             <PanelShell title="Your devices" eyebrow="Where notifications go" icon={Smartphone} count={devices.length}>

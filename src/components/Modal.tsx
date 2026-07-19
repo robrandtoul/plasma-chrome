@@ -24,10 +24,23 @@ function isTopModal(id: string) { return modalStack[modalStack.length - 1] === i
 // body locked after both close. Same pattern Radix / react-aria use.
 let scrollLockCount = 0
 let scrollLockPrevious = ''
+let scrollLockFramePrevious = ''
+// Below md the app is a locked h-dvh frame and ALL scrolling happens inside
+// #app-scroll — the body doesn't scroll at all (see DesignerChrome). Locking
+// only the body was therefore a no-op on phones: content behind an open modal
+// still scrolled under your finger. Lock whichever element actually scrolls.
+function appScrollFrame(): HTMLElement | null {
+  return document.getElementById('app-scroll')
+}
 function lockBodyScroll() {
   if (scrollLockCount === 0) {
     scrollLockPrevious = document.body.style.overflow
     document.body.style.overflow = 'hidden'
+    const frame = appScrollFrame()
+    if (frame) {
+      scrollLockFramePrevious = frame.style.overflow
+      frame.style.overflow = 'hidden'
+    }
   }
   scrollLockCount += 1
 }
@@ -35,6 +48,8 @@ function unlockBodyScroll() {
   scrollLockCount = Math.max(0, scrollLockCount - 1)
   if (scrollLockCount === 0) {
     document.body.style.overflow = scrollLockPrevious
+    const frame = appScrollFrame()
+    if (frame) frame.style.overflow = scrollLockFramePrevious
   }
 }
 

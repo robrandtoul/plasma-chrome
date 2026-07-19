@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { DesignerChrome, ButtonCoral, ButtonGhost, Pill } from '../design'
 import { supabase } from '../lib/supabase'
+import { useConfirm } from '../components/ConfirmDialog'
 import { useAuth } from '../lib/auth'
 import { logAudit } from '../lib/audit'
 import FlagProjectModal from '../components/FlagProjectModal'
@@ -131,6 +132,7 @@ function UpdateIcon({ kind, size = 12 }: { kind: WatchUpdateKind; size?: number 
 }
 
 export default function FlaggedPage() {
+  const { confirm, dialog: confirmDialog } = useConfirm()
   const { session, role } = useAuth()
   const userId = session?.user.id ?? null
   const isAdmin = role === 'admin'
@@ -357,7 +359,12 @@ export default function FlaggedPage() {
   }
 
   async function removeItem(item: WatchItem) {
-    if (!window.confirm('Remove this project from the flagged board? Its update thread will be deleted too.')) return
+    if (!(await confirm({
+      title: 'Remove from the flagged board?',
+      message: 'Its update thread will be deleted too.',
+      confirmLabel: 'Remove',
+      confirmClass: 'bg-out text-white hover:opacity-90',
+    }))) return
     setBusyId(item.id)
     const { error } = await supabase.from('watch_items').delete().eq('id', item.id)
     setBusyId(null)
@@ -726,6 +733,7 @@ export default function FlaggedPage() {
         </ButtonCoral>
       }
     >
+      {confirmDialog}
       <main className="mx-auto max-w-[920px] px-4 py-6 sm:px-7">
         <div className="mb-1 flex items-center gap-2">
           <Flag size={20} aria-hidden="true" className="text-brand" />

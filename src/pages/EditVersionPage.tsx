@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, type ChangeEvent } from 'react'
+import { useUnsavedChangesGuard } from '../lib/useUnsavedChangesGuard'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { v4 as uuidv4 } from 'uuid'
 import { supabase } from '../lib/supabase'
@@ -182,6 +183,8 @@ export default function EditVersionPage() {
   const [currency, setCurrency] = useState<Currency>('GBP')
   const [names, setNames] = useState<string[]>([])
   const [changeNotes, setChangeNotes] = useState('')
+  // What change_notes held when the version loaded — see the guard below.
+  const initialChangeNotesRef = useRef('')
   const [pricingDisplay, setPricingDisplay] = useState<PricingDisplayValue | null>(null)
   const [pricingSnapshot, setPricingSnapshot] = useState<PricingSnapshot | null>(null)
   // Personalisation flag and supporting material metadata (migration
@@ -249,6 +252,19 @@ export default function EditVersionPage() {
   const [toast, setToast] = useState<Toast | null>(null)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  // Warn before throwing away unsaved edits. Scoped to what can't be recovered
+  // by reloading: newly-dropped images (uploaded only at Save) and a change to
+  // the notes since load. Stands down once the save has gone through and the
+  // page has swapped to the preview/send step.
+  const hasNewImages = Object.values(editImagesByOption).some(
+    (list) => list.some((img) => img.kind === 'new'),
+  )
+  useUnsavedChangesGuard(
+    !savedVersionForPreview && !submitting
+      && (hasNewImages || changeNotes !== initialChangeNotesRef.current),
+    'Your changes to this version haven’t been saved yet. Leave anyway?',
+  )
 
   const fileRef         = useRef<HTMLInputElement>(null)
   const dragIndexRef    = useRef<number | null>(null)
@@ -411,6 +427,10 @@ export default function EditVersionPage() {
     setCurrency(v.currency as Currency)
     setNames(Array.isArray(v.names) ? (v.names as string[]) : [])
     setChangeNotes(v.change_notes ?? '')
+    // Baseline for the unsaved-changes guard: on an edit the notes arrive
+    // pre-filled, so "non-empty" means nothing — only a change from what was
+    // loaded counts as unsaved work.
+    initialChangeNotesRef.current = v.change_notes ?? ''
     setPricingDisplay(v.custom_quote ? 'custom' : 'standard')
     setPricingSnapshot(v.pricing_snapshot as PricingSnapshot)
     setShippingNote(v.shipping_note)
@@ -2270,10 +2290,17 @@ export default function EditVersionPage() {
                           {filename}
                         </p>
                       )}
+                      {/* Remove. Was opacity-0 + group-hover only, with no
+                          focus fallback — so on a phone (no hover) and by
+                          keyboard it was completely unreachable, at a 20px
+                          target. Now: always visible and 28px below md where
+                          there is no hover to reveal it; hover/focus-reveal
+                          retained on desktop so the grid stays clean. */}
                       <button
                         type="button"
                         onClick={() => removeImage(key)}
-                        className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-ink text-xs text-on-ink opacity-0 transition-opacity group-hover:opacity-100"
+                        aria-label={filename ? `Remove ${filename}` : 'Remove image'}
+                        className="absolute -right-1.5 -top-1.5 flex h-5 w-5 max-md:h-7 max-md:w-7 items-center justify-center rounded-full bg-ink text-xs text-on-ink transition-opacity max-md:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)]"
                       >
                         ×
                       </button>

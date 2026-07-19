@@ -10,6 +10,7 @@ import { PricingDisplayField, type PricingDisplayValue } from '../components/Pri
 import { CurrencyField } from '../components/CurrencyField'
 import NameChipInput from '../components/NameChipInput'
 import { matchImageToName } from '../lib/matchImageToName'
+import { useUnsavedChangesGuard } from '../lib/useUnsavedChangesGuard'
 import { matchMaterialByLabel } from '../lib/matchMaterial'
 import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { useImageFileDrop } from '../lib/useImageFileDrop'
@@ -2785,8 +2786,13 @@ export default function NewVersionPage() {
     setShared(next)
   }
 
-  function handleCardTypeChange(next: 'business' | 'membership') {
-    if (next === cardType) return
+  // Returns true when the flip was applied, false when the designer declined
+  // the discard confirm. Callers that pair this with their own destructive
+  // cleanup (handleWizardChange clearing the names roster) MUST check the
+  // result — running that cleanup after a declined confirm is exactly the
+  // "Cancel still destroyed my work" bug.
+  function handleCardTypeChange(next: 'business' | 'membership'): boolean {
+    if (next === cardType) return true
     // Card type flipping affects the slot universe only when
     // names[] transitions between empty and non-empty. Under the
     // new tiered-membership model, cardType no longer changes
@@ -2840,7 +2846,7 @@ export default function NewVersionPage() {
         const proceed = window.confirm(
           `Switching to ${next} will discard ${carriedLabel} and ${uploadedLabel}. Continue?`,
         )
-        if (!proceed) return
+        if (!proceed) return false
       }
     }
     cleanupReplacementsFor(vanishingV1)
@@ -2862,6 +2868,7 @@ export default function NewVersionPage() {
     // meanings carry through. Save path writes the preserved
     // names verbatim; the mode only affects validation + UI
     // copy, never the saved payload.
+    return true
   }
 
   // Flip variant-round mode and run the side-effects the old Round-
@@ -2897,6 +2904,8 @@ export default function NewVersionPage() {
   // names when entering the no-name Set branch so they can't persist
   // invisibly past the switch.
   function handleWizardChange(next: WizardAnswers) {
+    // Snapshot so a declined discard-confirm below can roll the wizard back.
+    const prevAnswers = wizardAnswers
     setWizardAnswers(next)
     const shape = resolveShape(next, {
       materialChosen: !!selectedMaterialId,
@@ -2937,13 +2946,24 @@ export default function NewVersionPage() {
       setHasPersonalisation(false)
       return
     }
-    if (fs.isVariantRound !== isVariantRound) applyVariantRoundMode(fs.isVariantRound)
-    setIsPerDirectionPricing(fs.isPerDirectionPricing)
+    // Card type is settled FIRST because it is the only step here that can
+    // prompt (and be declined). Doing it before the variant-round / per-
+    // direction setters means a declined confirm leaves nothing half-applied
+    // — we simply roll the wizard back and bail. The setters below read the
+    // current render's values, so the order is otherwise immaterial.
     if (fs.cardType !== cardType) {
       const enteringSet = fs.cardType === 'membership' && cardType === 'business'
-      handleCardTypeChange(fs.cardType)
+      if (!handleCardTypeChange(fs.cardType)) {
+        // Declined. Put the wizard back where it was so it can't display an
+        // answer the form never adopted, and — crucially — do NOT clear the
+        // names roster.
+        setWizardAnswers(prevAnswers)
+        return
+      }
       if (enteringSet) setNames([])
     }
+    if (fs.isVariantRound !== isVariantRound) applyVariantRoundMode(fs.isVariantRound)
+    setIsPerDirectionPricing(fs.isPerDirectionPricing)
     setHasPersonalisation(fs.hasPersonalisation)
     // A kept-together multi-material Set (collection) can't be priced by
     // the single-material grid, so force the version onto a custom quote.
@@ -4543,6 +4563,20 @@ export default function NewVersionPage() {
     layoutsImages:  layoutsImagesValid,
   } as const
   const isValid = Object.values(validations).every(Boolean)
+
+  // Warn before throwing away unsaved work. "Dirty" is scoped to the things
+  // that genuinely cannot be recovered by reloading: images staged in memory
+  // (they are only uploaded at Save, so a lost form means re-finding every
+  // file in Finder) and hand-typed change notes. Carried-forward state from
+  // the previous version is deliberately NOT counted — it re-derives on load,
+  // so counting it would prompt on a form the designer hasn't touched.
+  // Once savedVersion is set the work is safely in the database and the page
+  // has swapped to the send panel, so the guard stands down.
+  const hasStagedImages = Object.values(imagesByOption).some((list) => list.length > 0)
+  useUnsavedChangesGuard(
+    !savedVersion && !submitting && (hasStagedImages || changeNotes.trim().length > 0),
+    'This version hasn’t been saved yet. Your images and notes will be lost. Leave anyway?',
+  )
   // Rose-tint a field whenever its validation fails, regardless of
   // whether the designer has clicked Save yet. The previous gate
   // (`submitAttempted && !validations[k]`) hid the tint until the

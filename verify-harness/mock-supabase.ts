@@ -336,7 +336,37 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
     rows = [{ id: 'g1', status: 'sent', currency: 'GBP', token: 'gtok', payment_reference: 'GRP-TEST01', expires_at: daysAhead(12), pay_link_opened_at: null, xero_invoice_id: null, xero_invoice_error: null }]
     if (Array.isArray(filters['in:id'])) rows = rows.filter((r) => filters['in:id'].includes(r.id))
   } else if (table === 'profiles') {
-    rows = [{ designer_initials: 'RR', designer_colour: 'blue', full_name: 'Rob Randtoul', avatar_url: null, feedback_seen_at: null }]
+    // Multiple team members (not just Rob) so the chat thread-pill row and
+    // presence strip get realistic width to stress-test for overflow.
+    rows = [
+      { id: 'user-rob', designer_initials: 'RR', designer_colour: 'blue', full_name: 'Rob Randtoul', avatar_url: null, feedback_seen_at: null, team_chat_seen_at: null, deactivated_at: null },
+      { id: 'user-chris', designer_initials: 'CJ', designer_colour: 'teal', full_name: 'Christopher Jackson-Whitmore', avatar_url: null, feedback_seen_at: null, team_chat_seen_at: null, deactivated_at: null },
+      { id: 'user-donna', designer_initials: 'DL', designer_colour: 'coral', full_name: 'Donna Lambe', avatar_url: null, feedback_seen_at: null, team_chat_seen_at: null, deactivated_at: null },
+      { id: 'user-jack', designer_initials: 'JJ', designer_colour: 'purple', full_name: 'Jack Johnson', avatar_url: null, feedback_seen_at: null, team_chat_seen_at: null, deactivated_at: null },
+    ]
+    if (single) rows = rows.filter((r) => r.id === (filters['eq:id'] ?? 'user-rob'))
+  } else if (table === 'team_messages') {
+    // Edge-case content on purpose: a long unbroken URL (the classic
+    // flex/overflow trigger) and a long, space-free attachment filename.
+    rows = [
+      {
+        id: 'msg-1', author_id: 'user-jack', author_name: 'Jack Johnson', author_initials: 'JJ', author_colour: 'purple',
+        body: 'How’s the holiday', mentioned_user_ids: null, recipient_id: null,
+        attachment_paths: null, attachment_files: null, created_at: daysAgo(0.02),
+      },
+      {
+        id: 'msg-2', author_id: 'user-rob', author_name: 'Rob Randtoul', author_initials: 'RR', author_colour: 'blue',
+        body: 'Check this out https://www.dropbox.com/scl/fo/verylongfoldertoken1234567890abcdefghijklmnopqrstuvwxyz/order-artwork-final-approved-v3?dl=0&rlkey=abcdefghijklmnopqrstuvwxyz1234567890',
+        mentioned_user_ids: null, recipient_id: null, attachment_paths: null, attachment_files: null, created_at: daysAgo(0.015),
+      },
+      {
+        id: 'msg-3', author_id: 'user-chris', author_name: 'Christopher Jackson-Whitmore', author_initials: 'CJ', author_colour: 'teal',
+        body: 'Attaching the print-ready file', mentioned_user_ids: null, recipient_id: null,
+        attachment_paths: ['chat/fixture-1.pdf'],
+        attachment_files: [{ path: 'chat/fixture-1.pdf', name: 'AcmeCorporationBusinessCards_FrontAndBack_FINAL_APPROVED_FOR_PRINT_2026.pdf', type: 'application/pdf', size: 4_200_000 }],
+        created_at: daysAgo(0.01),
+      },
+    ]
   } else if (table === 'watch_items') {
     return { data: null, error: null, count: 2 }
   }
@@ -369,6 +399,28 @@ function makeBuilder(schema: string, table: string): any {
 export const supabase: any = {
   from: (table: string) => makeBuilder('proofs', table),
   schema: (schema: string) => ({ from: (table: string) => makeBuilder(schema, table) }),
+  // Generic RPC stand-in — DashboardPage (and others) call these directly on
+  // `supabase`, not via `.from()`, so they need their own fixture path.
+  // Unknown names resolve to an empty array, matching the file's existing
+  // "unrelated chrome never breaks the page under test" philosophy.
+  rpc: async (name: string) => {
+    if (name === 'dashboard_list') return { data: DASHBOARD_PROJECTS, error: null }
+    if (name === 'dashboard_tile_counts') {
+      return {
+        data: {
+          needs_attention: 6,
+          not_viewed: 7,
+          awaiting_customer: 15,
+          customer_responded: 3,
+          in_follow_up: 4,
+          approved_this_week: 2,
+          dormant: 1,
+        },
+        error: null,
+      }
+    }
+    return { data: [], error: null }
+  },
   functions: {
     invoke: async (name: string, opts?: { body?: any }) => {
       // Full PaymentsStatus shape — AdminSettingsPage reads this on mount and
