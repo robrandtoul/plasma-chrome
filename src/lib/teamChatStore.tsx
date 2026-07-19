@@ -186,6 +186,29 @@ function readPlacement(): ChatPlacement {
   }
 }
 
+const THREAD_KEY = 'pv:chat-thread'
+// Restore the last-open conversation across a hard refresh: 'team' or a peer's
+// user id (a DM). Defaults to the team room. A restored DM peer who has since
+// been deactivated is validated against the live roster on load (see the guard
+// in the mount effect) and falls back to team.
+function readThread(): ChatThread {
+  try {
+    return localStorage.getItem(THREAD_KEY) || 'team'
+  } catch {
+    return 'team'
+  }
+}
+function writeThread(thread: ChatThread) {
+  try {
+    // 'team' is the default, so store nothing for it (keeps the key absent for
+    // the common case, same as pinned/placement).
+    if (thread === 'team') localStorage.removeItem(THREAD_KEY)
+    else localStorage.setItem(THREAD_KEY, thread)
+  } catch {
+    /* localStorage unavailable — thread still switches for this session */
+  }
+}
+
 // Inert default so consumers (e.g. the header) don't crash if they render
 // outside the provider (the design-system preview harness, signed-out routes).
 const DEFAULT: TeamChatValue = {
@@ -266,7 +289,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   // Unread per thread ('team' or peer id). Totals are derived at render.
   const [threadUnread, setThreadUnread] = useState<Record<string, number>>({})
   const [mentionUnread, setMentionUnread] = useState(0)
-  const [activeThread, setActiveThreadState] = useState<ChatThread>('team')
+  const [activeThread, setActiveThreadState] = useState<ChatThread>(readThread)
   // Per-thread history pager: absent = unknown, 'loading' = fetch in flight,
   // 'exhausted' = the start of that thread's history is loaded.
   const [historyStatus, setHistoryStatus] = useState<Record<string, 'loading' | 'exhausted'>>({})
@@ -298,7 +321,7 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   const seenAtRef = useRef<string | null>(null)
   // Per-peer DM "last read" stamps (team_chat_dm_reads), keyed by peer id.
   const dmReadsRef = useRef<Record<string, string>>({})
-  const activeThreadRef = useRef<ChatThread>('team')
+  const activeThreadRef = useRef<ChatThread>(readThread())
   const messagesRef = useRef<TeamMessage[]>([])
   messagesRef.current = messages
   const historyStatusRef = useRef(historyStatus)
@@ -462,6 +485,20 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
           avatarUrl: m.avatar_url,
         })),
       )
+
+      // Guard the restored thread against the live roster: a DM whose peer has
+      // since been deactivated/removed isn't in `mem`, so fall back to the team
+      // room rather than stranding the user on a thread with no pill and a
+      // "Message the team…" composer. 'team' is always valid.
+      const restoredThread = activeThreadRef.current
+      if (
+        restoredThread !== 'team' &&
+        !((mem ?? []) as Array<{ id: string }>).some((m) => m.id === restoredThread)
+      ) {
+        activeThreadRef.current = 'team'
+        setActiveThreadState('team')
+        writeThread('team')
+      }
 
       seenAtRef.current = (prof?.team_chat_seen_at as string | null) ?? null
       profileRef.current = {
@@ -671,6 +708,8 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     setActiveThread: (thread: ChatThread) => {
       activeThreadRef.current = thread
       setActiveThreadState(thread)
+      // Remember it so a hard refresh reopens this conversation, not team.
+      writeThread(thread)
       // If a chat surface is open, landing on the thread reads it.
       if (viewingRef.current) stampSeen(thread)
       recomputeTyping()
