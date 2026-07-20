@@ -5,14 +5,9 @@
 //
 // Soft 14% tint background with a solid text colour matches the readability you
 // want at 24px — a solid bg + white text reads too heavy when 20+ avatars stack
-// in a list. Same four-colour palette as DesignerHeader's COLOUR_BG.
+// in a list. Palette shared with the header and chat via lib/designerColours.
 
-const AVATAR_COLOUR: Record<string, string> = {
-  blue: 'var(--c-allocated)',
-  teal: 'var(--c-in-stock)',
-  coral: 'var(--c-brand)',
-  purple: '#7b3ff2',
-}
+import { designerColourCss } from '../lib/designerColours'
 
 export default function DesignerAvatar({
   initials,
@@ -26,7 +21,7 @@ export default function DesignerAvatar({
   tooltip?: string
 }) {
   const ini = (initials ?? '').slice(0, 2) || '—'
-  const tint = AVATAR_COLOUR[colour ?? 'teal'] ?? AVATAR_COLOUR.teal
+  const tint = designerColourCss(colour, 'teal')
   const tintedStyle = avatarUrl
     ? undefined
     : {

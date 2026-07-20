@@ -2,7 +2,13 @@ import { useEffect, useId, useRef, useState } from 'react'
 import Modal from './Modal'
 import { supabase } from '../lib/supabase'
 import { logAudit } from '../lib/audit'
-import type { DesignerColour } from '../lib/dashboardGrouping'
+import {
+  DESIGNER_COLOURS,
+  designerColourCss,
+  designerColourLabel,
+  designerTint,
+  type DesignerColour,
+} from '../lib/designerColours'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -20,21 +26,15 @@ function initialsFromName(name: string): string {
 
 // ── Colour catalogue ─────────────────────────────────────────────────────────
 
-const COLOURS: {
-  value: DesignerColour
-  label: string
-  bg: string
-  text: string
-  ring: string
-}[] = [
-  { value: 'blue',   label: 'Blue',   bg: 'bg-sky-100',    text: 'text-sky-800',    ring: 'ring-sky-400' },
-  { value: 'teal',   label: 'Teal',   bg: 'bg-teal-100',   text: 'text-teal-800',   ring: 'ring-teal-400' },
-  { value: 'coral',  label: 'Coral',  bg: 'bg-orange-100', text: 'text-orange-800', ring: 'ring-orange-400' },
-  { value: 'purple', label: 'Purple', bg: 'bg-violet-100', text: 'text-violet-800', ring: 'ring-violet-400' },
-]
-
-function colourMeta(c: DesignerColour) {
-  return COLOURS.find((x) => x.value === c) ?? COLOURS[0]
+/**
+ * Swatch styling, derived from the shared palette rather than a parallel set of
+ * Tailwind classes. The old sky/teal/orange/violet classes were only ever an
+ * approximation of the real avatar colours, so the picker showed you something
+ * slightly different from what everyone else would see. Soft tint + solid text
+ * matches how DesignerAvatar renders on the dashboard.
+ */
+function swatchStyle(c: DesignerColour) {
+  return { backgroundColor: designerTint(c, 14), color: designerColourCss(c) }
 }
 
 const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp']
@@ -89,6 +89,10 @@ export default function EditProfileModal({
   const [uploading,       setUploading]       = useState(false)
   const [uploadError,     setUploadError]     = useState<string | null>(null)
   const [formError,       setFormError]       = useState<string | null>(null)
+  // Colour → the teammate already using it, so the picker can steer you off a
+  // clash. Keyed off the roster RPC rather than a profiles read: the profiles
+  // SELECT policies only expose your own row to a non-admin (see 000329).
+  const [takenBy,         setTakenBy]         = useState<Partial<Record<DesignerColour, string>>>({})
 
   // ── Load current profile ─────────────────────────────────────────────────
 
@@ -121,6 +125,30 @@ export default function EditProfileModal({
         setLoading(false)
       })
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId])
+
+  // ── Which colours are already spoken for ─────────────────────────────────
+  //
+  // Best-effort: if the roster call fails the picker simply offers everything,
+  // which is the behaviour it had before. Never blocks opening the modal.
+
+  useEffect(() => {
+    supabase
+      .rpc('team_roster')
+      .then(({ data, error }) => {
+        if (error || !data) return
+        const map: Partial<Record<DesignerColour, string>> = {}
+        for (const m of data as Array<{
+          id: string
+          full_name: string | null
+          designer_colour: string | null
+        }>) {
+          if (m.id === userId) continue
+          const c = m.designer_colour as DesignerColour | null
+          if (c && !map[c]) map[c] = (m.full_name ?? 'a teammate').split(' ')[0]
+        }
+        setTakenBy(map)
+      })
   }, [userId])
 
   // ── Avatar upload ────────────────────────────────────────────────────────
@@ -302,7 +330,9 @@ export default function EditProfileModal({
 
   // ── Render ───────────────────────────────────────────────────────────────
 
-  const cm = colourMeta(colour)
+  // Only bar a clash while there is somewhere else to go — with more staff than
+  // colours, a disabled-everything picker would be a dead end.
+  const freeColourExists = DESIGNER_COLOURS.some((c) => !takenBy[c])
 
   return (
     <Modal open onClose={onClose} preventClose={saving || uploading} ariaLabelledBy={titleId}>
@@ -337,11 +367,8 @@ export default function EditProfileModal({
                   />
                 ) : (
                   <span
-                    className={[
-                      'flex h-full w-full items-center justify-center text-lg font-semibold',
-                      cm.bg,
-                      cm.text,
-                    ].join(' ')}
+                    className="flex h-full w-full items-center justify-center text-lg font-semibold"
+                    style={swatchStyle(colour)}
                     aria-hidden
                   >
                     {initials || '?'}
@@ -484,10 +511,8 @@ export default function EditProfileModal({
               {/* Live avatar preview — shows photo if uploaded, initials otherwise */}
               <span
                 aria-hidden
-                className={[
-                  'flex h-9 w-9 shrink-0 select-none items-center justify-center rounded-full text-sm font-semibold ring-1 ring-line overflow-hidden',
-                  !avatarUrl ? `${cm.bg} ${cm.text}` : '',
-                ].join(' ')}
+                className="flex h-9 w-9 shrink-0 select-none items-center justify-center overflow-hidden rounded-full text-sm font-semibold ring-1 ring-line"
+                style={avatarUrl ? undefined : swatchStyle(colour)}
               >
                 {avatarUrl
                   ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
@@ -503,28 +528,46 @@ export default function EditProfileModal({
           {/* Colour picker ──────────────────────────────────────────────── */}
           <div>
             <p className="mb-2 text-sm font-medium text-ink-soft">Avatar colour</p>
-            <p className="mb-2 text-xs text-ink-dim">Used as the background for your initials when no photo is set.</p>
-            <div className="flex gap-3" role="radiogroup" aria-label="Avatar colour">
-              {COLOURS.map((c) => (
-                <button
-                  key={c.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={colour === c.value}
-                  aria-label={c.label}
-                  onClick={() => setColour(c.value)}
-                  className={[
-                    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold transition-transform focus:outline-none focus-visible:ring-2 focus-visible:ring-brand',
-                    c.bg,
-                    c.text,
-                    colour === c.value
-                      ? `scale-110 ring-2 ring-offset-2 ${c.ring}`
-                      : 'ring-1 ring-line hover:scale-105',
-                  ].join(' ')}
-                >
-                  {initials || '?'}
-                </button>
-              ))}
+            <p className="mb-2 text-xs text-ink-dim">
+              Used as the background for your initials when no photo is set, and as the tint on your
+              chat messages. Colours already taken by a teammate are greyed out, so everyone stays
+              telling-apart-able at a glance.
+            </p>
+            <div className="flex flex-wrap gap-3" role="radiogroup" aria-label="Avatar colour">
+              {DESIGNER_COLOURS.map((c) => {
+                const owner = takenBy[c]
+                // Your own current colour is never "taken" — it's yours.
+                const blocked = !!owner && c !== colour && freeColourExists
+                const label = designerColourLabel(c)
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    role="radio"
+                    aria-checked={colour === c}
+                    aria-label={owner ? `${label} — already used by ${owner}` : label}
+                    title={owner ? `${label} — already used by ${owner}` : label}
+                    disabled={blocked}
+                    onClick={() => setColour(c)}
+                    className={[
+                      'flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold transition-transform focus:outline-none focus-visible:ring-2 focus-visible:ring-brand',
+                      blocked
+                        ? 'cursor-not-allowed opacity-30 ring-1 ring-line'
+                        : colour === c
+                          ? 'scale-110 ring-2 ring-offset-2'
+                          : 'ring-1 ring-line hover:scale-105',
+                    ].join(' ')}
+                    style={{
+                      ...swatchStyle(c),
+                      ...(colour === c && !blocked
+                        ? { ['--tw-ring-color' as string]: designerColourCss(c) }
+                        : {}),
+                    }}
+                  >
+                    {initials || '?'}
+                  </button>
+                )
+              })}
             </div>
           </div>
 

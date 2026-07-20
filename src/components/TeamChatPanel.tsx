@@ -39,6 +39,7 @@ import {
   type ChatAttachment,
   type TeamMessage,
 } from '../lib/teamChat'
+import { designerTint } from '../lib/designerColours'
 
 const CHAT_BUCKET = 'chat-attachments'
 const EMOJI_CHOICES = ['👍', '❤️', '😂', '🎉', '👀', '✅', '🙏']
@@ -1053,6 +1054,13 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
               const authorAvatar = m.author_id
                 ? membersById.get(m.author_id)?.avatarUrl ?? null
                 : null
+              // Prefer the roster's live colour over the copy frozen onto the
+              // row when it was sent, so someone changing their colour
+              // recolours their whole history at once rather than splitting it
+              // into before-and-after. The frozen value is the fallback for an
+              // author who has since left the roster.
+              const authorColour =
+                (m.author_id ? membersById.get(m.author_id)?.colour : null) ?? m.author_colour
               return (
                 <li key={m.id}>
                   {showDay && (
@@ -1089,7 +1097,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                           ) : (
                             <span
                               className="inline-flex h-9 w-9 items-center justify-center rounded-full font-mono text-[12px] font-medium text-white sm:h-7 sm:w-7 sm:text-[10px]"
-                              style={{ backgroundColor: authorBadgeColour(m.author_colour) }}
+                              style={{ backgroundColor: authorBadgeColour(authorColour) }}
                               aria-hidden="true"
                             >
                               {(m.author_initials ?? '?').slice(0, 2)}
@@ -1117,11 +1125,18 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                         </div>
                       )}
                       <div className={['flex items-start gap-2', mine ? '' : 'flex-row-reverse'].join(' ')}>
+                        {/* A wash of the author's own colour, so a glance down
+                            the thread reads as "Chris, Chris, Donna" without
+                            parsing names. 10% rather than the 14% used for
+                            small chips — a bubble is a much larger filled area,
+                            and above ~12% the tint starts competing with the
+                            message text instead of sitting behind it. */}
                         <div
                           className={[
-                            'min-w-0 rounded-[14px] bg-canvas px-3 py-1.5',
+                            'min-w-0 rounded-[14px] px-3 py-1.5',
                             !grouped ? (mine ? 'rounded-tl-[5px]' : 'rounded-tr-[5px]') : '',
                           ].join(' ')}
+                          style={{ backgroundColor: designerTint(authorColour, 10) }}
                         >
                           {m.body && (
                             <p className="whitespace-pre-wrap break-words text-[19px] leading-snug text-ink-soft sm:text-[14px]">

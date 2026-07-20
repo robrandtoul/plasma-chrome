@@ -285,6 +285,16 @@ interface QueryState {
   filters: Record<string, any>
 }
 
+// Multiple team members (not just Rob) so the chat thread-pill row and presence
+// strip get realistic width to stress-test for overflow, and so the Edit-profile
+// colour picker has colours genuinely taken by someone else.
+const PROFILES = [
+  { id: 'user-rob', designer_initials: 'RR', designer_colour: 'blue', full_name: 'Rob Randtoul', avatar_url: null, feedback_seen_at: null, team_chat_seen_at: null, deactivated_at: null },
+  { id: 'user-chris', designer_initials: 'CJ', designer_colour: 'teal', full_name: 'Christopher Jackson-Whitmore', avatar_url: null, feedback_seen_at: null, team_chat_seen_at: null, deactivated_at: null },
+  { id: 'user-donna', designer_initials: 'DL', designer_colour: 'coral', full_name: 'Donna Lambe', avatar_url: null, feedback_seen_at: null, team_chat_seen_at: null, deactivated_at: null },
+  { id: 'user-jack', designer_initials: 'JJ', designer_colour: 'purple', full_name: 'Jack Johnson', avatar_url: null, feedback_seen_at: null, team_chat_seen_at: null, deactivated_at: null },
+]
+
 function resolveQuery(state: QueryState): { data: any; error: null; count?: number } {
   const { table, select, single, filters } = state
   let rows: any[] = []
@@ -336,14 +346,7 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
     rows = [{ id: 'g1', status: 'sent', currency: 'GBP', token: 'gtok', payment_reference: 'GRP-TEST01', expires_at: daysAhead(12), pay_link_opened_at: null, xero_invoice_id: null, xero_invoice_error: null }]
     if (Array.isArray(filters['in:id'])) rows = rows.filter((r) => filters['in:id'].includes(r.id))
   } else if (table === 'profiles') {
-    // Multiple team members (not just Rob) so the chat thread-pill row and
-    // presence strip get realistic width to stress-test for overflow.
-    rows = [
-      { id: 'user-rob', designer_initials: 'RR', designer_colour: 'blue', full_name: 'Rob Randtoul', avatar_url: null, feedback_seen_at: null, team_chat_seen_at: null, deactivated_at: null },
-      { id: 'user-chris', designer_initials: 'CJ', designer_colour: 'teal', full_name: 'Christopher Jackson-Whitmore', avatar_url: null, feedback_seen_at: null, team_chat_seen_at: null, deactivated_at: null },
-      { id: 'user-donna', designer_initials: 'DL', designer_colour: 'coral', full_name: 'Donna Lambe', avatar_url: null, feedback_seen_at: null, team_chat_seen_at: null, deactivated_at: null },
-      { id: 'user-jack', designer_initials: 'JJ', designer_colour: 'purple', full_name: 'Jack Johnson', avatar_url: null, feedback_seen_at: null, team_chat_seen_at: null, deactivated_at: null },
-    ]
+    rows = [...PROFILES]
     if (single) rows = rows.filter((r) => r.id === (filters['eq:id'] ?? 'user-rob'))
   } else if (table === 'team_messages') {
     // Edge-case content on purpose: a long unbroken URL (the classic
@@ -405,6 +408,9 @@ export const supabase: any = {
   // "unrelated chrome never breaks the page under test" philosophy.
   rpc: async (name: string) => {
     if (name === 'dashboard_list') return { data: DASHBOARD_PROJECTS, error: null }
+    // The staff roster, as the real SECURITY DEFINER RPC returns it. Lets the
+    // Edit-profile colour picker be checked with colours actually taken.
+    if (name === 'team_roster') return { data: PROFILES, error: null }
     if (name === 'dashboard_tile_counts') {
       return {
         data: {

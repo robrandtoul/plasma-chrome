@@ -61,19 +61,9 @@ export function formatBytes(n: number): string {
   return `${rounded} ${units[unit]}`
 }
 
-// Map the four legacy designer-colour names to design tokens for the author
-// chip. Duplicated (small) from DesignerHeader's COLOUR_BG / feedback's
-// AUTHOR_BADGE_BG rather than cross-importing, keeping this module standalone.
-const AUTHOR_BADGE_BG: Record<string, string> = {
-  blue: 'var(--c-allocated)',
-  teal: 'var(--c-in-stock)',
-  coral: 'var(--c-brand)',
-  purple: '#7b3ff2',
-}
-
-export function authorBadgeColour(colour: string | null | undefined): string {
-  return AUTHOR_BADGE_BG[colour ?? ''] ?? 'var(--c-ink-mute, #8a8a8a)'
-}
+// The author chip's colour, from the shared identity palette so a person's
+// chat avatar matches their header avatar and dashboard chip.
+export { designerColourCss as authorBadgeColour, designerTint } from './designerColours'
 
 // Message text split into plain runs and URL runs, so the composer can stay
 // text-only while a pasted link (e.g. a /proofs/:id URL — "can someone look at

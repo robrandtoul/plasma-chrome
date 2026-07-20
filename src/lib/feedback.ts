@@ -161,16 +161,6 @@ export function isRecentlyShipped(
   return now - changed <= RECENTLY_SHIPPED_DAYS * 24 * 60 * 60 * 1000
 }
 
-// Map the four legacy designer-colour names onto a CSS colour for the small
-// author initials badge on each card. Mirrors DesignerHeader's COLOUR_BG so
-// a staffer's badge colour matches their header avatar.
-const AUTHOR_BADGE_BG: Record<string, string> = {
-  blue: 'var(--c-allocated)',
-  teal: 'var(--c-in-stock)',
-  coral: 'var(--c-brand)',
-  purple: '#7b3ff2',
-}
-
-export function authorBadgeColour(colour: string | null | undefined): string {
-  return AUTHOR_BADGE_BG[colour ?? ''] ?? 'var(--c-ink-mute, #8a8a8a)'
-}
+// The small author initials badge on each card, from the shared identity
+// palette so a staffer's badge colour matches their header avatar.
+export { designerColourCss as authorBadgeColour } from './designerColours'

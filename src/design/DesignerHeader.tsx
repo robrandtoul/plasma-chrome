@@ -27,6 +27,7 @@ import { useScrolled } from './useScrolled'
 import { getOrderingEnabled, peekOrderingEnabled } from '../lib/orderingEnabled'
 import { openCommandPalette } from '../lib/useQuoteShortcut'
 import ChatMenu from '../components/ChatMenu'
+import { designerColourCss, type DesignerColour } from '../lib/designerColours'
 
 // Shared chrome for every designer-facing page. Sticky top bar with
 // the wordmark on the left, a pill nav strip beside it, an optional
@@ -48,7 +49,9 @@ export type DesignerNavId =
   | 'chat'
   | 'activity'
   | 'admin'
-export type DesignerHeaderColour = 'blue' | 'teal' | 'coral' | 'purple'
+// Alias kept so the many `DesignerHeaderColour` imports keep working; the
+// palette itself lives in lib/designerColours.
+export type DesignerHeaderColour = DesignerColour
 
 interface NavItem {
   id: DesignerNavId
@@ -77,18 +80,6 @@ const NAV: NavItem[] = [
   { id: 'admin',  label: 'Admin',  to: '/admin' },
 ]
 
-// Map the four legacy designer colours to design-system tokens. The
-// older Tailwind palette (sky/teal/orange/violet) is retained for
-// the dashboard-row DesignerAvatar component for now; the header
-// pill uses these brand-system colours so the chrome matches the
-// reskin tokens. Purple has no exact token match — falls back to
-// a hand-picked violet that lives only here.
-const COLOUR_BG: Record<DesignerHeaderColour, string> = {
-  blue:   'var(--c-allocated)',
-  teal:   'var(--c-in-stock)',
-  coral:  'var(--c-brand)',
-  purple: '#7b3ff2',
-}
 
 interface SearchProps {
   value: string
@@ -505,7 +496,7 @@ function AccountSheet({
         <div className="flex items-center gap-3 px-2 py-2">
           <span
             className="inline-flex h-10 w-10 items-center justify-center overflow-hidden rounded-full font-mono text-[13px] font-medium"
-            style={user.avatarUrl ? undefined : { backgroundColor: COLOUR_BG[user.colour], color: '#fff' }}
+            style={user.avatarUrl ? undefined : { backgroundColor: designerColourCss(user.colour), color: '#fff' }}
           >
             {user.avatarUrl ? (
               <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" />
@@ -695,7 +686,7 @@ function UserPill({
     }
   }, [open])
 
-  const bg = COLOUR_BG[user.colour]
+  const bg = designerColourCss(user.colour)
   const avatarStyle = user.avatarUrl
     ? undefined
     : { backgroundColor: bg, color: '#fff' }

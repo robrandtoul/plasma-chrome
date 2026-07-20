@@ -2,8 +2,11 @@
 // be unit-tested independently of the React component tree.
 
 import type { ProofStatus } from './types'
+import type { DesignerColour } from './designerColours'
 
-export type DesignerColour = 'blue' | 'teal' | 'coral' | 'purple'
+// Re-exported so the many existing `from '../lib/dashboardGrouping'` imports
+// keep working; the palette itself lives in lib/designerColours.
+export type { DesignerColour }
 
 export type NeedsAttentionRule =
   | 'request_changes_no_version'
