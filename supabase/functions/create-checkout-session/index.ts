@@ -599,6 +599,36 @@ Deno.serve(async (req) => {
     productLabel = `${qtyPrefix}${materialName || 'Cards'}${variantSuffix}${optionSuffix}`.trim()
   }
 
+  // ── Priced-at-all guard ──────────────────────────────────────────
+  // Goods must be a positive figure by this point. The grid branch already
+  // bails via pricing_not_supported when it can't find a tier, but the
+  // custom-quote branch takes `custom_quote_total` at face value — and a blank
+  // "agreed total" box used to store 0 (Number('') === 0), which then also
+  // zeroed the card discount (resolveCardDiscount returns 0 on a zero base) and
+  // left this function happily charging shipping alone. The order forms now
+  // reject a blank box; this is the backstop, so a £0 order can never be
+  // CHARGED even if one is somehow created. Deliberately keyed on `goods`
+  // (pre-discount), not the final total, so a legitimate 100%-off goodwill
+  // discount still goes through.
+  //
+  // Prototypes carry a real flat fee and reprints never reach checkout (they're
+  // born paid), so neither is a false positive here.
+  if (!Number.isFinite(goods) || goods <= 0) {
+    console.error('[create-checkout-session] refusing zero-goods order', {
+      orderId: order.id,
+      // NB: the `ref` const is declared further down, so build it inline here —
+      // reading it before its initialiser would throw and turn this clean 422
+      // into a 500 at exactly the moment the guard is supposed to fire.
+      ref: order.payment_reference ?? order.id,
+      orderKind: order.order_kind,
+      customQuoteTotal: order.custom_quote_total,
+    })
+    return json({
+      error: 'pricing_not_supported',
+      message: 'We couldn’t price this order online — please reply to the email you received and we’ll confirm the price and send a payment link.',
+    }, 422)
+  }
+
   // ── Shipping (server-authoritative) ──────────────────────────────
   // free → 0; manual → the designer's fixed figure; full_cost / goodwill →
   // the live carriage for the rating destination (UK flat DPD, or a FedEx
@@ -1177,6 +1207,26 @@ async function handleGroupCheckout(ctx: {
       const variantSuffix = variantName && variantName !== materialName ? ` ${variantName}` : ''
       const optionSuffix = optionName ? ` — ${optionName}` : ''
       label = `${qtyPrefix}${materialName || 'Cards'}${variantSuffix}${optionSuffix}`.trim()
+    }
+
+    // Same priced-at-all guard as the single-order path: a member whose goods
+    // came out at zero (a custom quote saved with a blank agreed total) would
+    // otherwise contribute nothing to the combined charge while still being
+    // marked paid and invoiced. Refuse the whole group rather than quietly
+    // undercharge one card. Keyed on pre-discount goods, so a 100%-off member
+    // is still allowed.
+    if (!Number.isFinite(goods) || goods <= 0) {
+      console.error('[create-checkout-session] refusing zero-goods group member', {
+        groupId,
+        memberOrderId: m.id,
+        ref: m.payment_reference,
+        orderKind: m.order_kind,
+        customQuoteTotal: m.custom_quote_total,
+      })
+      return json({
+        error: 'group_member_not_payable',
+        message: 'One of the items in this combined payment couldn’t be priced online — please reply to the email you received.',
+      }, 409)
     }
 
     // Combined parcel weight for the FedEx rating below.
