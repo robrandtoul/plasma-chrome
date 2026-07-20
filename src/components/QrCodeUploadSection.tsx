@@ -549,6 +549,11 @@ export function QrCodeUploadSection({
                       <p className="mt-1 truncate text-[12px] text-ink-mute" title={find.decodedData}>
                         {describeFind(find)}
                       </p>
+                      {find.rendering === 'rebuilt' && (
+                        <p className="mt-1 text-[11px] text-ink-mute">
+                          Redrawn from the artwork so the customer can scan it off their screen.
+                        </p>
+                      )}
                       {!find.cropped && (
                         <p className="mt-1 text-[11px] text-low">
                           Couldn't isolate the code — this attaches the whole image. Check it before adding.

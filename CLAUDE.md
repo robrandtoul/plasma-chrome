@@ -323,6 +323,26 @@ The designer used to upload a cropped copy of a QR that was already plainly visi
 
 - `scanArtworkForQrs(sources)` takes `{ id, url, associatedName, side, filename }`. Both version forms can feed it the same shape because `preview` is a blob URL for a freshly-dropped file and a signed URL for a saved row. NewVersionPage also passes the v1 images being carried forward; EditVersionPage passes everything in `editImagesByOption`.
 - Cropping uses the decoder's corner points, padded ~12% for a quiet zone, cropped from the **source** pixels (not a synthesised white border) so the stored image shows the code as it actually prints. Verified on real proofs: every crop re-decodes to the same payload, including photographs of physical cards shot at an angle.
+- Where possible the crop is replaced by a **rebuild** — see below.
+
+### Rebuilding the QR crisply (`src/lib/qrRebuild.ts`)
+
+Customers scan the QR off the screen to test how it behaves on their own phone, so the image has to actually scan. Many proof images are photographs of physical cards shot at an angle, and a small skewed photo of a dense code often won't.
+
+Two options were measured over 72–102 real codes:
+
+| Approach | Result |
+| --- | --- |
+| Re-encode the decoded **text** into a fresh QR | module-for-module identical only **53%** (38/72) |
+| Rebuild from the artwork's **own pixels** | ~**54%** of finds, and **40/40 of those scanned** at on-screen size |
+
+Re-encoding was **rejected**. Pinning the version + error-correction the decoder reports and searching all eight mask patterns still only matched half the time, because encoders split text into chunks differently — and there is no "close": when it missed, the median difference was **38% of all modules**. Half the time we'd have shown the customer a code that looks nothing like the one on their card.
+
+So instead the module grid is sampled straight off the printed artwork (projective homography from the decoder's corner points, Otsu threshold, finder-pattern sanity gate) and redrawn as clean black squares on white with a 4-module quiet zone. Always black-on-white even when the card prints white-on-black — it scans far better off a screen and it's the same code.
+
+**The guarantee is the round trip, not the sampling.** Every rebuild is decoded again and only used if it reads back byte-for-byte identical; anything else falls back to the plain crop. That's what makes it safe to try several sampling strategies and to keep the finder gate loose (0.75) — a bad sample can't reach a customer because it can't survive being re-read. `ArtworkQrFind.rendering` records which was used (`'rebuilt'` | `'photo'`).
+
+Measured end to end: **~82% → 93%** of codes scannable from the screen. Don't bother adding more thresholding strategies — midpoint and wider-cluster variants were tried and recovered nothing. When a rebuild fails it's because the sampling grid doesn't line up with a steeply-angled photo, and no amount of re-thresholding fixes a misaligned grid; the fix would be locating the finder patterns directly rather than trusting the decoder's quad.
 - Never auto-attaches. Every find is a suggestion the designer confirms, because the scan is ~95% reliable, not perfect, and because only the designer knows whether a code belongs on this version. **The manual upload path is untouched** — the worst case is exactly the old workflow.
 - Runs in the background, caps at 24 images, and fails silently. A failed scan means no suggestions, never an error in the designer's face.
 

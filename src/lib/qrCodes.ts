@@ -178,6 +178,12 @@ export interface QrPosition {
 export interface DecodedQrHit extends DecodedQr {
   /** Where the code sits in the source image. Null if unreported. */
   position: QrPosition | null
+  /**
+   * QR version (1–40). The grid is (4 × version + 17) modules square,
+   * which is what lets qrRebuild.ts sample the printed code module by
+   * module. Null when the decoder doesn't report a parseable version.
+   */
+  version: number | null
 }
 
 // ── decodeAllQrs ─────────────────────────────────────────────────────
@@ -219,10 +225,16 @@ export async function decodeAllQrs(
     const text = r.text
     if (!r.isValid || !text || seen.has(text)) continue
     seen.add(text)
+    // `version` comes back as a string ("4", or occasionally decorated)
+    // so pull the digits out rather than trusting the format.
+    const versionDigits = String(r.version ?? '').replace(/\D/g, '')
+    const version = versionDigits ? Number.parseInt(versionDigits, 10) : NaN
+
     hits.push({
       data: text,
       kind: classifyQrData(text),
       position: (r.position as QrPosition | undefined) ?? null,
+      version: Number.isInteger(version) && version >= 1 && version <= 40 ? version : null,
     })
   }
   return hits
