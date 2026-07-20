@@ -58,11 +58,11 @@ export interface ArtworkQrFind {
   /**
    * How cropFile was produced.
    *
-   * 'rebuilt' — the code's module grid was read off the artwork and
+   * 'rebuilt' — the decoder's own straightened module grid was
    *   redrawn as clean black squares, then decoded again to prove it
    *   is byte-for-byte the same code. Crisp at any size, so the
    *   customer can scan it off their screen to test it on their own
-   *   phone. Measured at ~90% of finds.
+   *   phone.
    * 'photo'   — the plain crop from the artwork. Used whenever a
    *   rebuild couldn't be proven correct, so we never show an
    *   idealised code we can't stand behind.
@@ -180,40 +180,20 @@ export async function scanArtworkForQrs(
       bitmap = null
     }
 
-    // Full-resolution pixels, read once and shared by every code on
-    // this image — the rebuild samples the printed module grid out of
-    // them and needs the detail, so this can't be a downscale.
-    let pixels: ImageData | null = null
-    if (bitmap) {
-      try {
-        const canvas = document.createElement('canvas')
-        canvas.width = bitmap.width
-        canvas.height = bitmap.height
-        const ctx = canvas.getContext('2d', { willReadFrequently: true })
-        if (ctx) {
-          ctx.drawImage(bitmap, 0, 0)
-          pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height)
-        }
-      } catch {
-        pixels = null
-      }
-    }
-
     for (const hit of hits) {
       if (seenPayloads.has(hit.data)) continue
       seenPayloads.add(hit.data)
 
       // Prefer a rebuild — it's the same code drawn crisply, so the
-      // customer can scan it off the screen. rebuildQrImage returns
-      // null unless it decoded back to this exact payload, so a
-      // silent sampling error can never reach the customer.
+      // customer can scan it off the screen. The grid comes from the
+      // decoder itself, and rebuildQrImage returns null unless the
+      // render decoded back to this exact payload, so nothing
+      // unproven reaches the customer.
       let rebuilt: Blob | null = null
-      if (pixels && hit.position) {
-        try {
-          rebuilt = await rebuildQrImage(pixels, hit.position, hit.version, hit.data)
-        } catch {
-          rebuilt = null
-        }
+      try {
+        rebuilt = await rebuildQrImage(hit.symbol, hit.version, hit.data)
+      } catch {
+        rebuilt = null
       }
 
       let cropBlob: Blob | null = null

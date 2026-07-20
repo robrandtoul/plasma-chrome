@@ -329,20 +329,25 @@ The designer used to upload a cropped copy of a QR that was already plainly visi
 
 Customers scan the QR off the screen to test how it behaves on their own phone, so the image has to actually scan. Many proof images are photographs of physical cards shot at an angle, and a small skewed photo of a dense code often won't.
 
-Two options were measured over 72–102 real codes:
+Three approaches were measured over real codes. **Two were rejected — don't re-attempt either:**
 
 | Approach | Result |
 | --- | --- |
-| Re-encode the decoded **text** into a fresh QR | module-for-module identical only **53%** (38/72) |
-| Rebuild from the artwork's **own pixels** | ~**54%** of finds, and **40/40 of those scanned** at on-screen size |
+| Re-encode the decoded **text** into a fresh QR | module-for-module identical only **53%** (38/72) — rejected |
+| Sample the module grid off the artwork **ourselves** | **54%** of finds — rejected |
+| Render **zxing-cpp's own `symbol` grid** (current) | **89%** of finds, 97% of those scan at 200px |
 
-Re-encoding was **rejected**. Pinning the version + error-correction the decoder reports and searching all eight mask patterns still only matched half the time, because encoders split text into chunks differently — and there is no "close": when it missed, the median difference was **38% of all modules**. Half the time we'd have shown the customer a code that looks nothing like the one on their card.
+**Re-encoding the text** fails because encoders split text into chunks differently, so the bit layout diverges even with version + error-correction pinned and all eight mask patterns searched. And there is no "close": when it missed, the median difference was **38% of all modules** — half the time you'd show the customer a code that looks nothing like theirs.
 
-So instead the module grid is sampled straight off the printed artwork (projective homography from the decoder's corner points, Otsu threshold, finder-pattern sanity gate) and redrawn as clean black squares on white with a 4-module quiet zone. Always black-on-white even when the card prints white-on-black — it scans far better off a screen and it's the same code.
+**Hand-rolled sampling** (projective homography from the decoder's four corner points, Otsu threshold, finder gate) worked but only on ~54%: a grid stretched between four fuzzy *outer corners* drifts badly across a steeply-angled photo, and re-thresholding can't fix misaligned geometry (midpoint and wider-cluster variants were tried and recovered nothing). This was ~350 lines and is now deleted.
 
-**The guarantee is the round trip, not the sampling.** Every rebuild is decoded again and only used if it reads back byte-for-byte identical; anything else falls back to the plain crop. That's what makes it safe to try several sampling strategies and to keep the finder gate loose (0.75) — a bad sample can't reach a customer because it can't survive being re-read. `ArtworkQrFind.rendering` records which was used (`'rebuilt'` | `'photo'`).
+**What actually works** is that `ReadResult.symbol` hands back the straightened module grid zxing-cpp built internally to decode — it already locates the finder patterns precisely and uses the alignment patterns as interior anchors. Measured: present on 100% of decodes, exactly `4 × version + 17` square every time, and correct even for cards photographed at an angle in someone's hand. We just render it as clean black squares with a 4-module quiet zone. Always black-on-white even when the card prints white-on-black — scans far better off a screen and it's the same code.
 
-Measured end to end: **~82% → 93%** of codes scannable from the screen. Don't bother adding more thresholding strategies — midpoint and wider-cluster variants were tried and recovered nothing. When a rebuild fails it's because the sampling grid doesn't line up with a steeply-angled photo, and no amount of re-thresholding fixes a misaligned grid; the fix would be locating the finder patterns directly rather than trusting the decoder's quad.
+⚠ `symbol` is marked **`@experimental`** by zxing-wasm, which is why `package.json` pins `zxing-wasm` to an **exact version** (no caret). Don't loosen it without re-running the benchmark. The risk is contained anyway: `rebuildQrImage` checks the grid is square and matches `4 × version + 17` before using it.
+
+**The guarantee is the round trip.** Every rebuild is decoded again and only used if it reads back byte-for-byte identical; anything else falls back to the plain crop. A wrong rebuild — including one caused by a future change to `symbol` — can't reach a customer because it can't survive being re-read. `ArtworkQrFind.rendering` records which was used (`'rebuilt'` | `'photo'`).
+
+Measured end to end: **~82% → 95%** of codes scannable from the screen at a conservative 200px display size.
 - Never auto-attaches. Every find is a suggestion the designer confirms, because the scan is ~95% reliable, not perfect, and because only the designer knows whether a code belongs on this version. **The manual upload path is untouched** — the worst case is exactly the old workflow.
 - Runs in the background, caps at 24 images, and fails silently. A failed scan means no suggestions, never an error in the designer's face.
 
