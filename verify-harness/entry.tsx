@@ -40,11 +40,10 @@ function QuoteSpreadRig() {
   const tiers = [100, 250, 500, 1000, 2000, 5000, 10000].map((quantity) => ({
     variantId: 'v1',
     quantity,
-    // Deliberately absurd unit rate: the top tier lands on a
-    // six-figure total so the widest number the card could ever
-    // hold is exercised alongside the personalisation subline.
-    totalPrice: 139 + quantity * 9.4,
+    totalPrice: 139 + quantity * 0.38,
   }))
+  // 137 isn't a tier — exercises the "Not priced" row and its
+  // inline swap buttons alongside the personalisation subline.
   return (
     <div className="min-h-screen bg-canvas">
       <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
@@ -52,7 +51,7 @@ function QuoteSpreadRig() {
           <div />
           <div className="space-y-6">
             <SpreadQuoteResults
-              quantities={[100, 250, 500, 10000]}
+              quantities={[100, 137, 250, 10000]}
               onChangeQuantities={() => {}}
               variantTiers={tiers}
               finishSurchargesByQty={null}

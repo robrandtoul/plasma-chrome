@@ -17,7 +17,7 @@ import { CopyQuoteButton } from './CopyQuoteButton'
 //   ┌────────────────────────────────────────────────────┐
 //   │ Header (currency + N of M priced)                  │
 //   │ {N} cards                            £{total}      │
-//   │                                  £{unit} per card  │ ← when toggle on
+//   │ incl. £{p} personalisation       £{unit} per card  │ ← each when on
 //   │ ──────────────────────────────────────────────     │
 //   │ {N} cards                          Not priced      │ ← invalid row
 //   │ Nearest tiers …  [Swap to X]  [Swap to Y]          │
@@ -400,67 +400,50 @@ function SpreadList({
 
   return (
     <ul className="mt-4 divide-y divide-line-soft" role="list">
-      {/* Header row appears only when the personalisation column
-          is showing — otherwise the existing two-cell layout reads
-          fine on its own. */}
-      {personalisationActive && merged.length > 0 && (
-        <li className="flex items-baseline justify-between gap-4 pb-2 pt-1">
-          <p className="text-xs font-semibold uppercase tracking-widest text-ink-dim" />
-          <div className="flex items-baseline gap-8 text-right">
-            <p className="w-24 text-xs font-semibold uppercase tracking-widest text-ink-dim">
-              Personalisation
-            </p>
-            <p className="w-28 text-xs font-semibold uppercase tracking-widest text-ink-dim">
-              Total
-            </p>
-          </div>
-        </li>
-      )}
       {merged.map(({ row: r, kind }, i) => (
         <li key={`row-${r.quantity}-${i}`}>
           <div className="flex items-baseline justify-between gap-4 py-[18px]">
-            <p className="tabular-nums">
-              <span className="text-[22px] font-medium text-ink">
-                {r.quantity.toLocaleString()}
-              </span>
-              <span className="ml-1.5 text-[16px] font-medium text-ink-mute">cards</span>
-            </p>
-            <div className="flex items-baseline gap-8 text-right">
-              {/* Personalisation column — only renders when the
-                  parent flagged personalisation active. The
-                  closed-form formula always has a value (zero is a
-                  valid result), but we only ever show this column
-                  when the toggle is on so a vanilla spread quote
-                  reads as before. */}
-              {personalisationActive && (
-                <div className="w-24 text-right">
-                  {kind === 'valid' ? (
-                    <p className="text-[18px] font-medium leading-none tabular-nums text-ink-soft">
-                      {formatPrice(r.personalisationSurcharge, currency)}
-                    </p>
-                  ) : (
-                    <p className="text-[16px] tabular-nums text-ink-dim">—</p>
-                  )}
-                </div>
+            <div className="min-w-0">
+              <p className="tabular-nums">
+                <span className="text-[22px] font-medium text-ink">
+                  {r.quantity.toLocaleString()}
+                </span>
+                <span className="ml-1.5 text-[16px] font-medium text-ink-mute">cards</span>
+              </p>
+              {/* Personalisation reads as a qualifier under the
+                  quantity rather than as its own column. It used to
+                  be a third cell with a fixed w-24 next to the
+                  w-28 total, but the results column is only 22rem
+                  (304px of content): "10,000 cards" + a £2,000
+                  personalisation cell + a 32px "£12,540" needs
+                  ~380px, and neither fixed-width cell can shrink
+                  below its content, so the total spilled clean out
+                  of the card. Sublining it keeps the total as the
+                  headline at full size and fits every realistic
+                  quantity/price with room to spare. */}
+              {personalisationActive && kind === 'valid' && (
+                <p className="mt-1 text-[13px] tabular-nums text-ink-mute">
+                  incl. {formatPrice(r.personalisationSurcharge, currency)} personalisation
+                </p>
               )}
-              <div className={personalisationActive ? 'w-28 text-right' : 'text-right'}>
-                {kind === 'valid' && r.total != null ? (
-                  <>
-                    <p className="text-[32px] font-medium leading-none tabular-nums text-ink">
-                      {formatPrice(r.total, currency)}
-                    </p>
-                    {includeUnitPrice && r.unitPrice != null && (
-                      <p className="mt-1.5 text-[13px] tabular-nums text-ink-mute">
-                        {formatPrice(r.unitPrice, currency, 2)} per card
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  <p className="text-[16px] font-medium tabular-nums text-ink-dim">
-                    Not priced
+            </div>
+            <div className="shrink-0 text-right">
+              {kind === 'valid' && r.total != null ? (
+                <>
+                  <p className="text-[32px] font-medium leading-none tabular-nums text-ink">
+                    {formatPrice(r.total, currency)}
                   </p>
-                )}
-              </div>
+                  {includeUnitPrice && r.unitPrice != null && (
+                    <p className="mt-1.5 text-[13px] tabular-nums text-ink-mute">
+                      {formatPrice(r.unitPrice, currency, 2)} per card
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="text-[16px] font-medium tabular-nums text-ink-dim">
+                  Not priced
+                </p>
+              )}
             </div>
           </div>
           {/* Inline swap affordance for invalid-base rows. Same
