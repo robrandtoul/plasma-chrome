@@ -781,8 +781,15 @@ export default function OrderBuilderModal({
     }
     let customQuoteValue: number | null = null
     if (!isPrototype && isCustomQuote) {
-      const c = Number(customQuoteTotal)
-      if (!Number.isFinite(c) || c < 0) {
+      // An EMPTY box must not save. Number('') is 0, so a blank field used to
+      // sail past this check and store an agreed price of £0 — which then also
+      // wiped any card discount (resolveCardDiscount returns 0 on a zero base)
+      // and left checkout charging shipping only. Reject blank explicitly, and
+      // require a total above zero: a genuine £0 order is a prototype (handled
+      // above) or a reprint (created elsewhere), never a custom quote.
+      const raw = customQuoteTotal.trim()
+      const c = Number(raw)
+      if (raw === '' || !Number.isFinite(c) || c <= 0) {
         setError('This is a custom-quote proof — enter the agreed total.')
         return
       }

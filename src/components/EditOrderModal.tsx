@@ -285,8 +285,10 @@ export default function EditOrderModal({
 
     let customQuoteValue: number | null = null
     if (isCustomQuote) {
-      const c = Number(customQuoteTotal)
-      if (!Number.isFinite(c) || c < 0) {
+      // Blank must not save as £0 — see the matching guard in OrderBuilderModal.
+      const raw = customQuoteTotal.trim()
+      const c = Number(raw)
+      if (raw === '' || !Number.isFinite(c) || c <= 0) {
         setError('This is a custom-quote order — enter the agreed total.')
         return
       }

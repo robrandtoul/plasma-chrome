@@ -682,6 +682,11 @@ export default function OrdersPage() {
   // the loaded orders, keyed by id; the ticked order ids while picking a set
   // to combine; and whether the combine modal is open.
   const [groups, setGroups] = useState<Record<string, OrderGroupRow>>({})
+  // Current version id per proof, for the orders on this page. Re-sending a pay
+  // link posts on the Help Scout thread via send-helpscout-reply, which requires
+  // a version_id — the orders query has no route to it (proof_versions isn't
+  // embedded), so it's fetched alongside and merged in at send time.
+  const [currentVersionByProof, setCurrentVersionByProof] = useState<Record<string, string>>({})
   const [groupSelect, setGroupSelect] = useState<Set<string>>(new Set())
   const [selectMode, setSelectMode] = useState(false)
   const [groupModalOpen, setGroupModalOpen] = useState(false)
@@ -981,6 +986,26 @@ export default function OrdersPage() {
       setOrders(rows)
       setCapped(rows.length >= 300)
       setLoading(false)
+
+      // The current version of each order's proof, so "Re-send link" can post on
+      // the Help Scout thread (send-helpscout-reply requires a version_id).
+      const proofIds = Array.from(new Set(rows.map((r) => r.proof_id).filter(Boolean)))
+      if (proofIds.length > 0) {
+        void supabase
+          .from('proof_versions')
+          .select('id, proof_id')
+          .in('proof_id', proofIds)
+          .eq('is_current', true)
+          .then(({ data: versionRows, error: versionErr }) => {
+            if (cancelled) return
+            if (versionErr) { console.error('[orders] current versions failed', versionErr); return }
+            setCurrentVersionByProof(
+              Object.fromEntries(
+                (versionRows as { id: string; proof_id: string }[]).map((v) => [v.proof_id, v.id]),
+              ),
+            )
+          })
+      }
 
       // The combined-payment groups those orders belong to (banner + actions).
       const groupIds = Array.from(new Set(rows.map((r) => r.order_group_id).filter((g): g is string => !!g)))
@@ -1572,7 +1597,12 @@ export default function OrdersPage() {
       {sendLinkFor && (
         <SendPayLinkModal
           open
-          order={{ id: sendLinkFor.id, proof_id: sendLinkFor.proof_id, token: sendLinkFor.token }}
+          order={{
+            id: sendLinkFor.id,
+            proof_id: sendLinkFor.proof_id,
+            token: sendLinkFor.token,
+            current_version_id: currentVersionByProof[sendLinkFor.proof_id] ?? null,
+          }}
           customerLabel={customerLabel(sendLinkFor)}
           // Every order on this list has had a link created; sent_at is
           // stamped at creation, so anything here is a re-send.

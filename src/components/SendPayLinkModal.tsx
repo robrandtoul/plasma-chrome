@@ -27,7 +27,13 @@ interface Props {
     id: string
     proof_id: string
     token: string | null
-    current_version_id?: string | null
+    /**
+     * The proof's current version. REQUIRED (not optional) on purpose:
+     * send-helpscout-reply rejects a missing version_id, and when this was
+     * optional a caller silently omitted it, so every re-send failed with a
+     * raw "version_id is required". Keep it required so that's a build error.
+     */
+    current_version_id: string | null
   }
   /** Shown in the heading so the designer can see who this is going to. */
   customerLabel: string
@@ -68,12 +74,19 @@ export default function SendPayLinkModal({
 
   async function send() {
     if (!message.trim()) return
+    // Help Scout needs to know which version this reply belongs to. If we don't
+    // have it, say so in plain English and point at the manual route, rather
+    // than letting the edge function answer with a raw "version_id is required".
+    if (!order.current_version_id) {
+      setError('Couldn’t tell which proof version this belongs to, so it can’t post to Help Scout. Copy the link and send it manually.')
+      return
+    }
     setSending(true)
     setError(null)
     try {
       const { data, error: fnErr } = await supabase.functions.invoke<{ thread_id?: number; error?: string }>(
         'send-helpscout-reply',
-        { body: { proof_id: order.proof_id, version_id: order.current_version_id ?? null, body: message } },
+        { body: { proof_id: order.proof_id, version_id: order.current_version_id, body: message } },
       )
       if (fnErr || !data || 'error' in data) {
         // The edge function reports failures in the response body, which
