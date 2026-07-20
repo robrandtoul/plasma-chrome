@@ -60,7 +60,7 @@ function Segmented<T extends string>({
   disabled?: boolean
 }) {
   return (
-    <div className="inline-flex rounded-[6px] border border-line bg-canvas p-0.5" role="group">
+    <div className="inline-flex shrink-0 rounded-[6px] border border-line bg-canvas p-0.5" role="group">
       {options.map((o) => {
         const active = o.value === value
         return (
@@ -70,7 +70,7 @@ function Segmented<T extends string>({
             disabled={disabled}
             onClick={() => onChange(o.value)}
             className={[
-              'px-2.5 h-7 text-[12px] rounded-[4px] transition-colors disabled:opacity-50',
+              'px-2.5 h-7 text-[12px] whitespace-nowrap rounded-[4px] transition-colors disabled:opacity-50',
               active ? 'bg-surface text-ink border border-line-soft' : 'text-ink-mute hover:text-ink',
             ].join(' ')}
           >
@@ -217,7 +217,7 @@ export default function NotificationSettingsPage() {
             <PanelShell title="Proofs" eyebrow="What to notify me about" icon={Bell}>
               <div className="divide-y divide-line-soft">
                 {PROOF_EVENTS.map((ev) => (
-                  <div key={ev.code} className="flex items-center justify-between gap-4 py-2.5 first:pt-0 last:pb-0">
+                  <div key={ev.code} className="flex flex-col items-start gap-2 py-2.5 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                     <div className="min-w-0">
                       <div className="text-[13px] text-ink">{ev.label}</div>
                       <div className="text-[12px] text-ink-mute">{ev.hint}</div>
@@ -240,7 +240,7 @@ export default function NotificationSettingsPage() {
             <PanelShell title="Orders" eyebrow="What to notify me about" icon={Bell}>
               <div className="divide-y divide-line-soft">
                 {ORDER_EVENTS.map((ev) => (
-                  <div key={ev.code} className="flex items-center justify-between gap-4 py-2.5 first:pt-0 last:pb-0">
+                  <div key={ev.code} className="flex flex-col items-start gap-2 py-2.5 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                     <div className="min-w-0">
                       <div className="text-[13px] text-ink">{ev.label}</div>
                       <div className="text-[12px] text-ink-mute">{ev.hint}</div>
@@ -262,7 +262,7 @@ export default function NotificationSettingsPage() {
             <PanelShell title="Team chat" eyebrow="What to notify me about" icon={Bell}>
               <div className="divide-y divide-line-soft">
                 {CHAT_EVENTS.map((ev) => (
-                  <div key={ev.code} className="flex items-center justify-between gap-4 py-2.5 first:pt-0 last:pb-0">
+                  <div key={ev.code} className="flex flex-col items-start gap-2 py-2.5 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                     <div className="min-w-0">
                       <div className="text-[13px] text-ink">{ev.label}</div>
                       <div className="text-[12px] text-ink-mute">{ev.hint}</div>
