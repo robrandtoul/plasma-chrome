@@ -431,6 +431,21 @@ Staff use this app as an installed iOS home-screen PWA (standalone). Two hard-wo
 
 Do NOT reintroduce, however tempting: keyboard-height "glue" that resizes the frame while typing; any `scrollTo`/`scrollIntoView` during keyboard presentation; a per-page `visualViewport` snap-back (a `vv.height >= innerHeight - N` check reads as "keyboard closed" *mid-typing* in the standalone PWA, because `innerHeight` shrinks with the keyboard there — this shipped as a real bug in ChatPage and scrolled the page while the user typed); or a permanent `setInterval` re-check. `interactive-widget=resizes-content` in the viewport meta is ignored by WebKit. Separately: the "keyboard won't appear AT ALL" symptom is a known iOS OS-level bug (installed PWAs stop presenting the keyboard until reinstalled/restarted), not an app bug — the cure is delete-and-reinstall the app or restart the phone, and it is NOT caused by anything in this code (confirmed on-device: the keyboard appears even with all viewport JS disabled).
 
+## iOS PWA data freshness — every live feature needs a foreground resync
+
+Same root cause as the section above (iOS treats an installed PWA's page as a suspended native app), different subsystem, and worth stating separately because it silently breaks *data* rather than layout. **Backgrounding the app kills its network connections — including the Supabase realtime WebSocket — but keeps the page in memory. Returning to it does NOT remount React**, so no mount effect re-runs and nothing refetches. A "fetch once at mount, then rely on realtime INSERTs" design therefore drifts permanently the first time the phone goes in a pocket.
+
+The symptom shape to recognise: a list that is frozen **with holes in it** (not merely old), no error, no gap marker — so the screen reads as "this is the whole conversation" when it isn't. It is invisible on desktop, so a feature can look perfect on the Mac and be quietly broken on every phone. Diagnosed 2026-07-20 when team chat on a phone was missing ~15 messages mid-morning plus the three most recent, while the database held them all (PR #513; memory:ios-pwa-realtime-resync).
+
+`syncMessages()` in `src/lib/teamChatStore.tsx` is the reference implementation — copy its shape for anything live (realtime tables, presence, polling, unread badges):
+
+- **Resync on mount, on `visibilitychange`/`focus`/`online` (throttled — those three overlap on a desktop window switch), and on realtime reconnect.** Handle the *failure* statuses on `.subscribe()`, not just `SUBSCRIBED`: a dropped socket sets a stale flag, and the next successful subscribe resyncs the gap. Only reacting to `SUBSCRIBED` means a drop is never noticed.
+- **Reconcile, never replace.** The fetched window is authoritative for its own time range (so deletions made while away disappear), while older pages the user pulled in via a "load more" affordance are kept.
+- **A failed read must leave good local state untouched.** ⚠ supabase-js returns `data: null` on error, so the idiomatic `data ?? []` silently empties the list — the same class of silent-write trap as the lazy-builder note in "Claude operating discipline". Never derive "there is nothing more to load" from a fetch that may have failed: gating the manual recovery affordance on a flag computed from that same fetch is what turned a stale chat into an unrecoverable one, because one bad read both emptied the list and hid the only control that could refill it.
+- **Recompute counters from their stored stamps rather than incrementing them**, or a resync that replays known rows inflates the badges.
+
+Deploy note: the fix cannot install itself on the devices that need it, since they are holding the old bundle in memory — after shipping, every phone needs one manual force-quit (swipe up, flick away) to pick up the new code. Not yet audited: other one-shot-fetch surfaces (dashboard, Orders) likely carry the same pattern.
+
 ## Still to build
 
 - Letterpress edge gilding prices
