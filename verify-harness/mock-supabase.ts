@@ -262,6 +262,65 @@ const DASHBOARD_PROJECTS = [
   },
 ]
 
+// ——— Flagged board fixtures (watch_items / watch_updates) ———
+// Shaped to exercise the card's widest content on mobile: a full pill row
+// (category + status + overdue date + customer-replied) and, when expanded,
+// the Links row with all four buttons (Project / Start reprint / Help Scout /
+// Remove — the last two need a conversation url + own-authored row).
+const WATCH_ITEMS = [
+  {
+    id: 'w1',
+    proof_id: 'p-a1',
+    category: 'quality_complaint',
+    status: 'open',
+    ordered_on: daysAgo(20),
+    due_on: daysAgo(2).slice(0, 10),
+    company_name: 'Acme Corporation International',
+    contact_name: 'Ada Lovelace',
+    designer_name: 'Rob Randtoul',
+    stock_order_number: '10234',
+    helpscout_conversation_url: 'https://secure.helpscout.net/conversation/1',
+    created_by: 'user-rob',
+    created_by_name: 'Rob Randtoul',
+    created_by_initials: 'RR',
+    created_by_colour: 'blue',
+    status_changed_at: null,
+    status_changed_by: null,
+    status_changed_by_name: null,
+    created_at: daysAgo(5),
+    updated_at: daysAgo(1),
+  },
+  {
+    id: 'w2',
+    proof_id: 'p-a2',
+    category: 'lost_in_transit',
+    status: 'monitoring',
+    ordered_on: daysAgo(30),
+    due_on: null,
+    company_name: 'Vandelay Industries',
+    contact_name: 'Art Vandelay',
+    designer_name: 'Chris Jackson',
+    stock_order_number: '10235',
+    helpscout_conversation_url: 'https://secure.helpscout.net/conversation/2',
+    created_by: 'user-rob',
+    created_by_name: 'Rob Randtoul',
+    created_by_initials: 'RR',
+    created_by_colour: 'blue',
+    status_changed_at: daysAgo(1),
+    status_changed_by: 'user-rob',
+    status_changed_by_name: 'Rob Randtoul',
+    created_at: daysAgo(8),
+    updated_at: daysAgo(1),
+  },
+]
+
+const WATCH_UPDATES = [
+  { id: 'u1', watch_item_id: 'w1', kind: 'note', body: 'Customer reported the foiling has lifted on a run of cards — asked them to send a photo.', created_by: 'user-rob', created_by_name: 'Rob Randtoul', created_by_initials: 'RR', created_by_colour: 'blue', helpscout_thread_id: null, created_at: daysAgo(4) },
+  { id: 'u2', watch_item_id: 'w1', kind: 'phone_call', body: 'Called Ada — she is happy for us to reprint the affected 200.', created_by: 'user-rob', created_by_name: 'Rob Randtoul', created_by_initials: 'RR', created_by_colour: 'blue', helpscout_thread_id: null, created_at: daysAgo(2) },
+  { id: 'u3', watch_item_id: 'w1', kind: 'helpscout_customer', body: 'Any update on the reprint? Thanks.', created_by: null, created_by_name: 'Ada Lovelace', created_by_initials: null, created_by_colour: null, helpscout_thread_id: 'ht1', created_at: daysAgo(1) },
+  { id: 'u4', watch_item_id: 'w2', kind: 'note', body: 'Tracking shows the parcel stuck at the depot — opened a claim with the courier.', created_by: 'user-rob', created_by_name: 'Rob Randtoul', created_by_initials: 'RR', created_by_colour: 'blue', helpscout_thread_id: null, created_at: daysAgo(3) },
+]
+
 const PROOF_MATERIAL: Record<string, string> = {
   'p-o1': 'metal_steel', 'p-o2': 'paper_letterpress', 'p-o3': 'metal_steel', 'p-o4': 'metal_steel',
   'p-o5': 'metal_steel', 'p-o6': 'plastic_satin', 'p-o7': 'paper_letterpress', 'p-o8': 'metal_steel',
@@ -371,7 +430,10 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
       },
     ]
   } else if (table === 'watch_items') {
-    return { data: null, error: null, count: 2 }
+    rows = WATCH_ITEMS
+  } else if (table === 'watch_updates') {
+    rows = WATCH_UPDATES
+    if (Array.isArray(filters['in:watch_item_id'])) rows = rows.filter((r) => filters['in:watch_item_id'].includes(r.watch_item_id))
   }
 
   if (single) return { data: rows[0] ?? null, error: null }

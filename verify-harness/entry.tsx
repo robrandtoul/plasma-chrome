@@ -10,11 +10,15 @@
 // Pass ?path=/dashboard for the dashboard, wrapped in the real
 // TeamChatProvider so the right rail's docked-chat layout can be checked
 // (set localStorage 'pv:chat-placement' to 'docked' first).
+// Pass ?path=/flagged for the Flagged board (watch_items / watch_updates
+// fixtures in mock-supabase) — used to verify the card layout at mobile
+// widths (the page uniquely carries both a search field and a header CTA).
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import OrdersPage from '../src/pages/OrdersPage'
 import DashboardPage from '../src/pages/DashboardPage'
+import FlaggedPage from '../src/pages/FlaggedPage'
 import { TeamChatProvider } from '../src/lib/teamChatStore'
 import DesignerSearch from '../src/components/DesignerSearch'
 import AdminLayout from '../src/pages/admin/AdminLayout'
@@ -42,6 +46,13 @@ const tree = requestedPath === '/palette' ? (
   <MemoryRouter initialEntries={['/']}>
     <Routes>
       <Route path="/" element={<DesignerSearch open onClose={() => {}} />} />
+    </Routes>
+  </MemoryRouter>
+) : requestedPath === '/flagged' ? (
+  <MemoryRouter initialEntries={['/']}>
+    <Routes>
+      <Route path="/" element={<FlaggedPage />} />
+      <Route path="*" element={<Elsewhere />} />
     </Routes>
   </MemoryRouter>
 ) : requestedPath === '/dashboard' ? (

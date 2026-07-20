@@ -625,7 +625,7 @@ export default function FlaggedPage() {
             </div>
 
             {/* Links */}
-            <div className="mt-2 flex items-center gap-1">
+            <div className="mt-2 flex flex-wrap items-center gap-1">
               <Link to={`/proofs/${item.proof_id}`}>
                 <ButtonGhost size="sm" icon={Package}>Project</ButtonGhost>
               </Link>
@@ -727,14 +727,18 @@ export default function FlaggedPage() {
       active="flagged"
       search={{ value: search, onChange: setSearch, placeholder: 'Search by company, contact, designer, order #…' }}
       actions={
-        <ButtonCoral icon={Flag} onClick={() => setFlagOpen(true)}>
-          <span className="max-sm:hidden">Flag a project</span>
-          <span className="sm:hidden">Flag</span>
+        <ButtonCoral icon={Flag} onClick={() => setFlagOpen(true)} aria-label="Flag a project">
+          {/* Full label on desktop, "Flag" on regular phones, and icon-only on
+              the narrowest screens (<375px) so the top bar — which on this page
+              uniquely carries both a search field and this CTA — never spills
+              off the right edge. aria-label keeps the icon-only state named. */}
+          <span className="hidden sm:inline">Flag a project</span>
+          <span className="hidden min-[375px]:inline sm:hidden">Flag</span>
         </ButtonCoral>
       }
     >
       {confirmDialog}
-      <main className="mx-auto max-w-[920px] px-4 py-6 sm:px-7">
+      <main className="mx-auto w-full max-w-[920px] px-4 py-6 sm:px-7">
         <div className="mb-1 flex items-center gap-2">
           <Flag size={20} aria-hidden="true" className="text-brand" />
           <h1 className="text-[20px] font-semibold text-ink">Flagged</h1>
