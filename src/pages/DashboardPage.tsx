@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { DesignerChrome, useDesignerProfile, useIsMobile, Sheet, ButtonCoral, ButtonGhost, ButtonInk, ProofStatusPill, HelpTip } from '../design'
@@ -3694,12 +3694,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                 )}
               </div>
 
-              <aside className="hidden lg:block space-y-6">
-                {/* Docked chat (when chosen) pins at the rail top; the panels
-                    below keep their normal order and slide BENEATH the pinned
-                    card while scrolling — the card is opaque with z-10, which
-                    is what fixes the earlier paint-over glitch. */}
-                <DockedChat />
+              <DashboardRail>
                 {/* lg:sticky lg:top-10 used to ride here so the panel
                     locked to the viewport top while the project list
                     scrolled. Dropped in PR 30 — the project list can
@@ -3711,7 +3706,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                     only passed for client-side contact/company labels. */}
                 <NudgeOutboxPanel projects={projects} onAfterSend={() => loadDashboard()} />
                 <LeadTimesChart leadTimes={leadTimes} navigate={navigate} />
-              </aside>
+              </DashboardRail>
             </div>
           </>
         )}
@@ -3719,6 +3714,41 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     </div>
 
     </DesignerChrome>
+  )
+}
+
+// The dashboard's right rail. Two layouts, chosen by whether the chat is
+// docked here:
+//
+//   • chat elsewhere (floating / closed) — a plain column that scrolls with
+//     the page, exactly as the rail has always behaved.
+//   • chat docked — the WHOLE rail pins to the viewport instead of just the
+//     chat card. The chat sits at the top and the panels are parked in the
+//     space beneath it, scrolling within the rail. Previously only the chat
+//     was sticky, so the panels slid up behind it on every page scroll — an
+//     overlap that needed an opaque background, a z-index and an "apron" gap
+//     to look tidy, and still read as pointless motion. Pinning the rail as a
+//     unit means nothing ever passes behind anything.
+//
+// The children are passed through untouched, so a chat message re-rendering
+// this wrapper doesn't re-render the panels (same element identity).
+function DashboardRail({ children }: { children: ReactNode }) {
+  const { placement } = useTeamChat()
+  const isLarge = useIsLargeScreen()
+
+  if (placement !== 'docked' || !isLarge) {
+    return <aside className="hidden lg:block space-y-6">{children}</aside>
+  }
+
+  // top-14 clears the condensed page header; the 4.5rem height leaves a
+  // matching gap plus a little breathing room at the window bottom. The
+  // panels get whatever the chat card doesn't (min-h-0 so they may shrink
+  // below their content height and scroll rather than overflow the rail).
+  return (
+    <aside className="hidden lg:sticky lg:top-14 lg:flex lg:h-[calc(100vh-4.5rem)] flex-col gap-1">
+      <DockedChat />
+      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto">{children}</div>
+    </aside>
   )
 }
 
@@ -3739,10 +3769,16 @@ function useIsLargeScreen() {
 }
 
 // The docked card's saved height (per browser). Null = the default, which is
-// rem-based so it scales with the user's browser font size (bigger text gets
-// a taller window, not fewer visible messages).
+// a share of the window (55vh) so the rail panels below always keep a usable
+// slice of the pinned rail — a fixed rem height left them a sliver on a
+// laptop. DOCK_RESERVE is the room held back for them: the chat can never
+// grow (by default or by drag) past `100vh - DOCK_RESERVE`, which leaves the
+// panels ~190px — a header plus a couple of rows, enough to read as a panel
+// you can scroll rather than a sliver. It also re-caps a too-tall height
+// saved back when the chat was the only pinned thing in the rail.
 const DOCK_HEIGHT_KEY = 'pv:chat-dock-height'
 const DOCK_MIN_H = 360
+const DOCK_RESERVE = 288
 
 function readDockHeight(): number | null {
   try {
@@ -3755,17 +3791,15 @@ function readDockHeight(): number | null {
   }
 }
 
-// The dashboard-rail chat dock (Option A). Renders only when the user has
-// chosen 'docked' placement, at lg+ where the rail exists. A sticky card
-// pinned to the top of the right rail so chat stays in view while the project
-// list scrolls. Height is CAPPED (not viewport-tall) so the whole card —
-// header, messages, composer — sits comfortably in view; a full-height panel
-// glued to the screen bottom read as an infinite wall and hid the composer
-// below the fold at page top. The grip below the card drags the height
-// (persisted); the default is 42rem so it tracks browser font scaling.
-// z-[4] + the opaque background make the rail panels below slide cleanly
-// BENEATH the pinned card instead of painting over it. Reuses the shared
-// TeamChatPanel — same live engine as the header dropdown and the /chat page.
+// The dashboard-rail chat dock (Option A). Rendered by DashboardRail, which
+// pins the whole rail — so this is a plain card at the top of that pinned
+// column, not a sticky element in its own right. Height is CAPPED (not
+// viewport-tall) so the whole card — header, messages, composer — sits
+// comfortably in view AND the rail panels below keep their share; a
+// full-height panel glued to the screen bottom read as an infinite wall and
+// hid the composer below the fold at page top. The grip below the card drags
+// the height (persisted). Reuses the shared TeamChatPanel — same live engine
+// as the header dropdown and the /chat page.
 function DockedChat() {
   const navigate = useNavigate()
   const isLarge = useIsLargeScreen()
@@ -3782,7 +3816,7 @@ function DockedChat() {
     const card = document.getElementById('team-chat-dock')
     const startH = card ? card.getBoundingClientRect().height : dockHRef.current ?? 560
     const startY = e.clientY
-    const maxH = window.innerHeight - 112
+    const maxH = window.innerHeight - DOCK_RESERVE
     try {
       handle.setPointerCapture(e.pointerId)
     } catch {
@@ -3808,19 +3842,17 @@ function DockedChat() {
 
   if (placement !== 'docked' || !isLarge) return null
   return (
-    /* Sticky wrapper, opaque in the page background. The resize grip below
-       the card doubles as the "apron": panels sliding up vanish behind it a
-       clear gap before they reach the card, and the card casts a soft drop
-       shadow onto them — the visible divider that keeps the slide-under
-       looking tidy. Pinned at top-14 (~the condensed header's height) so
-       there is no slit above the card for passing panels to re-emerge
-       through; z-[4] keeps the card BELOW the z-[5] page header (any overlap
-       tucks under it) while still above the z-auto rail panels. */
-    <div className="lg:sticky lg:top-14 z-[4] -mb-5" style={{ background: 'var(--c-bg)' }}>
+    /* flex-shrink-0 so the card keeps its chosen height and the panels
+       below absorb the slack instead. The grip doubles as the gap to the
+       first panel. */
+    <div className="flex-shrink-0">
       <div
         id="team-chat-dock"
-        className="flex h-[min(42rem,calc(100vh-112px))] flex-col overflow-hidden rounded-[14px] border border-line bg-surface shadow-[0_14px_28px_-18px_rgba(22,19,17,0.35)]"
-        style={dockH != null ? { height: dockH, maxHeight: 'calc(100vh - 112px)' } : undefined}
+        className="flex h-[55vh] flex-col overflow-hidden rounded-[14px] border border-line bg-surface shadow-[0_14px_28px_-18px_rgba(22,19,17,0.35)]"
+        style={{
+          ...(dockH != null ? { height: dockH } : null),
+          maxHeight: `calc(100vh - ${DOCK_RESERVE}px)`,
+        }}
       >
         <div className="flex flex-shrink-0 items-center justify-between border-b border-line-soft px-3 py-2">
           <span className="text-[13px] font-semibold text-ink">Team chat</span>

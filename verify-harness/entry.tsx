@@ -7,10 +7,15 @@
 // shell instead (real AdminLayout + the consolidated tab pages, incl.
 // /admin/shipping) — used to visually verify the grouped admin nav; data
 // comes back empty from the fixture client, which is fine for layout checks.
+// Pass ?path=/dashboard for the dashboard, wrapped in the real
+// TeamChatProvider so the right rail's docked-chat layout can be checked
+// (set localStorage 'pv:chat-placement' to 'docked' first).
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import OrdersPage from '../src/pages/OrdersPage'
+import DashboardPage from '../src/pages/DashboardPage'
+import { TeamChatProvider } from '../src/lib/teamChatStore'
 import DesignerSearch from '../src/components/DesignerSearch'
 import AdminLayout from '../src/pages/admin/AdminLayout'
 import AdminHomePage from '../src/pages/admin/AdminHomePage'
@@ -39,6 +44,15 @@ const tree = requestedPath === '/palette' ? (
       <Route path="/" element={<DesignerSearch open onClose={() => {}} />} />
     </Routes>
   </MemoryRouter>
+) : requestedPath === '/dashboard' ? (
+  <TeamChatProvider>
+    <MemoryRouter initialEntries={['/']}>
+      <Routes>
+        <Route path="/" element={<DashboardPage />} />
+        <Route path="*" element={<Elsewhere />} />
+      </Routes>
+    </MemoryRouter>
+  </TeamChatProvider>
 ) : requestedPath?.startsWith('/admin') ? (
   <MemoryRouter initialEntries={[requestedPath]}>
     <Routes>
