@@ -253,6 +253,7 @@ const EARLIER_PAGE = 100 // "Show earlier messages" page size, per thread
 const IDLE_MS = 5 * 60 * 1000 // flip to "idle" after 5 minutes of no activity
 const ACTIVITY_THROTTLE_MS = 1000
 const STATUS_TICK_MS = 20_000
+const RESYNC_THROTTLE_MS = 3000 // collapse a burst of focus/visibility events
 
 function reducePresence(state: Record<string, PresenceMeta[]>): PresenceMember[] {
   const byUser = new Map<string, PresenceMember>()
@@ -326,9 +327,15 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   messagesRef.current = messages
   const historyStatusRef = useRef(historyStatus)
   historyStatusRef.current = historyStatus
-  // Whether the initial window came back full — if not, the entire history is
-  // already loaded and no thread has anything earlier to fetch.
+  // Whether the latest window came back full — if not, the entire history is
+  // already loaded and no thread has anything earlier to fetch. Only ever set
+  // from a SUCCESSFUL sync: a failed fetch that set it false used to hide the
+  // "Show earlier messages" button, removing the last way back to the history.
   const initialFullRef = useRef(false)
+  // Guards against overlapping syncs (resume and reconnect often coincide).
+  const syncingRef = useRef(false)
+  // Set when the realtime socket drops so the next SUBSCRIBED resyncs the gap.
+  const staleRef = useRef(false)
   const myStatusRef = useRef<ChatStatus>('online')
   const profileRef = useRef<{
     name: string | null
@@ -424,6 +431,106 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     setTypingUsers(arr)
   }
 
+  // Pull the newest window of messages and reconcile it against what's in
+  // memory. Runs on mount, whenever the app returns to the foreground, and
+  // after the realtime socket reconnects.
+  //
+  // Why a resync is needed at all: messages used to be fetched exactly once,
+  // with the live channel expected to carry everything after that. iOS kills
+  // the socket when an installed PWA is backgrounded but keeps the page in
+  // memory, so reopening the app neither remounts nor refetches — every
+  // message sent while the phone was asleep was missed permanently, and
+  // silently. Reconciling here is what makes a phone self-heal.
+  async function syncMessages(): Promise<void> {
+    const uid = userIdRef.current
+    if (!uid || syncingRef.current) return
+    syncingRef.current = true
+    try {
+      // RLS scopes this to the team room + my own DM threads (000324).
+      const { data, error } = await supabase
+        .from('team_messages')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(INITIAL_LIMIT)
+
+      // Never clobber a good history with a bad answer. A failed request (or a
+      // quietly expired session) arrives as `data: null`, which — before this
+      // guard — emptied the list and left no way back to the conversation.
+      if (error) {
+        console.error('[chat] message sync failed:', error.message)
+        return
+      }
+      const fetched = ((data ?? []) as TeamMessage[]).slice().reverse()
+      // An empty answer when we already hold messages is far more likely to be
+      // a transient read failure than every message having been deleted, so
+      // keep what we have; the DELETE handler covers genuine removals.
+      if (fetched.length === 0 && messagesRef.current.length > 0) return
+
+      // The window is authoritative for its own time range: anything in memory
+      // inside it is replaced (so deletions made while away disappear), while
+      // older pages pulled in via "Show earlier messages" are kept.
+      const windowStart = fetched[0]?.created_at ?? null
+      const merged = windowStart
+        ? [...messagesRef.current.filter((m) => m.created_at < windowStart), ...fetched]
+        : fetched
+      messagesRef.current = merged
+      setMessages(merged)
+      initialFullRef.current = fetched.length >= INITIAL_LIMIT
+
+      // Recompute unread from the seen stamps rather than incrementing, so a
+      // resync that replays known messages can't inflate the badges. The team
+      // room measures against team_chat_seen_at, each DM against its own
+      // team_chat_dm_reads stamp.
+      const counts: Record<string, number> = {}
+      let mentions = 0
+      for (const m of merged) {
+        if (m.author_id === uid) continue
+        const thread = threadOf(m, uid)
+        if (thread === 'team') {
+          const seen = seenAtRef.current
+          if (!seen || m.created_at > seen) {
+            counts.team = (counts.team ?? 0) + 1
+            if (Array.isArray(m.mentioned_user_ids) && m.mentioned_user_ids.includes(uid)) {
+              mentions++
+            }
+          }
+        } else {
+          const seen = dmReadsRef.current[thread]
+          if (!seen || m.created_at > seen) counts[thread] = (counts[thread] ?? 0) + 1
+        }
+      }
+      setThreadUnread(counts)
+      setMentionUnread(mentions)
+      // Messages that landed while away in the thread already on screen count
+      // as read the moment they're shown, matching the live INSERT path. Gated
+      // on there being something to clear so a routine resync doesn't write a
+      // stamp every time the window regains focus.
+      if (viewingRef.current && counts[activeThreadRef.current]) {
+        stampSeen(activeThreadRef.current)
+      }
+
+      // Reactions for the window, which may have changed while we were away.
+      // Scoped to the window's ids so the query stays bounded no matter how
+      // many earlier pages are loaded; reactions on older messages are kept.
+      const windowIds = fetched.map((m) => m.id)
+      if (windowIds.length > 0) {
+        const { data: reactData, error: reactError } = await supabase
+          .from('team_message_reactions')
+          .select('*')
+          .in('message_id', windowIds)
+        if (!reactError) {
+          const inWindow = new Set(windowIds)
+          setReactions((prev) => [
+            ...prev.filter((r) => !inWindow.has(r.message_id)),
+            ...((reactData ?? []) as ReactionRow[]),
+          ])
+        }
+      }
+    } finally {
+      syncingRef.current = false
+    }
+  }
+
   // Load messages + presence identity, then open the shared channel.
   useEffect(() => {
     if (!userId) {
@@ -440,20 +547,18 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     }
     let cancelled = false
     setLoading(true)
+    // Start from empty so a sign-in as someone else can't have the previous
+    // account's messages survive the merge inside syncMessages().
+    messagesRef.current = []
+    setMessages([])
 
     void (async () => {
-      const [{ data: prof }, { data: msgs }, { data: mem }, { data: dmReads }] = await Promise.all([
+      const [{ data: prof }, { data: mem }, { data: dmReads }] = await Promise.all([
         supabase
           .from('profiles')
           .select('full_name, designer_initials, designer_colour, avatar_url, team_chat_seen_at')
           .eq('id', userId)
           .single(),
-        // RLS scopes this to the team room + my own DM threads (000324).
-        supabase
-          .from('team_messages')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(INITIAL_LIMIT),
         // Roster for the DM pills, @mention picker and message author
         // avatar/name lookup. Via the SECURITY DEFINER team_roster() RPC
         // (000329), NOT a direct profiles read: the profiles SELECT policies
@@ -511,45 +616,12 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
         avatarUrl: prof?.avatar_url ?? null,
       }
 
-      const list = ((msgs ?? []) as TeamMessage[]).slice().reverse()
-      setMessages(list)
-      initialFullRef.current = list.length >= INITIAL_LIMIT
+      // Messages, unread counts and reactions all come from the shared sync so
+      // the first load and every later resume take exactly the same path.
       setHistoryStatus({})
-      // Per-thread unread: the team room measures against team_chat_seen_at,
-      // each DM thread against its own team_chat_dm_reads stamp.
-      const counts: Record<string, number> = {}
-      let mentions = 0
-      for (const m of list) {
-        if (m.author_id === userId) continue
-        const thread = threadOf(m, userId)
-        if (thread === 'team') {
-          const seen = seenAtRef.current
-          if (!seen || m.created_at > seen) {
-            counts.team = (counts.team ?? 0) + 1
-            if (Array.isArray(m.mentioned_user_ids) && m.mentioned_user_ids.includes(userId)) {
-              mentions++
-            }
-          }
-        } else {
-          const seen = dmReadsRef.current[thread]
-          if (!seen || m.created_at > seen) counts[thread] = (counts[thread] ?? 0) + 1
-        }
-      }
-      setThreadUnread(counts)
-      setMentionUnread(mentions)
+      await syncMessages()
+      if (cancelled) return
       setLoading(false)
-
-      const messageIds = list.map((m) => m.id)
-      if (messageIds.length > 0) {
-        const { data: reactData } = await supabase
-          .from('team_message_reactions')
-          .select('*')
-          .in('message_id', messageIds)
-        if (cancelled) return
-        setReactions((reactData ?? []) as ReactionRow[])
-      } else {
-        setReactions([])
-      }
 
       const channel = supabase
         .channel('team-chat', { config: { presence: { key: userId } } })
@@ -645,6 +717,14 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
             myStatusRef.current = computeStatus()
             setMyStatus(myStatusRef.current)
             void channel.track(presencePayload())
+            // Anything sent while the socket was down never arrived as an
+            // INSERT, so close the gap on the way back up.
+            if (staleRef.current) {
+              staleRef.current = false
+              void syncMessages()
+            }
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            staleRef.current = true
           }
         })
       channelRef.current = channel
@@ -656,6 +736,36 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
         void supabase.removeChannel(channelRef.current)
         channelRef.current = null
       }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId])
+
+  // Resync whenever the app comes back to the user, or the network returns.
+  //
+  // This is the fix for a phone showing a conversation frozen hours earlier: an
+  // installed PWA that gets backgrounded has its socket torn down by iOS, but
+  // the page stays in memory, so returning to it neither remounts nor reopens
+  // anything. Without this the missed messages never arrived at all — and with
+  // no error and no gap marker, the chat simply looked finished.
+  useEffect(() => {
+    if (!userId) return
+    let lastResync = 0
+    function resync() {
+      if (document.hidden) return
+      // These three events overlap heavily (a desktop window switch can fire
+      // all of them), so collapse a burst into one fetch.
+      const now = Date.now()
+      if (now - lastResync < RESYNC_THROTTLE_MS) return
+      lastResync = now
+      void syncMessages()
+    }
+    document.addEventListener('visibilitychange', resync)
+    window.addEventListener('focus', resync)
+    window.addEventListener('online', resync)
+    return () => {
+      document.removeEventListener('visibilitychange', resync)
+      window.removeEventListener('focus', resync)
+      window.removeEventListener('online', resync)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId])
