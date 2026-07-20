@@ -23,6 +23,7 @@ const AdminXeroItemCodesPage = lazyWithRetry(() => import('./AdminXeroItemCodesP
 const AdminXeroSelfTestPage = lazyWithRetry(() => import('./AdminXeroSelfTestPage'), 'AdminXeroSelfTestPage')
 const AdminMaterialOptionsPage = lazyWithRetry(() => import('./AdminMaterialOptionsPage'), 'AdminMaterialOptionsPage')
 const AdminCoreColoursPage = lazyWithRetry(() => import('./AdminCoreColoursPage'), 'AdminCoreColoursPage')
+const AdminStockMaterialsPage = lazyWithRetry(() => import('./AdminStockMaterialsPage'), 'AdminStockMaterialsPage')
 
 const TABS: { slug: string; label: string }[] = [
   { slug: 'lead-times', label: 'Lead times' },
@@ -31,6 +32,7 @@ const TABS: { slug: string; label: string }[] = [
   { slug: 'xero-item-codes', label: 'Xero item codes' },
   { slug: 'material-options', label: 'Material options' },
   { slug: 'paper-colours', label: 'Paper colours' },
+  { slug: 'stock-materials', label: 'Stock materials' },
 ]
 
 export default function AdminCatalogueDataPage() {
@@ -86,6 +88,7 @@ export default function AdminCatalogueDataPage() {
         )}
         {tab === 'material-options' && <AdminMaterialOptionsPage />}
         {tab === 'paper-colours' && <AdminCoreColoursPage />}
+        {tab === 'stock-materials' && <AdminStockMaterialsPage />}
       </Suspense>
     </div>
   )

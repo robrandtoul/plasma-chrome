@@ -179,7 +179,7 @@ export const ADMIN_DESTINATIONS: AdminDestination[] = [
     group: 'Catalogue',
     icon: 'catalogue',
     sidebar: true,
-    keywords: ['reference data', 'lead times', 'card weights', 'xero item codes', 'material options', 'paper colours', 'prototype prices'],
+    keywords: ['reference data', 'lead times', 'card weights', 'xero item codes', 'material options', 'paper colours', 'prototype prices', 'stock materials'],
     description: 'Reference figures per material and variant.',
   },
   {
@@ -235,6 +235,15 @@ export const ADMIN_DESTINATIONS: AdminDestination[] = [
     icon: 'catalogue',
     keywords: ['colorplan', 'letterpress core colours', 'paper colors', 'colours', 'swatches', 'core colours'],
     description: 'Colorplan / letterpress colour palette.',
+  },
+  {
+    id: 'catalogue-stock-materials',
+    label: 'Stock materials',
+    path: '/admin/catalogue/stock-materials',
+    group: 'Catalogue',
+    icon: 'catalogue',
+    keywords: ['stock control', 'material mapping', 'hand-off', 'handoff', 'workshop system', 'stock material', 'production mapping'],
+    description: 'Map each material to its Stock Control counterpart for the order hand-off.',
   },
 
   // ── System ──

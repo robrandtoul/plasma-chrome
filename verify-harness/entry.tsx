@@ -17,6 +17,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import OrdersPage from '../src/pages/OrdersPage'
+import OrderReviewPage from '../src/pages/OrderReviewPage'
 import DashboardPage from '../src/pages/DashboardPage'
 import FlaggedPage from '../src/pages/FlaggedPage'
 import { TeamChatProvider } from '../src/lib/teamChatStore'
@@ -28,7 +29,56 @@ import AdminContentPage from '../src/pages/admin/AdminContentPage'
 import AdminNeedsAttentionPage from '../src/pages/admin/AdminNeedsAttentionPage'
 import AdminShippingPage from '../src/pages/admin/AdminShippingPage'
 import AdminSettingsPage from '../src/pages/admin/AdminSettingsPage'
+import { SpreadQuoteResults } from '../src/components/quote/SpreadQuoteResults'
 import '../src/index.css'
+
+// ?path=/quote-spread mounts the Quote compiler's spread-quote results card
+// on its own, inside the same lg:grid-cols-[1fr_22rem] shell QuotePage uses,
+// so the 22rem results column's real width is reproduced. The card needs no
+// Supabase data — every input is a prop — so this is a pure layout rig.
+function QuoteSpreadRig() {
+  const tiers = [100, 250, 500, 1000, 2000, 5000, 10000].map((quantity) => ({
+    variantId: 'v1',
+    quantity,
+    // Deliberately absurd unit rate: the top tier lands on a
+    // six-figure total so the widest number the card could ever
+    // hold is exercised alongside the personalisation subline.
+    totalPrice: 139 + quantity * 9.4,
+  }))
+  return (
+    <div className="min-h-screen bg-canvas">
+      <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
+        <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
+          <div />
+          <div className="space-y-6">
+            <SpreadQuoteResults
+              quantities={[100, 250, 500, 10000]}
+              onChangeQuantities={() => {}}
+              variantTiers={tiers}
+              finishSurchargesByQty={null}
+              currency="GBP"
+              materialDisplayName="Full Colour Plastic"
+              variantDisplayName="420 micron"
+              finishOption={null}
+              splitNameSurcharge={0}
+              names={1}
+              perExtraNameSurcharge={null}
+              personalisationAt={(qty) => Math.max(50, qty * 0.2)}
+              personalisationActive
+              personalisationBreakevenQty={250}
+              customFlags={{ nfc: false }}
+              discountPercent={0}
+              includeLeadTime={false}
+              onIncludeLeadTimeChange={() => {}}
+              leadTimeState={null}
+              loading={false}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function Elsewhere() {
   return <div style={{ padding: 40 }} data-nav-target>navigated away</div>
@@ -42,7 +92,9 @@ const requestedPath = new URLSearchParams(window.location.search).get('path')
 
 // ?path=/palette mounts the ⌘K designer command palette on its own, open, so
 // its layout and the fixture-backed proof search can be checked headlessly.
-const tree = requestedPath === '/palette' ? (
+const tree = requestedPath === '/quote-spread' ? (
+  <QuoteSpreadRig />
+) : requestedPath === '/palette' ? (
   <MemoryRouter initialEntries={['/']}>
     <Routes>
       <Route path="/" element={<DesignerSearch open onClose={() => {}} />} />
@@ -76,6 +128,15 @@ const tree = requestedPath === '/palette' ? (
         <Route path="settings" element={<AdminSettingsPage />} />
         <Route path="*" element={<Stub />} />
       </Route>
+      <Route path="*" element={<Elsewhere />} />
+    </Routes>
+  </MemoryRouter>
+) : requestedPath?.startsWith('/orders/') ? (
+  // ?path=/orders/o1/place — the place-order review screen against the
+  // fixture place-order preview (incl. the Stock Control hand-off checks).
+  <MemoryRouter initialEntries={[requestedPath]}>
+    <Routes>
+      <Route path="/orders/:id/place" element={<OrderReviewPage />} />
       <Route path="*" element={<Elsewhere />} />
     </Routes>
   </MemoryRouter>

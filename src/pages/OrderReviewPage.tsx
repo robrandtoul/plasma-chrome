@@ -57,6 +57,16 @@ interface PreviewResponse {
   // Both routes: which Dropbox folder files will be attached (to the in-house
   // note, or to the supplier email) vs skipped (too big / not artwork).
   artwork_plan?: { attach: string[]; skipped: { name: string; reason: string }[] }
+  // Optional Stock Control direct hand-off validation (order-handoff spec
+  // §3.3 / §6 Phase 1). Absent or null while the feature is off — the common
+  // case — in which case nothing renders. When present with any problems or
+  // warnings, they show as a NON-BLOCKING amber card: shadow mode surfaces
+  // mapping/setup gaps early without gating Confirm.
+  handoff_validation?: {
+    ok: boolean
+    problems: { code: string; message: string }[]
+    warnings: { code: string; message: string }[]
+  } | null
 }
 
 function Row({ label, value }: { label: string; value: ReactNode }) {
@@ -326,6 +336,12 @@ export default function OrderReviewPage() {
           : null
   const canConfirm = !blockReason
 
+  // Stock Control hand-off checks (shadow mode) — informational only.
+  // Deliberately NOT part of blockReason: a failed check never gates Confirm.
+  const handoffProblems = preview?.handoff_validation?.problems ?? []
+  const handoffWarnings = preview?.handoff_validation?.warnings ?? []
+  const showHandoffChecks = handoffProblems.length > 0 || handoffWarnings.length > 0
+
   // The editable hand-off message — identical control for both routes (only the
   // heading above it differs). Mirrors the generated preview until edited, then
   // the reviewer's text is sent verbatim (with the spec-line safety check above).
@@ -573,6 +589,32 @@ export default function OrderReviewPage() {
                 </label>
               </PanelShell>
             </div>
+
+            {/* Stock Control hand-off checks — the direct-import validation run
+                alongside the preview (shadow mode). Amber and NON-blocking:
+                problems (stronger) and warnings are surfaced so mapping/setup
+                gaps get fixed, but Confirm is never gated on them. Absent from
+                the response entirely while the feature is off. */}
+            {showHandoffChecks && (
+              <div className="mt-4 rounded-lg bg-low-soft px-3 py-3 text-[13px] text-ink ring-1 ring-low">
+                <p className="font-medium">Stock Control hand-off checks</p>
+                {handoffProblems.length > 0 && (
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                    {handoffProblems.map((p, i) => (
+                      <li key={`${p.code}-${i}`} className="break-words font-medium">{p.message}</li>
+                    ))}
+                  </ul>
+                )}
+                {handoffWarnings.length > 0 && (
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4 text-ink-soft">
+                    {handoffWarnings.map((w, i) => (
+                      <li key={`${w.code}-${i}`} className="break-words">{w.message}</li>
+                    ))}
+                  </ul>
+                )}
+                <p className="mt-1.5 text-[12px] text-ink-soft">These checks don’t block placing the order.</p>
+              </div>
+            )}
 
             {sentNotRecorded ? (
               <>

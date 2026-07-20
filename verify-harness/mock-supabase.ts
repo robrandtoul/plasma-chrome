@@ -360,9 +360,37 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
 
   if (state.schema === 'public') {
     if (table === 'outsourced_suppliers') rows = [{ id: 's1', name: 'QX Metals' }]
-    else if (table === 'materials') rows = [
-      { name: 'Satin Black', swatch_hex: '#1f2937', quantity_on_shelf: 240, measured_in: 'sheets' },
-      { name: 'Satin White', swatch_hex: '#f9fafb', quantity_on_shelf: 80, measured_in: 'sheets' },
+    else if (table === 'materials') {
+      // Two callers read Stock Control's catalogue: the stock-colour picker
+      // (selects swatch_hex etc.) and the Stock materials mapping tab
+      // (selects id, name). Key on the select string so each gets its shape.
+      rows = select.includes('swatch_hex')
+        ? [
+            { name: 'Satin Black', swatch_hex: '#1f2937', quantity_on_shelf: 240, measured_in: 'sheets' },
+            { name: 'Satin White', swatch_hex: '#f9fafb', quantity_on_shelf: 80, measured_in: 'sheets' },
+          ]
+        : [
+            { id: 'sc-carbon', name: 'Carbon Fibre 0.5mm' },
+            { id: 'sc-fcp', name: 'Full Colour Plastic' },
+            { id: 'sc-paper', name: 'Premium Smooth White 600gsm' },
+            { id: 'sc-steel', name: 'Stainless Steel 0.5mm' },
+          ]
+    }
+  } else if (table === 'materials') {
+    // The proof-viewer catalogue, as the Catalogue data grids read it
+    // (Stock materials mapping tab; also gives Lead times a few rows).
+    // Mix of mapped / unmapped / auto-resolved codes, plus one saved id
+    // that no longer exists in the Stock Control list ('sc-gone') to
+    // exercise the "Unknown material" option.
+    rows = [
+      { id: 'm-cf', code: 'carbon_fibre', display_name: 'Carbon Fibre', category: 'Carbon fibre', production_route: 'supplier', stock_material_id: null },
+      { id: 'm-steel', code: 'metal_steel', display_name: 'Stainless Steel', category: 'Metal', production_route: 'in_house', stock_material_id: 'sc-steel' },
+      { id: 'm-gold', code: 'metal_gold', display_name: 'Gold Metal', category: 'Metal', production_route: 'in_house', stock_material_id: null },
+      { id: 'm-lp', code: 'paper_letterpress', display_name: 'Letterpress', category: 'Paper', production_route: 'supplier', stock_material_id: null },
+      { id: 'm-paper', code: 'paper_standard', display_name: 'Standard Paper', category: 'Paper', production_route: 'supplier', stock_material_id: 'sc-paper' },
+      { id: 'm-fcp', code: 'plastic_full_colour', display_name: 'Full Colour Plastic', category: 'Plastic', production_route: 'in_house', stock_material_id: 'sc-gone' },
+      { id: 'm-satin', code: 'plastic_satin', display_name: 'Satin Plastic', category: 'Plastic', production_route: 'in_house', stock_material_id: null },
+      { id: 'm-wood', code: 'wood', display_name: 'Wood', category: 'Wood', production_route: 'in_house', stock_material_id: null },
     ]
   } else if (table === 'orders') {
     rows = ORDERS
@@ -509,6 +537,52 @@ export const supabase: any = {
               { name: '0% ROW', taxType: 'TAX003', effectiveRate: 0 },
             ],
             stripeAccountCode: '125',
+          },
+          error: null,
+        }
+      }
+      if (name === 'place-order') {
+        // OrderReviewPage preview (?path=/orders/o1/place). In-house route
+        // with the Stock Control hand-off checks populated (a problem + a
+        // warning) so the non-blocking amber card can be verified visually.
+        return {
+          data: {
+            ok: true,
+            route: 'in_house',
+            subject: 'Order 403999 - Acme Ltd',
+            note_lines: [
+              'Qty: 500',
+              'Card: Stainless Steel 500um',
+              'Date required: 30/07/2026',
+              '',
+              'Artwork: https://www.dropbox.com/example',
+            ],
+            critical_lines: ['Qty: 500', 'Card: Stainless Steel 500um', 'Date required: 30/07/2026'],
+            summary: {
+              customer: 'Acme Ltd',
+              material: 'Stainless Steel',
+              variant: '500 micron',
+              finish: null,
+              inkFront: 'White',
+              inkBack: null,
+              quantity: 500,
+              split: [],
+              packaging: 'Domestic',
+              dateRequired: '30/07/2026',
+              dropboxFolderUrl: 'https://www.dropbox.com/example',
+              route: 'in_house',
+            },
+            helpscout_linked: true,
+            artwork_plan: { attach: ['Approved_Front.pdf', 'Approved_Back.pdf'], skipped: [] },
+            handoff_validation: {
+              ok: false,
+              problems: [
+                { code: 'unmapped_material', message: 'Stainless Steel has no Stock Control mapping — set it on Admin → Catalogue data → Stock materials.' },
+              ],
+              warnings: [
+                { code: 'split_qty_mismatch', message: 'Per-person quantities (450) don’t add up to the order quantity (500).' },
+              ],
+            },
           },
           error: null,
         }

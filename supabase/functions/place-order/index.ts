@@ -23,6 +23,7 @@ import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { encodeBase64 } from 'jsr:@std/encoding/base64'
 import { getDropboxAccessToken, listSharedLinkEntries, downloadSharedLinkFile } from '../_shared/dropbox.ts'
 import { buildOrderSpecSnapshot, type OrderSpecSnapshot } from '../_shared/orderSpecSnapshot.ts'
+import { buildHandoffPayload } from '../_shared/orderHandoff.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -615,6 +616,15 @@ Deno.serve(async (req) => {
   const packaging = destCountry ? (destCountry === 'GB' ? 'Domestic' : 'International') : null
   const dateRequiredStr = fmtDate(order.date_required)
 
+  // Direct hand-off rollout switch (docs/order-handoff-spec.md §3.6). 'off' =
+  // this function behaves exactly as before. 'shadow' (and, until the Phase 2
+  // code ships, 'live' too) = the composed contract payload is validated via
+  // public.create_order_handoff(p_validate_only) and stored on the order for
+  // the parity check — today's Help Scout hand-off is untouched either way.
+  // Reading the column pre-migration just leaves the mode 'off', so this
+  // function is safe to deploy before 000332 is applied.
+  const handoffMode = await loadHandoffMode(admin)
+
   // Supplier quantity = customer quantity + spoilage overs, but ONLY on the
   // supplier route (overs are meaningless for an in-house job). This is the
   // number the supplier is told to make; `qty` stays the customer's quantity
@@ -667,6 +677,38 @@ Deno.serve(async (req) => {
     }
     const subject = `Order ${String(order.stock_order_number).trim()} - ${String(order.project_name ?? customerName).trim()}`.replace(/\s-\s*$/, '').trim()
 
+    // The direct hand-off contract payload (docs/order-handoff-spec.md §3.2) —
+    // composed from the same values as the note so the two can't drift.
+    const handoffPayload = buildHandoffPayload({
+      pvOrderId: orderId,
+      placedBy: callerId,
+      stockOrderNumber: String(order.stock_order_number),
+      route: 'in_house',
+      customerName,
+      projectName: (order.project_name as string | null) ?? null,
+      helpscoutConversationId: conversationId ? String(conversationId) : null,
+      qty,
+      supplierQty: qty,
+      supplierOvers: 0,
+      isPrototype,
+      material: {
+        pvMaterialId: orderMaterialId ?? pv.material_id,
+        code: mat.code,
+        display: mat.display_name ?? pv.material_display ?? null,
+        cardLine: card,
+        letterpress: (mat.code === 'paper_letterpress' || mat.code === 'paper_letterpress_gilded') && front && core && back
+          ? { front, core, back, gilding: mat.code === 'paper_letterpress_gilded' }
+          : null,
+      },
+      supplier: null,
+      dateRequired: (order.date_required as string | null) ?? null,
+      inks,
+      packaging,
+      split: split.map((p: { name: unknown; quantity: unknown }) => ({ name: String(p.name).trim(), qty: Number(p.quantity) })),
+      dropboxFolderUrl: (order.dropbox_folder_url as string | null) ?? null,
+      note: note || null,
+    })
+
     // Plan the artwork attachments from the Dropbox folder (best-effort: a
     // listing failure just means no attachments — the note + link still go).
     let artworkPlan: ArtworkPlan = { attach: [], skipped: [] }
@@ -684,7 +726,9 @@ Deno.serve(async (req) => {
     }
 
     if (mode === 'preview') {
-      return json({ ok: true, route, subject, note_lines: lines, critical_lines: criticalLines, summary, helpscout_linked: !!conversationId, artwork_plan: artworkPlan })
+      // Key present only when the feature is on — 'off' responses stay byte-identical.
+      const handoffValidation = await runHandoffValidation(pub, handoffMode, handoffPayload)
+      return json({ ok: true, route, subject, note_lines: lines, critical_lines: criticalLines, summary, helpscout_linked: !!conversationId, artwork_plan: artworkPlan, ...(handoffValidation ? { handoff_validation: handoffValidation } : {}) })
     }
 
     // confirm
@@ -723,8 +767,12 @@ Deno.serve(async (req) => {
       // distinct error so the UI does NOT offer a plain retry (which would re-post
       // the note); the human marks the order placed manually instead.
       await logPlaceMishap(admin, orderId, callerId, { route, subject, error: placed.error })
+      // The hand-off DID send, so the shadow ledger should still carry it —
+      // these odd placements are exactly the ones the parity check must see.
+      await recordShadowHandoff(admin, pub, handoffMode, orderId, handoffPayload)
       return json({ ok: false, code: 'sent_not_recorded', error: `The production note was posted to Help Scout, but the order status couldn’t be updated (${placed.error}). Do NOT place it again — mark this order placed manually.` }, 500)
     }
+    await recordShadowHandoff(admin, pub, handoffMode, orderId, handoffPayload)
     return json({ ok: true, route, placed: true })
   }
 
@@ -811,6 +859,47 @@ Deno.serve(async (req) => {
   const emailLines = (await renderSupplierEmail(admin, chosen?.id ?? null, { customer: customerName, order_details: orderDetails })).split('\n')
   const subject = `Order ${String(order.stock_order_number).trim()} - ${customerName}`
 
+  // The direct hand-off contract payload (docs/order-handoff-spec.md §3.2) —
+  // composed from the same values as the email so the two can't drift. At
+  // preview time before a supplier pick, supplier_id is null and validation
+  // reports "choose a supplier" — accurate, and Confirm is gated on the pick
+  // anyway.
+  const handoffPayload = buildHandoffPayload({
+    pvOrderId: orderId,
+    placedBy: callerId,
+    stockOrderNumber: String(order.stock_order_number),
+    route: 'supplier',
+    customerName,
+    projectName: (order.project_name as string | null) ?? null,
+    helpscoutConversationId: conversationId ? String(conversationId) : null,
+    qty,
+    supplierQty,
+    supplierOvers,
+    isPrototype,
+    material: {
+      pvMaterialId: orderMaterialId ?? pv.material_id,
+      code: mat.code,
+      display: mat.display_name ?? pv.material_display ?? null,
+      cardLine: null,
+      letterpress: null,
+    },
+    supplier: {
+      supplierId: chosen?.id ?? null,
+      supplierName: chosen?.name ?? null,
+      productTypeName: productType || null,
+      specificType,
+      thickness,
+      finish,
+      mustShipBy: isoDate(shipBy),
+    },
+    dateRequired: (order.date_required as string | null) ?? null,
+    inks,
+    packaging,
+    split: split.map((p: { name: unknown; quantity: unknown }) => ({ name: String(p.name).trim(), qty: Number(p.quantity) })),
+    dropboxFolderUrl: (order.dropbox_folder_url as string | null) ?? null,
+    note: note || null,
+  })
+
   // Plan the artwork attachments from the Dropbox folder (best-effort: a listing
   // failure just means no attachments — the email + folder link still go). Same
   // as the in-house route, so the supplier gets the files AND the link.
@@ -829,6 +918,8 @@ Deno.serve(async (req) => {
   }
 
   if (mode === 'preview') {
+    // Key present only when the feature is on — 'off' responses stay byte-identical.
+    const handoffValidation = await runHandoffValidation(pub, handoffMode, handoffPayload)
     return json({
       ok: true,
       route,
@@ -840,6 +931,7 @@ Deno.serve(async (req) => {
       ship_by: shipByStr,
       summary,
       artwork_plan: artworkPlan,
+      ...(handoffValidation ? { handoff_validation: handoffValidation } : {}),
     })
   }
 
@@ -924,8 +1016,12 @@ Deno.serve(async (req) => {
     // The supplier email WAS sent; only the status flip failed. Distinct error so
     // the UI won't re-send — the order is placed, it just needs recording manually.
     await logPlaceMishap(admin, orderId, callerId, { route, subject, supplier_name: chosen.name, supplier_helpscout_conversation_id: newConvId, error: placed.error })
+    // The hand-off DID send, so the shadow ledger should still carry it —
+    // these odd placements are exactly the ones the parity check must see.
+    await recordShadowHandoff(admin, pub, handoffMode, orderId, handoffPayload)
     return json({ ok: false, code: 'sent_not_recorded', error: `The order was emailed to ${chosen.name}, but the order status couldn’t be updated (${placed.error}). Do NOT send it again — mark this order placed manually.` }, 500)
   }
+  await recordShadowHandoff(admin, pub, handoffMode, orderId, handoffPayload)
   return json({ ok: true, route, placed: true, supplier: chosen.name })
 })
 
@@ -983,6 +1079,71 @@ async function markPlaced(
     after_value: detail,
   }).then(undefined, () => {})
   return { ok: true }
+}
+
+// ── Direct hand-off (shadow phase) ──────────────────────────────────────────
+// docs/order-handoff-spec.md §3.6 / §6 Phase 1. Everything here is best-effort
+// and additive: a failure in any of it must never affect the Help Scout
+// hand-off, which remains the live path until Phase 2.
+
+// Read settings.direct_handoff_mode. Any error (including the column not
+// existing yet — this function is deployable before migration 000332) = 'off'.
+// NOTE: until the Phase 2 code ships, 'live' deliberately behaves as 'shadow'
+// here — flipping the setting early can't make an undeployed code path run.
+async function loadHandoffMode(admin: SupabaseClient): Promise<'off' | 'shadow'> {
+  try {
+    const { data } = await admin.from('settings').select('direct_handoff_mode').limit(1).maybeSingle()
+    const m = (data as { direct_handoff_mode?: string | null } | null)?.direct_handoff_mode
+    return m === 'shadow' || m === 'live' ? 'shadow' : 'off'
+  } catch {
+    return 'off'
+  }
+}
+
+interface HandoffValidation {
+  ok: boolean
+  problems: { code: string; message: string }[]
+  warnings: { code: string; message: string }[]
+  resolution?: Record<string, unknown>
+}
+
+// Validate the contract payload against public.create_order_handoff without
+// writing anything. Null when the mode is off or the RPC isn't reachable
+// (pre-migration deploy) — the review page renders nothing for null.
+async function runHandoffValidation(pub: SupabaseClient, mode: 'off' | 'shadow', payload: Record<string, unknown>): Promise<HandoffValidation | null> {
+  if (mode === 'off') return null
+  try {
+    const { data, error } = await pub.rpc('create_order_handoff', { p_payload: payload, p_validate_only: true })
+    if (error || !data) return null
+    const d = data as { ok?: boolean; problems?: { code: string; message: string }[]; warnings?: { code: string; message: string }[]; resolution?: Record<string, unknown> }
+    return { ok: d.ok === true, problems: d.problems ?? [], warnings: d.warnings ?? [], resolution: d.resolution }
+  } catch {
+    return null
+  }
+}
+
+// Shadow record after a successful (legacy-path) placement: store the payload
+// for the Phase 1 parity check, and surface validation problems via
+// handoff_error (prefixed "shadow:") so the mapping gaps get fixed during the
+// shadow window rather than discovered at cutover.
+async function recordShadowHandoff(admin: SupabaseClient, pub: SupabaseClient, mode: 'off' | 'shadow', orderId: string, payload: Record<string, unknown>): Promise<void> {
+  if (mode === 'off') return
+  try {
+    const validation = await runHandoffValidation(pub, mode, payload)
+    const problems = validation?.problems ?? []
+    await admin
+      .from('orders')
+      .update({
+        handoff_payload: payload,
+        handoff_error: problems.length ? `shadow: ${problems.map((p) => p.message).join(' | ')}` : null,
+      })
+      .eq('id', orderId)
+      .then(({ error }) => {
+        if (error) console.error('shadow handoff record failed:', error.message)
+      })
+  } catch (e) {
+    console.error('shadow handoff record failed:', (e as Error)?.message ?? e)
+  }
 }
 
 // Record a "hand-off sent but status not updated" event so an order that was
