@@ -454,11 +454,14 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
           .select('*')
           .order('created_at', { ascending: false })
           .limit(INITIAL_LIMIT),
-        supabase
-          .from('profiles')
-          .select('id, full_name, designer_initials, designer_colour, avatar_url')
-          .is('deactivated_at', null)
-          .order('full_name'),
+        // Roster for the DM pills, @mention picker and message author
+        // avatar/name lookup. Via the SECURITY DEFINER team_roster() RPC
+        // (000329), NOT a direct profiles read: the profiles SELECT policies
+        // only let a non-admin see their OWN row, so a direct read collapsed
+        // the roster to [me] for every designer — no DM pills, no @mention
+        // candidates. The RPC returns the same five roster columns for active
+        // staff to any authenticated caller (sensitive columns stay admin-only).
+        supabase.rpc('team_roster'),
         supabase.from('team_chat_dm_reads').select('peer_id, seen_at').eq('user_id', userId),
       ])
       if (cancelled) return
