@@ -197,7 +197,12 @@
 }
 
 /* ─── Body baseline ─────────────────────────────────────── */
-html, body { font-family: var(--font-body); color: var(--c-ink); background: var(--c-bg); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+/* color-scheme: light mirrors the <meta name="color-scheme"> in
+   index.html. The app is cream in every state (no dark theme), so this
+   keeps iOS's standalone status bar, native form controls and
+   scrollbars in their light treatment even when the phone is in dark
+   mode. */
+html, body { color-scheme: light; font-family: var(--font-body); color: var(--c-ink); background: var(--c-bg); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 
 /* ─── Draftsman-paper grid ──────────────────────────────────
    Subtle engineering / drafting-paper background. Four layered

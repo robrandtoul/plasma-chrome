@@ -8,10 +8,17 @@
          iOS rounds the corners itself, so the PNG is a full-bleed
          square. apple-mobile-web-app-* make a saved shortcut open
          chrome-free with a short title. The status-bar style is
-         `default` (dark text); the previous `black-translucent`
-         rendered as a solid black strip behind the Dynamic Island on
-         the installed app instead of letting the page colour reach
-         the top edge the way Safari does. -->
+         `default` (adaptive) rather than `black-translucent` — the
+         latter rendered as a solid black strip behind the Dynamic
+         Island on the installed app instead of letting the page
+         colour reach the top edge the way Safari does. With
+         `default`, iOS colours the reserved status-bar strip by the
+         PHONE's light/dark setting, so in dark mode it painted a dark
+         band above the always-cream app. The `color-scheme: light`
+         meta below (mirrored in CSS) declares the app light-only, so
+         iOS keeps that strip in its light treatment — dark text on a
+         light bar that matches the cream — even when the phone is in
+         dark mode. -->
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <!-- Web App Manifest: makes the app installable as a PWA and is a
          prerequisite for web-push on iOS. The Apple meta tags below still
@@ -19,6 +26,11 @@
          standalone display + theme colour Chrome/Android read. -->
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#fbf7f0" />
+    <!-- The app is cream (light) in every state — there is no dark
+         theme. Declaring it light-only stops iOS painting the
+         standalone status-bar strip dark when the phone is in dark
+         mode (see the apple-touch-icon comment above). -->
+    <meta name="color-scheme" content="light" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Proof Viewer" />
