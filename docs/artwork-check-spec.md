@@ -530,7 +530,25 @@ Dropbox shared-link record and verified intact — no flow read it in the window
 (fulfilled order). Lesson recorded: capture-then-restore values as literals, never via
 self-referencing subqueries.
 
-**Deferred to Phase 2b/3:** Leg C (approved-proof vs print-file drift), the OrdersPage
-verdict chip / in-app report archive, a print-file staleness guard for content changes
-inside an unchanged folder link (re-link and Re-run cover it meanwhile), admin-editable
-rules (step 2 of the admin graduation), and any soft-block on flagged verdicts.
+**Leg C + the Orders-page chip/archive: SHIPPED 2026-07-21** (PR #524; function v6, then
+v7 the same evening — see below; `pnpm test:artwork-check` 104 checks). **Leg C:** the
+check downloads the version's approved proof images (gallery-ordered, byte budget shared
+with prints + attachments) and compares the print files against them for post-approval
+drift — contact text, names, titles and explicitly-agreed treatments must not diverge;
+rendering artefacts, proof chrome, crop/bleed and cut-through mirroring tolerated. The
+report body moved into the shared `src/components/ArtworkCheckReportView.tsx` (review
+card + archive modal render from one component). **Orders page:** a verdict chip
+(green ✓ / amber ⚠) beside the To-order readiness ticks and on Recently-ordered rows,
+gated on mode=live, clicking through to the stored report in a modal — the in-app
+archive; the report jsonb is fetched lazily per click. **Validation:** Hurst 403894 now
+flags ON the approved-proof comparison ("04.ai gilds only the 'R'… but the approved
+proof (and 04.pdf) gilds both whole words") — the drift catch is grounded, not lucky;
+For The Boys 403900 initially flipped flagged on a MAY instruction the customer
+superseded in July — fixed same evening (v7) with the superseded-instruction rule
+(corrections[] tracks the LATEST wish per topic; an out-of-date instruction is never an
+open correction) and re-verified clear, its summary now positively citing the approved
+silver-foil revision.
+
+**Deferred to Phase 3:** a print-file staleness guard for content changes inside an
+unchanged folder link (re-link and Re-run cover it meanwhile), admin-editable rules
+(step 2 of the admin graduation), and any soft-block on flagged verdicts.
