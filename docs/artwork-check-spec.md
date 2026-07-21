@@ -447,14 +447,36 @@ actually RUN once ① is applied.
       the card), reorder carried-over details honestly reported as reference gaps, and
       the no-cutout construction correctly excused the unmirrored back. Report persisted
       to `orders.artwork_check` with usage + a 3.6k-token prompt-cache write.
-- [ ] Reports now accumulate as staff open review pages; optionally batch-run over
-      ~25–30 fulfilled orders with the service key to seed the tuning set. Review
-      (`select stock_order_number, artwork_check_verdict, artwork_check->>'summary'
-      from proofs.orders where artwork_checked_at is not null`), tune `prompts.ts`,
-      redeploy, `{ force: true }` re-runs as needed. First tuning question from run 1:
-      should "QR printed on the card but not stored/decoded" be a flag (current
-      behaviour — arguably right, since QR contents defeat visual QC) or a
-      reference_gap?
+- [x] Seed the tuning set — **done 2026-07-21**: batch-ran the last 24 fulfilled orders
+      (3 concurrent, ~4½ min wall, ≈$2 of API total). **14 clear / 10 flagged / 0
+      errors.** Genuine catches: **403898 Everest** (Christine's email misses the 't' in
+      'health' vs every other card + the website — customer-typed, staff queried twice,
+      never confirmed, printed anyway; the model read all 10 per-person PDFs after the
+      cap fix below), **403894 Hurst** (the `04.ai` print file's gold-letter treatment
+      contradicts the approved arrangement while `04.pdf` in the same folder is correct
+      — a real print-file-drift catch), **403899 Plak8** (customer's explicit 15 Jul
+      phone re-spacing never picked up), **403892 Roundtable** ("ROUNDTABLE" one word vs
+      the customer's later two-word restatement), and **403902/403901 Snap-on**
+      (reproduces the manual prototype's title finding exactly). Coverage fix shipped
+      same day: print-file count cap 8 → 16 (403898 had 10 per-person cards; two were
+      skipped at 8) — deployed as v2, byte-verified, Everest force-re-run to full
+      coverage.
+- [ ] Tune `prompts.ts` from the batch, then redeploy + `{ force: true }` re-run the
+      affected orders. The candidates surfaced: (1) **403903 Sarenco** — printed title
+      flagged against the customer's email SIGNATURE (weak reference; treat signatures
+      as corroboration → not_supplied + note, not a flag); (2) **403904 Box Sash** —
+      the customer's own LOGO artwork wording ("WINDOWS" plural) flagged against the
+      typed form ("Window") — extend the brand-casing rule to supplied-logo wording;
+      (3) **403897 Fishies** — flagged verdict born solely of corrections that live in
+      an UNREAD attachment (can't-verify ≠ not-actioned — consider an 'unverifiable'
+      presentation distinct from resolved=false); (4) the standing QR question —
+      "QR printed but not stored/decoded" as flag (current) vs gap. Phase 2's
+      attachment reading would dissolve (3) and several reference gaps (403884, 403888,
+      403897 all keyed their ground truth in spreadsheets / PDFs / Drive links).
+      Ops note: long curl calls to the function need HTTP/2 (HTTP/1.1 dies at the
+      gateway's 60s idle timeout; even HTTP/2 drops the response ~5 min in while the
+      run completes and persists server-side — read the row, not the response, for
+      batch work).
 - [ ] Flip `artwork_check_mode` → `live` — the card appears.
 - [ ] After a settling-in window: flip `artwork_check_required` → true (the mandatory-run
       gate, UI + place-order).
