@@ -295,6 +295,15 @@ export const ADMIN_DESTINATIONS: AdminDestination[] = [
     description: 'Settings › the customer order-progress strip.',
   },
   {
+    id: 'settings-artwork-check',
+    label: 'Artwork check',
+    path: '/admin/settings#artwork-check',
+    group: 'System',
+    icon: 'settings',
+    keywords: ['artwork check', 'sanity check', 'pre-print check', 'supplied vs printed', 'transcription', 'typo check', 'ai check', 'shadow live', 'mandatory check', 'place order gate'],
+    description: 'Settings › the pre-print supplied-vs-printed artwork check.',
+  },
+  {
     id: 'settings-designer-defaults',
     label: 'Designer defaults',
     path: '/admin/settings#designer-defaults',

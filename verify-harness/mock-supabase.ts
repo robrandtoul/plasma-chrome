@@ -418,7 +418,7 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
       { id: 'img-back', image_path: 'proofs/approved-back.pdf', original_filename: 'Approved_Back.pdf', associated_name: null, side: 'back', layout_id: null },
     ]
   } else if (table === 'settings') {
-    rows = [{ ordering_enabled: true, order_reminders_max: 3, order_reminder_interval_days: 3, auto_order_reminders_enabled: true }]
+    rows = [{ ordering_enabled: true, order_reminders_max: 3, order_reminder_interval_days: 3, auto_order_reminders_enabled: true, artwork_check_mode: 'live', artwork_check_required: false }]
   } else if (table === 'site_settings') {
     rows = [{ needs_attention_rules: { helpscout_reply_grace_days: 3 } }]
   } else if (table === 'order_nudges') {
