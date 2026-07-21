@@ -20,11 +20,15 @@ export interface PrintFilePick {
 
 // Anthropic caps a request at ~32 MB and a document block at 100 pages; print
 // files are single-page and usually 0.5–3 MB, so these caps only bite on
-// outliers. Base64 expands bytes 4/3 — 6 files × 4 MB raw ≈ 32 MB encoded is
-// already the ceiling, hence the conservative totals.
+// outliers. Base64 expands bytes 4/3, and the 20 MB raw total keeps the
+// encoded payload inside the request ceiling regardless of file count.
+// Count cap raised 8 → 16 after the first shadow batch: a letterpress order
+// with 10 per-person cards (403898) had two recipients' cards skipped at 8 —
+// per-person runs routinely exceed 8 small files, and the byte caps are the
+// real guard.
 export const PRINT_FILE_MAX_BYTES = 8 * 1024 * 1024
 export const PRINT_FILES_MAX_TOTAL_BYTES = 20 * 1024 * 1024
-export const PRINT_FILES_MAX_COUNT = 8
+export const PRINT_FILES_MAX_COUNT = 16
 
 export function pickPrintFiles(
   entries: FolderEntry[],
