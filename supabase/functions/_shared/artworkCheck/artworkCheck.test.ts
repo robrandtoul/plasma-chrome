@@ -26,6 +26,12 @@ import {
   routedToBlocks,
   type AttachmentMeta,
 } from './attachments.ts'
+import {
+  APPROVED_IMAGES_MAX_COUNT,
+  approvedImageBudget,
+  pickApprovedImages,
+  type ApprovedImageRow,
+} from './approvedProof.ts'
 import { buildErrorReport, buildReport, countCheckedFields, countFlags, deriveVerdict } from './report.ts'
 import { buildContextText, buildInputs, type CheckContext } from './prompts.ts'
 import type { ModelReport } from './types.ts'
@@ -229,6 +235,8 @@ const ctx: CheckContext = {
   skippedFiles: [{ name: 'old.eps', reason: 'EPS — not PDF-readable' }],
   attachmentsRead: [{ name: 'details.xlsx', at: '2026-06-01' }],
   attachmentsSkipped: [{ name: 'source.zip', reason: 'not a readable type' }],
+  approvedRead: ['Dave Allen — front'],
+  approvedSkipped: [{ name: 'weird.tiff', reason: 'not a readable image type' }],
 }
 
 {
@@ -264,7 +272,7 @@ const ctx: CheckContext = {
 }
 
 {
-  const gapCtx: CheckContext = { ...ctx, threadText: '', threadGapNote: 'this proof has no linked Help Scout conversation', qrs: [], recipients: [], attachmentsRead: [], attachmentsSkipped: [] }
+  const gapCtx: CheckContext = { ...ctx, threadText: '', threadGapNote: 'this proof has no linked Help Scout conversation', qrs: [], recipients: [], attachmentsRead: [], attachmentsSkipped: [], approvedRead: [], approvedSkipped: [] }
   const text = buildContextText(gapCtx)
   check('gap note rendered', text.includes('this proof has no linked Help Scout conversation'))
   check('gap framed as not-evidence', text.includes('not as evidence of error'))
@@ -277,7 +285,43 @@ const ctx: CheckContext = {
   const text = buildContextText(ctx)
   check('read attachments listed', text.includes('CUSTOMER ATTACHMENTS READ (1') && text.includes('details.xlsx (2026-06-01)'))
   check('skipped attachments listed', text.includes('source.zip — not a readable type'))
+  check('approved proofs listed', text.includes('APPROVED PROOF IMAGES (1') && text.includes('Dave Allen — front'))
+  check('approved skips listed', text.includes('weird.tiff — not a readable image type'))
 }
+
+// ── approved proof picks (Leg C) ─────────────────────────────────────────────
+
+function approvedRow(overrides: Partial<ApprovedImageRow>): ApprovedImageRow {
+  return { image_path: 'proofs/a.jpg', original_filename: 'a.jpg', associated_name: null, side: 'front', is_qr_code: false, ...overrides }
+}
+
+{
+  const { picks, skipped } = pickApprovedImages([
+    approvedRow({ image_path: 'p/dave-back.jpg', associated_name: 'Dave Allen', side: 'back' }),
+    approvedRow({ image_path: 'p/shared-front.jpg', associated_name: null, side: 'front' }),
+    approvedRow({ image_path: 'p/dave-front.jpg', associated_name: 'Dave Allen', side: 'front' }),
+    approvedRow({ image_path: 'p/qr.svg', is_qr_code: true }),
+    approvedRow({ image_path: 'p/odd.tiff', original_filename: 'odd.tiff' }),
+    approvedRow({ image_path: '' }),
+  ])
+  eq('gallery order: shared first, then name, front before back',
+    picks.map((p) => p.label).join(','), 'Shared — front,Dave Allen — front,Dave Allen — back')
+  check('qr rows excluded silently', !picks.some((p) => p.path === 'p/qr.svg') && !skipped.some((s) => s.name.includes('qr')))
+  check('non-raster named as skipped', skipped.some((s) => s.name === 'odd.tiff' && /image type/.test(s.reason)))
+  check('media types resolved', picks.every((p) => p.mediaType === 'image/jpeg'))
+}
+
+{
+  const many = Array.from({ length: APPROVED_IMAGES_MAX_COUNT + 2 }, (_, i) =>
+    approvedRow({ image_path: `p/${i}.jpg`, original_filename: `${i}.jpg`, associated_name: `P${String(i).padStart(2, '0')}` }))
+  const { picks, skipped } = pickApprovedImages(many)
+  eq('approved count cap', picks.length, APPROVED_IMAGES_MAX_COUNT)
+  eq('approved overflow recorded', skipped.filter((s) => /limit reached/.test(s.reason)).length, 2)
+}
+
+eq('approved budget caps at 6MB', approvedImageBudget(0, 0), 6 * 1024 * 1024)
+eq('approved budget shrinks', approvedImageBudget(20 * 1024 * 1024, 2 * 1024 * 1024), 2 * 1024 * 1024)
+eq('approved budget floors at zero', approvedImageBudget(20 * 1024 * 1024, 8 * 1024 * 1024), 0)
 
 // ── attachments: pickAttachments ─────────────────────────────────────────────
 

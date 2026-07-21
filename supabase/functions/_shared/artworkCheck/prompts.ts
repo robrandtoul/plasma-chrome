@@ -51,6 +51,12 @@ QR RULES
 - For hosted vCard QRs (qcrd.uk short URLs) the payload is only the URL; use the provided contact snapshot when present, and treat a missing snapshot as a reference gap.
 - A QR VISIBLE on the artwork with NO stored payload to check it against is a flag (field 'qr') — the one deliberate exception to the gaps-are-not-flags rule, because QR contents defeat visual QC entirely and a human must scan-test it before print. One flag per distinct code, not one per recipient sharing it.
 
+APPROVED PROOF RULES (post-approval drift)
+- When APPROVED PROOF images are provided, they are what the customer SIGNED OFF; the print files are what will PRINT. Compare them: contact text, names, titles, and explicitly-agreed treatments (a foil/colour arrangement the thread records) must not diverge. A meaningful divergence is a flag on the affected field (or 'other'), noted as post-approval drift and quoting both sides.
+- Tolerate everything rendering explains: JPEG compression, resolution, colour-profile shifts, crop/bleed margins, proof-page chrome or watermarks — and, on cut-through materials, a mirrored back in the print file vs a front-reading approved back (expected construction).
+- The approved proof is the reference for what was AGREED, not for print construction — never flag the print file for production marks the proof lacks (cut lines, bleed, registration).
+- No approved proof images provided → the drift comparison simply wasn't possible; note it if relevant, never an error.
+
 WORKED EXAMPLES
 - Printed email "derick@plak8.com" vs supplied "derrick@plak8.com" → flag (dropped letter).
 - Printed email matches the request exactly as typed, but its domain drops a letter vs every other card and the website → flag, noted as matching the request (internal inconsistency a human must verify before print — even if the customer restated the same value in an attachment).
@@ -62,6 +68,8 @@ WORKED EXAMPLES
 - Supplied logo artwork reads "WINDOWS COMPANY" vs the typed form's "Window Company" → the logo is the brand; note at most, never a flag.
 - "Add one more name — details in the attached spreadsheet" with the spreadsheet READ and provided → verify the roster and each card against it like any other supplied reference.
 - The same request with the spreadsheet NOT readable → reference_gap, not an unresolved correction.
+- The approved proof shows HURST and AESTHETICS gilded as whole words; the print file gilds only the 'R' and the 'A' → flag (post-approval drift in an agreed treatment).
+- The approved proof is a slightly soft JPEG while the print file is crisp vector → rendering, not drift; no finding.
 
 OUTPUT
 - summary: one line, issues-first.
@@ -98,6 +106,10 @@ export interface CheckContext {
   // blocks ride after the print files) and the ones passed over, with reasons.
   attachmentsRead: { name: string; at: string }[]
   attachmentsSkipped: { name: string; reason: string }[]
+  // Leg C — the approved proof images provided for the drift comparison
+  // (labels matching the review-page gallery), and the ones passed over.
+  approvedRead: string[]
+  approvedSkipped: { name: string; reason: string }[]
 }
 
 // The first user text block: everything the model needs BEFORE the documents.
@@ -159,6 +171,18 @@ export function buildContextText(ctx: CheckContext): string {
   }
 
   lines.push('')
+  if (ctx.approvedRead.length > 0) {
+    lines.push(`APPROVED PROOF IMAGES (${ctx.approvedRead.length} — what the customer signed off; provided after the print files for the drift comparison):`)
+    ctx.approvedRead.forEach((n, i) => lines.push(`${i + 1}. ${n}`))
+  } else {
+    lines.push('No approved proof images available — the post-approval drift comparison is not possible for this order.')
+  }
+  if (ctx.approvedSkipped.length > 0) {
+    lines.push('Approved images NOT provided:')
+    for (const s of ctx.approvedSkipped) lines.push(`- ${s.name} — ${s.reason}`)
+  }
+
+  lines.push('')
   if (ctx.attachmentsRead.length > 0) {
     lines.push(`CUSTOMER ATTACHMENTS READ (${ctx.attachmentsRead.length} — provided after the print files, treat as supplied reference material):`)
     ctx.attachmentsRead.forEach((a, i) => lines.push(`${i + 1}. ${a.name} (${a.at})`))
@@ -192,5 +216,7 @@ export function buildInputs(
     recipients: ctx.recipients,
     attachments_read: ctx.attachmentsRead,
     attachments_skipped: ctx.attachmentsSkipped,
+    approved_proofs_read: ctx.approvedRead,
+    approved_proofs_skipped: ctx.approvedSkipped,
   }
 }

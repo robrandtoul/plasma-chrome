@@ -5,6 +5,7 @@ import { DesignerChrome, PanelShell, ButtonCoral, ButtonGhost } from '../design'
 import { ImageCard, type GridImage } from '../components/ImageGrid'
 import Modal from '../components/Modal'
 import { checkEditedMessage } from '../lib/handoffMessageCheck'
+import ArtworkCheckReportView, { artworkFlagCount, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
 
 // OrderReviewPage (/orders/:id/place) — the review-and-confirm screen for placing
 // a PAID order into production. Shows the artwork, spec, quantities, destination
@@ -69,25 +70,8 @@ interface PreviewResponse {
   } | null
 }
 
-// The artwork sanity-check report (docs/artwork-check-spec.md) — the shape the
-// artwork-check edge function stores on orders.artwork_check and returns here.
-interface ArtworkFinding {
-  field: string
-  supplied: string
-  printed: string
-  status: 'match' | 'flag' | 'not_supplied'
-  note: string
-}
-interface ArtworkCheckReport {
-  verdict: 'clear' | 'flagged' | 'error'
-  summary: string
-  cards: { label: string; findings: ArtworkFinding[] }[]
-  corrections: { quote: string; resolved: boolean; note: string }[]
-  notes: string[]
-  reference_gaps: string[]
-  checked_at: string
-  error?: string
-}
+// The artwork-check edge function's response envelope; the report shape +
+// renderer live in ArtworkCheckReportView (shared with the Orders page).
 interface ArtworkCheckResponse {
   ok: boolean
   mode?: 'off' | 'shadow' | 'live'
@@ -421,15 +405,10 @@ export default function OrderReviewPage() {
   const handoffWarnings = preview?.handoff_validation?.warnings ?? []
   const showHandoffChecks = handoffProblems.length > 0 || handoffWarnings.length > 0
 
-  // Artwork check card derivations. Flags = 'flag' findings + corrections the
-  // customer sent that the artwork doesn't reflect; matches stay in the
-  // collapsed full table so the headline is the flags.
+  // Artwork check card derivations; the body rendering lives in the shared
+  // ArtworkCheckReportView (also used by the Orders-page report modal).
   const artworkReport = artworkCheck.report
-  const artworkFlags = artworkReport?.cards.flatMap((c) =>
-    c.findings.filter((f) => f.status === 'flag').map((f) => ({ card: c.label, ...f }))) ?? []
-  const artworkCorrectionsOpen = artworkReport?.corrections.filter((c) => !c.resolved) ?? []
-  const artworkFlagCount = artworkFlags.length + artworkCorrectionsOpen.length
-  const artworkFieldsChecked = artworkReport?.cards.reduce((s, c) => s + c.findings.length, 0) ?? 0
+  const artworkFlagTotal = artworkReport ? artworkFlagCount(artworkReport) : 0
   const showArtworkCard = artworkCheck.live && (artworkCheck.status === 'running' || artworkReport != null)
 
   // The editable hand-off message — identical control for both routes (only the
@@ -729,7 +708,7 @@ export default function OrderReviewPage() {
                       : artworkReport?.verdict === 'clear'
                         ? '✅ Artwork check — all clear'
                         : artworkReport?.verdict === 'flagged'
-                          ? `⚠️ Artwork check — ${artworkFlagCount} thing${artworkFlagCount === 1 ? '' : 's'} to check`
+                          ? `⚠️ Artwork check — ${artworkFlagTotal} thing${artworkFlagTotal === 1 ? '' : 's'} to check`
                           : '⚠️ Artwork check couldn’t run'}
                   </p>
                   {artworkCheck.status !== 'running' && (
@@ -744,64 +723,7 @@ export default function OrderReviewPage() {
                   )}
                 </div>
                 {artworkCheck.status !== 'running' && artworkReport && (
-                  <>
-                    <p className="mt-1 text-ink-soft">{artworkReport.summary}</p>
-                    {artworkFlags.length > 0 && (
-                      <ul className="mt-2 space-y-1.5">
-                        {artworkFlags.map((f, i) => (
-                          <li key={i} className="break-words">
-                            <span className="font-medium">{f.card} · {f.field.replace(/_/g, ' ')}:</span>{' '}
-                            printed <span className="font-mono text-[12px]">“{f.printed}”</span>
-                            {f.supplied && <> vs supplied <span className="font-mono text-[12px]">“{f.supplied}”</span></>}
-                            {f.note && <span className="text-ink-soft"> — {f.note}</span>}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {artworkCorrectionsOpen.length > 0 && (
-                      <ul className="mt-2 space-y-1.5">
-                        {artworkCorrectionsOpen.map((c, i) => (
-                          <li key={i} className="break-words">
-                            <span className="font-medium">Customer correction not picked up:</span>{' '}
-                            “{c.quote}”{c.note && <span className="text-ink-soft"> — {c.note}</span>}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {(artworkReport.notes.length > 0 || artworkReport.reference_gaps.length > 0) && (
-                      <ul className="mt-2 space-y-0.5 text-[12px] text-ink-soft">
-                        {artworkReport.notes.map((n, i) => <li key={`n-${i}`} className="break-words">{n}</li>)}
-                        {artworkReport.reference_gaps.map((g, i) => <li key={`g-${i}`} className="break-words">Couldn’t check: {g}</li>)}
-                      </ul>
-                    )}
-                    {artworkReport.cards.length > 0 && (
-                      <details className="mt-2">
-                        <summary className="cursor-pointer text-[12px] font-medium text-ink-soft">Full comparison table</summary>
-                        <div className="mt-1 space-y-2">
-                          {artworkReport.cards.map((c, i) => (
-                            <div key={i}>
-                              <p className="text-[12px] font-medium text-ink">{c.label}</p>
-                              <ul className="mt-0.5 space-y-0.5 text-[12px] text-ink-soft">
-                                {c.findings.map((f, j) => (
-                                  <li key={j} className="break-words">
-                                    {f.status === 'flag' ? '⚠️' : f.status === 'match' ? '✓' : '—'}{' '}
-                                    {f.field.replace(/_/g, ' ')}: {f.printed}
-                                    {f.status === 'not_supplied' ? ' (not supplied by customer)' : ''}
-                                    {f.status === 'flag' && f.supplied ? ` (supplied: ${f.supplied})` : ''}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    )}
-                    <p className="mt-1.5 text-[12px] text-ink-mute">
-                      {artworkReport.verdict !== 'error' && artworkFieldsChecked > 0 && `${artworkFieldsChecked} field${artworkFieldsChecked === 1 ? '' : 's'} compared. `}
-                      {artworkReport.verdict === 'flagged' && 'Flags are advisory — review them, then place the order when you’re satisfied. '}
-                      Checked {new Date(artworkReport.checked_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}.
-                    </p>
-                  </>
+                  <ArtworkCheckReportView report={artworkReport} />
                 )}
               </div>
             )}

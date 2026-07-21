@@ -76,6 +76,9 @@ function order(partial: FixtureOrder): FixtureOrder {
     project_name: null,
     stock_colour: null,
     person_quantities: null,
+    artwork_check_verdict: null,
+    artwork_checked_at: null,
+    artwork_check: null,
     ship_dest_country: 'GB',
     ship_to_name: null,
     ship_to_email: null,
@@ -92,6 +95,47 @@ function order(partial: FixtureOrder): FixtureOrder {
     },
     ...partial,
   }
+}
+
+// The artwork sanity-check report fixture (000336) — shared by the
+// artwork-check invoke branch (OrderReviewPage's live card) and the
+// orders rows below (the OrdersPage chip + report modal).
+const ARTWORK_REPORT_FLAGGED = {
+  verdict: 'flagged',
+  summary: '1 flag: the printed email drops a letter vs the request form; plus a later correction not picked up.',
+  cards: [
+    {
+      label: 'Derrick Smith — front/back',
+      findings: [
+        { field: 'name', supplied: 'Derrick Smith (request form)', printed: 'Derrick Smith', status: 'match', note: '' },
+        { field: 'email', supplied: 'derrick@plak8.com (request form)', printed: 'derick@plak8.com', status: 'flag', note: 'printed email drops an “r” vs what the customer supplied' },
+        { field: 'job_title', supplied: '', printed: 'Operations Director', status: 'not_supplied', note: '' },
+      ],
+    },
+  ],
+  corrections: [
+    { quote: 'Sorry — mobile should be 07700 900456, not 900123 (12 Jul)', resolved: false, note: 'card still shows 07700 900123' },
+  ],
+  notes: ['metal cut-through back — logo mirrored as expected'],
+  reference_gaps: ['details for Jo Bloggs supplied as attachment details.xlsx (not read)'],
+  checked_at: '2026-07-21T10:30:00Z',
+}
+const ARTWORK_REPORT_CLEAR = {
+  ...ARTWORK_REPORT_FLAGGED,
+  verdict: 'clear',
+  summary: 'All clear — every printed detail matches what the customer supplied.',
+  cards: [
+    {
+      label: 'Richard Hendricks — front',
+      findings: [
+        { field: 'name', supplied: 'Richard Hendricks (request form)', printed: 'Richard Hendricks', status: 'match', note: '' },
+        { field: 'email', supplied: 'richard@piedpiper.com (request form)', printed: 'richard@piedpiper.com', status: 'match', note: '' },
+      ],
+    },
+  ],
+  corrections: [],
+  notes: [],
+  reference_gaps: [],
 }
 
 const ORDERS: FixtureOrder[] = [
@@ -199,6 +243,9 @@ const ORDERS: FixtureOrder[] = [
     dropbox_folder_url: 'https://www.dropbox.com/scl/fo/abc/order-1234',
     stock_order_number: '1234',
     project_name: 'Letterpress relaunch',
+    artwork_check_verdict: 'flagged',
+    artwork_checked_at: daysAgo(0.2),
+    artwork_check: ARTWORK_REPORT_FLAGGED,
     proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-4', contacts: contact('Initech', 'Bill Lumbergh') },
   }),
   // Being revised — paid + placed, artwork being redone.
@@ -212,7 +259,7 @@ const ORDERS: FixtureOrder[] = [
     proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-5', contacts: contact('Hooli', 'Gavin Belson') },
   }),
   // Recently ordered.
-  order({ id: 'o9', status: 'fulfilled', paid_at: daysAgo(8), fulfilled_at: daysAgo(5), proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Pied Piper', 'Richard Hendricks') } }),
+  order({ id: 'o9', status: 'fulfilled', paid_at: daysAgo(8), fulfilled_at: daysAgo(5), artwork_check_verdict: 'clear', artwork_checked_at: daysAgo(5), artwork_check: ARTWORK_REPORT_CLEAR, proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Pied Piper', 'Richard Hendricks') } }),
   order({ id: 'o10', status: 'fulfilled', paid_at: daysAgo(15), fulfilled_at: daysAgo(12), proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact(null, 'Jian Yang') } }),
 ].map((o, i) => ({ ...o, proof_id: `p-${o.id}` }))
 
@@ -395,6 +442,7 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
   } else if (table === 'orders') {
     rows = ORDERS
     if (Array.isArray(filters['in:status'])) rows = rows.filter((r) => filters['in:status'].includes(r.status))
+    if (filters['eq:id']) rows = rows.filter((r) => r.id === filters['eq:id'])
   } else if (table === 'public_dashboard_projects') {
     rows = DASHBOARD_PROJECTS
     if (filters['eq:status']) rows = rows.filter((r) => r.status === filters['eq:status'])
@@ -590,34 +638,10 @@ export const supabase: any = {
       if (name === 'artwork-check') {
         // OrderReviewPage artwork sanity check (?path=/orders/o1/place) — a
         // live-mode FLAGGED report so the advisory card renders with a flag,
-        // an unresolved correction, notes, gaps and the full table.
+        // an unresolved correction, notes, gaps and the full table. Same
+        // fixture the orders rows carry for the OrdersPage chip + modal.
         return {
-          data: {
-            ok: true,
-            mode: 'live',
-            required: true,
-            cached: true,
-            report: {
-              verdict: 'flagged',
-              summary: '1 flag: the printed email drops a letter vs the request form; plus a later correction not picked up.',
-              cards: [
-                {
-                  label: 'Derrick Smith — front/back',
-                  findings: [
-                    { field: 'name', supplied: 'Derrick Smith (request form)', printed: 'Derrick Smith', status: 'match', note: '' },
-                    { field: 'email', supplied: 'derrick@plak8.com (request form)', printed: 'derick@plak8.com', status: 'flag', note: 'printed email drops an “r” vs what the customer supplied' },
-                    { field: 'job_title', supplied: '', printed: 'Operations Director', status: 'not_supplied', note: '' },
-                  ],
-                },
-              ],
-              corrections: [
-                { quote: 'Sorry — mobile should be 07700 900456, not 900123 (12 Jul)', resolved: false, note: 'card still shows 07700 900123' },
-              ],
-              notes: ['metal cut-through back — logo mirrored as expected'],
-              reference_gaps: ['details for Jo Bloggs supplied as attachment details.xlsx (not read)'],
-              checked_at: '2026-07-21T10:30:00Z',
-            },
-          },
+          data: { ok: true, mode: 'live', required: true, cached: true, report: ARTWORK_REPORT_FLAGGED },
           error: null,
         }
       }

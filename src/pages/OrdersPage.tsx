@@ -26,6 +26,7 @@ import { useConfirm } from '../components/ConfirmDialog'
 import SendPayLinkModal from '../components/SendPayLinkModal'
 import DesignerAvatar from '../components/DesignerAvatar'
 import ApprovedArtworkPanel from '../components/ApprovedArtworkPanel'
+import ArtworkCheckReportView, { artworkFlagCount, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
 import { ChevronDown, ChevronRight, StickyNote } from 'lucide-react'
 
 // Orders / "to order" surface (Ordering & checkout, Step 6 — overhauled).
@@ -92,6 +93,11 @@ interface OrderRow {
   paid_at: string | null
   fulfilled_at: string | null
   revised_at: string | null
+  // Artwork sanity check (000336): the latest run's verdict + stamp — the chip
+  // on To-order / Recently-ordered cards. The full report jsonb is fetched
+  // lazily when the chip is clicked, never in the list select.
+  artwork_check_verdict: 'clear' | 'flagged' | 'error' | null
+  artwork_checked_at: string | null
   // Order-placement fields (000252).
   date_required: string | null
   dropbox_folder_url: string | null
@@ -141,6 +147,7 @@ const SELECT = `
   custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff,
   card_discount_type, card_discount_value, amount_card_discount, payment_method, order_kind,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, revised_at,
+  artwork_check_verdict, artwork_checked_at,
   date_required, dropbox_folder_url, stock_order_number, project_name, stock_colour, person_quantities,
   ship_to_name, ship_to_email, ship_to_phone, ship_to_address, ship_dest_country, proof_id,
   material_variants(display_name, materials(code, display_name, production_route, lead_time_max_days, outsourced_supplier_ids)),
@@ -599,6 +606,26 @@ function PrepChip({ ok, label }: { ok: boolean; label: string }) {
   )
 }
 
+// The artwork sanity-check verdict as a clickable chip (000336) — green when
+// the last run was clear, amber when flagged or failed. Click opens the stored
+// report in a modal (the in-app archive; no SQL needed to read past checks).
+function ArtworkChip({ verdict, onOpen }: { verdict: 'clear' | 'flagged' | 'error'; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title="Open the artwork check report"
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)] ${
+        verdict === 'clear'
+          ? 'bg-[var(--c-in-stock-soft)] text-in-stock ring-[var(--c-in-stock)]/40'
+          : 'bg-[var(--c-low-soft)] text-low ring-[var(--c-low)]/40'
+      }`}
+    >
+      {verdict === 'clear' ? '✓' : verdict === 'flagged' ? '⚠' : '!'} Artwork check
+    </button>
+  )
+}
+
 // A between-tiles flow chevron, signalling the header reads left-to-right as a
 // pipeline. Shown only at sm+ (single row); on the mobile 2×2 grid it's hidden
 // (display:none) so it doesn't consume a grid cell.
@@ -675,6 +702,24 @@ export default function OrdersPage() {
   const [materialThumbs, setMaterialThumbs] = useState<Record<string, ThumbInfo>>({})
   const [busyId, setBusyId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  // Artwork check (000336): chips render only when the feature is live; the
+  // full report jsonb is fetched lazily per click, never in the list select.
+  const [artworkChipsOn, setArtworkChipsOn] = useState(false)
+  const [artworkReportModal, setArtworkReportModal] = useState<{
+    label: string
+    loading: boolean
+    report: ArtworkCheckReport | null
+  } | null>(null)
+
+  async function openArtworkReport(order: OrderRow) {
+    setArtworkReportModal({ label: customerLabel(order), loading: true, report: null })
+    const { data } = await supabase.from('orders').select('artwork_check').eq('id', order.id).maybeSingle()
+    setArtworkReportModal((m) => m && {
+      ...m,
+      loading: false,
+      report: ((data as { artwork_check?: ArtworkCheckReport | null } | null)?.artwork_check ?? null),
+    })
+  }
   // The awaiting-payment order being recorded as paid offline (bank transfer),
   // or null when the modal is closed.
   const [recordOffline, setRecordOffline] = useState<OrderRow | null>(null)
@@ -971,6 +1016,12 @@ export default function OrdersPage() {
           setNotesByProof({})
         }
       })()
+      // Artwork check chips (000336): only meaningful once the feature is live
+      // — in shadow the reports exist but stay invisible, matching the review
+      // page's contract. Tolerant read: any failure just keeps chips off.
+      void supabase.from('settings').select('artwork_check_mode').eq('id', 1).maybeSingle().then(({ data }) => {
+        setArtworkChipsOn((data as { artwork_check_mode?: string | null } | null)?.artwork_check_mode === 'live')
+      })
       void supabase.schema('public').from('outsourced_suppliers').select('id, name').then(({ data }) => {
         if (cancelled || !data) return
         setSupplierNames(Object.fromEntries((data as { id: string; name: string }[]).map((s) => [s.id, s.name])))
@@ -1978,6 +2029,8 @@ export default function OrdersPage() {
                             onCopy={() => void copyLink(o)}
                             onSaveField={(patch) => saveOrderField(o.id, patch)}
                             onRetryInvoice={() => void retryInvoice(o)}
+                            showArtworkChip={artworkChipsOn}
+                            onOpenArtworkReport={() => void openArtworkReport(o)}
                           />
                         </div>
                       ))}
@@ -2022,6 +2075,8 @@ export default function OrdersPage() {
                       onCopy={() => void copyLink(o)}
                       onSaveField={(patch) => saveOrderField(o.id, patch)}
                       onRetryInvoice={() => void retryInvoice(o)}
+                      showArtworkChip={artworkChipsOn}
+                      onOpenArtworkReport={() => void openArtworkReport(o)}
                     />
                   ))}
                 </div>
@@ -2061,6 +2116,9 @@ export default function OrdersPage() {
                               <span className="ml-2 text-ink-mute">{o.payment_reference}</span>
                             </div>
                             <div className="flex items-center gap-3 text-ink-soft">
+                              {artworkChipsOn && o.artwork_check_verdict && (
+                                <ArtworkChip verdict={o.artwork_check_verdict} onOpen={() => void openArtworkReport(o)} />
+                              )}
                               <span>{o.quantity != null ? `${o.quantity.toLocaleString()} cards` : 'Custom'}</span>
                               <span className="text-ink-mute">Ordered {formatDate(o.fulfilled_at)}</span>
                               <button
@@ -2141,6 +2199,36 @@ export default function OrdersPage() {
             onClose={() => setRecordOffline(null)}
             onRecorded={(orderId) => void refetchOrder(orderId)}
           />
+        )}
+
+        {/* Artwork check report — the in-app archive (000336). Read-only: the
+            stored supplied-vs-printed report for whichever card's chip was
+            clicked; re-runs live on the Place-order review page. */}
+        {artworkReportModal && (
+          <Modal open onClose={() => setArtworkReportModal(null)} ariaLabel="Artwork check report">
+            <div className="w-full max-w-xl p-5 text-[13px] text-ink">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">{artworkReportModal.label}</p>
+              {artworkReportModal.loading ? (
+                <p className="mt-2 text-sm text-ink-mute">Loading the report…</p>
+              ) : artworkReportModal.report ? (
+                <>
+                  <p className="mt-1 font-medium">
+                    {artworkReportModal.report.verdict === 'clear'
+                      ? '✅ Artwork check — all clear'
+                      : artworkReportModal.report.verdict === 'flagged'
+                        ? `⚠️ Artwork check — ${artworkFlagCount(artworkReportModal.report)} thing${artworkFlagCount(artworkReportModal.report) === 1 ? '' : 's'} to check`
+                        : '⚠️ Artwork check couldn’t run'}
+                  </p>
+                  <ArtworkCheckReportView report={artworkReportModal.report} />
+                </>
+              ) : (
+                <p className="mt-2 text-sm text-ink-mute">No stored report for this order yet — open its Place order screen to run one.</p>
+              )}
+              <div className="mt-4 flex justify-end">
+                <ButtonGhost size="sm" onClick={() => setArtworkReportModal(null)}>Close</ButtonGhost>
+              </div>
+            </div>
+          </Modal>
         )}
 
         {editingOrder && (
@@ -2261,6 +2349,8 @@ function OrderCard({
   onSaveField,
   onRetryInvoice,
   proofMaterialCode,
+  showArtworkChip = false,
+  onOpenArtworkReport,
 }: {
   order: OrderRow
   thumb: ThumbInfo | null
@@ -2277,6 +2367,8 @@ function OrderCard({
   onSaveField: (patch: Partial<OrderRow>) => Promise<boolean>
   onRetryInvoice: () => void
   proofMaterialCode: string | null
+  showArtworkChip?: boolean
+  onOpenArtworkReport?: () => void
 }) {
   const total = orderTotal(order)
   const invoiceError = !order.xero_invoice_id ? friendlyInvoiceError(order.xero_invoice_error) : null
@@ -2547,6 +2639,9 @@ function OrderCard({
             <PrepChip ok={folderVerified} label="Folder" />
             <PrepChip ok={datePersisted} label="Date" />
             {needsColour && <PrepChip ok={!!order.stock_colour} label="Colour" />}
+            {showArtworkChip && order.artwork_check_verdict && onOpenArtworkReport && (
+              <ArtworkChip verdict={order.artwork_check_verdict} onOpen={onOpenArtworkReport} />
+            )}
           </div>
 
           {expanded && isRevision && (

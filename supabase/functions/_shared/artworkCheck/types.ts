@@ -77,6 +77,10 @@ export interface ReportInputs {
   // Absent on pre-Phase-2a reports.
   attachments_read?: { name: string; at: string }[]
   attachments_skipped?: { name: string; reason: string }[]
+  // Leg C — approved proof images provided for the drift comparison, and the
+  // ones passed over. Absent on pre-Leg-C reports.
+  approved_proofs_read?: string[]
+  approved_proofs_skipped?: { name: string; reason: string }[]
 }
 
 export interface ReportUsage {

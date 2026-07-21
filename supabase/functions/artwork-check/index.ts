@@ -36,6 +36,11 @@ import {
   routedToBlocks,
   type RoutedAttachment,
 } from '../_shared/artworkCheck/attachments.ts'
+import {
+  APPROVED_IMAGE_MAX_BYTES,
+  approvedImageBudget,
+  pickApprovedImages,
+} from '../_shared/artworkCheck/approvedProof.ts'
 import { threadToText } from '../_shared/artworkCheck/threadText.ts'
 import {
   buildContextText,
@@ -185,15 +190,17 @@ Deno.serve(async (req) => {
     .filter((p: { name?: unknown; quantity?: unknown }) => p && typeof p.name === 'string' && p.name.trim() && Number(p.quantity) > 0)
     .map((p: { name: string; quantity: unknown }) => `${p.name.trim()} — ${Number(p.quantity)}`)
 
-  // QR rows for the version (payloads are exact decoded text, 000168; hosted
-  // vCards additionally carry the approved-contact snapshot, 000194).
-  const { data: qrRows } = await admin
+  // Every image row for the version in one read: QR rows carry the exact
+  // decoded payloads (000168; hosted vCards additionally carry the approved-
+  // contact snapshot, 000194), and the non-QR rows are the approved proof
+  // images Leg C compares the print files against.
+  const { data: imageRows } = await admin
     .from('proof_version_images')
-    .select('qr_decoded_data, qr_kind, qr_vcard_slug, associated_name, side')
+    .select('image_path, original_filename, is_qr_code, qr_decoded_data, qr_kind, qr_vcard_slug, associated_name, side')
     .eq('proof_version_id', pv.id)
-    .eq('is_qr_code', true)
-  type QrRow = { qr_decoded_data: string | null; qr_kind: string | null; qr_vcard_slug: string | null; associated_name: string | null; side: string | null }
-  const qrRowsTyped = ((qrRows ?? []) as QrRow[]).filter((q) => q.qr_decoded_data)
+  type QrRow = { qr_decoded_data: string | null; qr_kind: string | null; qr_vcard_slug: string | null; associated_name: string | null; side: string | null; is_qr_code?: boolean | null; image_path?: string | null; original_filename?: string | null }
+  const allImageRows = (imageRows ?? []) as QrRow[]
+  const qrRowsTyped = allImageRows.filter((q) => q.is_qr_code === true && q.qr_decoded_data)
   const qrs: QrContext[] = qrRowsTyped.map((q) => ({
     kind: q.qr_kind ?? 'unknown',
     decoded: q.qr_decoded_data as string,
@@ -242,6 +249,8 @@ Deno.serve(async (req) => {
     skippedFiles: [],
     attachmentsRead: [],
     attachmentsSkipped: [],
+    approvedRead: [],
+    approvedSkipped: [],
   }
   let threadMessages = 0
   let threadFound = false
@@ -339,6 +348,7 @@ Deno.serve(async (req) => {
     // excluded inside pickAttachments — reading our own proof exports back
     // would verify the card against itself.
     const routedAttachments: RoutedAttachment[] = []
+    let attachmentsRawTotal = 0
     if (conversationId && hsToken && hsThreads) {
       const { picks, skipped } = pickAttachments(hsThreads, printsRawTotal)
       baseCtx.attachmentsSkipped.push(...skipped)
@@ -355,6 +365,7 @@ Deno.serve(async (req) => {
             continue
           }
           routedAttachments.push(routed)
+          attachmentsRawTotal += bytes.length
           baseCtx.attachmentsRead.push({ name: meta.filename, at: attachmentDateLabel(meta.at) })
         } catch {
           baseCtx.attachmentsSkipped.push({ name: meta.filename, reason: 'download failed' })
@@ -363,10 +374,52 @@ Deno.serve(async (req) => {
     }
     const attachmentBlocks = routedToBlocks(routedAttachments)
 
+    // ── Leg C: the approved proof images (post-approval drift) ──────────────
+    // What the customer signed off, downloaded from storage and fed alongside
+    // the print files so the model can compare agreement vs production.
+    // Best-effort like everything else: a miss is a named skip, never an error.
+    const approvedBlocks: ContentBlock[] = []
+    {
+      const { picks, skipped } = pickApprovedImages(allImageRows)
+      baseCtx.approvedSkipped.push(...skipped)
+      let approvedRawTotal = 0
+      const budget = approvedImageBudget(printsRawTotal, attachmentsRawTotal)
+      for (const pick of picks) {
+        try {
+          const { data: blob, error: dlErr } = await admin.storage.from('proof-images').download(pick.path)
+          if (dlErr || !blob) {
+            baseCtx.approvedSkipped.push({ name: pick.label, reason: 'download failed' })
+            continue
+          }
+          const bytes = new Uint8Array(await blob.arrayBuffer())
+          if (bytes.length > APPROVED_IMAGE_MAX_BYTES) {
+            baseCtx.approvedSkipped.push({ name: pick.label, reason: 'over the size limit' })
+            continue
+          }
+          if (approvedRawTotal + bytes.length > budget) {
+            baseCtx.approvedSkipped.push({ name: pick.label, reason: 'size budget reached' })
+            continue
+          }
+          approvedRawTotal += bytes.length
+          baseCtx.approvedRead.push(pick.label)
+          approvedBlocks.push({ type: 'text', text: `Approved proof ${baseCtx.approvedRead.length}: ${pick.label} (customer-approved artwork):` })
+          approvedBlocks.push({
+            type: 'image',
+            source: { type: 'base64', media_type: pick.mediaType, data: bytesToBase64(bytes) },
+          })
+        } catch {
+          baseCtx.approvedSkipped.push({ name: pick.label, reason: 'download failed' })
+        }
+      }
+    }
+
     // ── One multimodal call ─────────────────────────────────────────────────
     const content: ContentBlock[] = [
       { type: 'text', text: buildContextText(baseCtx) },
       ...documents,
+      ...(approvedBlocks.length > 0
+        ? [{ type: 'text', text: 'APPROVED PROOF IMAGES (what the customer signed off — compare the print files against these for post-approval drift):' } as ContentBlock, ...approvedBlocks]
+        : []),
       ...(attachmentBlocks.length > 0
         ? [{ type: 'text', text: 'CUSTOMER-SUPPLIED ATTACHMENTS (reference material, labelled per file):' } as ContentBlock, ...attachmentBlocks]
         : []),
