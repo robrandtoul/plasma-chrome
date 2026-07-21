@@ -1,0 +1,376 @@
+# Artwork sanity-check — build spec
+
+Assessed, grounded on live data, prototyped, and backtested over real orders 2026-07-21.
+**Not yet built.** Companion to `memory:artwork-sanity-check-productisation`. This is the
+working spec for the build; update it as decisions change, the way
+`docs/followup-automation-rollout.md` tracked the nudge project.
+
+## What this is — and the failure it exists to catch
+
+The dominant cause of a *wrong card reaching print* is not a fancy one. The customer types
+their contact details into the online **artwork request form**; a designer then **re-types**
+those details into the artwork by hand; a character in **any** field comes out wrong; and
+**nobody can see it**. You cannot eyeball that a phone number, an email, a name spelling or an
+address is "correct" — any plausible string passes visual QC — and the customer approves the
+proof assuming you used exactly what they supplied. The typo survives approval and only surfaces
+*after printing*. The same failure occurs when a customer **revises** a detail later in the
+thread — sometimes silently — and the card still carries the old value. The
+"approved-artwork-is-your-responsibility" disclaimer doesn't really save you there: a designer's
+transcription typo (or a missed revision) is not something you can fairly pin on the customer.
+
+The only thing that reliably catches this is comparing **what the customer actually supplied**
+(which lives in the Help Scout thread / the request-form submission) against **what got typed
+onto the card**. That comparison is done today, manually, in ChatGPT — outside the app, after
+payment. This feature moves it *inside* the order workflow: an **advisory check that runs
+between "To order" (Dropbox folder linked) and sending the job to the supplier / workshop.** It
+gathers the customer's supplied details + the QR contents, reads the actual print artwork,
+reconciles them, and shows the reviewer a short report *before* they hit send. It never sends
+anything and never blocks on its own; a human always confirms.
+
+The specification of *what to compare* is the installed `artwork-sanity-check` skill (an
+8-field contact comparison: name, job title, company, address, tel, mob, website, email, plus
+hunting the thread for later corrections). This feature is that skill, run automatically at the
+right moment against the app's own data.
+
+## Decisions locked in with Rob
+
+- **The Help Scout thread is the PRIMARY reference.** The most frequent post-payment issue is a
+  designer transcription typo of customer-supplied details, and only the thread (the form
+  submission) holds the ground truth to catch it. Everything else is corroboration.
+- **Also check the real Dropbox print files** (not only the approved proof) so it *additionally*
+  catches errors introduced after approval, during print-prep. Important, but rarer than the
+  transcription typo — so it's the secondary leg, not the headline.
+- **Advisory, never auto-send.** A missed error prints wrong cards; the check flags for a human
+  and the human always clicks send. Same stance as today's green-light/flag.
+- **Running the check is MANDATORY; its verdict stays advisory.** A human still okays or dismisses
+  each flag — a flagged verdict never hard-blocks the send. But an order **cannot be submitted to
+  the workshop / supplier until the check has been run for it.** Enforced in the UI (`blockReason`)
+  *and* server-side in `place-order`, behind an enforcement flag so it only bites once we trust it.
+- **Include QR verification.** ~28% of ordered cards carry a QR; the decoded contents are already
+  stored, so it's nearly free and a strong corroborator — better than the manual step, which
+  skips QR entirely.
+- **Skip technical checks** (DPI / CMYK / bleed / dimensions). Contact-content only.
+- **Attachments matter.** Customers "reasonably frequently" supply details as a spreadsheet, PDF,
+  or their own source artwork — and the request-form data itself may arrive as an attachment. So
+  reading Help Scout attachments is in scope (see phasing / open questions).
+
+## What it compares (three legs, in priority order)
+
+- **Leg A — the card vs the customer's supplied details** *(PRIMARY — the transcription-typo
+  catch)*. Card read from the **Dropbox print file** (hi-res, and the thing that actually
+  prints). Supplied details from the **Help Scout thread** (the request-form submission + any
+  later corrections). "Does every character on the card match what the customer gave us?"
+- **Leg B — the card vs the QR** *(corroborator)*. Decoded QR (`qr_decoded_data` / vCard) vs the
+  printed card face vs the supplied details. Catches QR-vs-face mismatches and gives a second
+  authoritative source for the contact fields.
+- **Leg C — the print file vs the approved proof** *(secondary — production drift)*. Did the
+  print file diverge from what the customer signed off, after approval? Lower frequency than A;
+  needs both images.
+
+**Reference priority (learned from the backtest).** Trust, in order: (1) the **customer's
+request-form submission / Help Scout thread** — the ground truth for what was *asked for*;
+(2) the **vCard QR** — matched a real card across all six fields; (3) recipient **`names[]`**.
+The `contacts` / company / order **record fields are WEAK** — they describe the *account*, not
+the card (the orderer is frequently not the cardholder), and "company" is often a domain
+shorthand. Use them only as loose corroboration, never as the thing the card must match.
+
+## Reading the thread: chronological, latest-value-wins
+
+The supplied details are **usually the first message** in the thread (the request-form
+submission) — which is exactly why reading the *oldest* messages matters (see §1). But a
+considerable share of jobs (**repeat customers** especially) have **no first-message form**: they
+say "same as last time", reference a previous order, or supply details part-way through. So the
+check must (a) find the supplied details wherever they are, and (b) for a repeat customer who
+re-supplies nothing, reconcile against the **previous order / version** rather than report
+"nothing supplied".
+
+Then read the whole thread **oldest → newest and resolve each field to the customer's
+LAST-supplied value.** Customers revise details later, sometimes **silently** (a new number or
+spelling stated with no "correction" wording) — the first value is *not* gospel. This applies to
+**any** retyped field — name spelling, title, company, email, phone, mobile, website, address —
+not just phone numbers. Two failure modes fall out, and the check must flag both: (1) a designer
+**mistyped** a supplied value; (2) the card matches the **original** request but the customer
+**revised** it later and it was never picked up ("card shows a superseded value; revised to X on
+&lt;date&gt;").
+
+## The worked prototype + backtest (real orders)
+
+**Prototype — Snap-on 403902 (matte black metal, vCard QR).** End-to-end, no shortcuts: pulled
+the record + decoded QR, downloaded `03_Front.ai` / `01_Back.ai` from Dropbox, rendered to
+3000px, reconciled. Read every character cleanly (incl. accented French) and found a **genuine
+flag**: printed title *"Franchisé propriétaire"* ≠ QR title *"Franchisé autorisé Snap-on Tools
+Canada"*. (The "mirror-reversed back logo" I noted first was a **false positive** — see the
+metal cut-through rule below.)
+
+**Backtest — 3 more orders (Nawsera, Nexusqs, Plak8).** Reading held up on **all** print files,
+across both **PDF** (plastic jobs) and **`.ai`** (metal jobs), light and dark cards, down to a
+postcode and a mobile number. One clean six-field match (Nexusqs, card ↔ vCard QR), two correct
+all-clears. **The decisive finding: a naive field-equality check would have false-flagged 3 of
+the 4 orders.** The value is almost entirely in the allow-list below.
+
+## The "don't over-flag" rules (each earned from a real order)
+
+- **Advisory, review-not-block.** Nothing here decides; a human confirms.
+- **Compare the card to the RECIPIENT, never the account contact.** The person who *placed* the
+  order is often not the person *on the card* (Plak8: Parissa Mobasher ordered, the card is
+  Derrick Smith with his own email; Nawsera's contact is a personal gmail). Key every name/email
+  check off `names[]` / `associated_name`, not `contacts.*`.
+- **Cut-through backs are mirrored BY DESIGN — never flag.** When artwork (usually the logo) is
+  cut *through* the material from the front, it is necessarily reversed on the back. This affects
+  **every cut-through material — currently metal, acrylic, wood, and carbon fibre**. A mirrored
+  logo/element on the back of a card in one of those materials is expected construction, not an
+  error — gate this tolerance on the version's `material`.
+- **The record's "company" is often a domain / shorthand** ("Nexusqs.co.uk", "Plak8.com") vs the
+  card's real trading name ("Nexus Quantity Surveyors", "PlaK8 Security"). Don't flag; treat the
+  QR ORG / printed name as authoritative.
+- **Brand casing is intentional** (PLAK8 / PlaK8). Don't flag stylistic case in logos/brand names.
+- **Card fields the record doesn't hold are "not supplied", not discrepancies** (title, address,
+  phone — `contacts` has no phone column at all). Verify these against the *thread*, not the DB.
+- **Skip the shared / front brand card** — no personal details to check.
+- **Printed title vs QR title can legitimately differ** (Snap-on) — surface for a human, don't
+  hard-fail.
+- **One shared QR legitimately prints on every recipient's card** (Nawsera) — not a "missing
+  per-person QR".
+- **The print file / rendered artwork is the truth for what's ON the card.** Don't flag what you
+  can't clearly see. **Never treat a gap as an error** — "couldn't read / supplied as an
+  attachment / no thread match" is a `reference_gap`, not a discrepancy.
+- **Read chronologically; the latest supplied value wins** (see "Reading the thread" above) —
+  this covers explicit corrections ("noticed", "typo", "should be", "change") *and* silent later
+  revisions, and it flags a card that still carries a now-superseded value.
+
+## Where it lives in the workflow
+
+`OrderReviewPage` at **`/orders/:id/place`** already sits precisely between "folder linked" and
+the place-order Confirm. It already loads the approved artwork, the order spec, and the
+material/version. Reuse two existing patterns:
+
+- **The advisory card** — `preview.handoff_validation` renders as the amber "Stock Control
+  hand-off checks" card (`OrderReviewPage.tsx:339-343`, ~593-617): informational,
+  `{ problems[], warnings[] }`, **deliberately not part of `blockReason`**. The artwork report
+  renders as a sibling card in exactly this shape.
+- **The block gate** — `blockReason` / `canConfirm` (`OrderReviewPage.tsx:300-337`) disables
+  Confirm. Add **one clause**: when enforcement is on and the check hasn't been run for this order
+  (`orders.artwork_checked_at IS NULL`), block with *"Run the artwork check before placing this
+  order."* This makes **running** mandatory while the **verdict** stays advisory — a flagged
+  result does not block; the human okays it. (Stricter later option: a flagged verdict soft-blocks
+  behind an "I've reviewed the flags" checkbox, like the existing `oldJobCancelled` attestation.)
+
+The check runs as its **own edge function** invoked from the review page (not folded into the
+`place-order` preview) because it's a heavier multimodal call — it shouldn't slow or risk the
+send path. The result is cached on the order so re-opening the page is instant.
+
+## Data sources & how to fetch each
+
+### 1. The customer's supplied details — Help Scout thread (PRIMARY, service-side API)
+Reuse `_shared/helpscout.ts` `fetchConversationWithThreads`
+(`GET /v2/conversations/{id}?embed=threads`; OAuth client-credentials via `HELPSCOUT_APP_ID` /
+`HELPSCOUT_APP_SECRET`). This is a **REST API call the app already makes in production** — the
+MCP connector is irrelevant to the build. **Three required changes vs today:**
+- **Paginate.** The current call reads only the first ~25-thread page, newest-first — long
+  threads silently drop the *oldest* messages, which is exactly where the request-form submission
+  usually is. Follow `_links.next`.
+- **Use raw `thread.body`**, not the lossy human-preview cleaner in
+  `fetch-helpscout-conversation-context` (it strips signatures/quotes and could remove the very
+  detail block the check needs).
+- **Read attachments** (see §5) — the request-form data may arrive as an attachment, not inline.
+
+⚠ **The request-form submission is typically the FIRST message** in the thread — so paginating to
+the *oldest* end is doubly critical. But a considerable share of jobs (repeat customers) have no
+first-message form; the check must handle that (see "Reading the thread") by reconciling against
+the previous order rather than reporting nothing supplied. (Open question #2.)
+
+### 2. QR contents (Supabase, already structured — no vision needed)
+`proof_version_images` where `is_qr_code`: `qr_decoded_data` (verbatim payload, CHECK-guaranteed
+non-null on QR rows), `qr_kind` (`vcard` / `url` — the only live kinds), `qr_vcard_slug`. For
+`hosted_vcard` use `proof_name_approvals.qr_snapshot` (000194) instead of `qr_decoded_data`
+(which is only the short URL) — though no fulfilled order uses `hosted_vcard` today.
+
+### 3. The card being printed — Dropbox print file (hi-res)
+`orders.dropbox_folder_url` (100% present on fulfilled orders) → resolve → list the folder → the
+print files. **File type depends on the job:** metal jobs are native **`.ai`**
+(`NN_Front.ai` / `NN_Back.ai`); plastic / full-colour jobs export as **PDF**
+(`NN_Front.pdf`, per-recipient `NN_<Name>.pdf`). Both render identically well. The proof JPEGs
+alongside are **not** a reliable substitute — observed to lag the print file by days; always
+read the print file. Dropbox access from the function: reuse the existing integration
+(`dropbox-folder`, `clone-order-folder` edge functions) to list and fetch bytes.
+
+**The render decision.** The `.ai` are valid `%PDF-1.6`. **Recommended: pass each print file to
+the model as a PDF document block** (relabel `media_type: application/pdf`; 1 page, <1 MB — well
+inside limits). No renderer needed. **Must be confirmed** the API accepts the Illustrator-
+flavoured PDF (open question #1 — the prototype rendered locally with `sips` instead).
+**Fallback:** rasterise with a WASM PDF renderer (`mupdf-wasm` / `pdfium`) inside the Deno
+function at ≥300 dpi — the backtest proved 3000px is ample even for a postcode. (Neither
+`poppler` nor `sips` exists in an edge function, hence the PDF-block-or-WASM route.)
+
+### 4. Recipient names + weak corroboration (Supabase, service role)
+Current version via `proof_versions where is_current` → `names[]` / per-image `associated_name`
+(the strong keys). `contacts.full_name` / `email` and `companies.name` are the **weak** account
+fields — corroborate only.
+
+### 5. Attachments (Help Scout)
+Not fetched anywhere today. Add: embed attachment metadata, then
+`GET /v2/conversations/{id}/attachments/{attachmentId}/data` (base64). Route by type: image/PDF →
+content block; **xlsx/csv → parse to text** (SheetJS / CSV parse); `.ai`/`.eps` → the same PDF
+path as print files when PDF-compatible. Priority depends on where the request-form data lands
+(§1 / open question #2): if it's an attachment, this moves into Phase 1.
+
+## The AI call (reuse the aiDrafts pattern)
+
+Reuse `supabase/functions/_shared/aiDrafts/`: Anthropic Messages API via raw `fetch`
+(`anthropic.ts`), model `claude-opus-4-8`, `ANTHROPIC_API_KEY`, `postWithRetry` (429/5xx
+backoff), structured output via `output_config` json_schema, prompt caching
+(`cache_control: ephemeral`) on the stable rules prefix, and the service-role auth gate from
+`ai-draft/index.ts` (`timingSafeEqual` against the service key or a `role: service_role` JWT).
+
+**The one net-new capability:** the aiDrafts calls are *text-only* (`content` is a string). This
+check needs **multimodal** — a `content` array mixing `{type:'text'}` (thread + QR + names),
+`{type:'document', source:{type:'base64', media_type:'application/pdf',…}}` (print files), and
+`{type:'image',…}` (approved proof, for Leg C). Small, localised change to `structuredCall`.
+
+System prompt = the rules above (cached). User content = supplied details (thread text, QR
+payloads, recipient names) + the artwork (print-file PDFs, approved-proof images), each clearly
+labelled per card / person.
+
+## The report (structured output schema)
+
+```jsonc
+{
+  "verdict": "clear" | "flagged" | "error",
+  "summary": "one line, issues-first",
+  "cards": [
+    { "label": "Derrick Smith — front/back",
+      "findings": [
+        { "field": "email",
+          "supplied": "derrick@plak8.com (request form)",
+          "printed": "derick@plak8.com",
+          "status": "match" | "flag" | "not_supplied",
+          "note": "printed email drops an 'r' vs what the customer supplied" }
+      ] }
+  ],
+  "corrections": [ { "quote": "...should be Jon not John", "resolved": true|false } ],
+  "notes": [ "metal cut-through back — logo mirrored as expected" ],
+  "reference_gaps": [ "no request-form submission found in the thread" ],
+  "model": "claude-opus-4-8",
+  "usage": { "...": "tokens" }
+}
+```
+
+Rendered on the review card: `✅ All clear` or `⚠️ N things to check`, each finding showing
+*supplied vs printed* so the reviewer adjudicates in seconds.
+
+## Schema changes
+
+Minimal — mirror the `handoff_payload` pattern (store the latest report on the order):
+
+- `proofs.orders.artwork_check jsonb` — the latest report (shape above).
+- `proofs.orders.artwork_checked_at timestamptz`.
+- `proofs.orders.artwork_check_verdict text` — `clear | flagged | error`, for filtering / a chip.
+- Settings (not order columns): `settings.artwork_check_mode` (`off | shadow | live`) and
+  `settings.artwork_check_required boolean` — the rollout gate and the mandatory-run enforcement.
+
+`orders` already carries `authenticated` CRUD (000176) and service-role writes (used by
+`place-order` / `stripe-webhook`), so a new column needs **no grant work**. **Do not pick a
+migration number from any doc** — run `ls supabase/migrations/0003*` and take the next free one;
+apply via MCP `apply_migration` (Rob gates prod), schema-qualified `proofs.`. (If we later want
+re-run history, promote to a `proofs.artwork_checks` table with the full explicit grant matrix —
+the `proofs` schema has no default privileges.)
+
+## The edge function
+
+New `supabase/functions/artwork-check/` (+ shared logic in `_shared/artworkCheck/` so it's
+unit-testable like `_shared/aiDrafts/` and `_shared/nudgeDecision.ts`):
+
+1. Service-role / JWT auth gate (copy `ai-draft/index.ts`).
+2. Input `{ order_id }`. Load order + proof + current version + recipient names + QR rows.
+3. Gather supplied details: Help Scout thread (paginated, raw bodies, + attachments).
+4. Gather artwork: Dropbox print-file bytes (+ approved-proof signed URLs for Leg C).
+5. One multimodal `structuredCall` → report JSON.
+6. Persist to `orders.artwork_check{,_at,_verdict}`.
+7. Return the report to the page.
+
+Deploy with `--project-ref bjvinrzbdrwebylkmbwy`; **preserve** the function's `verify_jwt`
+(don't blanket-set false); byte-verify after deploy (`memory:supabase-edge-deploy`).
+
+**The mandatory-run gate is enforced in `place-order` (mode `confirm`), not here:** when
+`settings.artwork_check_required`, it rejects with `artwork_check_required` if
+`orders.artwork_checked_at IS NULL`, so a direct API call can't bypass the UI gate — mirroring how
+`place-order` already re-checks the edited hand-off message server-side.
+
+## The UI (OrderReviewPage)
+
+- **Auto-run** the check when the review page loads — so the happy path needs no extra click and
+  the mandatory-run gate is satisfied without friction — with a spinner; plus a **"Re-run"**
+  affordance (artwork can change between visits).
+- Result as a `handoff_validation`-style advisory card: verdict headline + per-card findings
+  (supplied vs printed) + notes + reference-gaps. Green when clear.
+- **Confirm stays disabled until a check has completed** for the order (*"Run the artwork check
+  first"*). A **flagged** verdict does *not* disable Confirm — the human reviews the flags and
+  proceeds. If a run **errors** (Help Scout down, render failed), show the reason and let them
+  re-run; an errored run still satisfies the "has been run" gate so a transient outage can't
+  strand an order (open q — or require a clean run if Rob prefers stricter).
+- Optionally a verdict chip on the To-order card in `OrdersPage.tsx`.
+
+## Rollout (shadow-first, the house discipline)
+
+Mirror the `ai-draft` backtest and `place-order` `loadHandoffMode` shadow pattern. Behind a
+`settings.artwork_check_mode` (`off | shadow | live`) flag: in `shadow`, the function runs and
+stores the report but the page shows nothing. Run it over ~25–30 real fulfilled orders; Rob
+reviews the reports and we tune the prompt + allow-list until the signal-to-noise is right.
+Nothing reaches staff until proven. Then flip to `live` and the card appears. A separate
+`settings.artwork_check_required` boolean turns on the **mandatory-run gate** (Confirm blocked, in
+the UI *and* in `place-order`, until the check has run) — leave it off during the initial `live`
+window so staff get used to the card, then switch it on so **no order reaches the workshop /
+supplier without a check having run**.
+
+## Phasing
+
+- **Phase 1 (the high-value core): Leg A + Leg B.** Help Scout thread (paginated, raw bodies)
+  → the Dropbox print file, plus QR corroboration and recipient-name keying. This is the
+  transcription-typo catch — the dominant failure — at full print fidelity. Shadow → advisory.
+- **Phase 2: attachments + Leg C.** Read Help Scout attachments (the request form may live here —
+  may need to pull forward into Phase 1); add the approved-proof → print-file drift check.
+- **Phase 3: tuning** the allow-list from real use; optional soft-block; a "checked ✓" stamp;
+  maybe auto-run on payment with a dashboard flag.
+
+## Trust & safety
+
+- Advisory only; a human always confirms the send. Internal-only — the report never touches a
+  customer-facing surface (`public_*` views / anon RPCs stay untouched).
+- Cost/latency negligible at ~26 orders/week.
+- Reads customer PII (thread, contact details) — service-role, edge-side, stored on the internal
+  `orders` row only.
+
+## Open questions / to confirm
+
+1. **Does the Anthropic API accept an Illustrator `.ai` relabelled as `application/pdf` as a
+   document block?** If yes, no renderer needed. If no, add the WASM rasteriser. One quick test
+   settles it and picks the render route.
+2. **Repeat-customer / no-first-message jobs.** The form is *typically* the first message, but a
+   considerable share (repeat customers) re-supply nothing — "same as last time", a reference to a
+   prior order, or details mid-thread. Decide how the check reconciles these (against the previous
+   order / version) vs reporting a `reference_gap`. Also confirm whether any form data arrives as
+   an attachment (→ pulls attachment-reading into Phase 1).
+3. **Allow-list** — the batch + Rob seeded it (see the rules above); keep tuning in shadow mode.
+4. **Errored / stale runs & the mandatory gate.** Decided: auto-run on load, and *running* is
+   mandatory (verdict advisory). Confirm: does an **errored** run satisfy the gate (recommended —
+   non-stranding) or must it be a clean run? Should the gate require a run against the **current**
+   artwork (force a re-run if the print file changed) vs ever-run? And should a flagged verdict
+   ever soft-block (stricter, later)?
+5. **Storage shape** — a jsonb column (recommended) vs a history table.
+
+## Key files (pointers for the build session)
+
+- Insertion point: `src/pages/OrderReviewPage.tsx` (`handoff_validation` card ~339-343 / 593-617;
+  `blockReason`/`canConfirm` 300-337), `src/pages/OrdersPage.tsx` (To-order card).
+- Send action being gated: `supabase/functions/place-order/` (mode `confirm`).
+- AI pattern to copy: `supabase/functions/_shared/aiDrafts/` (`anthropic.ts`, `pipeline.ts`),
+  `supabase/functions/ai-draft/index.ts` (auth gate, mode gate).
+- Help Scout (primary reference): `supabase/functions/_shared/helpscout.ts`
+  (`fetchConversationWithThreads`), `supabase/functions/fetch-helpscout-conversation-context/`.
+- Artwork: Dropbox `supabase/functions/dropbox-folder/`; `src/lib/approvedArtwork.ts` +
+  `supabase/functions/customer-proof-images/` (service-role signed URLs, for Leg C).
+- QR: `src/lib/qrCodes.ts`; schema `proof_version_images` (QR cols), `proof_name_approvals`
+  (`qr_snapshot`).
+- Shadow-gate precedent: `place-order/index.ts` `loadHandoffMode` / `runHandoffValidation`
+  (~1085-1123).
+- Check-rule source of truth: the installed `artwork-sanity-check` skill.
