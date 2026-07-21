@@ -512,7 +512,25 @@ card matches the request as typed; re-run confirmed flagged again with the "matc
 typed, but…" note. Still unread: `.eml`/`.eps` attachments, and links out to Drive/
 Dropbox in thread text (deliberately out of scope).
 
+**Auto-run: SHIPPED 2026-07-21** (migration 000337, applied via MCP). The check fires
+automatically the moment an order's Dropbox folder is linked — NOT at payment, which
+sounds right but isn't (at payment there's no folder yet, so a payment-time run could
+only record a "no folder linked" error). A DB trigger on `proofs.orders`
+(`notify_artwork_check_on_folder_link`, the 000320 push-trigger idiom: pg_net POST
+authed with the `proofs_send_nudges_key` vault secret) fires on first-link AND re-link
+with `force:true`, so a changed folder refreshes any stale report — which also covers
+the folder-changed case of the staleness-guard item. Mode-gated in the trigger itself
+(off = zero network chatter); wrapped in an exception guard so an order write can never
+fail on the check's plumbing; the review page's on-load run stays as the backstop.
+Verified live end-to-end on order 403893: trigger → pg_net (the 5s client timeout is
+expected — the function continues after disconnect) → fresh report persisted 17 seconds
+later. ⚠ Incident during testing, resolved: a badly-written test UPDATE briefly nulled
+403893's `dropbox_folder_url` (~10 min); recovered byte-identical from the folder's own
+Dropbox shared-link record and verified intact — no flow read it in the window
+(fulfilled order). Lesson recorded: capture-then-restore values as literals, never via
+self-referencing subqueries.
+
 **Deferred to Phase 2b/3:** Leg C (approved-proof vs print-file drift), the OrdersPage
-verdict chip / in-app report archive, auto-run at payment, a print-file staleness guard
-on the run gate, admin-editable rules (step 2 of the admin graduation), and any
-soft-block on flagged verdicts.
+verdict chip / in-app report archive, a print-file staleness guard for content changes
+inside an unchanged folder link (re-link and Re-run cover it meanwhile), admin-editable
+rules (step 2 of the admin graduation), and any soft-block on flagged verdicts.
