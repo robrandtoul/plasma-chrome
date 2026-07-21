@@ -481,9 +481,14 @@ actually RUN once ① is applied.
       gateway's 60s idle timeout; even HTTP/2 drops the response ~5 min in while the
       run completes and persists server-side — read the row, not the response, for
       batch work).
-- [ ] Flip `artwork_check_mode` → `live` — the card appears.
-- [ ] After a settling-in window: flip `artwork_check_required` → true (the mandatory-run
-      gate, UI + place-order).
+- [x] Flip `artwork_check_mode` → `live` — **done 2026-07-21** (Rob's call after
+      reviewing the batch + tuning). The advisory card now appears on the Place-order
+      review screen. Same day, the two switches got their admin home (PR #522): a new
+      **Admin → Settings → Artwork check** section with the Off/Shadow/Live picker and
+      the confirm-guarded "Require a check before placing" toggle (inert unless Live),
+      registered in the jump nav + admin feature search. Flag flips no longer need SQL.
+- [ ] After a settling-in window: flip `artwork_check_required` → true (now a toggle on
+      Admin → Settings → Artwork check; enforced in the UI and in place-order).
 
 **Deferred to Phase 2/3:** reading attachment contents (xlsx/csv/PDF → the request form
 may live there), Leg C (approved-proof vs print-file drift), the OrdersPage verdict chip,
