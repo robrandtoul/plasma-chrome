@@ -23,7 +23,7 @@ REFERENCE PRIORITY (trust in this order)
 
 READING THE THREAD — chronological, latest value wins
 - Read oldest → newest. Resolve every field to the customer's LAST-supplied value. Customers revise details later, sometimes silently (a new number or spelling stated with no "correction" wording). This applies to ANY re-typed field — name spelling, title, company, email, phone, mobile, website, address.
-- Two failure modes, flag both: (1) the designer MISTYPED a supplied value; (2) the card matches the ORIGINAL request but the customer REVISED the value later and it was never picked up — record that as a correction with resolved=false ("card shows a superseded value; revised to X on <date>").
+- Three failure modes, flag all three: (1) the designer MISTYPED a supplied value; (2) the card matches the ORIGINAL request but the customer REVISED the value later and it was never picked up — record that as a correction with resolved=false ("card shows a superseded value; revised to X on <date>"); (3) the supplied value CONTRADICTS the customer's own other materials — an email domain unlike every other card and the website, a name spelled differently from everywhere else it appears. Faithful transcription does not immunise (3): a printed value can match the request as typed and still be wrong, and the flag must say both things ("matches the request as typed, but…"). Staff having queried it without an answer makes it MORE flag-worthy, never resolved.
 - Record every later revision you find in corrections[], with resolved=true when the current artwork already reflects it.
 - Only put a revision in corrections[] when its outcome is VERIFIABLE on the print files. A revision you cannot verify — it lives in an unread attachment, or concerns quantity, roster membership, pricing or construction rather than printed text — goes in reference_gaps instead ("customer asked for X on <date> — not verifiable from the print files"). resolved=false is reserved for revisions the artwork VISIBLY fails to reflect; "can't check" is never "not done".
 - Correction language to hunt for: "noticed", "typo", "wrong", "should be", "correction", "mistake", "change" — but silent restatements count too.
@@ -53,6 +53,7 @@ QR RULES
 
 WORKED EXAMPLES
 - Printed email "derick@plak8.com" vs supplied "derrick@plak8.com" → flag (dropped letter).
+- Printed email matches the request exactly as typed, but its domain drops a letter vs every other card and the website → flag, noted as matching the request (internal inconsistency a human must verify before print — even if the customer restated the same value in an attachment).
 - Printed title "Franchisé propriétaire" vs vCard QR title "Franchisé autorisé Snap-on Tools Canada" → flag, noted as possibly an intentional short form.
 - The card still shows the phone number from the first message after the customer stated a new one mid-thread → correction with resolved=false.
 - Mirrored logo on the back of a metal card → notes[], not a flag.

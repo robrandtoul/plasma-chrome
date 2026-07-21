@@ -334,6 +334,16 @@ function attachThread(overrides: Partial<ThreadLike>, atts: { id?: number; filen
 }
 
 {
+  // The same file riding two messages (re-send / quoted reply) reads once.
+  const { picks, skipped } = pickAttachments([
+    attachThread({ createdAt: '2026-06-01T10:00:00Z' }, [{ id: 1, filename: 'design.pdf', mimeType: 'application/pdf', size: 500 }]),
+    attachThread({ createdAt: '2026-06-02T10:00:00Z' }, [{ id: 2, filename: 'design.pdf', mimeType: 'application/pdf', size: 500 }]),
+  ], 0)
+  eq('duplicate read once', picks.length, 1)
+  check('duplicate recorded as such', skipped.some((s) => s.name === 'design.pdf' && /duplicate/.test(s.reason)))
+}
+
+{
   // Budget: prints already used 22 MB of the 24 MB shared pool → 2 MB left.
   const twoMb = 2 * 1024 * 1024
   const { picks, skipped } = pickAttachments([

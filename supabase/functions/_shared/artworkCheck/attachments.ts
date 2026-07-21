@@ -109,8 +109,16 @@ export function pickAttachments(
 
   const budget = attachmentBudget(printFilesRawBytes)
   const picks: AttachmentMeta[] = []
+  const seen = new Set<string>()
   let total = 0
   for (const m of metas) {
+    // The same file often rides several messages (re-sends, replies quoting
+    // the original) — one read is enough, and duplicates waste budget.
+    const key = `${m.filename}|${m.size}`
+    if (seen.has(key)) {
+      skipped.push({ name: m.filename, reason: 'duplicate of an already-read attachment' })
+      continue
+    }
     if (picks.length >= ATTACHMENTS_MAX_COUNT) {
       skipped.push({ name: m.filename, reason: 'attachment limit reached' })
       continue
@@ -120,6 +128,7 @@ export function pickAttachments(
       continue
     }
     picks.push(m)
+    seen.add(key)
     total += m.size
   }
   return { picks, skipped }
