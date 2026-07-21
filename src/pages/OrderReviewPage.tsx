@@ -69,6 +69,34 @@ interface PreviewResponse {
   } | null
 }
 
+// The artwork sanity-check report (docs/artwork-check-spec.md) — the shape the
+// artwork-check edge function stores on orders.artwork_check and returns here.
+interface ArtworkFinding {
+  field: string
+  supplied: string
+  printed: string
+  status: 'match' | 'flag' | 'not_supplied'
+  note: string
+}
+interface ArtworkCheckReport {
+  verdict: 'clear' | 'flagged' | 'error'
+  summary: string
+  cards: { label: string; findings: ArtworkFinding[] }[]
+  corrections: { quote: string; resolved: boolean; note: string }[]
+  notes: string[]
+  reference_gaps: string[]
+  checked_at: string
+  error?: string
+}
+interface ArtworkCheckResponse {
+  ok: boolean
+  mode?: 'off' | 'shadow' | 'live'
+  required?: boolean
+  cached?: boolean
+  report?: ArtworkCheckReport
+  error?: string
+}
+
 function Row({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-4 py-1.5 text-sm">
@@ -145,6 +173,17 @@ export default function OrderReviewPage() {
   // re-approved can't be placed (place-order 409s server-side); gate the button
   // client-side too so the reviewer sees why, rather than a post-click error.
   const [revisionNeedsApproval, setRevisionNeedsApproval] = useState(false)
+  // The artwork sanity check — auto-run on load so the happy path needs no
+  // extra click. `live` only turns true when the function says the mode is
+  // live, so in off/shadow (or with the function not deployed yet) nothing
+  // ever renders. A failed RE-run keeps the previous report on screen rather
+  // than emptying good state.
+  const [artworkCheck, setArtworkCheck] = useState<{
+    status: 'hidden' | 'running' | 'done'
+    live: boolean
+    required: boolean
+    report: ArtworkCheckReport | null
+  }>({ status: 'hidden', live: false, required: false, report: null })
 
   const loadPreview = useCallback(async (chosenSupplierId?: string | null, noteArg?: string, oversArg?: number) => {
     if (!id) return
@@ -248,6 +287,37 @@ export default function OrderReviewPage() {
     return () => { cancelled = true }
   }, [id, loadPreview])
 
+  // Run (or force re-run) the artwork check. The function is the mode gate:
+  // off/shadow → no report in live shape, so the card stays hidden; the run
+  // itself still happens server-side in shadow (that's the rollout's data
+  // collection). Any invoke failure degrades to hidden/previous state — this
+  // card must never break the review page.
+  const runArtworkCheck = useCallback(async (force: boolean) => {
+    if (!id) return
+    setArtworkCheck((prev) => ({ ...prev, status: 'running' }))
+    try {
+      const { data } = await supabase.functions.invoke<ArtworkCheckResponse>('artwork-check', {
+        body: { order_id: id, ...(force ? { force: true } : {}) },
+      })
+      if (!data?.ok || data.mode !== 'live') {
+        setArtworkCheck((prev) => ({ ...prev, status: prev.report ? 'done' : 'hidden' }))
+        return
+      }
+      setArtworkCheck((prev) => ({
+        status: 'done',
+        live: true,
+        required: data.required === true,
+        report: data.report ?? prev.report,
+      }))
+    } catch {
+      setArtworkCheck((prev) => ({ ...prev, status: prev.report ? 'done' : 'hidden' }))
+    }
+  }, [id])
+
+  useEffect(() => {
+    void runArtworkCheck(false)
+  }, [runArtworkCheck])
+
   async function onSupplierChange(newId: string) {
     setSupplierId(newId)
     setArmed(false) // changing supplier disarms — re-confirm the new recipient
@@ -314,6 +384,13 @@ export default function OrderReviewPage() {
   // Only meaningful once a supplier is resolved (picked or the lone one).
   const supplierEmailMissing = isSupplier && !!preview?.supplier && !preview.supplier.email
   const hsMissing = !isSupplier && preview?.helpscout_linked === false
+  // Mandatory-RUN gate (docs/artwork-check-spec.md): when the check is live +
+  // required and no run exists for this order, Confirm waits. Only RUNNING is
+  // mandatory — any verdict (clear, flagged, even an errored run) satisfies
+  // it; the auto-run on load normally clears this before anyone notices.
+  // `required` is only ever true from a live-mode response, so this is inert
+  // while the feature is off/shadow. place-order re-checks it server-side.
+  const artworkRunNeeded = artworkCheck.required && artworkCheck.report == null
   // An edit that would break the Stock Control import takes precedence over the
   // other reasons — it's the thing the reviewer can fix right here, right now.
   const messageBroken = messageProblems.length > 0
@@ -333,7 +410,9 @@ export default function OrderReviewPage() {
         ? 'The selected supplier has no email address in Stock Control, so this order can’t be emailed.'
         : hsMissing
           ? 'This proof has no linked Help Scout conversation, so the production note can’t be posted.'
-          : null
+          : artworkRunNeeded
+            ? 'Run the artwork check before placing this order.'
+            : null
   const canConfirm = !blockReason
 
   // Stock Control hand-off checks (shadow mode) — informational only.
@@ -341,6 +420,17 @@ export default function OrderReviewPage() {
   const handoffProblems = preview?.handoff_validation?.problems ?? []
   const handoffWarnings = preview?.handoff_validation?.warnings ?? []
   const showHandoffChecks = handoffProblems.length > 0 || handoffWarnings.length > 0
+
+  // Artwork check card derivations. Flags = 'flag' findings + corrections the
+  // customer sent that the artwork doesn't reflect; matches stay in the
+  // collapsed full table so the headline is the flags.
+  const artworkReport = artworkCheck.report
+  const artworkFlags = artworkReport?.cards.flatMap((c) =>
+    c.findings.filter((f) => f.status === 'flag').map((f) => ({ card: c.label, ...f }))) ?? []
+  const artworkCorrectionsOpen = artworkReport?.corrections.filter((c) => !c.resolved) ?? []
+  const artworkFlagCount = artworkFlags.length + artworkCorrectionsOpen.length
+  const artworkFieldsChecked = artworkReport?.cards.reduce((s, c) => s + c.findings.length, 0) ?? 0
+  const showArtworkCard = artworkCheck.live && (artworkCheck.status === 'running' || artworkReport != null)
 
   // The editable hand-off message — identical control for both routes (only the
   // heading above it differs). Mirrors the generated preview until edited, then
@@ -613,6 +703,106 @@ export default function OrderReviewPage() {
                   </ul>
                 )}
                 <p className="mt-1.5 text-[12px] text-ink-soft">These checks don’t block placing the order.</p>
+              </div>
+            )}
+
+            {/* Artwork sanity check (docs/artwork-check-spec.md) — the
+                supplied-vs-printed comparison against the Help Scout thread,
+                the QR contents and the Dropbox PRINT files. Advisory: a
+                flagged verdict never disables Confirm — the reviewer
+                adjudicates each flag right here. Renders only when the
+                feature mode is live. */}
+            {showArtworkCard && (
+              <div
+                className={`mt-4 rounded-lg px-3 py-3 text-[13px] text-ink ring-1 ${
+                  artworkCheck.status === 'running' || !artworkReport
+                    ? 'bg-canvas/60 ring-line'
+                    : artworkReport.verdict === 'clear'
+                      ? 'bg-[var(--c-in-stock-soft)]/50 ring-[var(--c-in-stock)]/40'
+                      : 'bg-low-soft ring-low'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <p className="font-medium">
+                    {artworkCheck.status === 'running'
+                      ? 'Checking the artwork against the customer’s details…'
+                      : artworkReport?.verdict === 'clear'
+                        ? '✅ Artwork check — all clear'
+                        : artworkReport?.verdict === 'flagged'
+                          ? `⚠️ Artwork check — ${artworkFlagCount} thing${artworkFlagCount === 1 ? '' : 's'} to check`
+                          : '⚠️ Artwork check couldn’t run'}
+                  </p>
+                  {artworkCheck.status !== 'running' && (
+                    <button
+                      type="button"
+                      onClick={() => void runArtworkCheck(true)}
+                      disabled={confirming}
+                      className="shrink-0 text-[12px] font-medium text-brand hover:underline"
+                    >
+                      Re-run
+                    </button>
+                  )}
+                </div>
+                {artworkCheck.status !== 'running' && artworkReport && (
+                  <>
+                    <p className="mt-1 text-ink-soft">{artworkReport.summary}</p>
+                    {artworkFlags.length > 0 && (
+                      <ul className="mt-2 space-y-1.5">
+                        {artworkFlags.map((f, i) => (
+                          <li key={i} className="break-words">
+                            <span className="font-medium">{f.card} · {f.field.replace(/_/g, ' ')}:</span>{' '}
+                            printed <span className="font-mono text-[12px]">“{f.printed}”</span>
+                            {f.supplied && <> vs supplied <span className="font-mono text-[12px]">“{f.supplied}”</span></>}
+                            {f.note && <span className="text-ink-soft"> — {f.note}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {artworkCorrectionsOpen.length > 0 && (
+                      <ul className="mt-2 space-y-1.5">
+                        {artworkCorrectionsOpen.map((c, i) => (
+                          <li key={i} className="break-words">
+                            <span className="font-medium">Customer correction not picked up:</span>{' '}
+                            “{c.quote}”{c.note && <span className="text-ink-soft"> — {c.note}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {(artworkReport.notes.length > 0 || artworkReport.reference_gaps.length > 0) && (
+                      <ul className="mt-2 space-y-0.5 text-[12px] text-ink-soft">
+                        {artworkReport.notes.map((n, i) => <li key={`n-${i}`} className="break-words">{n}</li>)}
+                        {artworkReport.reference_gaps.map((g, i) => <li key={`g-${i}`} className="break-words">Couldn’t check: {g}</li>)}
+                      </ul>
+                    )}
+                    {artworkReport.cards.length > 0 && (
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-[12px] font-medium text-ink-soft">Full comparison table</summary>
+                        <div className="mt-1 space-y-2">
+                          {artworkReport.cards.map((c, i) => (
+                            <div key={i}>
+                              <p className="text-[12px] font-medium text-ink">{c.label}</p>
+                              <ul className="mt-0.5 space-y-0.5 text-[12px] text-ink-soft">
+                                {c.findings.map((f, j) => (
+                                  <li key={j} className="break-words">
+                                    {f.status === 'flag' ? '⚠️' : f.status === 'match' ? '✓' : '—'}{' '}
+                                    {f.field.replace(/_/g, ' ')}: {f.printed}
+                                    {f.status === 'not_supplied' ? ' (not supplied by customer)' : ''}
+                                    {f.status === 'flag' && f.supplied ? ` (supplied: ${f.supplied})` : ''}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                    <p className="mt-1.5 text-[12px] text-ink-mute">
+                      {artworkReport.verdict !== 'error' && artworkFieldsChecked > 0 && `${artworkFieldsChecked} field${artworkFieldsChecked === 1 ? '' : 's'} compared. `}
+                      {artworkReport.verdict === 'flagged' && 'Flags are advisory — review them, then place the order when you’re satisfied. '}
+                      Checked {new Date(artworkReport.checked_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}.
+                    </p>
+                  </>
+                )}
               </div>
             )}
 

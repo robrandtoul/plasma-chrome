@@ -32,7 +32,8 @@
     "test:stranded": "tsx src/lib/strandedApprovals.test.ts",
     "test:preview-review": "tsx src/lib/previewReview.test.ts",
     "backtest": "tsx scripts/run-backtest.ts",
-    "test:ai-drafts": "tsx supabase/functions/_shared/aiDrafts/guardrails.test.ts"
+    "test:ai-drafts": "tsx supabase/functions/_shared/aiDrafts/guardrails.test.ts",
+    "test:artwork-check": "tsx supabase/functions/_shared/artworkCheck/artworkCheck.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

@@ -1,7 +1,9 @@
 # Artwork sanity-check — build spec
 
 Assessed, grounded on live data, prototyped, and backtested over real orders 2026-07-21.
-**Not yet built.** Companion to `memory:artwork-sanity-check-productisation`. This is the
+**Phase 1 BUILT 2026-07-21** (branch `feat/artwork-check`) — see "Build status & rollout"
+at the end for what shipped, the decisions taken on the open questions, and the go-live
+checklist. Companion to `memory:artwork-sanity-check-productisation`. This is the
 working spec for the build; update it as decisions change, the way
 `docs/followup-automation-rollout.md` tracked the nudge project.
 
@@ -374,3 +376,80 @@ supplier without a check having run**.
 - Shadow-gate precedent: `place-order/index.ts` `loadHandoffMode` / `runHandoffValidation`
   (~1085-1123).
 - Check-rule source of truth: the installed `artwork-sanity-check` skill.
+
+## Build status & rollout (2026-07-21, Phase 1)
+
+**What shipped** (branch `feat/artwork-check`):
+
+- **Migration `000336_artwork_check.sql`** — `orders.artwork_check` jsonb +
+  `artwork_checked_at` + `artwork_check_verdict` (CHECK clear|flagged|error), and the two
+  settings gates: `artwork_check_mode` (off|shadow|live, default **off**) +
+  `artwork_check_required` (default false). ⚠ **Not yet applied to live.**
+- **`supabase/functions/_shared/artworkCheck/`** — the unit-testable core: `types.ts`,
+  `schema.ts` (structured-output json_schema), `prompts.ts` (system prompt carrying the
+  full allow-list; tune THIS from shadow reports), `printFiles.ts` (.pdf/.ai selection +
+  caps + `%PDF` sniff + the cut-through material set), `threadText.ts` (chronological
+  flatten, raw bodies via `normaliseBody`, attachment names surfaced, oldest+newest kept
+  on overflow), `anthropic.ts` (the multimodal structuredCall — text + PDF document
+  blocks; model `claude-opus-4-8`, env-overridable `ARTWORK_CHECK_MODEL`), `report.ts`
+  (verdict derived in CODE: any flag finding or unresolved correction → flagged).
+  Tests: `pnpm test:artwork-check` (64 checks).
+- **`supabase/functions/artwork-check/`** — the edge function: designer-JWT or
+  service-role auth, mode gate, cached-report fast path (`{ force: true }` re-runs),
+  full-thread Help Scout read (new paginated `fetchAllConversationThreads` in
+  `_shared/helpscout.ts`), Dropbox print-file fetch, one multimodal call, persists the
+  report on the order. A Help Scout outage degrades to a reference gap (QR + roster legs
+  still run); Dropbox/AI failures persist a verdict-'error' report. ⚠ **Not yet
+  deployed** (deploy WITHOUT `--no-verify-jwt` — this function wants verify_jwt true).
+- **`place-order`** — mode `confirm` now 409s `artwork_check_required` when the gate is
+  on (live + required) and `orders.artwork_checked_at` is NULL. Column read is a separate
+  query, so the function stays deployable before the migration. ⚠ **Redeploy needed.**
+- **`OrderReviewPage`** — auto-runs the check on load (satisfies the mandatory-run gate
+  with zero clicks), renders the advisory card only when the response says mode=live
+  (off/shadow/undeployed → nothing), Re-run affordance, flags shown supplied-vs-printed
+  with a collapsed full comparison table, `blockReason` clause for the run gate. A failed
+  re-run keeps the previous report (never empties good state).
+
+**Decisions taken on the open questions** (revisit in shadow if wrong):
+
+1. *Illustrator-PDF acceptance* — built the PDF-document-block route with a `%PDF` magic-
+   bytes sniff; NOT yet proven against the API (no key available at build time). The
+   first shadow run settles it; if the API rejects Illustrator-flavoured PDFs, the run
+   persists a verdict-'error' report naming the rejection and the WASM rasteriser fallback
+   gets built then.
+2. *Repeat customers* — Phase 1 reports honest `reference_gaps` ("details not re-confirmed
+   in this thread") rather than reconciling against a previous order; attachments are
+   surfaced by filename as gaps, not read (Phase 2).
+3. *Allow-list* — encoded in `prompts.ts` verbatim from this spec; tune there.
+4. *Errored runs* — an errored run DOES satisfy the mandatory-run gate (non-stranding),
+   and the gate is ever-run (no staleness check on the print files) — the Re-run button
+   covers artwork changed between visits. A flagged verdict never blocks.
+5. *Storage* — jsonb column on `orders` (no history table).
+
+**Deploy order** (each step safe before the next): ① apply 000336 via MCP → ② deploy
+`artwork-check` + redeploy `place-order` → ③ merge/deploy the frontend. The frontend is
+tolerant of ①/② missing (invoke fails → card hidden), and both functions are tolerant of
+① missing (settings read errors → mode off), but the artwork-check function can only
+actually RUN once ① is applied.
+
+**Rollout checklist:**
+
+- [ ] Apply migration 000336 (MCP `apply_migration`, Rob gates).
+- [ ] Set `ANTHROPIC_API_KEY` as a Supabase secret if not already present (the ai-draft
+      function already uses it — verify it's set for the project).
+- [ ] Deploy `artwork-check` (verify_jwt true — no `--no-verify-jwt` flag) + redeploy
+      `place-order`; byte-verify both.
+- [ ] Flip `artwork_check_mode` → `shadow`. Reports now accumulate silently as staff
+      open review pages; optionally batch-run over ~25–30 fulfilled orders with the
+      service key to seed the tuning set.
+- [ ] Review reports (`select stock_order_number, artwork_check_verdict,
+      artwork_check->>'summary' from proofs.orders where artwork_checked_at is not
+      null`), tune `prompts.ts`, redeploy, `{ force: true }` re-runs as needed.
+- [ ] Flip `artwork_check_mode` → `live` — the card appears.
+- [ ] After a settling-in window: flip `artwork_check_required` → true (the mandatory-run
+      gate, UI + place-order).
+
+**Deferred to Phase 2/3:** reading attachment contents (xlsx/csv/PDF → the request form
+may live there), Leg C (approved-proof vs print-file drift), the OrdersPage verdict chip,
+an Admin → Settings surface for the two flags (flip via SQL/MCP meanwhile), and any
+soft-block on flagged verdicts.

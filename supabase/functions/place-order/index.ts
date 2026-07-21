@@ -468,6 +468,21 @@ Deno.serve(async (req) => {
   if (!order.stock_order_number) return json({ ok: false, error: 'Link and check the Dropbox order folder first (no order number).' }, 400)
   if (!order.date_required) return json({ ok: false, error: 'Set the date required first.' }, 400)
 
+  // Artwork sanity check — the mandatory-RUN gate (docs/artwork-check-spec.md).
+  // When settings.artwork_check_required is on (and the check is live), an
+  // order can't be confirmed until the check has run for it — the server-side
+  // mirror of the review page's blockReason clause, so a direct API call can't
+  // bypass the UI gate. Only RUNNING is mandatory: any verdict (clear, flagged,
+  // even error) satisfies it — the human adjudicates flags on the review page.
+  // The artwork_checked_at read is a separate query so the main order select
+  // stays free of 000336 columns (pre-migration deploy safety).
+  if (mode === 'confirm' && await loadArtworkCheckGate(admin)) {
+    const { data: chk } = await admin.from('orders').select('artwork_checked_at').eq('id', orderId).maybeSingle()
+    if (!(chk as { artwork_checked_at: string | null } | null)?.artwork_checked_at) {
+      return json({ ok: false, code: 'artwork_check_required', error: 'Run the artwork check before placing this order.' }, 409)
+    }
+  }
+
   const { data: proof } = await admin
     .from('proofs')
     .select('id, status, helpscout_conversation_id, contacts:contact_id ( full_name, email, companies:company_id ( name ) )')
@@ -1097,6 +1112,20 @@ async function loadHandoffMode(admin: SupabaseClient): Promise<'off' | 'shadow'>
     return m === 'shadow' || m === 'live' ? 'shadow' : 'off'
   } catch {
     return 'off'
+  }
+}
+
+// Read settings.artwork_check_mode + artwork_check_required, tolerant of the
+// columns not existing yet (deployable before migration 000336 — the
+// loadHandoffMode idiom). True only when the check is LIVE and required: a
+// shadow/off check isn't a precondition the reviewer can see or satisfy.
+async function loadArtworkCheckGate(admin: SupabaseClient): Promise<boolean> {
+  try {
+    const { data } = await admin.from('settings').select('artwork_check_mode, artwork_check_required').limit(1).maybeSingle()
+    const d = data as { artwork_check_mode?: string | null; artwork_check_required?: boolean | null } | null
+    return d?.artwork_check_mode === 'live' && d?.artwork_check_required === true
+  } catch {
+    return false
   }
 }
 

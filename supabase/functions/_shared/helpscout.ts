@@ -213,6 +213,49 @@ export async function fetchConversationWithThreads(
   return await resp.json() as HsConversationWithThreads
 }
 
+// GET /v2/conversations/{id}/threads, following _links.next until exhausted.
+// The ?embed=threads shape above returns only the FIRST page (~25 threads,
+// newest-first), silently dropping the OLDEST messages on long conversations —
+// which is exactly where the request-form submission usually is. The artwork
+// check reads the whole trail, so it pages. Returns null on 404 (same
+// contract as fetchConversation); throws HsError on other failures. Order is
+// as Help Scout returns it (newest-first per page) — callers needing
+// chronology sort by createdAt themselves. Each thread carries its attachment
+// metadata under _embedded.attachments on this endpoint.
+export interface HsThreadWithAttachments extends HsThread {
+  _embedded?: {
+    attachments?: { id?: number; filename?: string; mimeType?: string; size?: number }[]
+  }
+}
+
+export async function fetchAllConversationThreads(
+  token: string,
+  id: number | string,
+): Promise<HsThreadWithAttachments[] | null> {
+  const out: HsThreadWithAttachments[] = []
+  let url: string | null = `https://api.helpscout.net/v2/conversations/${id}/threads`
+  // Belt-and-braces page cap — 50 pages ≈ 1,250 threads, far beyond any real
+  // conversation; stops a malformed next-link from looping forever.
+  for (let page = 0; url && page < 50; page++) {
+    const resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    })
+    if (resp.status === 404) return page === 0 ? null : out
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '<body read failed>')
+      throw new HsError(resp.status, `Help Scout threads fetch (${resp.status}): ${text}`)
+    }
+    const data = await resp.json().catch(() => null) as {
+      _embedded?: { threads?: HsThreadWithAttachments[] }
+      _links?: { next?: { href?: string } }
+    } | null
+    out.push(...(data?._embedded?.threads ?? []))
+    const next = data?._links?.next?.href
+    url = typeof next === 'string' && next.startsWith('https://api.helpscout.net/') ? next : null
+  }
+  return out
+}
+
 // Subset of the Help Scout customer resource the project currently
 // reads. Used by lookup-helpscout-conversation to populate the new-
 // proof form's company / customer fields from a single paste of a

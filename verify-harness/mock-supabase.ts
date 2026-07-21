@@ -587,6 +587,40 @@ export const supabase: any = {
           error: null,
         }
       }
+      if (name === 'artwork-check') {
+        // OrderReviewPage artwork sanity check (?path=/orders/o1/place) — a
+        // live-mode FLAGGED report so the advisory card renders with a flag,
+        // an unresolved correction, notes, gaps and the full table.
+        return {
+          data: {
+            ok: true,
+            mode: 'live',
+            required: true,
+            cached: true,
+            report: {
+              verdict: 'flagged',
+              summary: '1 flag: the printed email drops a letter vs the request form; plus a later correction not picked up.',
+              cards: [
+                {
+                  label: 'Derrick Smith — front/back',
+                  findings: [
+                    { field: 'name', supplied: 'Derrick Smith (request form)', printed: 'Derrick Smith', status: 'match', note: '' },
+                    { field: 'email', supplied: 'derrick@plak8.com (request form)', printed: 'derick@plak8.com', status: 'flag', note: 'printed email drops an “r” vs what the customer supplied' },
+                    { field: 'job_title', supplied: '', printed: 'Operations Director', status: 'not_supplied', note: '' },
+                  ],
+                },
+              ],
+              corrections: [
+                { quote: 'Sorry — mobile should be 07700 900456, not 900123 (12 Jul)', resolved: false, note: 'card still shows 07700 900123' },
+              ],
+              notes: ['metal cut-through back — logo mirrored as expected'],
+              reference_gaps: ['details for Jo Bloggs supplied as attachment details.xlsx (not read)'],
+              checked_at: '2026-07-21T10:30:00Z',
+            },
+          },
+          error: null,
+        }
+      }
       if (name === 'customer-proof-images') {
         const proofId: string = opts?.body?.proofId ?? ''
         const colour = THUMB_COLOUR[proofId]
