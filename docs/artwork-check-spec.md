@@ -490,7 +490,29 @@ actually RUN once ① is applied.
 - [ ] After a settling-in window: flip `artwork_check_required` → true (now a toggle on
       Admin → Settings → Artwork check; enforced in the UI and in place-order).
 
-**Deferred to Phase 2/3:** reading attachment contents (xlsx/csv/PDF → the request form
-may live there), Leg C (approved-proof vs print-file drift), the OrdersPage verdict chip,
-an Admin → Settings surface for the two flags (flip via SQL/MCP meanwhile), and any
+**Phase 2a — attachment reading: SHIPPED 2026-07-21** (PR #523; function v4, then v5 the
+same evening — see below; `pnpm test:artwork-check` 93 checks). Customer-authored Help
+Scout attachments are downloaded and read as supplied reference material: xlsx/xls/csv/
+tsv/txt parsed to text (SheetJS via `npm:` on the edge runtime — proven live on Fishies'
+`Book1.xlsx`), PDFs + PDF-compatible `.ai` as document blocks, photos as image blocks;
+each labelled filename+date; latest-wins across messages and attachments alike.
+Deliberate boundaries: STAFF attachments are never read (our own proof exports — reading
+them would verify the card against itself); unreadable ≠ absent (every pass-over recorded
+by name, stays an honest gap); identical files riding several messages read once;
+attachments share the request byte budget with the print files (spreadsheets first,
+oldest first). **Validation on the gap orders:** 403897 gap→verified roster (and an
+honest "only 1 of 145 named fronts present in the folder" observation), 403884
+gap→order-form-verified name, and 403888 flipped clear→flagged with a NEW catch (the
+front print omits "CHRISTOPHER HOOPER" / "DIRECTOR" that appear on the customer's own
+supplied design — for human adjudication). **The regression guard earned its keep:**
+Everest 403898 initially dropped its email flag once the model saw the customer restate
+the typo'd address in an attachment — fixed same evening (v5) with failure mode (3):
+a supplied value that CONTRADICTS the customer's own other materials flags even when the
+card matches the request as typed; re-run confirmed flagged again with the "matches as
+typed, but…" note. Still unread: `.eml`/`.eps` attachments, and links out to Drive/
+Dropbox in thread text (deliberately out of scope).
+
+**Deferred to Phase 2b/3:** Leg C (approved-proof vs print-file drift), the OrdersPage
+verdict chip / in-app report archive, auto-run at payment, a print-file staleness guard
+on the run gate, admin-editable rules (step 2 of the admin graduation), and any
 soft-block on flagged verdicts.
