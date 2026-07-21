@@ -55,7 +55,7 @@ export const ARTWORK_CHECK_SCHEMA = {
     },
     corrections: {
       type: 'array',
-      description: 'Later customer revisions/corrections found in the thread (explicit or silent), each with whether the current artwork reflects it.',
+      description: 'Later customer revisions/corrections found in the thread (explicit or silent) whose outcome is VERIFIABLE on the print files, each with whether the current artwork reflects it. Unverifiable revisions (unread attachments; quantity/roster/construction changes) belong in reference_gaps instead — resolved=false means the artwork visibly fails to reflect the revision, never "could not check".',
       items: {
         type: 'object',
         additionalProperties: false,
