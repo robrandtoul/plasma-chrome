@@ -28,7 +28,8 @@ READING THE THREAD — chronological, latest value wins
 - Only put a revision in corrections[] when its outcome is VERIFIABLE on the print files. A revision you cannot verify — it lives in an unread attachment, or concerns quantity, roster membership, pricing or construction rather than printed text — goes in reference_gaps instead ("customer asked for X on <date> — not verifiable from the print files"). resolved=false is reserved for revisions the artwork VISIBLY fails to reflect; "can't check" is never "not done".
 - Correction language to hunt for: "noticed", "typo", "wrong", "should be", "correction", "mistake", "change" — but silent restatements count too.
 - Repeat customers often re-supply nothing ("same as last time", a reference to a previous order, details part-way through the thread). Find the details wherever they are; if they genuinely aren't in this thread, that is a reference gap ("details not re-confirmed in this thread"), NOT a set of flags — record the printed values as not_supplied so the reviewer still gets the full table.
-- Attachments are listed by filename but their contents are NOT provided to you. If the supplied details appear to live in an attachment (a spreadsheet, PDF or the customer's own artwork), say so in reference_gaps naming the file. Never guess at unread contents.
+- Readable attachments from the CUSTOMER'S OWN messages are provided after the print files, each labelled with its filename and date. Treat their contents as supplied reference material — the request form, a roster spreadsheet, or the customer's own source artwork often lives there — and latest-wins applies across messages and attachments alike (an attachment's values can be superseded by a later message, and vice versa). Attachments listed as NOT read stay reference gaps; never guess at unread contents.
+- Staff-sent attachments are never provided — they are our own outputs (proof exports, hand-off copies), not the customer's ground truth. Don't treat a proof image mentioned in the thread as if the customer supplied those values.
 
 DO NOT OVER-FLAG (each rule earned from a real order)
 - Compare the card to the RECIPIENT, never the account contact. The person who placed the order is frequently not the person on the card (a PA orders; the card is the director's, with the director's own email). Key every name/email check off the recipient roster and the per-card artwork.
@@ -58,7 +59,8 @@ WORKED EXAMPLES
 - Record company "Plak8.com" vs printed "PlaK8 Security" → match (domain shorthand; printed name authoritative).
 - Printed title "founder - owner" while the customer merely SIGNS emails "Managing Director" and never requested a title → not_supplied with a note, not a flag.
 - Supplied logo artwork reads "WINDOWS COMPANY" vs the typed form's "Window Company" → the logo is the brand; note at most, never a flag.
-- "Add one more name — details in the attached spreadsheet" with the spreadsheet unread → reference_gap, not an unresolved correction.
+- "Add one more name — details in the attached spreadsheet" with the spreadsheet READ and provided → verify the roster and each card against it like any other supplied reference.
+- The same request with the spreadsheet NOT readable → reference_gap, not an unresolved correction.
 
 OUTPUT
 - summary: one line, issues-first.
@@ -91,6 +93,10 @@ export interface CheckContext {
   threadGapNote: string | null
   printFileNames: string[]
   skippedFiles: { name: string; reason: string }[]
+  // Phase 2a — customer-thread attachments read as references (the content
+  // blocks ride after the print files) and the ones passed over, with reasons.
+  attachmentsRead: { name: string; at: string }[]
+  attachmentsSkipped: { name: string; reason: string }[]
 }
 
 // The first user text block: everything the model needs BEFORE the documents.
@@ -151,6 +157,18 @@ export function buildContextText(ctx: CheckContext): string {
     for (const s of ctx.skippedFiles) lines.push(`- ${s.name} — ${s.reason}`)
   }
 
+  lines.push('')
+  if (ctx.attachmentsRead.length > 0) {
+    lines.push(`CUSTOMER ATTACHMENTS READ (${ctx.attachmentsRead.length} — provided after the print files, treat as supplied reference material):`)
+    ctx.attachmentsRead.forEach((a, i) => lines.push(`${i + 1}. ${a.name} (${a.at})`))
+  } else {
+    lines.push('No customer attachments were readable for this check.')
+  }
+  if (ctx.attachmentsSkipped.length > 0) {
+    lines.push('Customer attachments NOT read (keep as reference gaps where relevant):')
+    for (const s of ctx.attachmentsSkipped) lines.push(`- ${s.name} — ${s.reason}`)
+  }
+
   return lines.join('\n')
 }
 
@@ -171,5 +189,7 @@ export function buildInputs(
     thread_found: threadFound,
     qr_count: ctx.qrs.length,
     recipients: ctx.recipients,
+    attachments_read: ctx.attachmentsRead,
+    attachments_skipped: ctx.attachmentsSkipped,
   }
 }

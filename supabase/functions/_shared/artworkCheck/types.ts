@@ -72,6 +72,11 @@ export interface ReportInputs {
   thread_found: boolean
   qr_count: number
   recipients: string[]
+  // Phase 2a — customer-thread attachments read as reference material, and
+  // the ones passed over (type/size/budget/fetch/parse), with reasons.
+  // Absent on pre-Phase-2a reports.
+  attachments_read?: { name: string; at: string }[]
+  attachments_skipped?: { name: string; reason: string }[]
 }
 
 export interface ReportUsage {

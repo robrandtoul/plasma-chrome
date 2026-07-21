@@ -228,6 +228,37 @@ export interface HsThreadWithAttachments extends HsThread {
   }
 }
 
+// GET /v2/conversations/{id}/attachments/{attachmentId}/data — the attachment
+// bytes, which Help Scout returns as { data: "<base64>" }. Null on 404 or any
+// decode failure so callers stay best-effort (the artwork check treats an
+// unfetchable attachment as a reference gap, never an error). Throws HsError
+// on other non-2xx responses.
+export async function fetchAttachmentData(
+  token: string,
+  conversationId: number | string,
+  attachmentId: number | string,
+): Promise<Uint8Array | null> {
+  const resp = await fetch(
+    `https://api.helpscout.net/v2/conversations/${conversationId}/attachments/${attachmentId}/data`,
+    { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
+  )
+  if (resp.status === 404) return null
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '<body read failed>')
+    throw new HsError(resp.status, `Help Scout attachment fetch (${resp.status}): ${text}`)
+  }
+  const body = await resp.json().catch(() => null) as { data?: string } | null
+  if (!body?.data || typeof body.data !== 'string') return null
+  try {
+    const binary = atob(body.data)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+    return bytes
+  } catch {
+    return null
+  }
+}
+
 export async function fetchAllConversationThreads(
   token: string,
   id: number | string,

@@ -31,14 +31,20 @@ const API_VERSION = '2023-06-01'
 
 const ADAPTIVE_THINKING_MODELS = /^claude-(fable-5|opus-4-[6-9]|sonnet-4-6)/
 
-// User content blocks: labelled text + base64 PDF documents. `title` names the
-// file so findings can reference which card/file they came from.
+// User content blocks: labelled text, base64 PDF documents, and base64 images
+// (customer-supplied attachment photos/screenshots — Phase 2a). `title` names
+// a document so findings can reference which card/file they came from; images
+// carry no title, so callers put a labelling text block before each one.
 export type ContentBlock =
   | { type: 'text'; text: string }
   | {
     type: 'document'
     source: { type: 'base64'; media_type: 'application/pdf'; data: string }
     title?: string
+  }
+  | {
+    type: 'image'
+    source: { type: 'base64'; media_type: string; data: string }
   }
 
 interface ApiMessage {

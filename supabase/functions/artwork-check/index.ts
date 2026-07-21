@@ -26,9 +26,16 @@
 // the service-role key (shadow backtests / scripts).
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
-import { fetchAllConversationThreads, getAccessToken, HsError } from '../_shared/helpscout.ts'
+import { fetchAllConversationThreads, fetchAttachmentData, getAccessToken, HsError, type HsThreadWithAttachments } from '../_shared/helpscout.ts'
 import { downloadSharedLinkFile, getDropboxAccessToken, listSharedLinkEntries } from '../_shared/dropbox.ts'
 import { isCutThroughMaterial, looksLikePdf, pickPrintFiles } from '../_shared/artworkCheck/printFiles.ts'
+import {
+  attachmentDateLabel,
+  pickAttachments,
+  routeAttachment,
+  routedToBlocks,
+  type RoutedAttachment,
+} from '../_shared/artworkCheck/attachments.ts'
 import { threadToText } from '../_shared/artworkCheck/threadText.ts'
 import {
   buildContextText,
@@ -233,9 +240,15 @@ Deno.serve(async (req) => {
     threadGapNote: null,
     printFileNames: [],
     skippedFiles: [],
+    attachmentsRead: [],
+    attachmentsSkipped: [],
   }
   let threadMessages = 0
   let threadFound = false
+  // Held for the attachment phase, which runs AFTER the print files so its
+  // byte budget can be sized around what the prints already used.
+  let hsToken: string | null = null
+  let hsThreads: HsThreadWithAttachments[] | null = null
 
   // Persist + respond with a report (success or error alike) — an errored run
   // still stamps artwork_checked_at, deliberately (non-stranding gate).
@@ -266,6 +279,8 @@ Deno.serve(async (req) => {
           if (threads === null) {
             baseCtx.threadGapNote = 'the linked Help Scout conversation no longer exists'
           } else {
+            hsToken = token
+            hsThreads = threads
             const flat = threadToText(threads)
             baseCtx.threadText = flat.text
             threadMessages = flat.messageCount
@@ -295,6 +310,7 @@ Deno.serve(async (req) => {
     const picked = pickPrintFiles(entries)
     baseCtx.skippedFiles = [...picked.skipped]
     const documents: ContentBlock[] = []
+    let printsRawTotal = 0
     for (const f of picked.files) {
       const bytes = await downloadSharedLinkFile(dbxToken, order.dropbox_folder_url, f.path)
       if (!bytes) {
@@ -306,6 +322,7 @@ Deno.serve(async (req) => {
         continue
       }
       baseCtx.printFileNames.push(f.name)
+      printsRawTotal += bytes.length
       documents.push({
         type: 'document',
         source: { type: 'base64', media_type: 'application/pdf', data: bytesToBase64(bytes) },
@@ -316,10 +333,43 @@ Deno.serve(async (req) => {
       return await finish(buildErrorReport(modelId(), 'no readable print files (.pdf/.ai) in the Dropbox folder', buildInputs(baseCtx, threadMessages, threadFound)))
     }
 
+    // ── Customer-thread attachments (Phase 2a) ──────────────────────────────
+    // Best-effort throughout: any failure demotes that attachment to a listed
+    // skip (an honest reference gap), never an error. Staff attachments are
+    // excluded inside pickAttachments — reading our own proof exports back
+    // would verify the card against itself.
+    const routedAttachments: RoutedAttachment[] = []
+    if (conversationId && hsToken && hsThreads) {
+      const { picks, skipped } = pickAttachments(hsThreads, printsRawTotal)
+      baseCtx.attachmentsSkipped.push(...skipped)
+      for (const meta of picks) {
+        try {
+          const bytes = await fetchAttachmentData(hsToken, conversationId, meta.id)
+          if (!bytes) {
+            baseCtx.attachmentsSkipped.push({ name: meta.filename, reason: 'download failed' })
+            continue
+          }
+          const routed = await routeAttachment(meta, bytes)
+          if (!routed) {
+            baseCtx.attachmentsSkipped.push({ name: meta.filename, reason: 'contents not readable' })
+            continue
+          }
+          routedAttachments.push(routed)
+          baseCtx.attachmentsRead.push({ name: meta.filename, at: attachmentDateLabel(meta.at) })
+        } catch {
+          baseCtx.attachmentsSkipped.push({ name: meta.filename, reason: 'download failed' })
+        }
+      }
+    }
+    const attachmentBlocks = routedToBlocks(routedAttachments)
+
     // ── One multimodal call ─────────────────────────────────────────────────
     const content: ContentBlock[] = [
       { type: 'text', text: buildContextText(baseCtx) },
       ...documents,
+      ...(attachmentBlocks.length > 0
+        ? [{ type: 'text', text: 'CUSTOMER-SUPPLIED ATTACHMENTS (reference material, labelled per file):' } as ContentBlock, ...attachmentBlocks]
+        : []),
       { type: 'text', text: FINAL_INSTRUCTION },
     ]
     const { result, usage } = await callArtworkCheck(SYSTEM_PROMPT, content)

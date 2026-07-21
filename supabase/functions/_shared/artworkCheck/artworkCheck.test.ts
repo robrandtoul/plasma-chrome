@@ -16,6 +16,16 @@ import {
   type FolderEntry,
 } from './printFiles.ts'
 import { MESSAGE_CHAR_CAP, THREAD_CHAR_CAP, threadToText, type ThreadLike } from './threadText.ts'
+import {
+  ATTACHMENT_MAX_BYTES,
+  ATTACHMENTS_MAX_COUNT,
+  attachmentBudget,
+  parseSpreadsheet,
+  pickAttachments,
+  routeAttachment,
+  routedToBlocks,
+  type AttachmentMeta,
+} from './attachments.ts'
 import { buildErrorReport, buildReport, countCheckedFields, countFlags, deriveVerdict } from './report.ts'
 import { buildContextText, buildInputs, type CheckContext } from './prompts.ts'
 import type { ModelReport } from './types.ts'
@@ -217,6 +227,8 @@ const ctx: CheckContext = {
   threadGapNote: null,
   printFileNames: ['01_Front.ai'],
   skippedFiles: [{ name: 'old.eps', reason: 'EPS — not PDF-readable' }],
+  attachmentsRead: [{ name: 'details.xlsx', at: '2026-06-01' }],
+  attachmentsSkipped: [{ name: 'source.zip', reason: 'not a readable type' }],
 }
 
 {
@@ -252,13 +264,136 @@ const ctx: CheckContext = {
 }
 
 {
-  const gapCtx: CheckContext = { ...ctx, threadText: '', threadGapNote: 'this proof has no linked Help Scout conversation', qrs: [], recipients: [] }
+  const gapCtx: CheckContext = { ...ctx, threadText: '', threadGapNote: 'this proof has no linked Help Scout conversation', qrs: [], recipients: [], attachmentsRead: [], attachmentsSkipped: [] }
   const text = buildContextText(gapCtx)
   check('gap note rendered', text.includes('this proof has no linked Help Scout conversation'))
   check('gap framed as not-evidence', text.includes('not as evidence of error'))
   check('no recipients line', text.includes('No named recipients'))
   check('no qr line', text.includes('No QR codes'))
+  check('no-attachments line', text.includes('No customer attachments were readable'))
 }
+
+{
+  const text = buildContextText(ctx)
+  check('read attachments listed', text.includes('CUSTOMER ATTACHMENTS READ (1') && text.includes('details.xlsx (2026-06-01)'))
+  check('skipped attachments listed', text.includes('source.zip — not a readable type'))
+}
+
+// ── attachments: pickAttachments ─────────────────────────────────────────────
+
+function attachThread(overrides: Partial<ThreadLike>, atts: { id?: number; filename?: string; mimeType?: string; size?: number }[]): ThreadLike {
+  return {
+    type: 'customer',
+    state: 'published',
+    body: 'see attached',
+    createdAt: '2026-06-01T10:00:00Z',
+    createdBy: { type: 'customer', first: 'Jo' },
+    _embedded: { attachments: atts },
+    ...overrides,
+  }
+}
+
+{
+  const { picks, skipped } = pickAttachments([
+    attachThread({}, [
+      { id: 1, filename: 'roster.xlsx', mimeType: 'application/vnd.ms-excel', size: 1000 },
+      { id: 2, filename: 'source.zip', mimeType: 'application/zip', size: 1000 },
+      { id: 3, filename: 'too-big.pdf', mimeType: 'application/pdf', size: ATTACHMENT_MAX_BYTES + 1 },
+    ]),
+    // Staff attachment (our own proof export) — excluded entirely, no skip entry.
+    attachThread({ createdBy: { type: 'user', first: 'Rob' } }, [
+      { id: 4, filename: 'Proof01.jpg', mimeType: 'image/jpeg', size: 1000 },
+    ]),
+    // Draft thread — excluded.
+    attachThread({ state: 'draft' }, [{ id: 5, filename: 'draft.pdf', mimeType: 'application/pdf', size: 100 }]),
+  ], 0)
+  eq('customer readable picked', picks.map((p) => p.filename).join(','), 'roster.xlsx')
+  check('zip skipped by type', skipped.some((s) => s.name === 'source.zip' && /readable type/.test(s.reason)))
+  check('oversize skipped', skipped.some((s) => s.name === 'too-big.pdf' && /size limit/.test(s.reason)))
+  check('staff attachment silently excluded', !picks.some((p) => p.filename === 'Proof01.jpg') && !skipped.some((s) => s.name === 'Proof01.jpg'))
+  check('draft attachment excluded', !picks.some((p) => p.filename === 'draft.pdf'))
+}
+
+{
+  // Priority: spreadsheets before PDFs before images; date ascending within kind.
+  const { picks } = pickAttachments([
+    attachThread({ createdAt: '2026-06-03T10:00:00Z' }, [{ id: 1, filename: 'photo.jpg', mimeType: 'image/jpeg', size: 10 }]),
+    attachThread({ createdAt: '2026-06-02T10:00:00Z' }, [{ id: 2, filename: 'form.pdf', mimeType: 'application/pdf', size: 10 }]),
+    attachThread({ createdAt: '2026-06-05T10:00:00Z' }, [{ id: 3, filename: 'late.csv', mimeType: 'text/csv', size: 10 }]),
+    attachThread({ createdAt: '2026-06-01T10:00:00Z' }, [{ id: 4, filename: 'early.csv', mimeType: 'text/csv', size: 10 }]),
+  ], 0)
+  eq('priority + date order', picks.map((p) => p.filename).join(','), 'early.csv,late.csv,form.pdf,photo.jpg')
+}
+
+{
+  const many = Array.from({ length: ATTACHMENTS_MAX_COUNT + 2 }, (_, i) =>
+    attachThread({}, [{ id: i + 1, filename: `f${String(i).padStart(2, '0')}.csv`, mimeType: 'text/csv', size: 10 }]))
+  const { picks, skipped } = pickAttachments(many, 0)
+  eq('attachment count cap', picks.length, ATTACHMENTS_MAX_COUNT)
+  eq('count-cap overflow recorded', skipped.filter((s) => /attachment limit/.test(s.reason)).length, 2)
+}
+
+{
+  // Budget: prints already used 22 MB of the 24 MB shared pool → 2 MB left.
+  const twoMb = 2 * 1024 * 1024
+  const { picks, skipped } = pickAttachments([
+    attachThread({}, [
+      { id: 1, filename: 'a.pdf', mimeType: 'application/pdf', size: twoMb - 1 },
+      { id: 2, filename: 'b.pdf', mimeType: 'application/pdf', size: twoMb },
+    ]),
+  ], 22 * 1024 * 1024)
+  eq('budget keeps what fits', picks.map((p) => p.filename).join(','), 'a.pdf')
+  check('budget overflow recorded', skipped.some((s) => s.name === 'b.pdf' && /budget/.test(s.reason)))
+}
+
+eq('budget caps at 8MB', attachmentBudget(0), 8 * 1024 * 1024)
+eq('budget shrinks with prints', attachmentBudget(20 * 1024 * 1024), 4 * 1024 * 1024)
+eq('budget floors at zero', attachmentBudget(30 * 1024 * 1024), 0)
+
+// ── attachments: routing + parsing ───────────────────────────────────────────
+
+const enc = new TextEncoder()
+function meta(filename: string): AttachmentMeta {
+  return { id: 1, filename, mimeType: '', size: 10, at: '2026-06-01T10:00:00Z' }
+}
+
+await (async () => {
+  const csv = await routeAttachment(meta('roster.csv'), enc.encode('name,email\nDave,dave@a.com'))
+  check('csv routes to text', csv?.kind === 'text' && csv.text.includes('dave@a.com'))
+
+  const pdf = await routeAttachment(meta('form.pdf'), enc.encode('%PDF-1.4 rest'))
+  check('pdf routes to document', pdf?.kind === 'document')
+
+  const badPdf = await routeAttachment(meta('form.pdf'), enc.encode('not a pdf'))
+  eq('non-pdf bytes rejected', badPdf, null)
+
+  const ai = await routeAttachment(meta('art.ai'), enc.encode('%PDF-1.6 rest'))
+  check('pdf-compatible ai routes to document', ai?.kind === 'document')
+
+  const img = await routeAttachment(meta('photo.JPG'), enc.encode('xx'))
+  check('jpg routes to image with media type', img?.kind === 'image' && img.mediaType === 'image/jpeg')
+
+  const zip = await routeAttachment(meta('stuff.zip'), enc.encode('xx'))
+  eq('unknown type unroutable', zip, null)
+
+  // Real xlsx round-trip through SheetJS (the same library the runtime loads).
+  const XLSX = await import('xlsx')
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['name', 'email'], ['Kamran Randhawa', 'kamran@fish.com']]), 'Cards')
+  const xlsxBytes = new Uint8Array(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer)
+  const parsed = await parseSpreadsheet('Book1.xlsx', xlsxBytes)
+  check('xlsx parses to csv text', !!parsed && parsed.includes('Kamran Randhawa') && parsed.includes('kamran@fish.com'))
+
+  const blocks = routedToBlocks([
+    { kind: 'text', name: 'roster.csv', at: '2026-06-01T10:00:00Z', text: 'name,email' },
+    { kind: 'document', name: 'form.pdf', at: '2026-06-02T10:00:00Z', bytes: enc.encode('%PDF-1.4') },
+    { kind: 'image', name: 'photo.jpg', at: '2026-06-03T10:00:00Z', mediaType: 'image/jpeg', bytes: enc.encode('xx') },
+  ])
+  eq('blocks: text folds label+content, doc/image get label blocks', blocks.length, 5)
+  check('text block labelled', blocks[0].type === 'text' && (blocks[0] as { text: string }).text.includes('roster.csv') && (blocks[0] as { text: string }).text.includes('2026-06-01'))
+  check('document titled', blocks[2].type === 'document' && (blocks[2] as { title?: string }).title === 'form.pdf')
+  check('image block present', blocks[4].type === 'image')
+})()
 
 // ── summary ──────────────────────────────────────────────────────────────────
 
