@@ -14,22 +14,35 @@
          colour reach the top edge the way Safari does. With
          `default`, iOS colours the reserved status-bar strip by the
          PHONE's light/dark setting, so in dark mode it painted a dark
-         band above the always-cream app. The `color-scheme: light`
-         meta below (mirrored in CSS) declares the app light-only, so
-         iOS keeps that strip in its light treatment — dark text on a
-         light bar that matches the cream — even when the phone is in
-         dark mode. -->
+         band above the always-cream app. The per-scheme `theme-color`
+         tags below pin that strip to cream in BOTH light and dark, and
+         the `color-scheme: light` meta (mirrored in CSS) additionally
+         declares the app light-only so native controls stay light too
+         — together they keep the strip cream with dark text even when
+         the phone is in dark mode. -->
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <!-- Web App Manifest: makes the app installable as a PWA and is a
          prerequisite for web-push on iOS. The Apple meta tags below still
          drive the iOS Home Screen icon/title; the manifest adds the
          standalone display + theme colour Chrome/Android read. -->
     <link rel="manifest" href="/manifest.json" />
+    <!-- theme-color drives the installed-PWA status-bar strip on iOS
+         (Safari 15+ reads the meta AND its prefers-color-scheme media
+         variant). The app is cream in every state, so pin BOTH schemes
+         to the same cream. An installed app opened in dark mode was
+         falling back to a system-dark strip because only an
+         unconditional theme-color was present; giving iOS an explicit
+         dark-scheme value stops it reaching for its own dark default.
+         The plain fallback (last) covers anything that ignores the
+         media attribute and the pre-load splash, which reads the
+         manifest's theme_color (also cream). -->
+    <meta name="theme-color" content="#fbf7f0" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#fbf7f0" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#fbf7f0" />
-    <!-- The app is cream (light) in every state — there is no dark
-         theme. Declaring it light-only stops iOS painting the
-         standalone status-bar strip dark when the phone is in dark
-         mode (see the apple-touch-icon comment above). -->
+    <!-- Also declare the app light-only so iOS keeps native form
+         controls, scrollbars and status-bar text in their light
+         treatment even when the phone is in dark mode (mirrored in CSS,
+         see design-tokens.css). -->
     <meta name="color-scheme" content="light" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
