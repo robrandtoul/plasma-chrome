@@ -412,11 +412,11 @@ supplier without a check having run**.
 
 **Decisions taken on the open questions** (revisit in shadow if wrong):
 
-1. *Illustrator-PDF acceptance* — built the PDF-document-block route with a `%PDF` magic-
-   bytes sniff; NOT yet proven against the API (no key available at build time). The
-   first shadow run settles it; if the API rejects Illustrator-flavoured PDFs, the run
-   persists a verdict-'error' report naming the rejection and the WASM rasteriser fallback
-   gets built then.
+1. *Illustrator-PDF acceptance* — **SETTLED 2026-07-21, first live run**: the API accepts
+   `.ai` files relabelled `application/pdf` and genuinely reads them (order 403910's
+   `01Front.ai`/`01Back.ai` — the model read every printed field and even spotted an
+   undecoded QR printed on the back). No rasteriser needed; the `%PDF` sniff stays as the
+   guard against ancient non-PDF `.ai` files.
 2. *Repeat customers* — Phase 1 reports honest `reference_gaps` ("details not re-confirmed
    in this thread") rather than reconciling against a previous order; attachments are
    surfaced by filename as gaps, not read (Phase 2).
@@ -434,17 +434,27 @@ actually RUN once ① is applied.
 
 **Rollout checklist:**
 
-- [ ] Apply migration 000336 (MCP `apply_migration`, Rob gates).
-- [ ] Set `ANTHROPIC_API_KEY` as a Supabase secret if not already present (the ai-draft
-      function already uses it — verify it's set for the project).
-- [ ] Deploy `artwork-check` (verify_jwt true — no `--no-verify-jwt` flag) + redeploy
-      `place-order`; byte-verify both.
-- [ ] Flip `artwork_check_mode` → `shadow`. Reports now accumulate silently as staff
-      open review pages; optionally batch-run over ~25–30 fulfilled orders with the
-      service key to seed the tuning set.
-- [ ] Review reports (`select stock_order_number, artwork_check_verdict,
-      artwork_check->>'summary' from proofs.orders where artwork_checked_at is not
-      null`), tune `prompts.ts`, redeploy, `{ force: true }` re-runs as needed.
+- [x] Apply migration 000336 — **done 2026-07-21** (MCP `apply_migration`, name
+      `artwork_check`; all 5 columns verified with defaults off/false; advisors clean).
+- [x] `ANTHROPIC_API_KEY` Supabase secret — **verified present** (shared with ai-draft).
+- [x] Deploy `artwork-check` (v1, verify_jwt TRUE) + redeploy `place-order` (v29,
+      verify_jwt preserved TRUE) — **done 2026-07-21**, all 13 bundle files byte-verified
+      identical to the repo via `supabase functions download` + `cmp`.
+- [x] Flip `artwork_check_mode` → `shadow` — **done 2026-07-21**. First live run (order
+      403910 The Boat Shack, metal `.ai` reorder): HTTP 200 in ~45s, verdict `flagged`
+      (an undecoded QR printed on the back — worth a human eyeball), correction
+      detection worked (the mid-thread "add work phone" request verified as landed on
+      the card), reorder carried-over details honestly reported as reference gaps, and
+      the no-cutout construction correctly excused the unmirrored back. Report persisted
+      to `orders.artwork_check` with usage + a 3.6k-token prompt-cache write.
+- [ ] Reports now accumulate as staff open review pages; optionally batch-run over
+      ~25–30 fulfilled orders with the service key to seed the tuning set. Review
+      (`select stock_order_number, artwork_check_verdict, artwork_check->>'summary'
+      from proofs.orders where artwork_checked_at is not null`), tune `prompts.ts`,
+      redeploy, `{ force: true }` re-runs as needed. First tuning question from run 1:
+      should "QR printed on the card but not stored/decoded" be a flag (current
+      behaviour — arguably right, since QR contents defeat visual QC) or a
+      reference_gap?
 - [ ] Flip `artwork_check_mode` → `live` — the card appears.
 - [ ] After a settling-in window: flip `artwork_check_required` → true (the mandatory-run
       gate, UI + place-order).
