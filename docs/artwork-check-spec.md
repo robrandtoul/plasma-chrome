@@ -461,18 +461,22 @@ actually RUN once ① is applied.
       same day: print-file count cap 8 → 16 (403898 had 10 per-person cards; two were
       skipped at 8) — deployed as v2, byte-verified, Everest force-re-run to full
       coverage.
-- [ ] Tune `prompts.ts` from the batch, then redeploy + `{ force: true }` re-run the
-      affected orders. The candidates surfaced: (1) **403903 Sarenco** — printed title
-      flagged against the customer's email SIGNATURE (weak reference; treat signatures
-      as corroboration → not_supplied + note, not a flag); (2) **403904 Box Sash** —
-      the customer's own LOGO artwork wording ("WINDOWS" plural) flagged against the
-      typed form ("Window") — extend the brand-casing rule to supplied-logo wording;
-      (3) **403897 Fishies** — flagged verdict born solely of corrections that live in
-      an UNREAD attachment (can't-verify ≠ not-actioned — consider an 'unverifiable'
-      presentation distinct from resolved=false); (4) the standing QR question —
-      "QR printed but not stored/decoded" as flag (current) vs gap. Phase 2's
-      attachment reading would dissolve (3) and several reference gaps (403884, 403888,
-      403897 all keyed their ground truth in spreadsheets / PDFs / Drive links).
+- [x] Tune `prompts.ts` from the batch — **done 2026-07-21** (commit 619dad9, function
+      v3, byte-verified). Four rules added, each from a batch order: signatures are
+      corroboration not requests (403903); the customer's own logo wording is
+      authoritative, not just its casing (403904); unverifiable revisions (unread
+      attachments, quantity/roster) are reference_gaps, never resolved=false (403897);
+      digit-identical phone regrouping matches unless explicitly requested. Plus the
+      undecoded-QR stance made explicit: visible QR with no stored payload = one flag
+      per code — the deliberate exception to gaps-are-not-flags. **Validation re-runs,
+      5/5 as intended**: 403903, 403904, 403897 all flipped to clear (each summary
+      showing the new rule applied, not silence); 403898 Everest and 403899 Plak8 kept
+      their genuine flags — the digit-identical rule correctly did NOT excuse Plak8's
+      explicitly-requested regrouping. Post-tuning tally over the 24-order set:
+      **17 clear / 7 flagged**, and every remaining flag is a genuine catch, the
+      Snap-on advisory title pair, or the deliberate QR policy. Phase 2's attachment
+      reading would dissolve several remaining reference gaps (403884/403888/403897
+      key their ground truth in spreadsheets / PDFs / Drive links).
       Ops note: long curl calls to the function need HTTP/2 (HTTP/1.1 dies at the
       gateway's 60s idle timeout; even HTTP/2 drops the response ~5 min in while the
       run completes and persists server-side — read the row, not the response, for
