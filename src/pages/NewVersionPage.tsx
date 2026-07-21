@@ -3969,17 +3969,20 @@ export default function NewVersionPage() {
     if (keptQrEntries.length > 0) {
       const qrUploadQueue = keptQrEntries
         .filter((e) => e.source === 'new' && e.file)
-        .map((e) => ({
-          entry: e,
-          file: e.file as File,
+        .map((e) => {
+          const file = e.file as File
           // Path extension matches the artefact: hosted-vCard QRs
-          // are SVGs generated client-side; uploaded customer QRs
-          // are the raw JPEG / PNG the designer dropped. The
-          // storage bucket is content-type-agnostic, but a wrong
-          // extension would mis-route any downstream tooling that
-          // inspects path suffixes.
-          path: `${proofId}/${uuidv4()}.${e.kind === 'hosted_vcard' ? 'svg' : 'jpg'}`,
-        }))
+          // are SVGs generated client-side; artwork-scan finds are
+          // PNGs (crop and rebuild both render to image/png);
+          // uploaded customer QRs are the raw JPEG the designer
+          // dropped. The storage bucket keys off the content type,
+          // not the extension, but a wrong extension would
+          // mis-route any downstream tooling that inspects path
+          // suffixes.
+          const ext =
+            e.kind === 'hosted_vcard' ? 'svg' : file.type === 'image/png' ? 'png' : 'jpg'
+          return { entry: e, file, path: `${proofId}/${uuidv4()}.${ext}` }
+        })
 
       const qrUploadErrors: string[] = []
       await Promise.all(

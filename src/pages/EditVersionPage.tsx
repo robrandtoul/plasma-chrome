@@ -1659,15 +1659,17 @@ export default function EditVersionPage() {
     // Upload + insert new QR rows.
     const newQrEntries = qrEntries.filter((e) => e.source === 'new' && e.file)
     if (newQrEntries.length > 0) {
-      const qrUploads = newQrEntries.map((e) => ({
-        entry: e,
-        file: e.file as File,
+      const qrUploads = newQrEntries.map((e) => {
+        const file = e.file as File
         // Path extension follows the artefact: hosted-vCard QRs are
-        // generated SVGs; customer-supplied QRs are the dropped
-        // JPEG / PNG. Mirrors NewVersionPage so a fresh-create and
-        // an edit-add produce paths in the same shape.
-        path: `${proofId}/${uuidv4()}.${e.kind === 'hosted_vcard' ? 'svg' : 'jpg'}`,
-      }))
+        // generated SVGs; artwork-scan finds are PNGs; customer-
+        // supplied QRs are the dropped JPEG. Mirrors NewVersionPage
+        // so a fresh-create and an edit-add produce paths in the
+        // same shape.
+        const ext =
+          e.kind === 'hosted_vcard' ? 'svg' : file.type === 'image/png' ? 'png' : 'jpg'
+        return { entry: e, file, path: `${proofId}/${uuidv4()}.${ext}` }
+      })
       const uploadedQrPaths: string[] = []
       const qrErrors: string[] = []
       await Promise.all(
