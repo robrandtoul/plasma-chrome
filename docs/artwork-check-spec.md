@@ -568,6 +568,25 @@ explicit 15 Jul re-grouping landed after v2; v3–v5 all post-date it and still 
 old grouping). The dates-decide-everything rule held: pre-revision rounds innocent,
 post-revision rounds not.
 
+**Red ✗ defect tier: SHIPPED 2026-07-21** (PR #528; migration 000338 applied — widens
+the verdict CHECK to clear|flagged|defect|error; function v9, byte-verified;
+`pnpm test:artwork-check` 124 checks). Findings + corrections carry a model-graded
+severity against the "would we bet a reprint on it" bar — defect reserved for exactly
+three categories: (1) functionally broken value, (2) explicit written instruction not
+carried out, (3) print file contradicts the approved proof. Choose-review-when-torn is
+in the prompt, and the legitimate-difference shapes are named never-red. Any
+defect-grade flag ⇒ verdict `defect`: red ✗ Orders-page chip, rose review card with
+`❌ N items look wrong`, defects sorted first and ✗-marked. Red stays ADVISORY — the
+gate still only requires a run. **Re-grade validation, exactly the predicted 3/4
+split:** Everest 403898 (broken email, cat 1), Plak8 403899 (ignored instruction,
+cat 2), Hurst 403894 (drift, cat 3) → **defect**; Roundtable 403892, Snap-on
+403901/403902 (titles, correctly "possibly intentional"), Boat Shack 403910 → review.
+Notably the model graded Boat Shack's boat-shack.com-vs-boatshackutah.com domain
+difference review, not defect — the right restraint on a genuinely arguable case. The
+two investigations (discarded by the re-runs) were re-run and reproduced their fault
+attributions exactly: Everest → customer_origin, Plak8 → ours_missed_revision.
+
 **Deferred to Phase 3:** a print-file staleness guard for content changes inside an
 unchanged folder link (re-link and Re-run cover it meanwhile), admin-editable rules
-(step 2 of the admin graduation), and any soft-block on flagged verdicts.
+(step 2 of the admin graduation), and any soft-block (if ever wanted, "reds require an
+I've-reviewed tick" is its natural scope).
