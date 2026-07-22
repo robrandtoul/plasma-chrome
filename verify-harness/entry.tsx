@@ -30,6 +30,7 @@ import AdminContentPage from '../src/pages/admin/AdminContentPage'
 import AdminNeedsAttentionPage from '../src/pages/admin/AdminNeedsAttentionPage'
 import AdminShippingPage from '../src/pages/admin/AdminShippingPage'
 import AdminSettingsPage from '../src/pages/admin/AdminSettingsPage'
+import AdminArtworkCheckPage from '../src/pages/admin/AdminArtworkCheckPage'
 import { SpreadQuoteResults } from '../src/components/quote/SpreadQuoteResults'
 import '../src/index.css'
 
@@ -130,6 +131,7 @@ const tree = requestedPath === '/quote-spread' ? (
         <Route index element={<AdminHomePage />} />
         <Route path="catalogue/:tab" element={<AdminCatalogueDataPage />} />
         <Route path="content/:tab" element={<AdminContentPage />} />
+        <Route path="artwork-check" element={<AdminArtworkCheckPage />} />
         <Route path="needs-attention" element={<AdminNeedsAttentionPage />} />
         <Route path="shipping" element={<AdminShippingPage />} />
         <Route path="settings" element={<AdminSettingsPage />} />

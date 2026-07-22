@@ -28,6 +28,8 @@ import { usePersonalisationPricing } from '../lib/quote/usePersonalisationPricin
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { computeQrArtworkChangedSlots, isQrSlotFlagged, resolveQrEffectiveKeep } from '../lib/qrCarryForward'
 import { rostersAreDisjoint } from '../lib/strandedApprovals'
+import { resolveCurrency, type CurrencySuggestion } from '../lib/currencyResolver'
+import { fetchConversationContext } from '../lib/conversationContext'
 import { createSetFromProof, markSetReviewLinkSent, resolveCustomerReviewLink, type CustomerReviewLink } from '../lib/proofSets'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { LAYER_COLOUR_MATERIAL_CODES } from '../lib/letterpress'
@@ -310,6 +312,18 @@ export default function NewVersionPage() {
   const [variants, setVariants] = useState<Variant[]>([])
   const [selectedVariantIds, setSelectedVariantIds] = useState<string[]>([])
   const [currency, setCurrency] = useState<Currency | null>(null)
+  // Currency provenance. Several sources can set the currency; a higher rank
+  // wins and is never clobbered by a lower one — so the country suggestion
+  // overrides the blunt settings default, but never an inherited value or the
+  // designer's own pick. Ranks: 1 settings · 2 suggestion · 3 inherited · 4 user.
+  const currencySourceRef = useRef(0)
+  const setCurrencyFrom = (rank: number, value: Currency) => {
+    if (rank < currencySourceRef.current) return
+    currencySourceRef.current = rank
+    setCurrency(value)
+  }
+  const [currencySuggestion, setCurrencySuggestion] = useState<CurrencySuggestion | null>(null)
+  const [currencyChallengeDismissed, setCurrencyChallengeDismissed] = useState(false)
   const [variantTiers, setVariantTiers] = useState<Record<string, PriceTierRow[]>>({})
   // Entry A of the bundle-orders set flow (Slice 3): the wizard's
   // different-materials guard terminals offer "build as a set of cards",
@@ -763,7 +777,7 @@ export default function NewVersionPage() {
         if (inheritStandardPricing && inherited.currency) {
           // Currency — always inheritable from a standard-pricing
           // source version.
-          setCurrency(inherited.currency as Currency)
+          setCurrencyFrom(3, inherited.currency as Currency)
           currencyInherited = true
         }
 
@@ -1319,13 +1333,90 @@ export default function NewVersionPage() {
           setPricingDisplay((settings.default_pricing_display === 'custom_quote' ? 'custom' : 'standard') as PricingDisplayValue)
         }
         if (!currencyInherited && settings.default_currency != null) {
-          setCurrency(settings.default_currency as Currency)
+          setCurrencyFrom(1, settings.default_currency as Currency)
         }
       }
     }
 
     load()
     return () => { cancelled = true }
+  }, [proofId])
+
+  // Background currency suggestion (country → currency). Reads the customer's
+  // country from the linked Help Scout enquiry — the value the artwork form
+  // already collected but the app never stored — with a prior payment, the
+  // email domain, or the customer's other projects as fallbacks. Runs once,
+  // off the critical path; any failure just means no suggestion (never a
+  // blocker). Feeds the pre-fill (rank 2) and the challenge below the field.
+  useEffect(() => {
+    if (!proofId) return
+    let cancelled = false
+    const currentCurrencies = (rows: unknown): (Currency | null)[] =>
+      Array.isArray(rows)
+        ? rows.map((r) => {
+            const versions = Array.isArray((r as any)?.proof_versions)
+              ? (r as any).proof_versions
+              : []
+            return (versions.find((v: any) => v?.is_current)?.currency ?? null) as
+              | Currency
+              | null
+          })
+        : []
+    async function suggest() {
+      try {
+        const { data: proofRow } = await supabase
+          .from('proofs')
+          .select('contact_id, contacts(email, company_id)')
+          .eq('id', proofId!)
+          .single()
+        const contact = (proofRow as any)?.contacts
+        const contactEmail: string | null = contact?.email ?? null
+        const contactId: string | null = (proofRow as any)?.contact_id ?? null
+        const companyId: string | null = contact?.company_id ?? null
+
+        let priorCurrencies: (Currency | null)[] = []
+        if (companyId) {
+          const { data } = await supabase
+            .from('proofs')
+            .select('id, contacts!inner(company_id), proof_versions(currency, is_current)')
+            .eq('contacts.company_id', companyId)
+            .neq('id', proofId!)
+          priorCurrencies = currentCurrencies(data)
+        } else if (contactId) {
+          const { data } = await supabase
+            .from('proofs')
+            .select('id, proof_versions(currency, is_current)')
+            .eq('contact_id', contactId)
+            .neq('id', proofId!)
+          priorCurrencies = currentCurrencies(data)
+        }
+
+        let threadText: string | null = null
+        try {
+          const ctx = await fetchConversationContext(proofId!)
+          threadText = ctx.threads
+            .filter((t) => t.authorType === 'customer')
+            .map((t) => t.bodyText)
+            .join('\n\n')
+        } catch {
+          // No linked conversation / Help Scout unreachable — other layers
+          // still resolve most cases.
+        }
+
+        if (cancelled) return
+        const suggestion = resolveCurrency({ threadText, contactEmail, priorCurrencies })
+        if (!suggestion) return
+        setCurrencySuggestion(suggestion)
+        setCurrencyFrom(2, suggestion.currency)
+      } catch {
+        // Best effort — the suggestion is an aid, never a blocker.
+      }
+    }
+    suggest()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proofId])
 
   // Letterpress core colour catalogue (migration 000133). Loaded
@@ -4544,7 +4635,10 @@ export default function NewVersionPage() {
     pricingDisplay: isPerDirectionRound ? true : pricingDisplay !== null,
     material:       isPerDirectionRound ? true : !!selectedMaterialId,
     variant:        isPerDirectionRound ? true : (!variantRequired || selectedVariantIds.length > 0),
-    currency:       isPerDirectionRound ? true : (isCustomQuote || currency !== null),
+    // No longer a save blocker: currency is auto-suggested from the customer's
+    // country and pre-filled (with a GBP fallback on save), so the designer
+    // never has to select it by hand.
+    currency:       true,
     inkNames:       isPerDirectionRound ? true : (!requiresInkNames || (inkCount > 0 && inkNameValidities.every(Boolean))),
     names:          isVariantRound ? true : namesValid,
     // Options — required when the material exposes an option dimension
@@ -5302,13 +5396,49 @@ export default function NewVersionPage() {
                 <div style={carriedFieldStyle(carry.currency.isCarried, carry.currency.isEdited)}>
                   <CurrencyField
                     value={currency}
-                    onChange={(c) => setCurrency(c)}
+                    onChange={(c) => setCurrencyFrom(4, c)}
                     invalid={shouldHighlight('currency')}
                     tone={chipTone(carry.currency.isCarried, carry.currency.isEdited)}
                   />
                   {shouldHighlight('currency') && (
                     <p className="mt-1.5 text-xs font-medium text-out">Required</p>
                   )}
+                  {currencySuggestion &&
+                    currencySuggestion.confidence === 'high' &&
+                    currency &&
+                    currency !== currencySuggestion.currency &&
+                    !currencyChallengeDismissed && (
+                      <div className="mt-2 rounded border border-low bg-low-soft px-3 py-2 text-xs text-low">
+                        <p className="font-semibold">
+                          This looks like a {currencySuggestion.currency} customer.
+                        </p>
+                        <p className="mt-0.5">
+                          {(() => {
+                            const d = currencySuggestion.reasons.find(
+                              (r) => r.currency === currencySuggestion.currency,
+                            )?.detail
+                            return d ? `Because ${d}. ` : ''
+                          })()}
+                          You’ve selected {currency}.
+                        </p>
+                        <div className="mt-2 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setCurrencyFrom(4, currencySuggestion.currency)}
+                            className="rounded bg-low px-2.5 py-1 font-semibold text-white"
+                          >
+                            Switch to {currencySuggestion.currency}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCurrencyChallengeDismissed(true)}
+                            className="font-medium underline"
+                          >
+                            Keep {currency}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                 </div>
               </div>
             )}
@@ -6852,7 +6982,6 @@ function missingFieldItems(
   const optionArticle = /^[aeiou]/i.test(optionWord) ? 'an' : 'a'
   const items: string[] = []
   if (!validations.pricingDisplay) items.push('Select a pricing display')
-  if (!validations.currency) items.push('Select a currency')
   if (!validations.material) items.push('Select a material')
   if (!validations.variant) items.push('Select a variant')
   if (!validations.options) items.push(`Select ${optionArticle} ${optionWord}`)

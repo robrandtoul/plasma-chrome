@@ -7,7 +7,7 @@ import { invalidateApprovalSettings } from '../../lib/approvalSettings'
 import { invalidateShippingSettings } from '../../lib/shippingSettings'
 import { invalidateOrderingEnabled } from '../../lib/orderingEnabled'
 import { invalidateHotLeadsPanelEnabled } from '../../lib/hotLeadsPanelEnabled'
-import { FieldRow, inputClass } from './settingsControls'
+import { FieldRow, RadioGroup, Toggle, inputClass } from './settingsControls'
 
 // /admin/settings — the operational cards only: Customer approvals,
 // Designer defaults, Help Scout, Shipping. The customer-facing copy
@@ -83,14 +83,6 @@ interface Settings {
    *  push for everyone; the per-person Notifications screen + the database
    *  triggers all defer to it. */
   push_enabled: boolean
-  /** Artwork sanity check (migration 000336) — the pre-print supplied-vs-
-   *  printed comparison on the place-order review screen. off = nothing runs;
-   *  shadow = runs + stores reports silently (tuning); live = the advisory
-   *  card shows. `required` additionally blocks placing an order until the
-   *  check has RUN for it (any verdict counts, and it auto-runs when the
-   *  review page opens); it only bites while the mode is live. */
-  artwork_check_mode: 'off' | 'shadow' | 'live'
-  artwork_check_required: boolean
 }
 
 type TrackingLevel = 'off' | 'broad' | 'granular'
@@ -170,8 +162,6 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   customer_tracking_config:          'setting.customer_tracking_config_updated',
   hot_leads_panel_enabled:           'setting.hot_leads_panel_enabled_updated',
   push_enabled:                      'setting.push_enabled_updated',
-  artwork_check_mode:                'setting.artwork_check_mode_updated',
-  artwork_check_required:            'setting.artwork_check_required_updated',
 }
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -184,7 +174,6 @@ const SECTIONS = [
   { id: 'customer-approvals', label: 'Customer approvals' },
   { id: 'ordering-checkout', label: 'Ordering & checkout' },
   { id: 'order-tracking', label: 'Order tracking' },
-  { id: 'artwork-check', label: 'Artwork check' },
   { id: 'designer-defaults', label: 'Designer defaults' },
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'notifications', label: 'Notifications' },
@@ -333,26 +322,12 @@ export default function AdminSettingsPage() {
     await saveField('ordering_enabled', v)
   }
 
-  // Turning the artwork-check RUN gate on blocks placing orders until each
-  // order's check has run. The check auto-runs when the review page opens, so
-  // in practice it adds no clicks — but blocking placement deserves a confirm.
-  async function changeArtworkCheckRequired(v: boolean) {
-    if (!settings) return
-    if (v) {
-      const ok = window.confirm(
-        'Require the artwork check before placing orders?\n\nAn order can’t be sent to the workshop or a supplier until the check has run for it. The check runs automatically when the review page opens, so this normally adds no extra clicks — and a flagged result never blocks; only running the check is required.',
-      )
-      if (!ok) return
-    }
-    await saveField('artwork_check_required', v)
-  }
-
   useEffect(() => { load(); void loadPaymentsStatus() }, [])
 
   async function load() {
     const { data, error } = await supabase
       .from('settings')
-      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, xero_stripe_account_code, xero_eu_tax_type, xero_row_tax_type, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent, hot_leads_panel_enabled, push_enabled, artwork_check_mode, artwork_check_required')
+      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, xero_stripe_account_code, xero_eu_tax_type, xero_row_tax_type, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent, hot_leads_panel_enabled, push_enabled')
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
@@ -1162,52 +1137,6 @@ export default function AdminSettingsPage() {
         )
       })()}
 
-      {/* ── Artwork check (migration 000336) ──────────────────────── */}
-      <section id="artwork-check" className={SECTION_CLASS}>
-        <h3 className="mb-4 text-sm font-semibold text-ink">Artwork check</h3>
-        <p className="mb-4 text-xs text-ink-mute">
-          Before an order is placed, an AI check compares what the customer supplied (the Help Scout
-          thread and any QR contents) against the actual Dropbox print files, and shows a
-          supplied-vs-printed report on the Place order screen. Advisory — a flagged result never
-          blocks; a human always decides. The comparison rules live in code and are tuned from real
-          reports.
-        </p>
-        <div className="space-y-5">
-          <FieldRow
-            label="Mode"
-            help={'Off — nothing runs. Shadow — the check runs and stores its report when a review page is opened, but nobody sees anything (used while tuning). Live — the report card appears on the Place order screen.'}
-            saved={recentlySaved('artwork_check_mode')}
-            working={working.artwork_check_mode}
-            error={errors.artwork_check_mode}
-          >
-            <RadioGroup<'off' | 'shadow' | 'live'>
-              value={settings.artwork_check_mode}
-              onChange={(v) => void saveField('artwork_check_mode', v)}
-              options={[
-                { value: 'off', label: 'Off' },
-                { value: 'shadow', label: 'Shadow' },
-                { value: 'live', label: 'Live' },
-              ]}
-            />
-          </FieldRow>
-
-          <FieldRow
-            label="Require a check before placing"
-            help={'When on (and the mode is Live), an order can’t be sent to the workshop or a supplier until the check has run for it. Running is the only requirement — any result (clear, flagged, even a failed run) satisfies it, and the check runs automatically when the review page opens. Inert while the mode isn’t Live.'}
-            saved={recentlySaved('artwork_check_required')}
-            working={working.artwork_check_required}
-            error={errors.artwork_check_required}
-          >
-            <Toggle
-              value={settings.artwork_check_required}
-              onChange={(v) => void changeArtworkCheckRequired(v)}
-              disabled={!!working.artwork_check_required}
-              label="Require a check before placing"
-            />
-          </FieldRow>
-        </div>
-      </section>
-
       {/* ── Designer defaults ─────────────────────────────────────── */}
       <section id="designer-defaults" className={SECTION_CLASS}>
         <h3 className="mb-4 text-sm font-semibold text-ink">Designer defaults</h3>
@@ -1619,67 +1548,6 @@ function Dot({ color }: { color: 'amber' | 'green' | 'red' }) {
 // Local copy of the app-wide toggle (gray-900 / gray-200, h-6 w-11,
 // role="switch") matching the AdminTemplatesSection toggle so the
 // Customer-approvals flow gate visually echoes the Send-replies gate.
-function Toggle({
-  value, onChange, disabled = false, label,
-}: {
-  value: boolean
-  onChange: (v: boolean) => void
-  disabled?: boolean
-  label: string
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={value}
-      aria-label={label}
-      disabled={disabled}
-      onClick={() => onChange(!value)}
-      className={[
-        'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors',
-        value ? 'bg-ink' : 'bg-line',
-        disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
-      ].join(' ')}
-    >
-      <span
-        className={[
-          'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-surface transition-transform',
-          value ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
-        ].join(' ')}
-      />
-    </button>
-  )
-}
-
-function RadioGroup<T extends string | null>({ value, onChange, options }: {
-  value: T
-  onChange: (v: T) => void
-  options: { value: T; label: string }[]
-}) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      {options.map((o) => {
-        const active = o.value === value
-        return (
-          <button
-            key={o.value ?? '__none__'}
-            type="button"
-            onClick={() => onChange(o.value)}
-            className={[
-              'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
-              active
-                ? 'bg-ink text-on-ink'
-                : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
-            ].join(' ')}
-          >
-            {o.label}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
 function humanFieldLabel(field: keyof Settings): string {
   return {
     default_pricing_display: 'Default pricing display',
@@ -1711,7 +1579,5 @@ function humanFieldLabel(field: keyof Settings): string {
     customer_tracking_config: 'Customer order tracking config',
     hot_leads_panel_enabled: 'Dashboard Hot-leads panel enabled',
     push_enabled: 'Push notifications enabled',
-    artwork_check_mode: 'Artwork check mode',
-    artwork_check_required: 'Artwork check required before placing',
   }[field]
 }

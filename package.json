@@ -33,7 +33,8 @@
     "test:preview-review": "tsx src/lib/previewReview.test.ts",
     "backtest": "tsx scripts/run-backtest.ts",
     "test:ai-drafts": "tsx supabase/functions/_shared/aiDrafts/guardrails.test.ts",
-    "test:artwork-check": "tsx supabase/functions/_shared/artworkCheck/artworkCheck.test.ts"
+    "test:artwork-check": "tsx supabase/functions/_shared/artworkCheck/artworkCheck.test.ts",
+    "test:currency": "tsx src/lib/currencyResolver.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

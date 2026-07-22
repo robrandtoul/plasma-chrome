@@ -60,6 +60,7 @@ const AdminSettingsPage = lazyWithRetry(() => import('./pages/admin/AdminSetting
 const AdminOutsourcingPage = lazyWithRetry(() => import('./pages/admin/AdminOutsourcingPage'), 'AdminOutsourcingPage')
 const AdminContentPage = lazyWithRetry(() => import('./pages/admin/AdminContentPage'), 'AdminContentPage')
 const AdminAiDraftsPage = lazyWithRetry(() => import('./pages/admin/AdminAiDraftsPage'), 'AdminAiDraftsPage')
+const AdminArtworkCheckPage = lazyWithRetry(() => import('./pages/admin/AdminArtworkCheckPage'), 'AdminArtworkCheckPage')
 const AdminCreateMaterialPage = lazyWithRetry(() => import('./pages/admin/AdminCreateMaterialPage'), 'AdminCreateMaterialPage')
 const AdminNeedsAttentionPage = lazyWithRetry(() => import('./pages/admin/AdminNeedsAttentionPage'), 'AdminNeedsAttentionPage')
 const AdminCatalogueDataPage = lazyWithRetry(() => import('./pages/admin/AdminCatalogueDataPage'), 'AdminCatalogueDataPage')
@@ -203,6 +204,7 @@ function AppShell() {
           <Route path="outsourcing" element={<AdminOutsourcingPage />} />
           <Route path="needs-attention" element={<AdminNeedsAttentionPage />} />
           <Route path="ai-drafts" element={<AdminAiDraftsPage />} />
+          <Route path="artwork-check" element={<AdminArtworkCheckPage />} />
           <Route path="activity" element={<AdminActivityPage />} />
           <Route path="settings" element={<AdminSettingsPage />} />
 
@@ -218,6 +220,8 @@ function AppShell() {
           <Route path="stranded-approvals" element={<Navigate to="/admin/needs-attention" replace />} />
           <Route path="templates" element={<Navigate to="/admin/content/messages" replace />} />
           <Route path="site-copy" element={<Navigate to="/admin/content/site-copy" replace />} />
+          {/* The artwork-check controls moved off Settings to their own tab. */}
+          <Route path="settings/artwork-check" element={<Navigate to="/admin/artwork-check" replace />} />
         </Route>
       </Routes>
       </Suspense>

@@ -122,14 +122,15 @@ async function requireCaller(req: Request): Promise<{ admin: SupabaseClient } | 
 // existing yet (deployable before migration 000336 — same idiom as
 // place-order's loadHandoffMode). The required gate only means anything in
 // live mode: a shadow/off check isn't a precondition a reviewer can see.
-async function loadCheckSettings(admin: SupabaseClient): Promise<{ mode: 'off' | 'shadow' | 'live'; required: boolean }> {
+async function loadCheckSettings(admin: SupabaseClient): Promise<{ mode: 'off' | 'shadow' | 'live'; required: boolean; model: string | null }> {
   try {
-    const { data } = await admin.from('settings').select('artwork_check_mode, artwork_check_required').limit(1).maybeSingle()
-    const raw = (data as { artwork_check_mode?: string | null; artwork_check_required?: boolean | null } | null)
+    const { data } = await admin.from('settings').select('artwork_check_mode, artwork_check_required, artwork_check_model').limit(1).maybeSingle()
+    const raw = (data as { artwork_check_mode?: string | null; artwork_check_required?: boolean | null; artwork_check_model?: string | null } | null)
     const mode = raw?.artwork_check_mode === 'shadow' ? 'shadow' : raw?.artwork_check_mode === 'live' ? 'live' : 'off'
-    return { mode, required: mode === 'live' && raw?.artwork_check_required === true }
+    const model = typeof raw?.artwork_check_model === 'string' && raw.artwork_check_model.trim() ? raw.artwork_check_model.trim() : null
+    return { mode, required: mode === 'live' && raw?.artwork_check_required === true, model }
   } catch {
-    return { mode: 'off', required: false }
+    return { mode: 'off', required: false, model: null }
   }
 }
 
@@ -151,7 +152,10 @@ Deno.serve(async (req) => {
   const force = body.force === true
   if (!orderId) return json({ ok: false, error: 'order_id is required' }, 400)
 
-  const { mode, required } = await loadCheckSettings(admin)
+  const { mode, required, model: settingModel } = await loadCheckSettings(admin)
+  // The model this run uses everywhere (the call, the stored report's `model`,
+  // error reports): the admin pick, else the env / compiled default.
+  const runModel = settingModel || modelId()
   if (mode === 'off') return json({ ok: true, mode, required })
 
   // The order (incl. the cached report — this select names the 000336 columns,
@@ -252,7 +256,7 @@ Deno.serve(async (req) => {
           card,
           field,
           at: new Date().toISOString(),
-          model: modelId(),
+          model: runModel,
           usage: null,
         }
       } else {
@@ -286,13 +290,14 @@ Deno.serve(async (req) => {
           INVESTIGATION_SYSTEM_PROMPT,
           blocks,
           INVESTIGATION_SCHEMA,
+          runModel,
         )
         investigation = {
           ...result,
           card,
           field,
           at: new Date().toISOString(),
-          model: modelId(),
+          model: runModel,
           usage: { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens },
         }
       }
@@ -476,11 +481,11 @@ Deno.serve(async (req) => {
 
     // ── The cards being printed: Dropbox print files ────────────────────────
     if (!order.dropbox_folder_url) {
-      return await finish(buildErrorReport(modelId(), 'no Dropbox order folder is linked', buildInputs(baseCtx, threadMessages, threadFound)))
+      return await finish(buildErrorReport(runModel,'no Dropbox order folder is linked', buildInputs(baseCtx, threadMessages, threadFound)))
     }
     const dbxToken = await getDropboxAccessToken(admin)
     if (!dbxToken) {
-      return await finish(buildErrorReport(modelId(), 'Dropbox is not connected', buildInputs(baseCtx, threadMessages, threadFound)))
+      return await finish(buildErrorReport(runModel,'Dropbox is not connected', buildInputs(baseCtx, threadMessages, threadFound)))
     }
     const entries = await listSharedLinkEntries(dbxToken, order.dropbox_folder_url)
     const picked = pickPrintFiles(entries)
@@ -506,7 +511,7 @@ Deno.serve(async (req) => {
       })
     }
     if (documents.length === 0) {
-      return await finish(buildErrorReport(modelId(), 'no readable print files (.pdf/.ai) in the Dropbox folder', buildInputs(baseCtx, threadMessages, threadFound)))
+      return await finish(buildErrorReport(runModel,'no readable print files (.pdf/.ai) in the Dropbox folder', buildInputs(baseCtx, threadMessages, threadFound)))
     }
 
     // ── Customer-thread attachments (Phase 2a) ──────────────────────────────
@@ -605,11 +610,11 @@ Deno.serve(async (req) => {
         : []),
       { type: 'text', text: FINAL_INSTRUCTION },
     ]
-    const { result, usage } = await callArtworkCheck(SYSTEM_PROMPT, content)
-    return await finish(buildReport(modelId(), result, buildInputs(baseCtx, threadMessages, threadFound), usage))
+    const { result, usage } = await callArtworkCheck(SYSTEM_PROMPT, content, runModel)
+    return await finish(buildReport(runModel, result, buildInputs(baseCtx, threadMessages, threadFound), usage))
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[artwork-check] run failed:', msg)
-    return await finish(buildErrorReport(modelId(), msg.slice(0, 500), buildInputs(baseCtx, threadMessages, threadFound)))
+    return await finish(buildErrorReport(runModel, msg.slice(0, 500), buildInputs(baseCtx, threadMessages, threadFound)))
   }
 })

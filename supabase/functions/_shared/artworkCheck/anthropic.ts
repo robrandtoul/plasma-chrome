@@ -109,8 +109,11 @@ export async function callStructured<T>(
   system: string,
   content: ContentBlock[],
   schema: unknown,
+  // The admin-picked model (Admin → Artwork check); falls back to the env /
+  // compiled default when the caller passes nothing.
+  modelOverride?: string,
 ): Promise<{ result: T; usage: ReportUsage }> {
-  const model = modelId()
+  const model = modelOverride || modelId()
   const response = await postWithRetry({
     model,
     max_tokens: MAX_TOKENS,
@@ -146,8 +149,9 @@ export async function callStructured<T>(
 export async function callArtworkCheck(
   system: string,
   content: ContentBlock[],
+  modelOverride?: string,
 ): Promise<{ result: ModelReport; usage: ReportUsage }> {
-  return await callStructured<ModelReport>(system, content, ARTWORK_CHECK_SCHEMA)
+  return await callStructured<ModelReport>(system, content, ARTWORK_CHECK_SCHEMA, modelOverride)
 }
 
 // Base64 without the call-stack hazard of String.fromCharCode(...bytes) on
