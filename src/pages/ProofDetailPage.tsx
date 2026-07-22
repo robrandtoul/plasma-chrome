@@ -1976,6 +1976,11 @@ export default function ProofDetailPage() {
     latestOrder.status === 'revision' ||
     (latestOrder.status === 'sent' && !latestExpired)
   )
+  // A live (unpaid, unexpired) pay link. A project only ever needs one, so
+  // "Create another order" is not offered while one is out (the create-order
+  // guard from migration 000340 would reject a second anyway). A settled order
+  // — paid / placed / being revised — can still spawn a legitimate repeat.
+  const hasLiveLink = !!latestOrder && latestOrder.status === 'sent' && !latestExpired
   // The order the reopen acts on: the newest order still OPEN in a state that
   // needs an order-side change (an unpaid link to cancel, or a paid/placed order
   // to hold for revision). `orders` is sorted newest-first. A 'revision' order is
@@ -2982,7 +2987,7 @@ export default function ProofDetailPage() {
                           // version — offered on approved proofs too, which is
                           // exactly where the Novion-style ask lands.
                           { label: 'Add another material', onClick: () => void openAddMaterialDialog() },
-                          ...(isApproved && orderingEnabled === true && hasOpenOrder
+                          ...(isApproved && orderingEnabled === true && hasOpenOrder && !hasLiveLink
                             ? [{
                                 label: 'Create another order',
                                 onClick: () => {

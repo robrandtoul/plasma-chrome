@@ -638,6 +638,51 @@ Deno.serve(async (req) => {
     orderSpecSnapshot = null
   }
 
+  // ── One live pay link per project (duplicate-link guard) ─────────────
+  // Only an online order creates a live pay link (status 'sent'); offline
+  // and reprint orders are born 'paid' and are exempt. Two designers working
+  // the same approved proof from different places used to each be able to
+  // create a link — the proof page hides its "Create order" button when a
+  // link exists, but that runs on the order list loaded when the page opened,
+  // so it can't see a link a colleague created seconds ago. This check runs
+  // at creation time against the live table, so whoever clicks second gets a
+  // clear message instead of a duplicate. The partial unique index from
+  // migration 000340 is the atomic backstop for the exact-same-instant case.
+  if (!isOffline) {
+    const { data: liveLinks } = await admin
+      .from('orders')
+      .select('id, sent_at, expires_at, created_by, order_group_id')
+      .eq('proof_id', proofId)
+      .eq('status', 'sent')
+    const nowMs = Date.now()
+    // A still-live (unexpired) 'sent' link — grouped or not — blocks a second.
+    const active = (liveLinks ?? []).find((o) => !o.expires_at || Date.parse(o.expires_at) > nowMs)
+    if (active) {
+      let who = 'a colleague'
+      if (active.created_by) {
+        const { data: prof } = await admin.from('profiles').select('full_name').eq('id', active.created_by).maybeSingle()
+        if (prof?.full_name) who = prof.full_name as string
+      }
+      const when = active.sent_at
+        ? new Date(active.sent_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+        : null
+      return json({
+        error: `A pay link for this project was already sent by ${who}${when ? ` on ${when}` : ''}. Copy or re-send that one from the Orders page instead of creating a second — a project only ever needs one live link.`,
+        code: 'duplicate_live_order',
+      }, 409)
+    }
+    // No live link, but a dead (expired) ungrouped link may still sit in
+    // 'sent'. Supersede it so the unique index doesn't block this fresh order
+    // — creating a new order is a clear signal the designer isn't reactivating
+    // the old link (which would just push its expiry forward on the same row).
+    const expiredIds = (liveLinks ?? [])
+      .filter((o) => o.order_group_id == null && o.expires_at != null && Date.parse(o.expires_at) <= nowMs)
+      .map((o) => o.id)
+    if (expiredIds.length > 0) {
+      await admin.from('orders').update({ status: 'cancelled', updated_at: nowIso }).in('id', expiredIds)
+    }
+  }
+
   const { data: order, error: insertErr } = await admin
     .from('orders')
     .insert({

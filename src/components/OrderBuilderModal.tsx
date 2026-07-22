@@ -911,12 +911,17 @@ export default function OrderBuilderModal({
               : null,
         },
       })
-      if (fnError) {
-        setError('Could not create the order. Please try again.')
-        return
-      }
-      if (!data || 'error' in data) {
-        setError((data as { error?: string } | null)?.error ?? 'Could not create the order.')
+      if (fnError || !data || 'error' in data) {
+        // A guard rejection (e.g. a live pay link already exists — 409) comes
+        // back as a FunctionsHttpError with the message in the Response body,
+        // not in `data`, so read it out to show the real reason. Mirrors the
+        // send-helpscout-reply handler above.
+        let msg = (data as { error?: string } | null)?.error ?? null
+        const ctx = (fnError as { context?: Response } | null)?.context
+        if (!msg && ctx && typeof ctx.json === 'function') {
+          try { const b = await ctx.json(); if (b && typeof b.error === 'string') msg = b.error } catch { /* not JSON */ }
+        }
+        setError(msg ?? 'Could not create the order. Please try again.')
         return
       }
       setResult({ id: data.id, token: data.token, payment_reference: data.payment_reference })
