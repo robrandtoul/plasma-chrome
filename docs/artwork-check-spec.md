@@ -607,8 +607,22 @@ GIFTING") vs the printed "TOP HAMPERS" — model variance on a borderline case u
 logo-wording-authoritative rule (000304-era Box Sash tuning), unrelated to the QR change;
 revisit if that difference should reliably surface for review.
 
+**Dedicated Admin tab + selectable model: SHIPPED 2026-07-21** (PR #532; migration 000339
+applied; function v11, byte-verified). The controls moved off Admin → Settings to their
+own **Admin → Artwork check** tab (Messaging & automation group, beside AI drafts):
+Off/Shadow/Live mode, the confirm-guarded run gate, and a new Claude-model picker. The
+old `/admin/settings#artwork-check` deep link redirects; `Toggle`/`RadioGroup` moved into
+the shared `settingsControls`. **Model** is `settings.artwork_check_model` (null =
+default), read by the function in `loadCheckSettings` and threaded through the main call,
+the investigation call, and the stored report's `model` field — precedence
+setting > env `ARTWORK_CHECK_MODEL` > `claude-opus-4-8`, effective next run, no redeploy.
+Curated dropdown (Opus 4.8 recommended/validated; Sonnet 5; Fable 5) so a typo can't
+reach the API; a SQL-set value outside the list is preserved. Live state at ship:
+mode=live, **required=true** (Rob flipped the gate on during settling-in — now visible on
+the tab), model=null (default).
+
 **Deferred to Phase 3:** a print-file staleness guard for content changes inside an
-unchanged folder link (re-link and Re-run cover it meanwhile), admin-editable rules
-(step 2 of the admin graduation), verifying the PRINT file's QR byte-for-byte (needs a
-PDF rasteriser), and any soft-block (if ever wanted, "reds require an I've-reviewed tick"
-is its natural scope).
+unchanged folder link (re-link and Re-run cover it meanwhile), admin-editable *rules*
+(the prompt allow-list — step 2 of the admin graduation, distinct from the model picker),
+verifying the PRINT file's QR byte-for-byte (needs a PDF rasteriser), and any soft-block
+(if ever wanted, "reds require an I've-reviewed tick" is its natural scope).
