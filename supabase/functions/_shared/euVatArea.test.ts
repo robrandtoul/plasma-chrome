@@ -3,6 +3,9 @@
 // Run with: npx tsx supabase/functions/_shared/euVatArea.test.ts
 
 import { isEuVatCountry, zeroRatedRegion, EU_VAT_COUNTRIES } from './euVatArea.ts'
+// The pay page's twin of the country membership (migration 000341). Imported
+// here so any drift between the two EU sets fails this suite.
+import { isEuVatCountry as webIsEuVatCountry, EU_VAT_COUNTRIES as WEB_EU_VAT_COUNTRIES } from '../../../src/lib/euVatArea.ts'
 
 let passed = 0
 let failed = 0
@@ -49,6 +52,18 @@ test('non-members are not EU', () => {
 })
 test('the member list has the 27 states + Monaco', () => {
   assertEqual(EU_VAT_COUNTRIES.size, 28)
+})
+
+console.log('src/ twin (pay-page EU gating) matches the server set')
+test('both twins hold the identical country set', () => {
+  assertEqual([...WEB_EU_VAT_COUNTRIES].sort(), [...EU_VAT_COUNTRIES].sort())
+})
+test('both twins classify the same cases the same way', () => {
+  for (const code of ['DE', 'FR', 'IE', 'GR', 'MC', 'GB', 'CH', 'NO', 'US', 'JE', 'GG', '']) {
+    assertEqual(webIsEuVatCountry(code), isEuVatCountry(code))
+  }
+  assertEqual(webIsEuVatCountry(null), isEuVatCountry(null))
+  assertEqual(webIsEuVatCountry(undefined), isEuVatCountry(undefined))
 })
 
 console.log('zeroRatedRegion')

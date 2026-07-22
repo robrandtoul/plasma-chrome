@@ -12,6 +12,7 @@ import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
 import { pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/interpolation'
 import { totalFromTiers, surchargeFromTiers, thicknessNoteFor, type SpecVariantChoice, type SpecFinishChoice } from '../lib/openSpecTiers'
 import { exVat, isGbpOrderVatFree, normaliseShipDestination } from '../lib/ukVatArea'
+import { isEuVatCountry } from '../lib/euVatArea'
 import { hasThicknessGuide, thicknessSetForMaterial, type ThicknessOption } from '../lib/metalThicknessNotes'
 import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { SHIP_COUNTRIES } from '../lib/shipCountries'
@@ -100,6 +101,11 @@ interface OrderPayload {
     postal_code: string | null
     country: string | null
   } | null
+  // Optional VAT / EORI number the customer gave at checkout (migration 000341),
+  // for the customs paperwork on EU-bound B2B exports. public_get_order returns
+  // the whole order row (minus token), so it flows here automatically; used only
+  // to pre-fill the field on a revisit. Written back via record_order_customs_tax_id.
+  customs_tax_id: string | null
   // Server-computed customer order-tracking projection (Order log Phase 3).
   // Always present; level 'off' = nothing shown (the OFF-by-default master
   // switch + the per-route/per-supplier disclosure rules are resolved entirely
@@ -234,6 +240,10 @@ export default function OrderPayPage() {
   // from the designer's optional hint on the order.
   const [destCountry, setDestCountry] = useState('')
   const [destPostcode, setDestPostcode] = useState('')
+  // Optional VAT / EORI number for EU-bound customs paperwork (migration 000341).
+  // Pre-filled from the order if already stored (staff-entered or a prior visit)
+  // without clobbering anything the customer is typing; saved at Pay time.
+  const [customsTaxId, setCustomsTaxId] = useState('')
   // US tariff & customs handling: per-currency fee + copy (from public_settings),
   // the customer's opt-out, and the inline opt-out confirmation. Included by
   // default; opting out requires confirming the consequence (they then deal with
@@ -450,6 +460,16 @@ export default function OrderPayPage() {
     if (!stripeRef.current || !elementsRef.current || !id || !token) return
     setSubmitting(true)
     setFormError(null)
+    // Persist the optional VAT / EORI number before handing off to Stripe, so
+    // the webhook (Xero invoice) and Stock Control (customs paperwork) have it.
+    // Best-effort and independent of payment — a failure here must never block
+    // the charge, and an empty field is skipped server-side so it can't wipe a
+    // value staff entered on the shipping screen.
+    const taxId = customsTaxId.trim()
+    if (taxId) {
+      const { error: taxErr } = await supabase.rpc('record_order_customs_tax_id', { p_order_id: id, p_token: token, p_tax_id: taxId })
+      if (taxErr) console.warn('[pay] VAT/EORI save failed:', taxErr.message)
+    }
     const { error } = await stripeRef.current.confirmPayment({
       elements: elementsRef.current,
       confirmParams: {
@@ -471,6 +491,13 @@ export default function OrderPayPage() {
     document.documentElement.classList.add('customer-accent')
     return () => document.documentElement.classList.remove('customer-accent')
   }, [])
+
+  // Pre-fill the VAT / EORI field from a value already on the order, without
+  // clobbering anything the customer has started typing (functional update, so
+  // customsTaxId stays out of the deps).
+  useEffect(() => {
+    setCustomsTaxId((prev) => prev || (order?.customs_tax_id ?? ''))
+  }, [order])
 
   // US tariff fee + copy (anon public_settings, cached). Loaded independently of
   // the order so the panel is ready by the time the order resolves.
@@ -1183,6 +1210,10 @@ export default function OrderPayPage() {
     shippingComputedAtCheckout ? destCountry : order.ship_dest_country ?? '',
     shippingComputedAtCheckout ? destPostcode : '',
   )
+  // Offer the optional VAT / EORI field only for EU-bound orders (migration
+  // 000341) — the classification (isEuVatCountry) is the twin of the server's
+  // "0% EU" set. Falls back to the EUR currency when no destination is known yet.
+  const isEuBound = isEuVatCountry(effectiveDestCountry) || (!effectiveDestCountry && order.currency === 'EUR')
   const tariffFee = tariff ? tariff.fees[order.currency] ?? 0 : 0
   const tariffApplies = effectiveDestCountry === 'US' && tariffFee > 0
   const tariffAmount = tariffApplies && !tariffOptedOut ? tariffFee : 0
@@ -1826,6 +1857,17 @@ export default function OrderPayPage() {
                       <p className="mb-1.5 text-[12px] font-medium text-ink-mute">Shipping address</p>
                       <div id="address-element" aria-label="Shipping address" />
                     </div>
+                    {isEuBound && (
+                      <div>
+                        <label htmlFor="customs-tax-id" className="mb-1.5 block text-[12px] font-medium text-ink-mute">
+                          VAT / EORI number <span className="font-normal">(optional)</span>
+                        </label>
+                        <input id="customs-tax-id" type="text" value={customsTaxId} onChange={(e) => setCustomsTaxId(e.target.value)}
+                          autoComplete="off" placeholder="e.g. DE123456789"
+                          className="h-[38px] w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
+                        <p className="mt-1 text-[12px] text-ink-mute">For business orders — helps your parcel clear customs without delay.</p>
+                      </div>
+                    )}
                     <div>
                       <p className="mb-1.5 text-[12px] font-medium text-ink-mute">Payment details</p>
                       <div id="payment-element" aria-label="Payment details" />

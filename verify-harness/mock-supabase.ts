@@ -83,6 +83,7 @@ function order(partial: FixtureOrder): FixtureOrder {
     ship_to_name: null,
     ship_to_email: null,
     ship_to_phone: null,
+    customs_tax_id: null,
     ship_to_address: null,
     created_at: daysAgo(12),
     material_variants: { display_name: '500 micron', materials: steel },

@@ -7,6 +7,7 @@ import { customerLabel as customerLabelShared, specLabel as specLabelShared } fr
 import { logAudit } from '../../lib/audit'
 import { deriveParcelWeightGrams } from '../../lib/quote/shipping'
 import { SHIP_COUNTRIES } from '../../lib/shipCountries'
+import { isEuVatCountry } from '../../lib/euVatArea'
 import type { Currency } from '../../lib/types'
 
 // Admin → Shipping. A readiness worklist for the delivery details a paid order
@@ -75,6 +76,9 @@ interface OrderRow {
   ship_to_name: string | null
   ship_to_email: string | null
   ship_to_phone: string | null
+  // Optional customer VAT / EORI number from EU checkout (migration 000341),
+  // for the customs paperwork; also staff-editable here.
+  customs_tax_id: string | null
   ship_to_address: ShipAddress | null
   ship_dest_country: string | null
   ship_dest_postcode: string | null
@@ -91,7 +95,7 @@ const SELECT = `
   id, status, payment_method, order_kind, payment_reference, currency, quantity, quantity_open,
   custom_quote_total, material_id, material_variant_id, names_count, paid_at, fulfilled_at,
   order_group_id, proof_id, ship_to_name, ship_to_email, ship_to_phone, ship_to_address,
-  ship_dest_country, ship_dest_postcode,
+  customs_tax_id, ship_dest_country, ship_dest_postcode,
   material_variants(display_name, weight_grams, materials(code, display_name)),
   material_options(display_name),
   proofs(contacts(full_name, companies(name)))
@@ -99,7 +103,7 @@ const SELECT = `
 
 // ── Readiness rules ────────────────────────────────────────────────────────
 
-type FlagKind = 'address' | 'destination' | 'name' | 'phone' | 'weight'
+type FlagKind = 'address' | 'destination' | 'name' | 'phone' | 'weight' | 'vat'
 
 interface Flag {
   kind: FlagKind
@@ -154,12 +158,21 @@ function destinationUnknown(country: string | null): boolean {
   return !country || country === 'ZZ'
 }
 
+// A VAT / EORI number smooths customs on EU-bound B2B exports. Advisory only:
+// consumer orders won't have one, so this is a "worth checking" nudge (the
+// customer is offered the field at EU checkout, migration 000341), not a blocker.
+function customsIdMissing(o: OrderRow): boolean {
+  if (!isEuVatCountry(o.ship_dest_country)) return false
+  return !o.customs_tax_id || !o.customs_tax_id.trim()
+}
+
 function flagsFor(o: OrderRow): Flag[] {
   const flags: Flag[] = []
   if (addressMissing(o.ship_to_address)) flags.push({ kind: 'address', label: 'No delivery address', severity: 1 })
   if (destinationUnknown(o.ship_dest_country)) flags.push({ kind: 'destination', label: 'Destination country unknown', severity: 1 })
   if (!o.ship_to_name || !o.ship_to_name.trim()) flags.push({ kind: 'name', label: 'No recipient name', severity: 2 })
   if (!o.ship_to_phone || !o.ship_to_phone.trim()) flags.push({ kind: 'phone', label: 'No phone number', severity: 2 })
+  if (customsIdMissing(o)) flags.push({ kind: 'vat', label: 'No VAT/EORI number', severity: 3 })
   if (weightMissing(o)) flags.push({ kind: 'weight', label: 'Card weight not recorded', severity: 3 })
   return flags
 }
@@ -407,6 +420,11 @@ function ShippingCard({
             <span className="text-ink-mute">Parcel weight:</span>{' '}
             {weightRelevant(order.ship_dest_country) ? formatWeight(parcel) : 'UK flat rate'}
           </p>
+          {isEuVatCountry(order.ship_dest_country) && (
+            <p className="mt-0.5 text-[13px] text-ink-soft">
+              <span className="text-ink-mute">VAT/EORI:</span> {order.customs_tax_id || '—'}
+            </p>
+          )}
 
           {flags.length > 0 && (
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -439,6 +457,7 @@ function ShippingEditModal({
 
   const [name, setName] = useState(order.ship_to_name ?? '')
   const [phone, setPhone] = useState(order.ship_to_phone ?? '')
+  const [customsTaxId, setCustomsTaxId] = useState(order.customs_tax_id ?? '')
   const [line1, setLine1] = useState(a?.line1 ?? '')
   const [line2, setLine2] = useState(a?.line2 ?? '')
   const [city, setCity] = useState(a?.city ?? '')
@@ -492,6 +511,7 @@ function ShippingEditModal({
     const shipPatch = {
       ship_to_name: name.trim() || null,
       ship_to_phone: phone.trim() || null,
+      customs_tax_id: customsTaxId.trim() || null,
       ship_to_email: order.ship_to_email ?? null,
       ship_to_address: address,
       ship_dest_country: country,
@@ -510,6 +530,7 @@ function ShippingEditModal({
           supabase.from('order_groups').update({
             ship_to_name: shipPatch.ship_to_name,
             ship_to_phone: shipPatch.ship_to_phone,
+            customs_tax_id: shipPatch.customs_tax_id,
             ship_to_email: shipPatch.ship_to_email,
             ship_to_address: shipPatch.ship_to_address,
             ship_dest_country: shipPatch.ship_dest_country,
@@ -550,6 +571,7 @@ function ShippingEditModal({
         beforeValue: {
           ship_to_name: order.ship_to_name,
           ship_to_phone: order.ship_to_phone,
+          customs_tax_id: order.customs_tax_id,
           ship_to_address: order.ship_to_address,
           ship_dest_country: order.ship_dest_country,
           ship_dest_postcode: order.ship_dest_postcode,
@@ -557,6 +579,7 @@ function ShippingEditModal({
         afterValue: {
           ship_to_name: shipPatch.ship_to_name,
           ship_to_phone: shipPatch.ship_to_phone,
+          customs_tax_id: shipPatch.customs_tax_id,
           ship_to_address: shipPatch.ship_to_address,
           ship_dest_country: shipPatch.ship_dest_country,
           ship_dest_postcode: shipPatch.ship_dest_postcode,
@@ -612,6 +635,10 @@ function ShippingEditModal({
               <Input id="ship-phone" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Contact number" />
             </Field>
           </div>
+
+          <Field label="VAT / EORI number" htmlFor="ship-vat" hint="For EU-bound business orders — smooths the parcel through customs.">
+            <Input id="ship-vat" value={customsTaxId} onChange={(e) => setCustomsTaxId(e.target.value)} placeholder="e.g. DE123456789" />
+          </Field>
 
           <Field label="Address line 1" htmlFor="ship-line1">
             <Input id="ship-line1" value={line1} onChange={(e) => setLine1(e.target.value)} placeholder="Street address" />

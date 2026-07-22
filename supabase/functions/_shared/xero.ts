@@ -198,6 +198,11 @@ export interface InvoiceParams {
   // consulted when the invoice is VAT-free. Null/unset keeps the legacy
   // NoTax treatment (every line reads "No VAT").
   zeroRatedTaxType?: string | null
+  // The customer's VAT / EORI number (migration 000341), stamped on the Xero
+  // contact's TaxNumber so it prints on the invoice. Only takes effect on the
+  // new-contact fallback (no contactId) — like Name / EmailAddress / Addresses,
+  // Xero ignores it when the invoice binds to an existing ContactID.
+  taxNumber?: string | null
 }
 
 // The result of a create attempt. `invoiceId` is null on any failure (the
@@ -295,6 +300,7 @@ export function buildInvoicePayload(
       : {
           Name: p.contactName,
           ...(p.contactEmail ? { EmailAddress: p.contactEmail } : {}),
+          ...(p.taxNumber ? { TaxNumber: p.taxNumber } : {}),
           ...(p.address && (p.address.line1 || p.address.postalCode)
             ? {
                 Addresses: [
