@@ -11,6 +11,29 @@ export interface ArtworkFinding {
   note: string
 }
 
+// A designer-triggered per-flag history walk: the flagged card's artwork
+// across every proof round, lined up against the thread's dated instructions,
+// ending in a fault lean. Cached on the report under investigationKey.
+export interface ArtworkInvestigation {
+  timeline: { at: string; kind: 'instruction' | 'version'; label: string; detail: string }[]
+  conclusion: string
+  fault: 'ours_transcription' | 'ours_missed_revision' | 'customer_origin' | 'undetermined'
+  card: string
+  field: string
+  at: string
+}
+
+export function investigationKey(card: string, field: string): string {
+  return `${card}::${field}`
+}
+
+const FAULT_LABELS: Record<ArtworkInvestigation['fault'], string> = {
+  ours_transcription: 'Looks like our transcription slip',
+  ours_missed_revision: 'A revision we missed',
+  customer_origin: 'Matches what the customer supplied',
+  undetermined: 'Couldn’t be determined from the history',
+}
+
 export interface ArtworkCheckReport {
   verdict: 'clear' | 'flagged' | 'error'
   summary: string
@@ -20,6 +43,7 @@ export interface ArtworkCheckReport {
   reference_gaps: string[]
   checked_at: string
   error?: string
+  investigations?: Record<string, ArtworkInvestigation>
 }
 
 // Flags = 'flag' findings + corrections the customer sent that the artwork
@@ -41,7 +65,21 @@ export function artworkCheckedAtLabel(report: ArtworkCheckReport): string {
   })
 }
 
-export default function ArtworkCheckReportView({ report }: { report: ArtworkCheckReport }) {
+export default function ArtworkCheckReportView({
+  report,
+  onInvestigate,
+  investigatingKey,
+  investigationError,
+}: {
+  report: ArtworkCheckReport
+  // When provided, each flag offers "Investigate the history" — the
+  // designer-triggered walk of that card's artwork across the proof rounds.
+  // Deliberately a button, never automatic: the designer decides per-flag
+  // whether the circumstances are worth the wait and the cost.
+  onInvestigate?: (flag: { card: string; field: string }) => void
+  investigatingKey?: string | null
+  investigationError?: { key: string; message: string } | null
+}) {
   const flags = report.cards.flatMap((c) =>
     c.findings.filter((f) => f.status === 'flag').map((f) => ({ card: c.label, ...f })))
   const correctionsOpen = report.corrections.filter((c) => !c.resolved)
@@ -52,14 +90,57 @@ export default function ArtworkCheckReportView({ report }: { report: ArtworkChec
       <p className="mt-1 text-ink-soft">{report.summary}</p>
       {flags.length > 0 && (
         <ul className="mt-2 space-y-1.5">
-          {flags.map((f, i) => (
-            <li key={i} className="break-words">
-              <span className="font-medium">{f.card} · {f.field.replace(/_/g, ' ')}:</span>{' '}
-              printed <span className="font-mono text-[12px]">“{f.printed}”</span>
-              {f.supplied && <> vs supplied <span className="font-mono text-[12px]">“{f.supplied}”</span></>}
-              {f.note && <span className="text-ink-soft"> — {f.note}</span>}
-            </li>
-          ))}
+          {flags.map((f, i) => {
+            const key = investigationKey(f.card, f.field)
+            const inv = report.investigations?.[key]
+            const busy = investigatingKey === key
+            const invError = investigationError?.key === key ? investigationError.message : null
+            return (
+              <li key={i} className="break-words">
+                <span className="font-medium">{f.card} · {f.field.replace(/_/g, ' ')}:</span>{' '}
+                printed <span className="font-mono text-[12px]">“{f.printed}”</span>
+                {f.supplied && <> vs supplied <span className="font-mono text-[12px]">“{f.supplied}”</span></>}
+                {f.note && <span className="text-ink-soft"> — {f.note}</span>}
+                {inv ? (
+                  <div className="mt-1.5 rounded-lg border border-line-soft bg-canvas/60 px-2.5 py-2">
+                    <p className="text-[12px] font-semibold text-ink">History: {FAULT_LABELS[inv.fault]}</p>
+                    <p className="mt-0.5 text-[12px] text-ink-soft">{inv.conclusion}</p>
+                    {inv.timeline.length > 0 && (
+                      <details className="mt-1">
+                        <summary className="cursor-pointer text-[11px] font-medium text-ink-mute">Timeline</summary>
+                        <ul className="mt-1 space-y-0.5 text-[12px] text-ink-soft">
+                          {inv.timeline.map((t, j) => (
+                            <li key={j} className="break-words">
+                              <span className="text-ink-mute">{t.at}</span>{' '}
+                              <span className={t.kind === 'instruction' ? 'font-medium text-ink' : 'font-medium'}>{t.label}:</span>{' '}
+                              {t.detail}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                  </div>
+                ) : onInvestigate ? (
+                  <div className="mt-1">
+                    <button
+                      type="button"
+                      onClick={() => onInvestigate({ card: f.card, field: f.field })}
+                      disabled={!!investigatingKey}
+                      className="text-[12px] font-medium text-brand hover:underline disabled:opacity-50"
+                    >
+                      {busy ? 'Reconstructing the history…' : 'Investigate the history'}
+                    </button>
+                    {busy && (
+                      <span className="ml-2 text-[11px] text-ink-mute">
+                        Reading this card’s artwork across every round — takes half a minute or so.
+                      </span>
+                    )}
+                    {invError && <p className="mt-0.5 text-[12px] text-out">{invError}</p>}
+                  </div>
+                ) : null}
+              </li>
+            )
+          })}
         </ul>
       )}
       {correctionsOpen.length > 0 && (

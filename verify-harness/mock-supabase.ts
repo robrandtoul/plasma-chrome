@@ -636,6 +636,32 @@ export const supabase: any = {
         }
       }
       if (name === 'artwork-check') {
+        // Per-flag investigation (the designer-triggered history walk): a
+        // canned timeline + fault lean so the button → spinner → timeline
+        // flow can be verified in both surfaces.
+        if (opts?.body?.investigate) {
+          const inv = opts.body.investigate as { card: string; field: string }
+          return {
+            data: {
+              ok: true,
+              key: `${inv.card}::${inv.field}`,
+              investigation: {
+                timeline: [
+                  { at: '2026-07-08', kind: 'instruction', label: 'Customer', detail: 'Request form supplies tel 0207 288 8008.' },
+                  { at: '2026-07-09', kind: 'version', label: 'v1', detail: 'Back shows tel 0207 288 8008 — matches the instruction of the time.' },
+                  { at: '2026-07-12', kind: 'instruction', label: 'Customer', detail: '“Sorry — mobile should be 07700 900456, not 900123.”' },
+                  { at: '2026-07-14', kind: 'version', label: 'v2', detail: 'Back still shows 07700 900123 — cut after the revision but does not reflect it.' },
+                ],
+                conclusion: 'The number was correct against the original request; the customer revised it on 12 Jul and v2 (14 Jul) failed to pick the revision up. One of ours — a missed revision, not a transcription slip.',
+                fault: 'ours_missed_revision',
+                card: inv.card,
+                field: inv.field,
+                at: '2026-07-21T11:00:00Z',
+              },
+            },
+            error: null,
+          }
+        }
         // OrderReviewPage artwork sanity check (?path=/orders/o1/place) — a
         // live-mode FLAGGED report so the advisory card renders with a flag,
         // an unresolved correction, notes, gaps and the full table. Same

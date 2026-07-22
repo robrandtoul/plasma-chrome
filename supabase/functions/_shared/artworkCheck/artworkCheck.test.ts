@@ -32,6 +32,15 @@ import {
   pickApprovedImages,
   type ApprovedImageRow,
 } from './approvedProof.ts'
+import {
+  buildInvestigationContext,
+  INVESTIGATION_IMAGES_MAX,
+  investigationKey,
+  matchCardToRecipient,
+  pickInvestigationImages,
+  type VersionImageRowLite,
+  type VersionRowLite,
+} from './investigate.ts'
 import { buildErrorReport, buildReport, countCheckedFields, countFlags, deriveVerdict } from './report.ts'
 import { buildContextText, buildInputs, type CheckContext } from './prompts.ts'
 import type { ModelReport } from './types.ts'
@@ -448,6 +457,65 @@ await (async () => {
   check('document titled', blocks[2].type === 'document' && (blocks[2] as { title?: string }).title === 'form.pdf')
   check('image block present', blocks[4].type === 'image')
 })()
+
+// ── flag investigation (history walk) ────────────────────────────────────────
+
+eq('investigation key', investigationKey('Derrick Smith — back', 'tel'), 'Derrick Smith — back::tel')
+
+eq('recipient matched from label', matchCardToRecipient('Christine Davis — front', ['Thomas I. Joles', 'Christine Davis']), 'Christine Davis')
+eq('match is case-insensitive', matchCardToRecipient('CHRISTINE DAVIS — card', ['Christine Davis']), 'Christine Davis')
+eq('longest name wins', matchCardToRecipient('Dave Allen-Smith — front', ['Dave Allen', 'Dave Allen-Smith']), 'Dave Allen-Smith')
+eq('shared card matches nobody', matchCardToRecipient('Shared front card', ['Christine Davis']), null)
+
+{
+  const versions: VersionRowLite[] = [
+    { id: 'v1', version_number: 1, created_at: '2026-07-01T10:00:00Z', material_display: 'Letterpress' },
+    { id: 'v2', version_number: 2, created_at: '2026-07-05T10:00:00Z', material_display: 'Letterpress' },
+  ]
+  const images: VersionImageRowLite[] = [
+    { proof_version_id: 'v2', image_path: 'p/v2-chris-back.jpg', associated_name: 'Christine Davis', side: 'back' },
+    { proof_version_id: 'v1', image_path: 'p/v1-chris-front.jpg', associated_name: 'Christine Davis', side: 'front' },
+    { proof_version_id: 'v2', image_path: 'p/v2-chris-front.jpg', associated_name: 'Christine Davis', side: 'front' },
+    { proof_version_id: 'v1', image_path: 'p/v1-shared.jpg', associated_name: null, side: 'front' },
+    { proof_version_id: 'v1', image_path: 'p/v1-qr.jpg', associated_name: 'Christine Davis', side: 'front', is_qr_code: true },
+    { proof_version_id: 'v1', image_path: 'p/v1-odd.svg', associated_name: 'Christine Davis', side: 'front' },
+    { proof_version_id: 'ghost', image_path: 'p/ghost.jpg', associated_name: 'Christine Davis', side: 'front' },
+  ]
+  const picks = pickInvestigationImages(versions, images, 'Christine Davis')
+  eq('walk order: rounds ascending, front before back',
+    picks.map((p) => p.label).join(','), 'v1 — front,v2 — front,v2 — back')
+  check('shared/qr/non-raster/ghost excluded',
+    !picks.some((p) => p.path.includes('shared') || p.path.includes('qr') || p.path.includes('odd') || p.path.includes('ghost')))
+
+  const shared = pickInvestigationImages(versions, images, null)
+  eq('null recipient walks the shared artwork', shared.map((p) => p.path).join(','), 'p/v1-shared.jpg')
+}
+
+{
+  const versions: VersionRowLite[] = [{ id: 'v1', version_number: 1, created_at: '2026-07-01T10:00:00Z', material_display: null }]
+  const many: VersionImageRowLite[] = Array.from({ length: INVESTIGATION_IMAGES_MAX + 5 }, (_, i) => ({
+    proof_version_id: 'v1', image_path: `p/${i}.jpg`, associated_name: 'A', side: 'front',
+  }))
+  eq('investigation image cap', pickInvestigationImages(versions, many, 'A').length, INVESTIGATION_IMAGES_MAX)
+}
+
+{
+  const text = buildInvestigationContext(
+    { card: 'Derrick Smith — back', field: 'tel', printed: '0207 288 8008', supplied: '020 7288 8008 (15 Jul)', note: 'superseded grouping' },
+    [{ id: 'v1', version_number: 1, created_at: '2026-07-01T10:00:00Z', material_display: 'Gun Metal' }],
+    'Derrick Smith',
+    '— 2026-07-15 · Customer:\nshould read 020 7288 8008',
+    null,
+  )
+  check('investigation context carries flag', text.includes('Field: tel') && text.includes('0207 288 8008'))
+  check('investigation context carries rounds', text.includes('v1 — created 2026-07-01') && text.includes('Gun Metal'))
+  check('investigation context carries thread', text.includes('should read 020 7288 8008'))
+  const gapText = buildInvestigationContext(
+    { card: 'X', field: 'tel', printed: 'p', supplied: '', note: '' },
+    [], null, '', 'no linked conversation',
+  )
+  check('investigation gap note rendered', gapText.includes('no linked conversation') && gapText.includes('undetermined'))
+}
 
 // ── summary ──────────────────────────────────────────────────────────────────
 

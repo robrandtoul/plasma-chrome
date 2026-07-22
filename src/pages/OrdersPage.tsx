@@ -706,19 +706,49 @@ export default function OrdersPage() {
   // full report jsonb is fetched lazily per click, never in the list select.
   const [artworkChipsOn, setArtworkChipsOn] = useState(false)
   const [artworkReportModal, setArtworkReportModal] = useState<{
+    orderId: string
     label: string
     loading: boolean
     report: ArtworkCheckReport | null
   } | null>(null)
+  const [investigatingKey, setInvestigatingKey] = useState<string | null>(null)
+  const [investigationError, setInvestigationError] = useState<{ key: string; message: string } | null>(null)
 
   async function openArtworkReport(order: OrderRow) {
-    setArtworkReportModal({ label: customerLabel(order), loading: true, report: null })
+    setInvestigationError(null)
+    setArtworkReportModal({ orderId: order.id, label: customerLabel(order), loading: true, report: null })
     const { data } = await supabase.from('orders').select('artwork_check').eq('id', order.id).maybeSingle()
     setArtworkReportModal((m) => m && {
       ...m,
       loading: false,
       report: ((data as { artwork_check?: ArtworkCheckReport | null } | null)?.artwork_check ?? null),
     })
+  }
+
+  // Per-flag history walk from the archive modal (see ArtworkCheckReportView).
+  async function investigateFlag(orderId: string, flag: { card: string; field: string }) {
+    const key = `${flag.card}::${flag.field}`
+    setInvestigatingKey(key)
+    setInvestigationError(null)
+    try {
+      const { data } = await supabase.functions.invoke<{
+        ok: boolean
+        investigation?: NonNullable<ArtworkCheckReport['investigations']>[string]
+        error?: string
+      }>('artwork-check', { body: { order_id: orderId, investigate: flag } })
+      if (data?.ok && data.investigation) {
+        const inv = data.investigation
+        setArtworkReportModal((m) => m && m.report
+          ? { ...m, report: { ...m.report, investigations: { ...(m.report.investigations ?? {}), [key]: inv } } }
+          : m)
+      } else {
+        setInvestigationError({ key, message: data?.error ?? 'The investigation couldn’t run — try again.' })
+      }
+    } catch {
+      setInvestigationError({ key, message: 'The investigation couldn’t run — try again.' })
+    } finally {
+      setInvestigatingKey(null)
+    }
   }
   // The awaiting-payment order being recorded as paid offline (bank transfer),
   // or null when the modal is closed.
@@ -2219,7 +2249,12 @@ export default function OrdersPage() {
                         ? `⚠️ Artwork check — ${artworkFlagCount(artworkReportModal.report)} thing${artworkFlagCount(artworkReportModal.report) === 1 ? '' : 's'} to check`
                         : '⚠️ Artwork check couldn’t run'}
                   </p>
-                  <ArtworkCheckReportView report={artworkReportModal.report} />
+                  <ArtworkCheckReportView
+                    report={artworkReportModal.report}
+                    onInvestigate={(flag) => void investigateFlag(artworkReportModal.orderId, flag)}
+                    investigatingKey={investigatingKey}
+                    investigationError={investigationError}
+                  />
                 </>
               ) : (
                 <p className="mt-2 text-sm text-ink-mute">No stored report for this order yet — open its Place order screen to run one.</p>

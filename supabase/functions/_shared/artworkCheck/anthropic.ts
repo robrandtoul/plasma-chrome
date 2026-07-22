@@ -103,10 +103,13 @@ async function postWithRetry(body: Record<string, unknown>): Promise<ApiMessage>
   throw new Error(lastError)
 }
 
-export async function callArtworkCheck(
+// Generic structured multimodal call — the main report and the per-flag
+// investigation share everything except their schema and parsed shape.
+export async function callStructured<T>(
   system: string,
   content: ContentBlock[],
-): Promise<{ result: ModelReport; usage: ReportUsage }> {
+  schema: unknown,
+): Promise<{ result: T; usage: ReportUsage }> {
   const model = modelId()
   const response = await postWithRetry({
     model,
@@ -116,7 +119,7 @@ export async function callArtworkCheck(
     // ~0.1x. The per-order material/context all lives in the user content.
     system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
     messages: [{ role: 'user', content }],
-    output_config: { format: { type: 'json_schema', schema: ARTWORK_CHECK_SCHEMA } },
+    output_config: { format: { type: 'json_schema', schema } },
     ...(ADAPTIVE_THINKING_MODELS.test(model) ? { thinking: { type: 'adaptive' } } : {}),
   })
   if (response.stop_reason === 'max_tokens') {
@@ -130,7 +133,7 @@ export async function callArtworkCheck(
     .map((b) => b.text ?? '')
     .join('')
   return {
-    result: JSON.parse(text) as ModelReport,
+    result: JSON.parse(text) as T,
     usage: {
       input_tokens: response.usage.input_tokens,
       output_tokens: response.usage.output_tokens,
@@ -138,6 +141,13 @@ export async function callArtworkCheck(
       cache_read_tokens: response.usage.cache_read_input_tokens ?? 0,
     },
   }
+}
+
+export async function callArtworkCheck(
+  system: string,
+  content: ContentBlock[],
+): Promise<{ result: ModelReport; usage: ReportUsage }> {
+  return await callStructured<ModelReport>(system, content, ARTWORK_CHECK_SCHEMA)
 }
 
 // Base64 without the call-stack hazard of String.fromCharCode(...bytes) on

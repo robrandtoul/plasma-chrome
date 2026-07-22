@@ -99,4 +99,8 @@ export interface ArtworkCheckReport extends ModelReport {
   checked_at: string
   // Set only on verdict 'error' — why the run couldn't complete.
   error?: string
+  // Designer-triggered per-flag history walks, keyed investigationKey(card,
+  // field) — see investigate.ts. Deliberately discarded by a force re-run of
+  // the main check (new report, new flags).
+  investigations?: Record<string, import('./investigate.ts').Investigation>
 }

@@ -41,6 +41,22 @@ import {
   approvedImageBudget,
   pickApprovedImages,
 } from '../_shared/artworkCheck/approvedProof.ts'
+import {
+  buildInvestigationContext,
+  INVESTIGATION_FINAL_INSTRUCTION,
+  INVESTIGATION_IMAGE_MAX_BYTES,
+  INVESTIGATION_SCHEMA,
+  INVESTIGATION_SYSTEM_PROMPT,
+  INVESTIGATION_TOTAL_MAX_BYTES,
+  investigationKey,
+  matchCardToRecipient,
+  pickInvestigationImages,
+  type Investigation,
+  type InvestigationTimelineEntry,
+  type VersionImageRowLite,
+  type VersionRowLite,
+} from '../_shared/artworkCheck/investigate.ts'
+import { callStructured } from '../_shared/artworkCheck/anthropic.ts'
 import { threadToText } from '../_shared/artworkCheck/threadText.ts'
 import {
   buildContextText,
@@ -147,6 +163,155 @@ Deno.serve(async (req) => {
     .maybeSingle()
   if (orderErr) return json({ ok: false, error: `Order lookup failed: ${orderErr.message}` }, 500)
   if (!order) return json({ ok: false, error: 'Order not found.' }, 404)
+
+  // ── Flag investigation (designer-triggered escalation) ────────────────────
+  // Scoped to ONE flag: walks the flagged card's artwork across every proof
+  // version against the thread's dated instructions and returns a timeline +
+  // fault lean, cached on the report so the walk is paid for once. Never runs
+  // automatically — only from the Investigate button on a rendered flag.
+  const investigateReq = body.investigate as { card?: string; field?: string } | undefined
+  if (investigateReq) {
+    const report = order.artwork_check as ArtworkCheckReport | null
+    if (!report) return json({ ok: false, error: 'Run the artwork check first — there is no report to investigate.' }, 400)
+    const card = String(investigateReq.card ?? '')
+    const field = String(investigateReq.field ?? '')
+    const finding = report.cards
+      .find((c) => c.label === card)?.findings
+      .find((f) => f.field === field && f.status === 'flag')
+    if (!finding) return json({ ok: false, error: 'That flag is not on the current report (it may have been re-run).' }, 404)
+
+    const key = investigationKey(card, field)
+    const existing = (report as { investigations?: Record<string, Investigation> }).investigations?.[key]
+    if (existing && !force) return json({ ok: true, mode, required, cached: true, key, investigation: existing })
+
+    try {
+      // Every round of this proof, oldest first — the walk reads forward.
+      const { data: verRows } = await admin
+        .from('proof_versions')
+        .select('id, version_number, created_at, material_display, names')
+        .eq('proof_id', order.proof_id)
+        .order('version_number', { ascending: true })
+      const versions = (verRows ?? []) as (VersionRowLite & { names: string[] | null })[]
+      if (versions.length === 0) return json({ ok: false, error: 'No proof versions found.' }, 404)
+
+      // The recipient the flagged card belongs to, matched against the union
+      // of every round's roster (people join later rounds).
+      const allNames = [...new Set(versions.flatMap((v) => (Array.isArray(v.names) ? v.names : []).map((n) => String(n).trim()).filter(Boolean)))]
+      const recipient = matchCardToRecipient(card, allNames)
+
+      const { data: imgRows } = await admin
+        .from('proof_version_images')
+        .select('proof_version_id, image_path, associated_name, side, is_qr_code')
+        .in('proof_version_id', versions.map((v) => v.id))
+      const picks = pickInvestigationImages(versions, (imgRows ?? []) as VersionImageRowLite[], recipient)
+
+      // Thread for the instruction dates (same full, raw, paginated read as
+      // the main check; attachments aren't needed for sequencing). This branch
+      // runs before the main flow's proof load, so it resolves the linked
+      // conversation itself.
+      const { data: invProof } = await admin
+        .from('proofs')
+        .select('helpscout_conversation_id')
+        .eq('id', order.proof_id)
+        .maybeSingle()
+      const conversationId = (invProof as { helpscout_conversation_id: string | null } | null)?.helpscout_conversation_id ?? null
+      let threadText = ''
+      let threadGapNote: string | null = null
+      if (conversationId) {
+        const appId = Deno.env.get('HELPSCOUT_APP_ID')?.trim()
+        const appSecret = Deno.env.get('HELPSCOUT_APP_SECRET')?.trim()
+        if (appId && appSecret) {
+          try {
+            const token = await getAccessToken(appId, appSecret)
+            const threads = await fetchAllConversationThreads(token, conversationId)
+            if (threads) threadText = threadToText(threads).text
+            else threadGapNote = 'the linked Help Scout conversation no longer exists'
+          } catch {
+            threadGapNote = 'Help Scout could not be read'
+          }
+        } else {
+          threadGapNote = 'Help Scout credentials not configured'
+        }
+      } else {
+        threadGapNote = 'this proof has no linked Help Scout conversation'
+      }
+
+      let investigation: Investigation
+      if (picks.length === 0) {
+        // Nothing visual to walk — answer honestly without an AI call.
+        investigation = {
+          timeline: versions.map((v): InvestigationTimelineEntry => ({
+            at: v.created_at ? v.created_at.slice(0, 10) : 'unknown',
+            kind: 'version',
+            label: `v${v.version_number}`,
+            detail: 'No readable artwork stored for this card in this round.',
+          })),
+          conclusion: 'No stored artwork could be read for this card in any round, so the history cannot be walked — compare the flag against the thread dates in the main report.',
+          fault: 'undetermined',
+          card,
+          field,
+          at: new Date().toISOString(),
+          model: modelId(),
+          usage: null,
+        }
+      } else {
+        const blocks: ContentBlock[] = [{
+          type: 'text',
+          text: buildInvestigationContext(
+            { card, field, printed: finding.printed, supplied: finding.supplied, note: finding.note },
+            versions,
+            recipient,
+            threadText,
+            threadGapNote,
+          ),
+        }]
+        let total = 0
+        const included: string[] = []
+        for (const pick of picks) {
+          const { data: blob, error: dlErr } = await admin.storage.from('proof-images').download(pick.path)
+          if (dlErr || !blob) continue
+          const bytes = new Uint8Array(await blob.arrayBuffer())
+          if (bytes.length > INVESTIGATION_IMAGE_MAX_BYTES) continue
+          if (total + bytes.length > INVESTIGATION_TOTAL_MAX_BYTES) break
+          total += bytes.length
+          included.push(pick.label)
+          blocks.push({ type: 'text', text: `${pick.label}:` })
+          blocks.push({ type: 'image', source: { type: 'base64', media_type: pick.mediaType, data: bytesToBase64(bytes) } })
+        }
+        if (included.length === 0) return json({ ok: false, error: 'The version artwork could not be downloaded — try again.' }, 502)
+        blocks.push({ type: 'text', text: INVESTIGATION_FINAL_INSTRUCTION })
+
+        const { result, usage } = await callStructured<Pick<Investigation, 'timeline' | 'conclusion' | 'fault'>>(
+          INVESTIGATION_SYSTEM_PROMPT,
+          blocks,
+          INVESTIGATION_SCHEMA,
+        )
+        investigation = {
+          ...result,
+          card,
+          field,
+          at: new Date().toISOString(),
+          model: modelId(),
+          usage: { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens },
+        }
+      }
+
+      // Cache on the report so the walk is paid for once. Last-write-wins is
+      // fine here; a force re-run of the MAIN check discards investigations
+      // deliberately (new report, new flags).
+      const updated = {
+        ...report,
+        investigations: { ...((report as { investigations?: Record<string, Investigation> }).investigations ?? {}), [key]: investigation },
+      }
+      const { error: updErr } = await admin.from('orders').update({ artwork_check: updated }).eq('id', orderId)
+      if (updErr) console.error('[artwork-check] investigation persist failed:', updErr.message)
+      return json({ ok: true, mode, required, key, investigation, persisted: !updErr })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[artwork-check] investigation failed:', msg)
+      return json({ ok: false, error: `The investigation couldn't run: ${msg.slice(0, 300)}` }, 502)
+    }
+  }
 
   if (order.artwork_check && !force) {
     return json({ ok: true, mode, required, cached: true, report: order.artwork_check as ArtworkCheckReport })

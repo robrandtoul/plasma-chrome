@@ -302,6 +302,38 @@ export default function OrderReviewPage() {
     void runArtworkCheck(false)
   }, [runArtworkCheck])
 
+  // Per-flag history walk (designer-triggered — see ArtworkCheckReportView).
+  // On success the investigation is cached server-side AND merged into the
+  // local report so the timeline appears without a refetch.
+  const [investigatingKey, setInvestigatingKey] = useState<string | null>(null)
+  const [investigationError, setInvestigationError] = useState<{ key: string; message: string } | null>(null)
+
+  async function investigateFlag(flag: { card: string; field: string }) {
+    if (!id) return
+    const key = `${flag.card}::${flag.field}`
+    setInvestigatingKey(key)
+    setInvestigationError(null)
+    try {
+      const { data } = await supabase.functions.invoke<{
+        ok: boolean
+        investigation?: NonNullable<ArtworkCheckReport['investigations']>[string]
+        error?: string
+      }>('artwork-check', { body: { order_id: id, investigate: flag } })
+      if (data?.ok && data.investigation) {
+        const inv = data.investigation
+        setArtworkCheck((prev) => prev.report
+          ? { ...prev, report: { ...prev.report, investigations: { ...(prev.report.investigations ?? {}), [key]: inv } } }
+          : prev)
+      } else {
+        setInvestigationError({ key, message: data?.error ?? 'The investigation couldn’t run — try again.' })
+      }
+    } catch {
+      setInvestigationError({ key, message: 'The investigation couldn’t run — try again.' })
+    } finally {
+      setInvestigatingKey(null)
+    }
+  }
+
   async function onSupplierChange(newId: string) {
     setSupplierId(newId)
     setArmed(false) // changing supplier disarms — re-confirm the new recipient
@@ -723,7 +755,12 @@ export default function OrderReviewPage() {
                   )}
                 </div>
                 {artworkCheck.status !== 'running' && artworkReport && (
-                  <ArtworkCheckReportView report={artworkReport} />
+                  <ArtworkCheckReportView
+                    report={artworkReport}
+                    onInvestigate={(flag) => void investigateFlag(flag)}
+                    investigatingKey={investigatingKey}
+                    investigationError={investigationError}
+                  />
                 )}
               </div>
             )}
