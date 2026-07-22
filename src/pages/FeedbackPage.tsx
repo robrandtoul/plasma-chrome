@@ -415,7 +415,7 @@ export default function FeedbackPage() {
       }
     >
       {confirmDialog}
-      <main className="mx-auto max-w-[900px] px-4 py-8 sm:px-7">
+      <main className="mx-auto w-full max-w-[900px] px-4 py-8 sm:px-7">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold text-ink">Feedback</h1>

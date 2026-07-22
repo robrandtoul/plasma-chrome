@@ -20,6 +20,7 @@ import OrdersPage from '../src/pages/OrdersPage'
 import OrderReviewPage from '../src/pages/OrderReviewPage'
 import DashboardPage from '../src/pages/DashboardPage'
 import FlaggedPage from '../src/pages/FlaggedPage'
+import FeedbackPage from '../src/pages/FeedbackPage'
 import { TeamChatProvider } from '../src/lib/teamChatStore'
 import DesignerSearch from '../src/components/DesignerSearch'
 import AdminLayout from '../src/pages/admin/AdminLayout'
@@ -103,6 +104,13 @@ const tree = requestedPath === '/quote-spread' ? (
   <MemoryRouter initialEntries={['/']}>
     <Routes>
       <Route path="/" element={<FlaggedPage />} />
+      <Route path="*" element={<Elsewhere />} />
+    </Routes>
+  </MemoryRouter>
+) : requestedPath === '/feedback' ? (
+  <MemoryRouter initialEntries={['/']}>
+    <Routes>
+      <Route path="/" element={<FeedbackPage />} />
       <Route path="*" element={<Elsewhere />} />
     </Routes>
   </MemoryRouter>

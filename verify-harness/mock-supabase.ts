@@ -401,6 +401,19 @@ const PROFILES = [
   { id: 'user-jack', designer_initials: 'JJ', designer_colour: 'purple', full_name: 'Jack Johnson', avatar_url: null, feedback_seen_at: null, team_chat_seen_at: null, deactivated_at: null },
 ]
 
+// Feedback-board fixtures, mirroring the live board's shape (long titles,
+// area labels, mixed priorities/types/statuses) so the mobile-width overflow
+// on /feedback can be reproduced and verified headlessly.
+const FEEDBACK_ITEMS = [
+  { id: 'fb-1', created_by: 'user-chris', created_by_name: 'Chris Jackson', created_by_initials: 'CJ', created_by_colour: 'teal', type: 'improvement', priority: 'low', title: 'Stock order email threads linking in internal side panel', body: 'Would be handy to jump straight to the thread.', area: 'Open in house orders', status: 'under_review', admin_note: null, resolution_note: null, attachment_paths: ['feedback/shot-1.png'], status_changed_at: daysAgo(4), status_changed_by: null, status_changed_by_name: null, created_at: daysAgo(21), updated_at: daysAgo(4) },
+  { id: 'fb-2', created_by: 'user-rob', created_by_name: 'Rob Randtoul', created_by_initials: 'RR', created_by_colour: 'blue', type: 'improvement', priority: 'high', title: 'Collect VAT number at checkout', body: null, area: 'Checkout, Stock Control', status: 'new', admin_note: null, resolution_note: null, attachment_paths: [], status_changed_at: null, status_changed_by: null, status_changed_by_name: null, created_at: daysAgo(0.13), updated_at: daysAgo(0.13) },
+  { id: 'fb-3', created_by: 'user-rob', created_by_name: 'Rob Randtoul', created_by_initials: 'RR', created_by_colour: 'blue', type: 'improvement', priority: 'high', title: 'Currency enforcement', body: null, area: 'New version page', status: 'new', admin_note: null, resolution_note: null, attachment_paths: [], status_changed_at: null, status_changed_by: null, status_changed_by_name: null, created_at: daysAgo(0.7), updated_at: daysAgo(0.7) },
+  { id: 'fb-4', created_by: 'user-rob', created_by_name: 'Rob Randtoul', created_by_initials: 'RR', created_by_colour: 'blue', type: 'improvement', priority: 'high', title: 'Edit shipping address', body: null, area: 'Stock Control', status: 'new', admin_note: null, resolution_note: null, attachment_paths: [], status_changed_at: null, status_changed_by: null, status_changed_by_name: null, created_at: daysAgo(0.75), updated_at: daysAgo(0.75) },
+  { id: 'fb-5', created_by: 'user-rob', created_by_name: 'Rob Randtoul', created_by_initials: 'RR', created_by_colour: 'blue', type: 'idea', priority: 'high', title: 'Integrate artwork sanity check', body: null, area: 'Orders', status: 'new', admin_note: null, resolution_note: null, attachment_paths: [], status_changed_at: null, status_changed_by: null, status_changed_by_name: null, created_at: daysAgo(0.76), updated_at: daysAgo(0.76) },
+  { id: 'fb-6', created_by: 'user-rob', created_by_name: 'Rob Randtoul', created_by_initials: 'RR', created_by_colour: 'blue', type: 'idea', priority: 'medium', title: 'Verify specs of Dermids proofs', body: null, area: 'Order page', status: 'new', admin_note: null, resolution_note: null, attachment_paths: [], status_changed_at: null, status_changed_by: null, status_changed_by_name: null, created_at: daysAgo(0.03), updated_at: daysAgo(0.03) },
+  { id: 'fb-7', created_by: 'user-rob', created_by_name: 'Rob Randtoul', created_by_initials: 'RR', created_by_colour: 'blue', type: 'bug', priority: 'medium', title: 'Fix feedback page on mobile', body: 'It all spills over the right edge.', area: 'Feedback page', status: 'new', admin_note: null, resolution_note: null, attachment_paths: [], status_changed_at: null, status_changed_by: null, status_changed_by_name: null, created_at: daysAgo(0.13), updated_at: daysAgo(0.13) },
+]
+
 function resolveQuery(state: QueryState): { data: any; error: null; count?: number } {
   const { table, select, single, filters } = state
   let rows: any[] = []
@@ -505,6 +518,10 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
         created_at: daysAgo(0.01),
       },
     ]
+  } else if (table === 'feedback_items') {
+    rows = FEEDBACK_ITEMS
+    if (filters['eq:created_by']) rows = rows.filter((r) => r.created_by === filters['eq:created_by'])
+    if (Array.isArray(filters['in:status'])) rows = rows.filter((r) => filters['in:status'].includes(r.status))
   } else if (table === 'watch_items') {
     rows = WATCH_ITEMS
   } else if (table === 'watch_updates') {
