@@ -9,6 +9,7 @@ import { FinishChoiceCard } from '../components/FinishChoiceCard'
 import { RecapArtwork, buildRecapTiles } from '../components/ArtworkFade'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
 import { exVat, isGbpOrderVatFree, normaliseShipDestination } from '../lib/ukVatArea'
+import { isEuVatCountry } from '../lib/euVatArea'
 import { totalFromTiers, surchargeFromTiers, thicknessNoteFor, type SpecVariantChoice, type SpecFinishChoice } from '../lib/openSpecTiers'
 import { pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/interpolation'
 import { hasThicknessGuide, thicknessSetForMaterial, type ThicknessOption } from '../lib/metalThicknessNotes'
@@ -61,6 +62,10 @@ interface GroupPayload {
     postal_code: string | null
     country: string | null
   } | null
+  // Optional VAT / EORI number for EU-bound customs paperwork (migration 000341).
+  // public_get_order_group returns to_jsonb(g) - 'token', so it flows here; used
+  // to pre-fill the field, written back via record_order_group_customs_tax_id.
+  customs_tax_id: string | null
 }
 
 // Member order — the slice of the row the page renders. order_spec_snapshot
@@ -230,6 +235,9 @@ export default function OrderGroupPayPage() {
   const [tariff, setTariff] = useState<{ intro: string; warning: string; fees: Record<Currency, number> } | null>(null)
   const [tariffOptedOut, setTariffOptedOut] = useState(false)
   const [tariffConfirmingOptOut, setTariffConfirmingOptOut] = useState(false)
+  // Optional VAT / EORI number for EU-bound customs paperwork (migration 000341);
+  // pre-filled from the group below, saved at Pay time.
+  const [customsTaxId, setCustomsTaxId] = useState('')
 
   const [paying, setPaying] = useState(false)
   const [payError, setPayError] = useState<string | null>(null)
@@ -290,6 +298,7 @@ export default function OrderGroupPayPage() {
       setCompany(g.company_name?.trim() || null)
       if (g.group.ship_dest_country) setDestCountry(g.group.ship_dest_country)
       if (g.group.ship_dest_postcode) setDestPostcode(g.group.ship_dest_postcode)
+      if (g.group.customs_tax_id) setCustomsTaxId(g.group.customs_tax_id)
       if (g.group.us_tariff_opted_out) setTariffOptedOut(true)
       // Most-recent open stamp, delayed so an email scanner that fetches the
       // link without running JS doesn't log a false open (mirror of the
@@ -656,6 +665,15 @@ export default function OrderGroupPayPage() {
     if (!stripeRef.current || !elementsRef.current || !id || !token) return
     setSubmitting(true)
     setFormError(null)
+    // Persist the optional VAT / EORI number (once for the whole group — one
+    // recipient) before handing off to Stripe, so the webhook (Xero invoice) and
+    // Stock Control (customs paperwork) have it. Best-effort; never blocks the
+    // charge, and an empty value is skipped server-side.
+    const taxId = customsTaxId.trim()
+    if (taxId) {
+      const { error: taxErr } = await supabase.rpc('record_order_group_customs_tax_id', { p_group_id: id, p_token: token, p_tax_id: taxId })
+      if (taxErr) console.warn('[group pay] VAT/EORI save failed:', taxErr.message)
+    }
     const { error } = await stripeRef.current.confirmPayment({
       elements: elementsRef.current,
       confirmParams: {
@@ -861,6 +879,9 @@ export default function OrderGroupPayPage() {
     shippingComputedAtCheckout ? destCountry : group.ship_dest_country ?? '',
     shippingComputedAtCheckout ? destPostcode : '',
   )
+  // Offer the optional VAT / EORI field only for EU-bound groups (migration
+  // 000341); one destination per group, EUR fallback when unknown.
+  const isEuBound = isEuVatCountry(effectiveDestCountry) || (!effectiveDestCountry && group.currency === 'EUR')
   const tariffFee = tariff ? tariff.fees[group.currency] ?? 0 : 0
   const tariffApplies = effectiveDestCountry === 'US' && tariffFee > 0
   // GBP prices are VAT-inclusive; a delivery outside the UK VAT area (or a
@@ -1478,6 +1499,17 @@ export default function OrderGroupPayPage() {
                     <p className="mb-1.5 text-[12px] font-medium text-ink-mute">Shipping address</p>
                     <div id="address-element" aria-label="Shipping address" />
                   </div>
+                  {isEuBound && (
+                    <div>
+                      <label htmlFor="customs-tax-id" className="mb-1.5 block text-[12px] font-medium text-ink-mute">
+                        VAT / EORI number <span className="font-normal">(optional)</span>
+                      </label>
+                      <input id="customs-tax-id" type="text" value={customsTaxId} onChange={(e) => setCustomsTaxId(e.target.value)}
+                        autoComplete="off" placeholder="e.g. DE123456789"
+                        className="h-[38px] w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
+                      <p className="mt-1 text-[12px] text-ink-mute">For business orders — helps your parcel clear customs without delay.</p>
+                    </div>
+                  )}
                   <div>
                     <p className="mb-1.5 text-[12px] font-medium text-ink-mute">Payment details</p>
                     <div id="payment-element" aria-label="Payment details" />

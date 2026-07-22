@@ -8,8 +8,11 @@
 // admin-editable (settings.xero_eu_tax_type / xero_row_tax_type, migration
 // 000306); while unset the invoice keeps the old NoTax treatment.
 //
-// Server-side only — the pay page never shows tax codes, so unlike
-// ukVatArea.ts this has no src/lib twin.
+// The zeroRatedRegion tax-code classification is server-side only — the pay
+// page never shows tax codes. The country membership below (EU_VAT_COUNTRIES /
+// isEuVatCountry) IS mirrored in src/lib/euVatArea.ts, which the pay page uses
+// to decide whether to offer the optional VAT / EORI field (migration 000341);
+// euVatArea.test.ts imports both and fails on drift.
 
 import { isUkVatAreaCountry } from './ukVatArea.ts'
 
