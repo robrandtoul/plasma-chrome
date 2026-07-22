@@ -683,6 +683,11 @@ export const supabase: any = {
         // live-mode FLAGGED report so the advisory card renders with a flag,
         // an unresolved correction, notes, gaps and the full table. Same
         // fixture the orders rows carry for the OrdersPage chip + modal.
+        // The real check takes ~30–50s; the mock returns instantly. To inspect
+        // the "Checking…" spinner state, run sessionStorage.setItem('artworkHang','1')
+        // then reload — the invoke then hangs so the loading card stays up.
+        // Off by default (zero cost); harness-only, never ships.
+        if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('artworkHang') === '1') await new Promise(() => {})
         return {
           data: { ok: true, mode: 'live', required: true, cached: true, report: ARTWORK_REPORT_FLAGGED },
           error: null,

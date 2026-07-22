@@ -60,6 +60,20 @@ export function artworkDefectCount(report: ArtworkCheckReport): number {
   )
 }
 
+// A dependency-free indeterminate spinner that inherits the current text
+// colour and sits on the text baseline — used wherever the check or an
+// investigation is working (there's no honest % to show for a single opaque
+// multimodal call, so an indeterminate spinner is the right signal).
+export function InlineSpinner({ className = '' }: { className?: string }) {
+  return (
+    <span
+      role="status"
+      aria-label="Working"
+      className={`inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent align-[-2px] ${className}`}
+    />
+  )
+}
+
 // Flags = 'flag' findings + corrections the customer sent that the artwork
 // doesn't reflect — the number the ⚠️ headline carries.
 export function artworkFlagCount(report: ArtworkCheckReport): number {
@@ -145,6 +159,7 @@ export default function ArtworkCheckReportView({
                       disabled={!!investigatingKey}
                       className="text-[12px] font-medium text-brand hover:underline disabled:opacity-50"
                     >
+                      {busy && <InlineSpinner className="mr-1.5 h-3 w-3" />}
                       {busy ? 'Reconstructing the history…' : 'Investigate the history'}
                     </button>
                     {busy && (

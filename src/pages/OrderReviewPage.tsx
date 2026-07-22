@@ -5,7 +5,7 @@ import { DesignerChrome, PanelShell, ButtonCoral, ButtonGhost } from '../design'
 import { ImageCard, type GridImage } from '../components/ImageGrid'
 import Modal from '../components/Modal'
 import { checkEditedMessage } from '../lib/handoffMessageCheck'
-import ArtworkCheckReportView, { artworkDefectCount, artworkFlagCount, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
+import ArtworkCheckReportView, { InlineSpinner, artworkDefectCount, artworkFlagCount, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
 
 // OrderReviewPage (/orders/:id/place) — the review-and-confirm screen for placing
 // a PAID order into production. Shows the artwork, spec, quantities, destination
@@ -284,7 +284,9 @@ export default function OrderReviewPage() {
         body: { order_id: id, ...(force ? { force: true } : {}) },
       })
       if (!data?.ok || data.mode !== 'live') {
-        setArtworkCheck((prev) => ({ ...prev, status: prev.report ? 'done' : 'hidden' }))
+        // Correct a wrong optimistic pre-read (below): if the mode isn't live,
+        // the card must not linger.
+        setArtworkCheck((prev) => ({ ...prev, live: false, status: prev.report ? 'done' : 'hidden' }))
         return
       }
       setArtworkCheck((prev) => ({
@@ -299,6 +301,21 @@ export default function OrderReviewPage() {
   }, [id])
 
   useEffect(() => {
+    // The check auto-runs on load, but `live` (which gates the card) isn't
+    // known until that ~30–50s call returns — leaving the reviewer with no
+    // sign anything is happening on the first, uncached run. Pre-read the mode
+    // so the "Checking…" card + spinner appear immediately; the run's own
+    // response stays authoritative and corrects this if it disagrees.
+    void supabase
+      .from('settings')
+      .select('artwork_check_mode')
+      .eq('id', 1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if ((data as { artwork_check_mode?: string | null } | null)?.artwork_check_mode === 'live') {
+          setArtworkCheck((prev) => (prev.status === 'done' ? prev : { ...prev, live: true }))
+        }
+      })
     void runArtworkCheck(false)
   }, [runArtworkCheck])
 
@@ -739,7 +756,7 @@ export default function OrderReviewPage() {
                 <div className="flex items-start justify-between gap-3">
                   <p className="font-medium">
                     {artworkCheck.status === 'running'
-                      ? 'Checking the artwork against the customer’s details…'
+                      ? <><InlineSpinner className="mr-2" />Checking the artwork against the customer’s details…</>
                       : artworkReport?.verdict === 'clear'
                         ? '✅ Artwork check — all clear'
                         : artworkReport?.verdict === 'defect'
