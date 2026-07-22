@@ -41,6 +41,7 @@ import {
   approvedImageBudget,
   pickApprovedImages,
 } from '../_shared/artworkCheck/approvedProof.ts'
+import { decodeQrsFromImage } from '../_shared/artworkCheck/qrDecode.ts'
 import {
   buildInvestigationContext,
   INVESTIGATION_FINAL_INSTRUCTION,
@@ -408,6 +409,7 @@ Deno.serve(async (req) => {
       company: contact?.companies?.name ?? null,
     },
     qrs,
+    artworkDecodedQrs: [],
     threadText: '',
     threadGapNote: null,
     printFileNames: [],
@@ -544,6 +546,11 @@ Deno.serve(async (req) => {
     // the print files so the model can compare agreement vs production.
     // Best-effort like everything else: a miss is a named skip, never an error.
     const approvedBlocks: ContentBlock[] = []
+    // QR payloads decoded straight from the approved artwork (qrDecode.ts) —
+    // deduped across every proof image, the source that verifies a code the
+    // designer never registered on the proof. Best-effort: the decoder
+    // returns [] on any failure, so this only ever adds verification.
+    const artworkQrSeen = new Set<string>()
     {
       const { picks, skipped } = pickApprovedImages(allImageRows)
       baseCtx.approvedSkipped.push(...skipped)
@@ -557,6 +564,14 @@ Deno.serve(async (req) => {
             continue
           }
           const bytes = new Uint8Array(await blob.arrayBuffer())
+          // Scan for QRs before the size gate — a large proof still gets its
+          // code read (the decoder downscales internally).
+          for (const qr of await decodeQrsFromImage(bytes)) {
+            if (!artworkQrSeen.has(qr.data)) {
+              artworkQrSeen.add(qr.data)
+              baseCtx.artworkDecodedQrs.push(qr.data)
+            }
+          }
           if (bytes.length > APPROVED_IMAGE_MAX_BYTES) {
             baseCtx.approvedSkipped.push({ name: pick.label, reason: 'over the size limit' })
             continue

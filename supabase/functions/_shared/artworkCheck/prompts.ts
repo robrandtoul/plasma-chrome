@@ -50,7 +50,8 @@ QR RULES
 - Cross-check QR contact fields against the card face AND the thread — a vCard QR is a strong second reference for every field it carries.
 - A QR payload that contradicts the printed card face is a flag (use field 'qr', or the specific contact field when it is one).
 - For hosted vCard QRs (qcrd.uk short URLs) the payload is only the URL; use the provided contact snapshot when present, and treat a missing snapshot as a reference gap.
-- A QR VISIBLE on the artwork with NO stored payload to check it against is a flag (field 'qr') — the one deliberate exception to the gaps-are-not-flags rule, because QR contents defeat visual QC entirely and a human must scan-test it before print. One flag per distinct code, not one per recipient sharing it.
+- QR payloads may come from TWO sources: those stored on the proof version, AND those decoded straight from the approved artwork (listed A1, A2…). Both are exact programmatic decodes — use either as authoritative text, cross-check them against the card face and the thread, and flag any disagreement between them.
+- Only raise the no-payload flag (field 'qr') when a QR is visibly printed on the card AND neither source yielded its payload — i.e. the artwork was scanned and nothing decoded (or there was no artwork to scan). If a payload was decoded from the artwork, the QR IS verified: do NOT flag it merely for being unregistered on the proof. One flag per distinct code, not one per recipient sharing it.
 
 APPROVED PROOF RULES (post-approval drift)
 - When APPROVED PROOF images are provided, they are what the customer SIGNED OFF; the print files are what will PRINT. Compare them: contact text, names, titles, and explicitly-agreed treatments (a foil/colour arrangement the thread records) must not diverge. A meaningful divergence is a flag on the affected field (or 'other'), noted as post-approval drift and quoting both sides.
@@ -110,6 +111,11 @@ export interface CheckContext {
   quantitySplit: string[]
   accountContact: { name: string | null; email: string | null; company: string | null }
   qrs: QrContext[]
+  // QR payloads decoded directly from the approved artwork images by the same
+  // scanner the studio uses (qrDecode.ts) — the second authoritative source
+  // alongside ctx.qrs, and the one that closes the "printed but never
+  // registered on the proof" gap.
+  artworkDecodedQrs: string[]
   threadText: string
   threadGapNote: string | null
   printFileNames: string[]
@@ -162,6 +168,12 @@ export function buildContextText(ctx: CheckContext): string {
     })
   } else {
     lines.push('No QR codes are stored on this proof version.')
+  }
+  if (ctx.artworkDecodedQrs.length > 0) {
+    lines.push(`QR codes decoded straight from the approved artwork (${ctx.artworkDecodedQrs.length} — read off the proof images by the studio's own scanner; authoritative for what the approved cards carry, even if never registered on the proof):`)
+    ctx.artworkDecodedQrs.forEach((d, i) => lines.push(`A${i + 1}. ${d}`))
+  } else if (ctx.approvedRead.length > 0) {
+    lines.push('The approved artwork was scanned for QR codes and none decoded — so any QR visibly printed on it is UNVERIFIED.')
   }
 
   lines.push('')
@@ -230,5 +242,6 @@ export function buildInputs(
     attachments_skipped: ctx.attachmentsSkipped,
     approved_proofs_read: ctx.approvedRead,
     approved_proofs_skipped: ctx.approvedSkipped,
+    qr_decoded_from_artwork: ctx.artworkDecodedQrs.length,
   }
 }

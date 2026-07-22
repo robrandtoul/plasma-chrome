@@ -92,6 +92,10 @@ export interface ReportInputs {
   // ones passed over. Absent on pre-Leg-C reports.
   approved_proofs_read?: string[]
   approved_proofs_skipped?: { name: string; reason: string }[]
+  // How many QR payloads were decoded straight from the approved artwork
+  // (qrDecode.ts) — the source that verifies codes never registered on the
+  // proof. Absent on pre-decode reports.
+  qr_decoded_from_artwork?: number
 }
 
 export interface ReportUsage {

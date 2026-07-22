@@ -41,6 +41,7 @@ import {
   type VersionImageRowLite,
   type VersionRowLite,
 } from './investigate.ts'
+import { classifyQrPayload } from './qrDecode.ts'
 import { buildErrorReport, buildReport, countCheckedFields, countDefects, countFlags, deriveVerdict } from './report.ts'
 import { buildContextText, buildInputs, type CheckContext } from './prompts.ts'
 import type { ModelReport } from './types.ts'
@@ -255,6 +256,7 @@ const ctx: CheckContext = {
   quantitySplit: ['Dave Allen — 75', 'Scott Worsley — 50'],
   accountContact: { name: 'Parissa Mobasher', email: 'pm@gmail.com', company: 'Plak8.com' },
   qrs: [{ kind: 'vcard', decoded: 'BEGIN:VCARD…', associatedName: null, side: 'back' }],
+  artworkDecodedQrs: [],
   threadText: '— 2026-06-01 · Customer (Jo):\n125 for: Dave Allen',
   threadGapNote: null,
   printFileNames: ['01_Front.ai'],
@@ -298,7 +300,7 @@ const ctx: CheckContext = {
 }
 
 {
-  const gapCtx: CheckContext = { ...ctx, threadText: '', threadGapNote: 'this proof has no linked Help Scout conversation', qrs: [], recipients: [], attachmentsRead: [], attachmentsSkipped: [], approvedRead: [], approvedSkipped: [] }
+  const gapCtx: CheckContext = { ...ctx, threadText: '', threadGapNote: 'this proof has no linked Help Scout conversation', qrs: [], artworkDecodedQrs: [], recipients: [], attachmentsRead: [], attachmentsSkipped: [], approvedRead: [], approvedSkipped: [] }
   const text = buildContextText(gapCtx)
   check('gap note rendered', text.includes('this proof has no linked Help Scout conversation'))
   check('gap framed as not-evidence', text.includes('not as evidence of error'))
@@ -313,7 +315,27 @@ const ctx: CheckContext = {
   check('skipped attachments listed', text.includes('source.zip — not a readable type'))
   check('approved proofs listed', text.includes('APPROVED PROOF IMAGES (1') && text.includes('Dave Allen — front'))
   check('approved skips listed', text.includes('weird.tiff — not a readable image type'))
+  // No artwork-decoded QRs but approved images WERE read → the "scanned, none
+  // decoded" signal so the model knows a visible QR is unverified.
+  check('no-decode-but-scanned signal', text.includes('scanned for QR codes and none decoded'))
 }
+
+{
+  const decodedCtx: CheckContext = { ...ctx, artworkDecodedQrs: ['https://qcrd.uk/abc', 'BEGIN:VCARD\nFN:Jo\nEND:VCARD'] }
+  const text = buildContextText(decodedCtx)
+  check('artwork-decoded QRs listed', text.includes('decoded straight from the approved artwork (2') && text.includes('A1. https://qcrd.uk/abc'))
+  check('decode signal replaces the none-decoded line', !text.includes('none decoded'))
+}
+
+// ── QR payload classifier (qrDecode) ─────────────────────────────────────────
+
+eq('classify vcard', classifyQrPayload('BEGIN:VCARD\nFN:Jo\nEND:VCARD'), 'vcard')
+eq('classify url', classifyQrPayload('https://qcrd.uk/7k2nq8x'), 'url')
+eq('classify mailto', classifyQrPayload('mailto:jo@acme.com'), 'email')
+eq('classify bare email', classifyQrPayload('jo@acme.com'), 'email')
+eq('classify tel', classifyQrPayload('tel:+441234567890'), 'phone')
+eq('classify wifi', classifyQrPayload('WIFI:S:net;T:WPA;P:pw;;'), 'wifi')
+eq('classify plain text', classifyQrPayload('just some words'), 'text')
 
 // ── approved proof picks (Leg C) ─────────────────────────────────────────────
 
