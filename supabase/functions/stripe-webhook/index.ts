@@ -283,7 +283,7 @@ Deno.serve(async (req) => {
       // (so the VAT invoice is emailed exactly once).
       const { data: order } = await admin
         .from('orders')
-        .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, order_kind, ship_dest_country, vat_treatment, xero_invoice_id, xero_contact_id, xero_contact_name, invoice_emailed_at')
+        .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, order_kind, ship_dest_country, vat_treatment, customs_tax_id, xero_invoice_id, xero_contact_id, xero_contact_name, invoice_emailed_at')
         .eq('id', orderId)
         .single()
       let invoiceId: string | null = (order?.xero_invoice_id as string | null) ?? null
@@ -373,6 +373,9 @@ Deno.serve(async (req) => {
           contactId: boundContactId,
           vatFree,
           zeroRatedTaxType,
+          // The customer's VAT / EORI number → the Xero contact's TaxNumber
+          // (unbound path only; ignored when bound to an existing ContactID).
+          taxNumber: (order?.customs_tax_id as string | null) ?? null,
         })
         invoiceId = created.invoiceId
         // The created invoice object echoes back the resolved Contact (incl. the
@@ -406,6 +409,7 @@ Deno.serve(async (req) => {
             address: invoiceAddress,
             contactId: boundContactId,
             vatFree,
+            taxNumber: (order?.customs_tax_id as string | null) ?? null,
           })
           invoiceId = retry.invoiceId
           if (retry.invoice) createdInvoice = retry.invoice
@@ -691,7 +695,7 @@ async function handleGroupPaid(
     if (ctx && typeof evt.amountMajor === 'number') {
       const { data: group } = await admin
         .from('order_groups')
-        .select('payment_reference, currency, ship_dest_country, vat_treatment, amount_shipping, amount_us_tariff, xero_invoice_id, xero_contact_id, xero_contact_name, invoice_emailed_at')
+        .select('payment_reference, currency, ship_dest_country, vat_treatment, amount_shipping, amount_us_tariff, customs_tax_id, xero_invoice_id, xero_contact_id, xero_contact_name, invoice_emailed_at')
         .eq('id', groupId)
         .single()
       const { data: memberRows } = await admin
@@ -751,6 +755,9 @@ async function handleGroupPaid(
           contactId: boundContactId,
           vatFree,
           zeroRatedTaxType,
+          // The customer's VAT / EORI number → the Xero contact's TaxNumber
+          // (one recipient per group; unbound path only).
+          taxNumber: (group?.customs_tax_id as string | null) ?? null,
         })
         invoiceId = created.invoiceId
         let createdInvoice = created.invoice
@@ -771,6 +778,7 @@ async function handleGroupPaid(
             address: invoiceAddress,
             contactId: boundContactId,
             vatFree,
+            taxNumber: (group?.customs_tax_id as string | null) ?? null,
           })
           invoiceId = retry.invoiceId
           if (retry.invoice) createdInvoice = retry.invoice

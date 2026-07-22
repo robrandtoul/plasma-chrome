@@ -41,6 +41,7 @@ interface OrderRow {
   xero_invoice_id: string | null
   xero_contact_id: string | null
   xero_contact_name: string | null
+  customs_tax_id: string | null
   payment_reference: string | null
   ship_to_name: string | null
   ship_to_email: string | null
@@ -89,7 +90,7 @@ Deno.serve(async (req) => {
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, order_kind, currency, status, payment_method, xero_invoice_id, xero_contact_id, xero_contact_name, payment_reference, ship_to_name, ship_to_email, ship_to_address, ship_dest_country, vat_treatment, proofs(contacts(full_name, email))')
+    .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, order_kind, currency, status, payment_method, xero_invoice_id, xero_contact_id, xero_contact_name, customs_tax_id, payment_reference, ship_to_name, ship_to_email, ship_to_address, ship_dest_country, vat_treatment, proofs(contacts(full_name, email))')
     .eq('id', orderId)
     .single<OrderRow>()
   if (orderErr || !order) return json({ error: 'Order not found' }, 404)
@@ -186,6 +187,7 @@ Deno.serve(async (req) => {
     contactId: boundContactId,
     vatFree,
     zeroRatedTaxType,
+    taxNumber: order.customs_tax_id ?? null,
   })
   let invoiceId = created.invoiceId
   let createdInvoice = created.invoice
@@ -205,6 +207,7 @@ Deno.serve(async (req) => {
       address: invoiceAddress,
       contactId: boundContactId,
       vatFree,
+      taxNumber: order.customs_tax_id ?? null,
     })
     invoiceId = retry.invoiceId
     if (retry.invoice) createdInvoice = retry.invoice
@@ -273,6 +276,7 @@ async function retryGroupInvoice(
     xero_invoice_id: string | null
     xero_contact_id: string | null
     xero_contact_name: string | null
+    customs_tax_id: string | null
     amount_shipping: number | null
     amount_us_tariff: number | null
     ship_dest_country: string | null
@@ -291,7 +295,7 @@ async function retryGroupInvoice(
 
   const { data: group, error: groupErr } = await admin
     .from('order_groups')
-    .select('id, status, currency, payment_reference, xero_invoice_id, xero_contact_id, xero_contact_name, amount_shipping, amount_us_tariff, ship_dest_country, vat_treatment, ship_to_name, ship_to_email, ship_to_address')
+    .select('id, status, currency, payment_reference, xero_invoice_id, xero_contact_id, xero_contact_name, customs_tax_id, amount_shipping, amount_us_tariff, ship_dest_country, vat_treatment, ship_to_name, ship_to_email, ship_to_address')
     .eq('id', groupId)
     .single<GroupRow>()
   if (groupErr || !group) return json({ error: 'Payment group not found' }, 404)
@@ -377,6 +381,7 @@ async function retryGroupInvoice(
     contactId: boundContactId,
     vatFree,
     zeroRatedTaxType,
+    taxNumber: group.customs_tax_id ?? null,
   })
   let invoiceId = created.invoiceId
   let createdInvoice = created.invoice
@@ -393,6 +398,7 @@ async function retryGroupInvoice(
       address: invoiceAddress,
       contactId: boundContactId,
       vatFree,
+      taxNumber: group.customs_tax_id ?? null,
     })
     invoiceId = retry.invoiceId
     if (retry.invoice) createdInvoice = retry.invoice
