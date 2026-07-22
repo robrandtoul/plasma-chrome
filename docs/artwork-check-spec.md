@@ -586,7 +586,29 @@ difference review, not defect — the right restraint on a genuinely arguable ca
 two investigations (discarded by the re-runs) were re-run and reproduced their fault
 attributions exactly: Everest → customer_origin, Plak8 → ours_missed_revision.
 
+**QR decode from approved artwork: SHIPPED 2026-07-21** (PR #529; function v10,
+byte-verified; `pnpm test:artwork-check` 134 checks). First live-use finding: Top
+Hampers 403912 flagged "QR present, nothing on file to verify" on both cards even though
+they scan fine — because the check only ever compared print files against QR payloads
+REGISTERED on the proof, and this proof's QR was registered on v1 but not carried onto
+the current version. Fix: reuse the version-form scanner's engine (`zxing-wasm`, same
+3.1.2 pin + tryHarder/downscale/invert recipe) server-side over the approved-proof JPEGs
+the check already downloads for Leg C (`qrDecode.ts`). Decoded payloads join the
+DB-registered ones as a second authoritative source; the no-payload flag fires only when
+a QR is printed AND neither source yields it; a disagreement between sources flags (a
+free print-vs-registered cross-check). **The Deno-runtime wasm question — the one thing
+unprovable until deployed — is SETTLED: it loads and decodes.** Re-run of 403912:
+`qr_decoded_from_artwork = 1`, QR flags 0, verdict **flagged → clear**. Boundaries: raster
+only (print files are vector; verifying the print file's own QR needs a rasteriser,
+parked); strictly fail-safe (library's default fetches the pinned wasm from jsdelivr; any
+failure returns [] and behaves as today; latched off per-instance). ⚠ Note from the same
+re-run: the model also stopped flagging Top Hampers' supplied-logo wordmark ("TOP
+GIFTING") vs the printed "TOP HAMPERS" — model variance on a borderline case under the
+logo-wording-authoritative rule (000304-era Box Sash tuning), unrelated to the QR change;
+revisit if that difference should reliably surface for review.
+
 **Deferred to Phase 3:** a print-file staleness guard for content changes inside an
 unchanged folder link (re-link and Re-run cover it meanwhile), admin-editable rules
-(step 2 of the admin graduation), and any soft-block (if ever wanted, "reds require an
-I've-reviewed tick" is its natural scope).
+(step 2 of the admin graduation), verifying the PRINT file's QR byte-for-byte (needs a
+PDF rasteriser), and any soft-block (if ever wanted, "reds require an I've-reviewed tick"
+is its natural scope).
