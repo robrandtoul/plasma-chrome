@@ -8,6 +8,9 @@ export interface ArtworkFinding {
   supplied: string
   printed: string
   status: 'match' | 'flag' | 'not_supplied'
+  // review = amber (worth a glance, may be intentional); defect = red (the
+  // "bet a reprint on it" tier). Absent on pre-tier reports → review.
+  severity?: 'review' | 'defect'
   note: string
 }
 
@@ -35,15 +38,26 @@ const FAULT_LABELS: Record<ArtworkInvestigation['fault'], string> = {
 }
 
 export interface ArtworkCheckReport {
-  verdict: 'clear' | 'flagged' | 'error'
+  verdict: 'clear' | 'flagged' | 'defect' | 'error'
   summary: string
   cards: { label: string; findings: ArtworkFinding[] }[]
-  corrections: { quote: string; resolved: boolean; note: string }[]
+  corrections: { quote: string; resolved: boolean; severity?: 'review' | 'defect'; note: string }[]
   notes: string[]
   reference_gaps: string[]
   checked_at: string
   error?: string
   investigations?: Record<string, ArtworkInvestigation>
+}
+
+// Red count for the ❌ headline: defect-grade flags + defect-grade unresolved
+// corrections. Pre-tier reports count 0.
+export function artworkDefectCount(report: ArtworkCheckReport): number {
+  return (
+    report.cards.reduce(
+      (sum, c) => sum + c.findings.filter((f) => f.status === 'flag' && f.severity === 'defect').length,
+      0,
+    ) + report.corrections.filter((c) => !c.resolved && c.severity === 'defect').length
+  )
 }
 
 // Flags = 'flag' findings + corrections the customer sent that the artwork
@@ -80,8 +94,10 @@ export default function ArtworkCheckReportView({
   investigatingKey?: string | null
   investigationError?: { key: string; message: string } | null
 }) {
+  // Defect-grade flags first — the red items are what the reviewer must see.
   const flags = report.cards.flatMap((c) =>
     c.findings.filter((f) => f.status === 'flag').map((f) => ({ card: c.label, ...f })))
+    .sort((a, b) => (a.severity === 'defect' ? 0 : 1) - (b.severity === 'defect' ? 0 : 1))
   const correctionsOpen = report.corrections.filter((c) => !c.resolved)
   const fieldsChecked = report.cards.reduce((s, c) => s + c.findings.length, 0)
 
@@ -97,6 +113,7 @@ export default function ArtworkCheckReportView({
             const invError = investigationError?.key === key ? investigationError.message : null
             return (
               <li key={i} className="break-words">
+                {f.severity === 'defect' && <span className="font-semibold text-out">✗ </span>}
                 <span className="font-medium">{f.card} · {f.field.replace(/_/g, ' ')}:</span>{' '}
                 printed <span className="font-mono text-[12px]">“{f.printed}”</span>
                 {f.supplied && <> vs supplied <span className="font-mono text-[12px]">“{f.supplied}”</span></>}
@@ -147,6 +164,7 @@ export default function ArtworkCheckReportView({
         <ul className="mt-2 space-y-1.5">
           {correctionsOpen.map((c, i) => (
             <li key={i} className="break-words">
+              {c.severity === 'defect' && <span className="font-semibold text-out">✗ </span>}
               <span className="font-medium">Customer correction not picked up:</span>{' '}
               “{c.quote}”{c.note && <span className="text-ink-soft"> — {c.note}</span>}
             </li>
@@ -169,7 +187,7 @@ export default function ArtworkCheckReportView({
                 <ul className="mt-0.5 space-y-0.5 text-[12px] text-ink-soft">
                   {c.findings.map((f, j) => (
                     <li key={j} className="break-words">
-                      {f.status === 'flag' ? '⚠️' : f.status === 'match' ? '✓' : '—'}{' '}
+                      {f.status === 'flag' ? (f.severity === 'defect' ? '✗' : '⚠️') : f.status === 'match' ? '✓' : '—'}{' '}
                       {f.field.replace(/_/g, ' ')}: {f.printed}
                       {f.status === 'not_supplied' ? ' (not supplied by customer)' : ''}
                       {f.status === 'flag' && f.supplied ? ` (supplied: ${f.supplied})` : ''}
@@ -183,6 +201,7 @@ export default function ArtworkCheckReportView({
       )}
       <p className="mt-1.5 text-[12px] text-ink-mute">
         {report.verdict !== 'error' && fieldsChecked > 0 && `${fieldsChecked} field${fieldsChecked === 1 ? '' : 's'} compared. `}
+        {report.verdict === 'defect' && '✗ items look wrong outright — resolve them before placing. Everything here stays advisory. '}
         {report.verdict === 'flagged' && 'Flags are advisory — review them, then place the order when you’re satisfied. '}
         Checked {artworkCheckedAtLabel(report)}.
       </p>

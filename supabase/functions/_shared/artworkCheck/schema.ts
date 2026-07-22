@@ -28,7 +28,7 @@ export const ARTWORK_CHECK_SCHEMA = {
             items: {
               type: 'object',
               additionalProperties: false,
-              required: ['field', 'supplied', 'printed', 'status', 'note'],
+              required: ['field', 'supplied', 'printed', 'status', 'severity', 'note'],
               properties: {
                 field: {
                   type: 'string',
@@ -43,6 +43,11 @@ export const ARTWORK_CHECK_SCHEMA = {
                   description: 'The value as it actually appears on the card (or in the QR payload).',
                 },
                 status: { type: 'string', enum: ['match', 'flag', 'not_supplied'] },
+                severity: {
+                  type: 'string',
+                  enum: ['review', 'defect'],
+                  description: 'Per the SEVERITY rules: defect is reserved for the three bet-a-reprint-on-it categories; everything else — and every match/not_supplied — is review.',
+                },
                 note: {
                   type: 'string',
                   description: 'For flags: what exactly differs. For matches: empty or a short qualifier. Never speculate past what is clearly visible.',
@@ -59,10 +64,15 @@ export const ARTWORK_CHECK_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['quote', 'resolved', 'note'],
+        required: ['quote', 'resolved', 'severity', 'note'],
         properties: {
           quote: { type: 'string', description: 'Short verbatim quote of the revision, with its date if known.' },
           resolved: { type: 'boolean', description: 'True when the current artwork already carries the revised value.' },
+          severity: {
+            type: 'string',
+            enum: ['review', 'defect'],
+            description: 'defect only when resolved=false AND the quote is an explicit written instruction the artwork ignores (red category 2). resolved=true is always review.',
+          },
           note: { type: 'string' },
         },
       },

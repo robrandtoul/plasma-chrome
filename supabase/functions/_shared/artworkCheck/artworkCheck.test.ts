@@ -41,7 +41,7 @@ import {
   type VersionImageRowLite,
   type VersionRowLite,
 } from './investigate.ts'
-import { buildErrorReport, buildReport, countCheckedFields, countFlags, deriveVerdict } from './report.ts'
+import { buildErrorReport, buildReport, countCheckedFields, countDefects, countFlags, deriveVerdict } from './report.ts'
 import { buildContextText, buildInputs, type CheckContext } from './prompts.ts'
 import type { ModelReport } from './types.ts'
 
@@ -221,6 +221,23 @@ eq('one flag → flagged', deriveVerdict(report({ cards: [{ label: 'Jo', finding
 eq('not_supplied alone → clear', deriveVerdict(report({ cards: [{ label: 'Jo', findings: [{ ...matchFinding, status: 'not_supplied' as const }] }] })), 'clear')
 eq('unresolved correction → flagged', deriveVerdict(report({ corrections: [{ quote: 'should be Jon', resolved: false, note: '' }] })), 'flagged')
 eq('resolved correction → clear', deriveVerdict(report({ corrections: [{ quote: 'should be Jon', resolved: true, note: '' }] })), 'clear')
+
+// The red tier: defect-grade flags/corrections outrank flagged.
+const defectFinding = { ...flagFinding, severity: 'defect' as const }
+eq('defect flag → defect', deriveVerdict(report({ cards: [{ label: 'Jo', findings: [matchFinding, defectFinding] }] })), 'defect')
+eq('review flag stays flagged', deriveVerdict(report({ cards: [{ label: 'Jo', findings: [{ ...flagFinding, severity: 'review' as const }] }] })), 'flagged')
+eq('defect unresolved correction → defect', deriveVerdict(report({ corrections: [{ quote: 'should be X', resolved: false, severity: 'defect' as const, note: '' }] })), 'defect')
+eq('defect on a RESOLVED correction is inert', deriveVerdict(report({ corrections: [{ quote: 'should be X', resolved: true, severity: 'defect' as const, note: '' }] })), 'clear')
+eq('defect on a match finding is inert', deriveVerdict(report({ cards: [{ label: 'Jo', findings: [{ ...matchFinding, severity: 'defect' as const }] }] })), 'clear')
+eq('countDefects sums flags + unresolved corrections', countDefects(report({
+  cards: [{ label: 'Jo', findings: [defectFinding, flagFinding, { ...matchFinding, severity: 'defect' as const }] }],
+  corrections: [
+    { quote: 'q', resolved: false, severity: 'defect' as const, note: '' },
+    { quote: 'q2', resolved: false, note: '' },
+    { quote: 'q3', resolved: true, severity: 'defect' as const, note: '' },
+  ],
+})), 2)
+eq('pre-tier report (no severity) never defects', deriveVerdict(report({ cards: [{ label: 'Jo', findings: [flagFinding] }], corrections: [{ quote: 'q', resolved: false, note: '' }] })), 'flagged')
 eq('flag count sums findings + corrections', countFlags(report({
   cards: [{ label: 'Jo', findings: [flagFinding, matchFinding] }],
   corrections: [{ quote: 'q', resolved: false, note: '' }, { quote: 'q2', resolved: true, note: '' }],

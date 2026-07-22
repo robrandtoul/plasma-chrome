@@ -26,7 +26,7 @@ import { useConfirm } from '../components/ConfirmDialog'
 import SendPayLinkModal from '../components/SendPayLinkModal'
 import DesignerAvatar from '../components/DesignerAvatar'
 import ApprovedArtworkPanel from '../components/ApprovedArtworkPanel'
-import ArtworkCheckReportView, { artworkFlagCount, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
+import ArtworkCheckReportView, { artworkDefectCount, artworkFlagCount, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
 import { ChevronDown, ChevronRight, StickyNote } from 'lucide-react'
 
 // Orders / "to order" surface (Ordering & checkout, Step 6 — overhauled).
@@ -96,7 +96,7 @@ interface OrderRow {
   // Artwork sanity check (000336): the latest run's verdict + stamp — the chip
   // on To-order / Recently-ordered cards. The full report jsonb is fetched
   // lazily when the chip is clicked, never in the list select.
-  artwork_check_verdict: 'clear' | 'flagged' | 'error' | null
+  artwork_check_verdict: 'clear' | 'flagged' | 'defect' | 'error' | null
   artwork_checked_at: string | null
   // Order-placement fields (000252).
   date_required: string | null
@@ -607,9 +607,10 @@ function PrepChip({ ok, label }: { ok: boolean; label: string }) {
 }
 
 // The artwork sanity-check verdict as a clickable chip (000336) — green when
-// the last run was clear, amber when flagged or failed. Click opens the stored
+// the last run was clear, amber when flagged or failed, red when at least one
+// flag graded to the "bet a reprint on it" defect bar. Click opens the stored
 // report in a modal (the in-app archive; no SQL needed to read past checks).
-function ArtworkChip({ verdict, onOpen }: { verdict: 'clear' | 'flagged' | 'error'; onOpen: () => void }) {
+function ArtworkChip({ verdict, onOpen }: { verdict: 'clear' | 'flagged' | 'defect' | 'error'; onOpen: () => void }) {
   return (
     <button
       type="button"
@@ -618,10 +619,12 @@ function ArtworkChip({ verdict, onOpen }: { verdict: 'clear' | 'flagged' | 'erro
       className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)] ${
         verdict === 'clear'
           ? 'bg-[var(--c-in-stock-soft)] text-in-stock ring-[var(--c-in-stock)]/40'
-          : 'bg-[var(--c-low-soft)] text-low ring-[var(--c-low)]/40'
+          : verdict === 'defect'
+            ? 'bg-[var(--c-out-soft)] text-out ring-[var(--c-out)]/40'
+            : 'bg-[var(--c-low-soft)] text-low ring-[var(--c-low)]/40'
       }`}
     >
-      {verdict === 'clear' ? '✓' : verdict === 'flagged' ? '⚠' : '!'} Artwork check
+      {verdict === 'clear' ? '✓' : verdict === 'defect' ? '✗' : verdict === 'flagged' ? '⚠' : '!'} Artwork check
     </button>
   )
 }
@@ -2245,9 +2248,11 @@ export default function OrdersPage() {
                   <p className="mt-1 font-medium">
                     {artworkReportModal.report.verdict === 'clear'
                       ? '✅ Artwork check — all clear'
-                      : artworkReportModal.report.verdict === 'flagged'
-                        ? `⚠️ Artwork check — ${artworkFlagCount(artworkReportModal.report)} thing${artworkFlagCount(artworkReportModal.report) === 1 ? '' : 's'} to check`
-                        : '⚠️ Artwork check couldn’t run'}
+                      : artworkReportModal.report.verdict === 'defect'
+                        ? `❌ Artwork check — ${artworkDefectCount(artworkReportModal.report)} item${artworkDefectCount(artworkReportModal.report) === 1 ? ' looks' : 's look'} wrong`
+                        : artworkReportModal.report.verdict === 'flagged'
+                          ? `⚠️ Artwork check — ${artworkFlagCount(artworkReportModal.report)} thing${artworkFlagCount(artworkReportModal.report) === 1 ? '' : 's'} to check`
+                          : '⚠️ Artwork check couldn’t run'}
                   </p>
                   <ArtworkCheckReportView
                     report={artworkReportModal.report}

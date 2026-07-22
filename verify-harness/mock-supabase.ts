@@ -101,20 +101,20 @@ function order(partial: FixtureOrder): FixtureOrder {
 // artwork-check invoke branch (OrderReviewPage's live card) and the
 // orders rows below (the OrdersPage chip + report modal).
 const ARTWORK_REPORT_FLAGGED = {
-  verdict: 'flagged',
+  verdict: 'defect',
   summary: '1 flag: the printed email drops a letter vs the request form; plus a later correction not picked up.',
   cards: [
     {
       label: 'Derrick Smith — front/back',
       findings: [
-        { field: 'name', supplied: 'Derrick Smith (request form)', printed: 'Derrick Smith', status: 'match', note: '' },
-        { field: 'email', supplied: 'derrick@plak8.com (request form)', printed: 'derick@plak8.com', status: 'flag', note: 'printed email drops an “r” vs what the customer supplied' },
-        { field: 'job_title', supplied: '', printed: 'Operations Director', status: 'not_supplied', note: '' },
+        { field: 'name', supplied: 'Derrick Smith (request form)', printed: 'Derrick Smith', status: 'match', severity: 'review', note: '' },
+        { field: 'email', supplied: 'derrick@plak8.com (request form)', printed: 'derick@plak8.com', status: 'flag', severity: 'defect', note: 'printed email drops an “r” vs what the customer supplied — the address won’t work' },
+        { field: 'job_title', supplied: '', printed: 'Operations Director', status: 'not_supplied', severity: 'review', note: '' },
       ],
     },
   ],
   corrections: [
-    { quote: 'Sorry — mobile should be 07700 900456, not 900123 (12 Jul)', resolved: false, note: 'card still shows 07700 900123' },
+    { quote: 'Sorry — mobile should be 07700 900456, not 900123 (12 Jul)', resolved: false, severity: 'defect', note: 'card still shows 07700 900123' },
   ],
   notes: ['metal cut-through back — logo mirrored as expected'],
   reference_gaps: ['details for Jo Bloggs supplied as attachment details.xlsx (not read)'],
@@ -128,8 +128,8 @@ const ARTWORK_REPORT_CLEAR = {
     {
       label: 'Richard Hendricks — front',
       findings: [
-        { field: 'name', supplied: 'Richard Hendricks (request form)', printed: 'Richard Hendricks', status: 'match', note: '' },
-        { field: 'email', supplied: 'richard@piedpiper.com (request form)', printed: 'richard@piedpiper.com', status: 'match', note: '' },
+        { field: 'name', supplied: 'Richard Hendricks (request form)', printed: 'Richard Hendricks', status: 'match', severity: 'review', note: '' },
+        { field: 'email', supplied: 'richard@piedpiper.com (request form)', printed: 'richard@piedpiper.com', status: 'match', severity: 'review', note: '' },
       ],
     },
   ],
@@ -243,7 +243,7 @@ const ORDERS: FixtureOrder[] = [
     dropbox_folder_url: 'https://www.dropbox.com/scl/fo/abc/order-1234',
     stock_order_number: '1234',
     project_name: 'Letterpress relaunch',
-    artwork_check_verdict: 'flagged',
+    artwork_check_verdict: 'defect',
     artwork_checked_at: daysAgo(0.2),
     artwork_check: ARTWORK_REPORT_FLAGGED,
     proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-4', contacts: contact('Initech', 'Bill Lumbergh') },

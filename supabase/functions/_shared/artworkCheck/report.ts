@@ -10,10 +10,25 @@ import type {
   ReportUsage,
 } from './types.ts'
 
-export function deriveVerdict(report: ModelReport): 'clear' | 'flagged' {
+export function deriveVerdict(report: ModelReport): 'clear' | 'flagged' | 'defect' {
+  const hasDefect =
+    report.cards.some((c) => c.findings.some((f) => f.status === 'flag' && f.severity === 'defect')) ||
+    report.corrections.some((c) => !c.resolved && c.severity === 'defect')
+  if (hasDefect) return 'defect'
   const hasFlag = report.cards.some((c) => c.findings.some((f) => f.status === 'flag'))
   const hasUnresolvedCorrection = report.corrections.some((c) => !c.resolved)
   return hasFlag || hasUnresolvedCorrection ? 'flagged' : 'clear'
+}
+
+// The red count for the ❌ headline — defect-grade flags + defect-grade
+// unresolved corrections. Pre-tier reports (no severity anywhere) count 0.
+export function countDefects(report: ModelReport): number {
+  return (
+    report.cards.reduce(
+      (sum, c) => sum + c.findings.filter((f) => f.status === 'flag' && f.severity === 'defect').length,
+      0,
+    ) + report.corrections.filter((c) => !c.resolved && c.severity === 'defect').length
+  )
 }
 
 // Count helpers for the UI headline ("N things to check").

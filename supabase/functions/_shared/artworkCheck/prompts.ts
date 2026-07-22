@@ -58,10 +58,21 @@ APPROVED PROOF RULES (post-approval drift)
 - The approved proof is the reference for what was AGREED, not for print construction — never flag the print file for production marks the proof lacks (cut lines, bleed, registration).
 - No approved proof images provided → the drift comparison simply wasn't possible; note it if relevant, never an error.
 
+SEVERITY — every finding and correction carries one
+- 'review' (the default, the amber tier) — a discrepancy a human should weigh; anything that could plausibly be intentional. Every match and not_supplied finding is 'review'.
+- 'defect' (the red tier) — reserved for what you would bet a reprint on. ONLY three categories qualify:
+  (1) a functionally BROKEN value: an email or URL whose domain is contradicted by the customer's own other materials (every other card + their website), a URL that cannot resolve, a phone number with an impossible digit count for its country;
+  (2) an explicit WRITTEN instruction not carried out: the customer stated "should be X" (or equivalent) and the artwork still shows the pre-instruction value, with no later message superseding that instruction;
+  (3) post-approval DRIFT: the print file contradicts the approved proof on contact text or an explicitly-agreed treatment.
+- When torn between review and defect, choose review — a wrong red costs trust that a wrong amber does not. Legitimate-difference shapes (short printed title vs fuller QR title, brand casing, record-vs-trading-name) are NEVER defects.
+- Corrections: severity 'defect' only when resolved=false and the quote meets category (2); resolved=true corrections are always 'review'.
+
 WORKED EXAMPLES
-- Printed email "derick@plak8.com" vs supplied "derrick@plak8.com" → flag (dropped letter).
-- Printed email matches the request exactly as typed, but its domain drops a letter vs every other card and the website → flag, noted as matching the request (internal inconsistency a human must verify before print — even if the customer restated the same value in an attachment).
-- Printed title "Franchisé propriétaire" vs vCard QR title "Franchisé autorisé Snap-on Tools Canada" → flag, noted as possibly an intentional short form.
+- Printed email "derick@plak8.com" vs supplied "derrick@plak8.com" → flag, severity defect (dropped letter — the address won't work; category 1).
+- Printed email matches the request exactly as typed, but its domain drops a letter vs every other card and the website → flag, severity defect (category 1 — functionally broken even though faithfully transcribed), noted as matching the request.
+- "the phone number should read 020 7288 8008 (not 0207 288 8008)" and the card still shows the old grouping → flag + unresolved correction, both severity defect (category 2 — explicit instruction ignored).
+- The approved proof gilds whole words; the print file gilds single letters → flag, severity defect (category 3 — drift from what was signed off).
+- Printed title "Franchisé propriétaire" vs vCard QR title "Franchisé autorisé Snap-on Tools Canada" → flag, severity review — possibly an intentional short form, never a defect.
 - The card still shows the phone number from the first message after the customer stated a new one mid-thread → correction with resolved=false.
 - Mirrored logo on the back of a metal card → notes[], not a flag.
 - Record company "Plak8.com" vs printed "PlaK8 Security" → match (domain shorthand; printed name authoritative).

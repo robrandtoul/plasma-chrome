@@ -5,7 +5,7 @@ import { DesignerChrome, PanelShell, ButtonCoral, ButtonGhost } from '../design'
 import { ImageCard, type GridImage } from '../components/ImageGrid'
 import Modal from '../components/Modal'
 import { checkEditedMessage } from '../lib/handoffMessageCheck'
-import ArtworkCheckReportView, { artworkFlagCount, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
+import ArtworkCheckReportView, { artworkDefectCount, artworkFlagCount, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
 
 // OrderReviewPage (/orders/:id/place) — the review-and-confirm screen for placing
 // a PAID order into production. Shows the artwork, spec, quantities, destination
@@ -441,6 +441,7 @@ export default function OrderReviewPage() {
   // ArtworkCheckReportView (also used by the Orders-page report modal).
   const artworkReport = artworkCheck.report
   const artworkFlagTotal = artworkReport ? artworkFlagCount(artworkReport) : 0
+  const artworkDefectTotal = artworkReport ? artworkDefectCount(artworkReport) : 0
   const showArtworkCard = artworkCheck.live && (artworkCheck.status === 'running' || artworkReport != null)
 
   // The editable hand-off message — identical control for both routes (only the
@@ -730,7 +731,9 @@ export default function OrderReviewPage() {
                     ? 'bg-canvas/60 ring-line'
                     : artworkReport.verdict === 'clear'
                       ? 'bg-[var(--c-in-stock-soft)]/50 ring-[var(--c-in-stock)]/40'
-                      : 'bg-low-soft ring-low'
+                      : artworkReport.verdict === 'defect'
+                        ? 'bg-out-soft ring-out'
+                        : 'bg-low-soft ring-low'
                 }`}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -739,9 +742,11 @@ export default function OrderReviewPage() {
                       ? 'Checking the artwork against the customer’s details…'
                       : artworkReport?.verdict === 'clear'
                         ? '✅ Artwork check — all clear'
-                        : artworkReport?.verdict === 'flagged'
-                          ? `⚠️ Artwork check — ${artworkFlagTotal} thing${artworkFlagTotal === 1 ? '' : 's'} to check`
-                          : '⚠️ Artwork check couldn’t run'}
+                        : artworkReport?.verdict === 'defect'
+                          ? `❌ Artwork check — ${artworkDefectTotal} item${artworkDefectTotal === 1 ? ' looks' : 's look'} wrong`
+                          : artworkReport?.verdict === 'flagged'
+                            ? `⚠️ Artwork check — ${artworkFlagTotal} thing${artworkFlagTotal === 1 ? '' : 's'} to check`
+                            : '⚠️ Artwork check couldn’t run'}
                   </p>
                   {artworkCheck.status !== 'running' && (
                     <button

@@ -27,6 +27,13 @@ export type FindingField =
 //                (recorded for the reviewer's table, never an error).
 export type FindingStatus = 'match' | 'flag' | 'not_supplied'
 
+// review — the amber tier: worth a human's glance, may be intentional.
+// defect — the red tier, graded against "would we bet a reprint on it":
+//          functionally broken value / explicit written instruction not
+//          carried out / print file contradicts the approved proof. Absent on
+//          pre-tier reports (treated as review).
+export type FindingSeverity = 'review' | 'defect'
+
 export interface Finding {
   field: FindingField
   // What the reference says, with its source in brackets — e.g.
@@ -35,6 +42,7 @@ export interface Finding {
   // What's actually on the card / in the QR.
   printed: string
   status: FindingStatus
+  severity?: FindingSeverity
   note: string
 }
 
@@ -49,6 +57,9 @@ export interface Correction {
   quote: string
   // True when the current artwork reflects the corrected value.
   resolved: boolean
+  // defect when unresolved AND the quote is an explicit instruction the
+  // artwork ignores (category 2 of the red bar). Absent pre-tier.
+  severity?: FindingSeverity
   note: string
 }
 
@@ -61,7 +72,7 @@ export interface ModelReport {
   reference_gaps: string[]
 }
 
-export type ArtworkCheckVerdict = 'clear' | 'flagged' | 'error'
+export type ArtworkCheckVerdict = 'clear' | 'flagged' | 'defect' | 'error'
 
 // What actually gets fetched and fed to the model — stored on the report so a
 // shadow-mode review can see what each run was grounded on.
