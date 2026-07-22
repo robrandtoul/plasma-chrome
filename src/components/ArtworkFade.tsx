@@ -1,4 +1,7 @@
+import { useMemo, useState } from 'react'
+import { Maximize2 } from 'lucide-react'
 import type { GridImage } from './ImageGrid'
+import { ProofDetailView } from './ProofDetailView'
 
 // Finish-aware artwork recap for the pay pages, shared by the single-order
 // checkout (OrderPayPage) and the combined-payment checkout
@@ -89,5 +92,76 @@ export function ArtworkFade({ layers, activeId }: { layers: GridImage[]; activeI
         />
       ))}
     </span>
+  )
+}
+
+function sideLabel(side: GridImage['side']): string | undefined {
+  if (side === 'front') return 'Front'
+  if (side === 'back') return 'Back'
+  return undefined
+}
+
+// Click-to-zoom recap grid for the pay pages. Renders the finish-aware
+// tiles (ArtworkFade) as buttons that open ProofDetailView — the same
+// pinch-zoom + front/back viewer the customer used to approve the proof —
+// so they can review the artwork one last time before paying (customer
+// feedback: the recap thumbnails were too small and couldn't be expanded).
+// Shared by OrderPayPage (pre- and post-checkout) and OrderGroupPayPage.
+export function RecapArtwork({
+  tiles,
+  label,
+  className,
+}: {
+  tiles: RecapTile[]
+  label?: string | null
+  className?: string
+}) {
+  const [zoomIndex, setZoomIndex] = useState<number | null>(null)
+  // One navigable image per tile (the active finish's front / back), so the
+  // viewer's chevrons step between sides. Labelled by side so the caption
+  // reads "FRONT" / "BACK" (the recap images carry no stored label).
+  const zoomImages = useMemo(
+    () => tiles.map((t) => ({ ...t.active, label: t.active.label ?? sideLabel(t.active.side) })),
+    [tiles],
+  )
+  if (tiles.length === 0) return null
+
+  return (
+    <>
+      <div className={['grid gap-3', tiles.length > 1 ? 'sm:grid-cols-2' : '', className ?? ''].filter(Boolean).join(' ')}>
+        {tiles.map((tile, i) => (
+          <button
+            key={tile.active.side ?? tile.active.id}
+            type="button"
+            onClick={() => setZoomIndex(i)}
+            aria-label={`View ${sideLabel(tile.active.side)?.toLowerCase() ?? 'this'} artwork at full size`}
+            className="group relative block w-full cursor-zoom-in rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--c-brand)]"
+          >
+            <ArtworkFade layers={tile.layers} activeId={tile.active.id} />
+            {/* Expand affordance — always visible (touch devices can't hover)
+                but quiet; brightens on hover / focus so it reads as tappable. */}
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute right-2 top-2 inline-flex items-center gap-1 rounded-full border border-line bg-surface/80 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-ink-soft opacity-90 backdrop-blur-sm transition-opacity group-hover:opacity-100"
+            >
+              <Maximize2 size={11} strokeWidth={2.5} aria-hidden="true" />
+              Expand
+            </span>
+          </button>
+        ))}
+      </div>
+      {zoomIndex != null && (
+        <ProofDetailView
+          images={zoomImages}
+          initialIndex={zoomIndex}
+          displayLabel={label ?? null}
+          close={() => setZoomIndex(null)}
+          // Pure viewer on the pay page — no request-changes entry point.
+          onRequestChanges={() => {}}
+          hideRequestChanges
+          panelOpen={false}
+        />
+      )}
+    </>
   )
 }

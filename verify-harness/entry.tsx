@@ -32,6 +32,9 @@ import AdminShippingPage from '../src/pages/admin/AdminShippingPage'
 import AdminSettingsPage from '../src/pages/admin/AdminSettingsPage'
 import AdminArtworkCheckPage from '../src/pages/admin/AdminArtworkCheckPage'
 import { SpreadQuoteResults } from '../src/components/quote/SpreadQuoteResults'
+import { RecapArtwork, buildRecapTiles } from '../src/components/ArtworkFade'
+import type { GridImage } from '../src/components/ImageGrid'
+import { useEffect } from 'react'
 import '../src/index.css'
 
 // ?path=/quote-spread mounts the Quote compiler's spread-quote results card
@@ -81,6 +84,50 @@ function QuoteSpreadRig() {
   )
 }
 
+// ?path=/recap-zoom mounts the pay-page approved-artwork recap on its own,
+// inside the order-summary panel, so the click-to-expand affordance and the
+// ProofDetailView zoom viewer it opens can be checked headlessly (the real
+// pay page needs a live order + Stripe, so it can't run in the harness).
+// Self-contained SVG data-URI "artwork" so no network is needed.
+function cardSvg(bg: string, fg: string, title: string, sub: string): string {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="384" viewBox="0 0 640 384">` +
+    `<rect width="640" height="384" fill="${bg}"/>` +
+    `<rect x="24" y="24" width="592" height="336" rx="14" fill="none" stroke="${fg}" stroke-opacity="0.25"/>` +
+    `<text x="56" y="176" font-family="Georgia, serif" font-size="44" fill="${fg}">${title}</text>` +
+    `<text x="56" y="228" font-family="Arial, sans-serif" font-size="22" fill="${fg}" fill-opacity="0.7">${sub}</text>` +
+    `</svg>`
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
+}
+function RecapZoomRig() {
+  useEffect(() => {
+    document.documentElement.classList.add('customer-accent')
+    return () => document.documentElement.classList.remove('customer-accent')
+  }, [])
+  const images: GridImage[] = [
+    { id: 'front', signed_url: cardSvg('#1f2733', '#f4efe7', 'Ada Lovelace', 'Head of Engineering'), side: 'front', material_option: null },
+    { id: 'back', signed_url: cardSvg('#f4efe7', '#1f2733', 'PLASMA', 'plasmadesign.co.uk'), side: 'back', material_option: null },
+  ]
+  const tiles = buildRecapTiles(images, null, [], false)
+  return (
+    <div className="min-h-screen bg-canvas">
+      <div className="mx-auto max-w-md px-4 py-10">
+        <div className="rounded-2xl border border-line bg-surface p-4 shadow-sm">
+          <div className="flex items-baseline justify-between gap-3">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Order summary</p>
+            <p className="text-[12px] text-ink-mute">Approved 22 Jul 2026</p>
+          </div>
+          <RecapArtwork tiles={tiles} label="Stainless Steel" className="mt-3" />
+          <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+            <dt className="text-ink-mute">Material</dt>
+            <dd className="text-ink">Stainless Steel</dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Elsewhere() {
   return <div style={{ padding: 40 }} data-nav-target>navigated away</div>
 }
@@ -95,6 +142,8 @@ const requestedPath = new URLSearchParams(window.location.search).get('path')
 // its layout and the fixture-backed proof search can be checked headlessly.
 const tree = requestedPath === '/quote-spread' ? (
   <QuoteSpreadRig />
+) : requestedPath === '/recap-zoom' ? (
+  <RecapZoomRig />
 ) : requestedPath === '/palette' ? (
   <MemoryRouter initialEntries={['/']}>
     <Routes>

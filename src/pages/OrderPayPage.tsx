@@ -7,7 +7,7 @@ import { Lock } from 'lucide-react'
 import { Pill, PanelShell } from '../design'
 import { CustomerHeader } from '../components/CustomerHeader'
 import { FinishChoiceCard } from '../components/FinishChoiceCard'
-import { ArtworkFade, buildRecapTiles } from '../components/ArtworkFade'
+import { RecapArtwork, buildRecapTiles } from '../components/ArtworkFade'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
 import { pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/interpolation'
 import { totalFromTiers, surchargeFromTiers, thicknessNoteFor, type SpecVariantChoice, type SpecFinishChoice } from '../lib/openSpecTiers'
@@ -962,11 +962,7 @@ export default function OrderPayPage() {
                 )}
               </div>
               {recapTiles.length > 0 && (
-                <div className={`mt-3 grid gap-3 ${recapTiles.length > 1 ? 'sm:grid-cols-2' : ''}`}>
-                  {recapTiles.map((tile) => (
-                    <ArtworkFade key={tile.active.side ?? tile.active.id} layers={tile.layers} activeId={tile.active.id} />
-                  ))}
-                </div>
+                <RecapArtwork tiles={recapTiles} label={spec?.material ?? null} className="mt-3" />
               )}
               {spec && (
                 <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
@@ -1505,11 +1501,7 @@ export default function OrderPayPage() {
                 )}
               </div>
               {recapTiles.length > 0 && (
-                <div className={`mt-3 grid gap-3 ${recapTiles.length > 1 ? 'sm:grid-cols-2' : ''}`}>
-                  {recapTiles.map((tile) => (
-                    <ArtworkFade key={tile.active.side ?? tile.active.id} layers={tile.layers} activeId={tile.active.id} />
-                  ))}
-                </div>
+                <RecapArtwork tiles={recapTiles} label={spec?.material ?? null} className="mt-3" />
               )}
               {spec && (
                 <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">

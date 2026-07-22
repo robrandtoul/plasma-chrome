@@ -6,7 +6,7 @@ import { getPublicSettings } from '../lib/publicSettings'
 import { PanelShell, Pill } from '../design'
 import { CustomerHeader } from '../components/CustomerHeader'
 import { FinishChoiceCard } from '../components/FinishChoiceCard'
-import { ArtworkFade, buildRecapTiles } from '../components/ArtworkFade'
+import { RecapArtwork, buildRecapTiles } from '../components/ArtworkFade'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
 import { exVat, isGbpOrderVatFree, normaliseShipDestination } from '../lib/ukVatArea'
 import { totalFromTiers, surchargeFromTiers, thicknessNoteFor, type SpecVariantChoice, type SpecFinishChoice } from '../lib/openSpecTiers'
@@ -1109,11 +1109,7 @@ export default function OrderGroupPayPage() {
         </div>
 
         {recapTiles.length > 0 && (
-          <div className={`grid gap-3 ${recapTiles.length > 1 ? 'sm:grid-cols-2' : ''}`}>
-            {recapTiles.map((tile) => (
-              <ArtworkFade key={tile.active.side ?? tile.active.id} layers={tile.layers} activeId={tile.active.id} />
-            ))}
-          </div>
+          <RecapArtwork tiles={recapTiles} label={heading} />
         )}
 
         {isSplit ? (
