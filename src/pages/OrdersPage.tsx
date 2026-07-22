@@ -114,6 +114,9 @@ interface OrderRow {
   // Recipient contact number from checkout (Stripe Address Element) — the
   // courier paperwork (FedEx especially) needs it.
   ship_to_phone: string | null
+  // Optional customer VAT / EORI number captured at EU checkout (migration
+  // 000341), for the customs paperwork.
+  customs_tax_id: string | null
   ship_to_address: {
     line1?: string | null
     line2?: string | null
@@ -149,7 +152,7 @@ const SELECT = `
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, revised_at,
   artwork_check_verdict, artwork_checked_at,
   date_required, dropbox_folder_url, stock_order_number, project_name, stock_colour, person_quantities,
-  ship_to_name, ship_to_email, ship_to_phone, ship_to_address, ship_dest_country, proof_id,
+  ship_to_name, ship_to_email, ship_to_phone, ship_to_address, customs_tax_id, ship_dest_country, proof_id,
   material_variants(display_name, materials(code, display_name, production_route, lead_time_max_days, outsourced_supplier_ids)),
   material_options(display_name),
   proofs(helpscout_last_reply_at, helpscout_last_customer_reply_at, helpscout_conversation_id, contacts(full_name, companies(name)))
@@ -2893,6 +2896,7 @@ function OrderCard({
                 ))}
                 {order.ship_to_email && <span className="block text-ink-mute">{order.ship_to_email}</span>}
                 {order.ship_to_phone && <span className="block text-ink-mute">{order.ship_to_phone}</span>}
+                {order.customs_tax_id && <span className="block text-ink-mute">VAT/EORI: {order.customs_tax_id}</span>}
               </div>
               {/* Mobile: a 48px disclosure with the postcode line as a peek so
                   the full address doesn't stretch the card. */}
@@ -2907,6 +2911,7 @@ function OrderCard({
                   ))}
                   {order.ship_to_email && <span className="block text-ink-mute">{order.ship_to_email}</span>}
                   {order.ship_to_phone && <span className="block text-ink-mute">{order.ship_to_phone}</span>}
+                  {order.customs_tax_id && <span className="block text-ink-mute">VAT/EORI: {order.customs_tax_id}</span>}
                 </div>
               </details>
             </>
