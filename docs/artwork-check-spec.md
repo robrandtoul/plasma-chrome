@@ -549,6 +549,25 @@ superseded in July — fixed same evening (v7) with the superseded-instruction r
 open correction) and re-verified clear, its summary now positively citing the approved
 silver-foil revision.
 
+**Per-flag investigation ("Investigate the history"): SHIPPED 2026-07-21** (PR #526;
+function v8, byte-verified; `pnpm test:artwork-check` 117 checks). Rob's design: the
+primary check says WHAT disagrees; a button on each flag answers WHEN it arose and
+WHOSE it is — designer-triggered only, never automatic, so the cost lands exactly where
+a human wants the circumstances. Walks the flagged card's artwork across every proof
+round (designers rarely write change notes, so the artwork is the source of truth),
+dates each round against the thread's dated instructions, and returns a merged
+timeline + plain-English conclusion + fault lean (`ours_transcription` /
+`ours_missed_revision` / `customer_origin` / `undetermined`). Cached in
+`artwork_check.investigations` keyed card::field (paid for once; a force re-run of the
+main check deliberately discards them). Both surfaces render it via the shared report
+view. **Shadow validation, 2/2 as predicted:** Everest 403898 email →
+**customer_origin** (timeline caught the as-typed supply on 14 Jul, both internal
+queries, and every round v6–v8 reproducing it faithfully); Plak8 403899 tel →
+**ours_missed_revision** (v1–v2 matched the instruction current at the time; the
+explicit 15 Jul re-grouping landed after v2; v3–v5 all post-date it and still show the
+old grouping). The dates-decide-everything rule held: pre-revision rounds innocent,
+post-revision rounds not.
+
 **Deferred to Phase 3:** a print-file staleness guard for content changes inside an
 unchanged folder link (re-link and Re-run cover it meanwhile), admin-editable rules
 (step 2 of the admin graduation), and any soft-block on flagged verdicts.
