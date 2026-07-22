@@ -177,6 +177,17 @@ designer through the validate-only response on the review page:
 Every branch validates at preview. An unmapped material is a named preview error pointing at the
 mapping tab — it cannot reach production malformed.
 
+**The customer name on the Stock Control job is route-aware** (migration 000335, from a shadow
+finding on 2026-07-22). It must mirror the name the legacy parser reads from the Help Scout
+**subject** today, and the two routes build that subject differently: the in-house note subject is
+`Order N - {project_name ?? customer}` (the Dropbox folder name — which for a trade reseller is the
+**end client**, e.g. "The Cue Club", not the reseller "Premier Eco Cards"), while the supplier
+subject is `Order N - {customer}` (the company). So `create_order_handoff` writes the folder/project
+name on the in-house route and the company name on the supplier route, keeping the workshop's job
+label byte-identical to today. The payload carries both `customer_name` (company) and `project_name`
+(folder) as distinct facts; the RPC picks per route and echoes its choice back in
+`resolution.customer` so the shadow parity check reads the decision rather than re-deriving the rule.
+
 ### 3.4 Confirm sequence and failure surfacing
 
 Confirm becomes **RPC-first**:
