@@ -34,6 +34,7 @@ import AdminArtworkCheckPage from '../src/pages/admin/AdminArtworkCheckPage'
 import { SpreadQuoteResults } from '../src/components/quote/SpreadQuoteResults'
 import { RecapArtwork, buildRecapTiles } from '../src/components/ArtworkFade'
 import ArtworkCheckReportView, { type ArtworkCheckReport } from '../src/components/ArtworkCheckReportView'
+import Modal from '../src/components/Modal'
 import { ButtonGhost } from '../src/design'
 import type { GridImage } from '../src/components/ImageGrid'
 import { useEffect } from 'react'
@@ -136,6 +137,12 @@ function RecapZoomRig() {
 // glanceability formatting can be eyeballed without a live edge-function run.
 // Left column = the review-page treatment (Re-run action); right = the
 // Orders-page archive modal treatment (no action).
+//
+// ?path=/artwork-report-modal mounts the REAL Modal with a deliberately long
+// report (the header/body/footer structure copied verbatim from OrdersPage) so
+// the "long report breaches the top/bottom of the screen with no scroll" fix
+// can be verified — the panel must cap at 85vh with the report scrolling
+// between a pinned label and a pinned Close.
 const ARTWORK_REPORT_FIXTURE: ArtworkCheckReport = {
   verdict: 'defect',
   summary:
@@ -200,6 +207,61 @@ function ArtworkReportRig() {
   )
 }
 
+// A report long enough to overflow a desktop viewport — the Boat Shack-style
+// case Rob hit, where the modal spilled off the top and bottom with no scroll.
+const ARTWORK_REPORT_LONG: ArtworkCheckReport = {
+  verdict: 'flagged',
+  summary:
+    '2 to review: unverifiable QR payload, and email domain (boat-shack.com) differs from the website (boatshackutah.com); also flag the cut-through header vs the customer’s ‘keep full card intact’ request.',
+  cards: [
+    {
+      label: 'Chris Azevedo — front/back',
+      findings: [
+        { field: 'email', supplied: '', printed: 'chris@boat-shack.com', status: 'flag', severity: 'review', note: 'no email supplied in thread; domain boat-shack.com differs from the printed website boatshackutah.com and from the account email chrisazevedo8@gmail.com — worth confirming, but was approved in the proof' },
+        { field: 'qr', supplied: '', printed: 'QR code present on back', status: 'flag', severity: 'review', note: 'no stored payload to verify — scan-test before print' },
+        { field: 'name', supplied: 'Chris Azevedo', printed: 'Chris Azevedo', status: 'match', note: '' },
+        { field: 'phone', supplied: '801 555 0142', printed: '801 555 0142', status: 'match', note: '' },
+        { field: 'second_number', supplied: '', printed: '801 555 0199', status: 'not_supplied', note: '' },
+        { field: 'website', supplied: '', printed: 'boatshackutah.com', status: 'not_supplied', note: '' },
+        { field: 'address', supplied: '', printed: '128 Marina Way, Salt Lake City', status: 'not_supplied', note: '' },
+        { field: 'job_title', supplied: 'Owner', printed: 'Owner', status: 'match', note: '' },
+      ],
+    },
+  ],
+  corrections: [],
+  notes: [
+    'Back is not mirrored — correct here, because the customer requested full card intact (no cutout), so the usual cut-through mirroring does not apply.',
+    'Print files match the approved proof (front logo/website; back name, email, both numbers, QR, address) — no post-approval drift detected.',
+  ],
+  reference_gaps: [
+    'Order header states ‘cut-through construction: YES’, which conflicts with the customer’s explicit request to ‘keep full card intact instead of doing the cutout section’ — confirm the actual construction with production (cannot be fully verified from print files).',
+    'No email/website/address/second-number values were re-supplied in this reorder thread; printed values carried over from prior artwork and recorded as not_supplied.',
+    'QR payload not stored on this proof version — contents could not be checked.',
+  ],
+  checked_at: '2026-07-22T09:49:00.000Z',
+}
+// The header/body/footer structure here is copied verbatim from OrdersPage's
+// artworkReportModal block — keep them identical so this rig faithfully tests
+// the real layout.
+function ArtworkReportModalRig() {
+  return (
+    <div className="min-h-screen bg-canvas">
+      <div className="mx-auto max-w-5xl px-4 py-10 text-ink-mute">Orders page (behind the modal)</div>
+      <Modal open onClose={() => {}} ariaLabel="Artwork check report" panelClassName="w-full max-w-xl rounded-2xl bg-white shadow-xl md:flex md:max-h-[85vh] md:flex-col">
+        <div className="shrink-0 px-5 pt-5 pb-3">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Order 403910 · The Boat Shack</p>
+        </div>
+        <div className="px-5 text-[13px] text-ink md:min-h-0 md:flex-1 md:overflow-y-auto">
+          <ArtworkCheckReportView report={ARTWORK_REPORT_LONG} />
+        </div>
+        <div className="mt-1 flex shrink-0 justify-end border-t border-line-soft px-5 py-3">
+          <ButtonGhost size="sm">Close</ButtonGhost>
+        </div>
+      </Modal>
+    </div>
+  )
+}
+
 function Elsewhere() {
   return <div style={{ padding: 40 }} data-nav-target>navigated away</div>
 }
@@ -218,6 +280,8 @@ const tree = requestedPath === '/quote-spread' ? (
   <RecapZoomRig />
 ) : requestedPath === '/artwork-report' ? (
   <ArtworkReportRig />
+) : requestedPath === '/artwork-report-modal' ? (
+  <ArtworkReportModalRig />
 ) : requestedPath === '/palette' ? (
   <MemoryRouter initialEntries={['/']}>
     <Routes>

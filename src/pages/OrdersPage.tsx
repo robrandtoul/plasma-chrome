@@ -2251,26 +2251,36 @@ export default function OrdersPage() {
             stored supplied-vs-printed report for whichever card's chip was
             clicked; re-runs live on the Place-order review page. */}
         {artworkReportModal && (
-          <Modal open onClose={() => setArtworkReportModal(null)} ariaLabel="Artwork check report">
-            <div className="w-full max-w-xl p-5 text-[13px] text-ink">
+          // A long report must not spill off the top/bottom of the screen. On
+          // desktop the panel is a capped flex column — pinned label + Close,
+          // scrolling report between — so the whole thing stays on-screen and
+          // Close is always reachable. Mobile keeps the sheet (92dvh + scroll)
+          // from .modal-mobile-sheet, so the md:-only classes leave it alone.
+          <Modal
+            open
+            onClose={() => setArtworkReportModal(null)}
+            ariaLabel="Artwork check report"
+            panelClassName="w-full max-w-xl rounded-2xl bg-white shadow-xl md:flex md:max-h-[85vh] md:flex-col"
+          >
+            <div className="shrink-0 px-5 pt-5 pb-3">
               <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">{artworkReportModal.label}</p>
+            </div>
+            <div className="px-5 text-[13px] text-ink md:min-h-0 md:flex-1 md:overflow-y-auto">
               {artworkReportModal.loading ? (
-                <p className="mt-2 text-sm text-ink-mute">Loading the report…</p>
+                <p className="text-sm text-ink-mute">Loading the report…</p>
               ) : artworkReportModal.report ? (
-                <div className="mt-2">
-                  <ArtworkCheckReportView
-                    report={artworkReportModal.report}
-                    onInvestigate={(flag) => void investigateFlag(artworkReportModal.orderId, flag)}
-                    investigatingKey={investigatingKey}
-                    investigationError={investigationError}
-                  />
-                </div>
+                <ArtworkCheckReportView
+                  report={artworkReportModal.report}
+                  onInvestigate={(flag) => void investigateFlag(artworkReportModal.orderId, flag)}
+                  investigatingKey={investigatingKey}
+                  investigationError={investigationError}
+                />
               ) : (
-                <p className="mt-2 text-sm text-ink-mute">No stored report for this order yet — open its Place order screen to run one.</p>
+                <p className="text-sm text-ink-mute">No stored report for this order yet — open its Place order screen to run one.</p>
               )}
-              <div className="mt-4 flex justify-end">
-                <ButtonGhost size="sm" onClick={() => setArtworkReportModal(null)}>Close</ButtonGhost>
-              </div>
+            </div>
+            <div className="mt-1 flex shrink-0 justify-end border-t border-line-soft px-5 py-3">
+              <ButtonGhost size="sm" onClick={() => setArtworkReportModal(null)}>Close</ButtonGhost>
             </div>
           </Modal>
         )}
