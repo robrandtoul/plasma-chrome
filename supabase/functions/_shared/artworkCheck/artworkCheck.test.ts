@@ -27,9 +27,11 @@ import {
   type AttachmentMeta,
 } from './attachments.ts'
 import {
+  APPROVED_IMAGE_MAX_BYTES,
   APPROVED_IMAGES_MAX_COUNT,
   approvedImageBudget,
   pickApprovedImages,
+  PROOF_IMAGES_TOTAL_MAX_BYTES,
   type ApprovedImageRow,
 } from './approvedProof.ts'
 import {
@@ -43,7 +45,16 @@ import {
 } from './investigate.ts'
 import { classifyQrPayload } from './qrDecode.ts'
 import { buildErrorReport, buildReport, countCheckedFields, countDefects, countFlags, deriveVerdict } from './report.ts'
-import { buildContextText, buildInputs, type CheckContext } from './prompts.ts'
+import {
+  buildContextText,
+  buildInputs,
+  buildProofContextText,
+  buildProofInputs,
+  PROOF_SYSTEM_PROMPT,
+  SYSTEM_PROMPT,
+  type CheckContext,
+  type ProofCheckContext,
+} from './prompts.ts'
 import type { ModelReport } from './types.ts'
 
 let failures = 0
@@ -555,6 +566,91 @@ eq('shared card matches nobody', matchCardToRecipient('Shared front card', ['Chr
   )
   check('investigation gap note rendered', gapText.includes('no linked conversation') && gapText.includes('undetermined'))
 }
+
+// ── Pre-send proof check (000343) ────────────────────────────────────────────
+// The proof-mode prompt + context builder. The ORDER prompt's stability is
+// asserted alongside: the two are separate literals by design, and an edit
+// meant for one must not silently reshape the other.
+
+{
+  check('proof prompt: pre-send framing', PROOF_SYSTEM_PROMPT.includes('BEFORE the customer sees this proof'))
+  check('proof prompt: walks change requests', PROOF_SYSTEM_PROMPT.includes('un-actioned revisions'))
+  check('proof prompt: partial actioning flagged', PROOF_SYSTEM_PROMPT.includes('only partly carried out'))
+  check('proof prompt: latest-wins retained', PROOF_SYSTEM_PROMPT.includes('LAST-supplied value'))
+  check('proof prompt: no approved-proof section', !PROOF_SYSTEM_PROMPT.includes('APPROVED PROOF RULES'))
+  check('proof prompt: no drift category', !PROOF_SYSTEM_PROMPT.includes('post-approval DRIFT'))
+  check('proof prompt: two defect categories only', PROOF_SYSTEM_PROMPT.includes('ONLY two categories qualify'))
+  check('proof prompt: choose-review-when-torn retained', PROOF_SYSTEM_PROMPT.includes('choose review'))
+  check('proof prompt: redesign-not-a-flag rule', PROOF_SYSTEM_PROMPT.includes('deliberate redesign is not a flag'))
+  check('proof prompt: proof image is the truth', PROOF_SYSTEM_PROMPT.includes('The proof image is the truth'))
+
+  // Guard the live ORDER prompt against cross-contamination.
+  check('order prompt: approved-proof section intact', SYSTEM_PROMPT.includes('APPROVED PROOF RULES'))
+  check('order prompt: three defect categories intact', SYSTEM_PROMPT.includes('ONLY three categories qualify'))
+  check('order prompt: drift category intact', SYSTEM_PROMPT.includes('post-approval DRIFT'))
+  check('order prompt: print-file framing intact', SYSTEM_PROMPT.includes('The print file is the truth'))
+}
+
+const proofCtx: ProofCheckContext = {
+  proofLabel: 'The Boat Shack',
+  versionNumber: 3,
+  materialDisplay: 'Matte Black Metal',
+  materialCode: 'metal_matte_black',
+  cutThrough: true,
+  recipients: ['Chris Azevedo'],
+  accountContact: { name: 'Chris Azevedo', email: 'chrisazevedo8@gmail.com', company: 'The Boat Shack' },
+  qrs: [{ kind: 'url', decoded: 'https://qcrd.uk/abc', associatedName: null, side: 'back' }],
+  artworkDecodedQrs: [],
+  threadText: '— 2026-07-10 · Customer:\nPlease keep the full card intact.',
+  threadGapNote: null,
+  proofImagesRead: ['Chris Azevedo — front', 'Chris Azevedo — back'],
+  proofImagesSkipped: [{ name: 'odd.tiff', reason: 'not a readable image type' }],
+  attachmentsRead: [{ name: 'details.xlsx', at: '2026-07-09' }],
+  attachmentsSkipped: [{ name: 'source.zip', reason: 'not a readable type' }],
+}
+
+{
+  const text = buildProofContextText(proofCtx)
+  check('proof ctx: labelled as unsent', text.includes('PROOF: The Boat Shack — version 3 (NOT yet sent to the customer)'))
+  check('proof ctx: cut-through called out', text.includes('cut-through construction: YES'))
+  check('proof ctx: recipients listed', text.includes('- Chris Azevedo'))
+  check('proof ctx: account marked weak', text.includes('WEAK reference'))
+  check('proof ctx: qr payload present', text.includes('https://qcrd.uk/abc'))
+  check('proof ctx: thread section present', text.includes('CUSTOMER THREAD (Help Scout, oldest → newest'))
+  check('proof ctx: images listed as the artwork', text.includes('PROOF IMAGES (2') && text.includes('1. Chris Azevedo — front'))
+  check('proof ctx: image skips listed', text.includes('odd.tiff — not a readable image type'))
+  check('proof ctx: attachments listed', text.includes('details.xlsx (2026-07-09)'))
+  check('proof ctx: no print-file section', !text.includes('PRINT FILES'))
+  check('proof ctx: no approved-proof section', !text.includes('APPROVED PROOF IMAGES'))
+  // Images read but nothing decoded → the unverified-QR signal.
+  check('proof ctx: none-decoded signal', text.includes('scanned for QR codes and none decoded'))
+}
+
+{
+  const decoded = buildProofContextText({ ...proofCtx, artworkDecodedQrs: ['https://qcrd.uk/abc'] })
+  check('proof ctx: decoded QRs listed A-numbered', decoded.includes('decoded straight from the proof images (1') && decoded.includes('A1. https://qcrd.uk/abc'))
+  check('proof ctx: decode replaces none-decoded line', !decoded.includes('none decoded'))
+  const gap = buildProofContextText({ ...proofCtx, threadText: '', threadGapNote: 'this proof has no linked Help Scout conversation', recipients: [], qrs: [], proofImagesRead: [], proofImagesSkipped: [], attachmentsRead: [] })
+  check('proof ctx: gap note rendered', gap.includes('this proof has no linked Help Scout conversation') && gap.includes('not as evidence of error'))
+  check('proof ctx: no recipients line', gap.includes('No named recipients'))
+}
+
+{
+  const inputs = buildProofInputs(proofCtx, 4, true)
+  eq('proof inputs: kind stamped', inputs.check_kind, 'proof')
+  eq('proof inputs: no print files', inputs.print_files.length, 0)
+  eq('proof inputs: images recorded', (inputs.proof_images_read ?? []).join(','), 'Chris Azevedo — front,Chris Azevedo — back')
+  eq('proof inputs: image skips recorded', inputs.proof_images_skipped?.[0]?.name, 'odd.tiff')
+  eq('proof inputs: thread stats', inputs.thread_messages, 4)
+  eq('proof inputs: qr count', inputs.qr_count, 1)
+  // The report machinery is shared — a proof-mode report derives its verdict
+  // exactly like an order-mode one.
+  const flagged: ModelReport = { summary: 's', cards: [{ label: 'Chris Azevedo — front/back', findings: [{ field: 'email', supplied: 'a@b.com', printed: 'a@bb.com', status: 'flag', severity: 'review', note: '' }] }], corrections: [], notes: [], reference_gaps: [] }
+  eq('proof report verdict via shared derivation', buildReport('m', flagged, inputs, null).verdict, 'flagged')
+}
+
+check('proof image pool exceeds a single image cap', PROOF_IMAGES_TOTAL_MAX_BYTES > APPROVED_IMAGE_MAX_BYTES)
+check('proof image pool leaves attachment headroom', PROOF_IMAGES_TOTAL_MAX_BYTES < 24 * 1024 * 1024)
 
 // ── summary ──────────────────────────────────────────────────────────────────
 

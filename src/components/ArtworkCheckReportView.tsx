@@ -96,18 +96,20 @@ export function artworkCheckedAtLabel(report: ArtworkCheckReport): string {
 }
 
 // The verdict icon + headline text, shared so the review card and the archive
-// modal read identically.
-export function artworkVerdict(report: ArtworkCheckReport): { icon: string; text: string } {
-  if (report.verdict === 'clear') return { icon: '✅', text: 'Artwork check — all clear' }
+// modal read identically. `heading` names the check for the surface: the
+// order-time surfaces say "Artwork check", the pre-send proof surface says
+// "Proof check".
+export function artworkVerdict(report: ArtworkCheckReport, heading = 'Artwork check'): { icon: string; text: string } {
+  if (report.verdict === 'clear') return { icon: '✅', text: `${heading} — all clear` }
   if (report.verdict === 'defect') {
     const n = artworkDefectCount(report)
-    return { icon: '❌', text: `Artwork check — ${n} item${n === 1 ? ' looks' : 's look'} wrong` }
+    return { icon: '❌', text: `${heading} — ${n} item${n === 1 ? ' looks' : 's look'} wrong` }
   }
   if (report.verdict === 'flagged') {
     const n = artworkFlagCount(report)
-    return { icon: '⚠️', text: `Artwork check — ${n} thing${n === 1 ? '' : 's'} to check` }
+    return { icon: '⚠️', text: `${heading} — ${n} thing${n === 1 ? '' : 's'} to check` }
   }
-  return { icon: '⚠️', text: 'Artwork check couldn’t run' }
+  return { icon: '⚠️', text: `${heading} couldn’t run` }
 }
 
 // Small eyebrow label above the "Good to know" / "Couldn't check" groups.
@@ -117,12 +119,16 @@ function GroupLabel({ children }: { children: ReactNode }) {
 
 export default function ArtworkCheckReportView({
   report,
+  heading,
   action,
   onInvestigate,
   investigatingKey,
   investigationError,
 }: {
   report: ArtworkCheckReport
+  // Names the check in the headline — defaults to "Artwork check" (the
+  // order-time surfaces); the pre-send proof surface passes "Proof check".
+  heading?: string
   // Optional control shown at the top-right of the headline (the review page's
   // Re-run); the read-only archive modal passes none.
   action?: ReactNode
@@ -140,7 +146,7 @@ export default function ArtworkCheckReportView({
     .sort((a, b) => (a.severity === 'defect' ? 0 : 1) - (b.severity === 'defect' ? 0 : 1))
   const correctionsOpen = report.corrections.filter((c) => !c.resolved)
   const fieldsChecked = report.cards.reduce((s, c) => s + c.findings.length, 0)
-  const { icon, text } = artworkVerdict(report)
+  const { icon, text } = artworkVerdict(report, heading)
 
   return (
     <div className="text-[14px] leading-relaxed text-ink">

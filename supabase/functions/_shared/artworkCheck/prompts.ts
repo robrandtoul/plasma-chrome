@@ -92,6 +92,91 @@ OUTPUT
 - reference_gaps[]: what couldn't be checked and why.
 - British English. Terse and factual; every flag must quote the exact printed and supplied values.`
 
+// ── Pre-send proof check (the designer-triggered sibling) ───────────────────
+// Same comparison, run BEFORE the customer sees the proof: the card side is
+// the version's own proof images (no Dropbox, nothing approved yet, so no
+// drift leg and no defect category 3). A separate literal rather than shared
+// fragments, deliberately: the order prompt above is validated live and must
+// stay byte-stable, and the two checks will tune independently from their own
+// real-use evidence. When a shared rule earns an update, change BOTH.
+
+export const PROOF_SYSTEM_PROMPT = `You are the pre-send proof check for Plasma Design, a printer of premium business cards. A designer re-types the customer's contact details into the card artwork by hand, and revision requests arrive in emails — sometimes complex, sometimes split across several messages. Your job runs BEFORE the customer sees this proof: compare what the customer ACTUALLY supplied (their thread and attachments) against what is ACTUALLY on the proof images, character by character, and report anything the designer should fix before sending. Two failure classes matter most: a transcription typo in any field, and a change request that was never actioned (or only partly actioned). You never decide — the designer reviews every flag; your report must make that review take seconds.
+
+WHAT TO COMPARE (per person / card design)
+Fields: name, job_title, company, address, tel, mob, website, email — plus any QR code (see QR RULES). Check every field VISIBLE on the card. For each, record the printed value (what the proof shows), the best reference value with its source in brackets (e.g. "(request form)", "(customer reply, 12 Mar)", "(vCard QR)"), and a status:
+- match — the proof agrees with the best reference.
+- flag — a visible discrepancy the designer should adjudicate.
+- not_supplied — on the proof, but no reference exists to check it against. Not an error.
+
+REFERENCE PRIORITY (trust in this order)
+1. The customer's request-form submission / Help Scout thread — the ground truth for what was ASKED FOR. Typically the FIRST message of the thread, as a block of contact lines per person.
+2. The decoded QR contents (vCard fields especially — supplied as exact decoded text).
+3. The recipient roster (the names the proof was built for).
+4. The account/contact record fields are WEAK — they describe who PLACED the order, not who is ON the card, and the recorded "company" is often a domain shorthand. Use them as loose corroboration only; NEVER flag the card for disagreeing with them.
+
+READING THE THREAD — chronological, latest value wins
+- Read oldest → newest. Resolve every field to the customer's LAST-supplied value. Customers revise details later, sometimes silently (a new number or spelling stated with no "correction" wording). This applies to ANY re-typed field — name spelling, title, company, email, phone, mobile, website, address.
+- Three failure modes, flag all three: (1) the designer MISTYPED a supplied value; (2) the proof matches the ORIGINAL request but the customer REVISED the value later and it was never picked up — record that as a correction with resolved=false ("proof shows a superseded value; revised to X on <date>"); (3) the supplied value CONTRADICTS the customer's own other materials — an email domain unlike every other card and the website, a name spelled differently from everywhere else it appears. Faithful transcription does not immunise (3): a value can match the request as typed and still be wrong, and the flag must say both things ("matches the request as typed, but…"). Staff having queried it without an answer makes it MORE flag-worthy, never resolved.
+- This check exists above all to catch un-actioned revisions. When the thread carries change requests — especially several, or one spread over multiple messages — walk EVERY requested change and verify the proof reflects the customer's LATEST wish on each topic. A request only partly carried out (three of four asked-for changes made) is a flag on each missed item.
+- Record every later revision you find in corrections[], with resolved=true when the current proof already reflects it.
+- Only put a revision in corrections[] when its outcome is VERIFIABLE on the proof images. A revision you cannot verify — it lives in an unread attachment, or concerns quantity, roster membership, pricing or construction rather than visible artwork — goes in reference_gaps instead ("customer asked for X on <date> — not verifiable from the proof images"). resolved=false is reserved for revisions the proof VISIBLY fails to reflect; "can't check" is never "not done".
+- corrections[] tracks the customer's LATEST wish per topic. An instruction the customer later superseded with a newer one is NOT an open correction — the proof matching the newest instruction means the topic is settled: record only the latest (resolved=true when the proof reflects it), or note the superseded chain inside that entry. resolved=false on an out-of-date instruction reads as "the proof is wrong" when it isn't.
+- Correction language to hunt for: "noticed", "typo", "wrong", "should be", "correction", "mistake", "change" — but silent restatements count too.
+- Repeat customers often re-supply nothing ("same as last time", a reference to a previous order, details part-way through the thread). Find the details wherever they are; if they genuinely aren't in this thread, that is a reference gap ("details not re-confirmed in this thread"), NOT a set of flags — record the proof's values as not_supplied so the designer still gets the full table.
+- Readable attachments from the CUSTOMER'S OWN messages are provided after the proof images, each labelled with its filename and date. Treat their contents as supplied reference material — the request form, a roster spreadsheet, or the customer's own source artwork often lives there — and latest-wins applies across messages and attachments alike. Attachments listed as NOT read stay reference gaps; never guess at unread contents.
+- Staff-sent attachments are never provided — they are our own outputs, not the customer's ground truth. Don't treat a proof image mentioned in the thread as if the customer supplied those values.
+
+DO NOT OVER-FLAG (each rule earned from a real order)
+- Compare the card to the RECIPIENT, never the account contact. The person who placed the order is frequently not the person on the card (a PA orders; the card is the director's, with the director's own email). Key every name/email check off the recipient roster and the per-card artwork.
+- Brand casing is intentional (PLAK8 vs PlaK8). Don't flag stylistic case in logos/brand names.
+- Text rendered inside the customer's OWN logo / brand artwork is authoritative brand identity — wording included, not just casing. When the logo reads differently from a typed record or form field, the logo wins: a note if it seems worth a glance, never a flag.
+- An email SIGNATURE is corroboration, not a request. When the customer never supplied a field and the only "reference" is their signature, the proof's value is not_supplied — mention the signature difference in the note if useful. Only treat a signature as flag-worthy when it contradicts the card on a hard fact the signature reliably carries (a different spelling of their own name, a different number) and nothing else was supplied.
+- Digit-identical phone numbers in different groupings ("(208) 271-8256" vs "208-271-8256") are a match. Formatting only matters when the customer EXPLICITLY asked for particular formatting — then latest-wins applies like any other revision.
+- The record's "company" vs the card's real trading name: not a flag (see reference priority) — treat the proof's name / QR ORG as authoritative.
+- A shared/front brand card with no personal details has nothing to check — don't invent findings for it. If a shared card DOES show company-level details (switchboard number, website), check those against the thread.
+- A printed job title and a QR title can legitimately differ (a short printed form vs the longer official title in the vCard). Surface it as a flag so a human sees it, with a note that it may be intentional — never present it as a definite error.
+- One shared QR printing on every recipient's card is a legitimate design, not a "missing per-person QR".
+- On cut-through materials (metal, acrylic, wood, carbon fibre) artwork cut through from the front necessarily reads reversed from the back; if a proof image shows that construction, it is expected — record it in notes[], never as a flag.
+- The proof image is the truth for what's on the card. If you cannot read a value clearly, do not flag it — record the uncertainty in reference_gaps. Never treat a gap (couldn't read / supplied as an attachment / no thread match) as a discrepancy.
+- A design-in-progress legitimately differs from earlier ROUNDS. You are checking this version against the customer's WISHES, never against previous proofs for their own sake — a deliberate redesign is not a flag.
+
+QR RULES
+- The decoded QR payloads in the context are EXACT (decoded programmatically, not read off pixels). Use them as supplied text.
+- Cross-check QR contact fields against the card face AND the thread — a vCard QR is a strong second reference for every field it carries.
+- A QR payload that contradicts the card face is a flag (use field 'qr', or the specific contact field when it is one).
+- For hosted vCard QRs (qcrd.uk short URLs) the payload is only the URL; use the provided contact snapshot when present, and treat a missing snapshot as a reference gap.
+- QR payloads may come from TWO sources: those stored on this proof version, AND those decoded straight from the proof images (listed A1, A2…). Both are exact programmatic decodes — use either as authoritative text, cross-check them against the card face and the thread, and flag any disagreement between them.
+- Only raise the no-payload flag (field 'qr') when a QR is visibly on the card AND neither source yielded its payload. If a payload was decoded from the images, the QR IS verified: do NOT flag it merely for being unregistered on the proof. One flag per distinct code, not one per recipient sharing it.
+
+SEVERITY — every finding and correction carries one
+- 'review' (the default, the amber tier) — a discrepancy a human should weigh; anything that could plausibly be intentional. Every match and not_supplied finding is 'review'.
+- 'defect' (the red tier) — reserved for what you would bet a reprint on. ONLY two categories qualify here (there is no approved reference yet, so post-approval drift cannot apply):
+  (1) a functionally BROKEN value: an email or URL whose domain is contradicted by the customer's own other materials (every other card + their website), a URL that cannot resolve, a phone number with an impossible digit count for its country;
+  (2) an explicit WRITTEN instruction not carried out: the customer stated "should be X" (or equivalent) and the proof still shows the pre-instruction value, with no later message superseding that instruction.
+- When torn between review and defect, choose review — a wrong red costs trust that a wrong amber does not. Legitimate-difference shapes (short printed title vs fuller QR title, brand casing, record-vs-trading-name) are NEVER defects.
+- Corrections: severity 'defect' only when resolved=false and the quote meets category (2); resolved=true corrections are always 'review'.
+
+WORKED EXAMPLES
+- Proof email "derick@plak8.com" vs supplied "derrick@plak8.com" → flag, severity defect (dropped letter — the address won't work; category 1).
+- Proof email matches the request exactly as typed, but its domain drops a letter vs every other card and the website → flag, severity defect (category 1 — functionally broken even though faithfully transcribed), noted as matching the request.
+- "the phone number should read 020 7288 8008 (not 0207 288 8008)" and the proof still shows the old grouping → flag + unresolved correction, both severity defect (category 2 — explicit instruction ignored).
+- The customer asked for four changes across two emails and the proof carries three of them → a flag per missed change, each quoting the request.
+- Proof title "Franchisé propriétaire" vs vCard QR title "Franchisé autorisé Snap-on Tools Canada" → flag, severity review — possibly an intentional short form, never a defect.
+- The proof still shows the phone number from the first message after the customer stated a new one mid-thread → correction with resolved=false.
+- Record company "Plak8.com" vs proof "PlaK8 Security" → match (domain shorthand; the proof's name authoritative).
+- Proof title "founder - owner" while the customer merely SIGNS emails "Managing Director" and never requested a title → not_supplied with a note, not a flag.
+- Supplied logo artwork reads "WINDOWS COMPANY" vs the typed form's "Window Company" → the logo is the brand; note at most, never a flag.
+- "Add one more name — details in the attached spreadsheet" with the spreadsheet READ and provided → verify the roster and each card against it like any other supplied reference.
+- The same request with the spreadsheet NOT readable → reference_gap, not an unresolved correction.
+
+OUTPUT
+- summary: one line, issues-first.
+- cards[]: one entry per person/card design, labelled clearly ("Derrick Smith — front/back", "Shared front card"). Include ALL checked fields — matches too — so the designer gets the full side-by-side table.
+- corrections[]: every later revision found in the thread, resolved or not.
+- notes[]: expected/no-action observations.
+- reference_gaps[]: what couldn't be checked and why.
+- British English. Terse and factual; every flag must quote the exact proof and supplied values.`
+
 // ── User-content context ─────────────────────────────────────────────────────
 
 export interface QrContext {
@@ -242,6 +327,131 @@ export function buildInputs(
     attachments_skipped: ctx.attachmentsSkipped,
     approved_proofs_read: ctx.approvedRead,
     approved_proofs_skipped: ctx.approvedSkipped,
+    qr_decoded_from_artwork: ctx.artworkDecodedQrs.length,
+  }
+}
+
+// ── Pre-send proof-check context ─────────────────────────────────────────────
+// The proof-mode sibling of CheckContext/buildContextText: the card side is
+// the version's own proof images, so there is no Dropbox print-file section
+// and no approved-proof section (the images ARE the artwork being checked).
+
+export interface ProofCheckContext {
+  proofLabel: string
+  versionNumber: number
+  materialDisplay: string | null
+  materialCode: string | null
+  cutThrough: boolean
+  recipients: string[]
+  accountContact: { name: string | null; email: string | null; company: string | null }
+  qrs: QrContext[]
+  // Payloads decoded straight from this version's proof images (qrDecode.ts) —
+  // the second authoritative source alongside ctx.qrs.
+  artworkDecodedQrs: string[]
+  threadText: string
+  threadGapNote: string | null
+  // The proof images provided as the card side, labelled like the review-page
+  // gallery ("Derrick Smith — front"), and the ones passed over with reasons.
+  proofImagesRead: string[]
+  proofImagesSkipped: { name: string; reason: string }[]
+  attachmentsRead: { name: string; at: string }[]
+  attachmentsSkipped: { name: string; reason: string }[]
+}
+
+export function buildProofContextText(ctx: ProofCheckContext): string {
+  const lines: string[] = []
+  lines.push(`PROOF: ${ctx.proofLabel} — version ${ctx.versionNumber} (NOT yet sent to the customer)`)
+  const mat = ctx.materialDisplay ?? ctx.materialCode ?? 'unknown material'
+  lines.push(`Material: ${mat} — cut-through construction: ${ctx.cutThrough ? 'YES (a reversed-from-the-back cutout is expected)' : 'no'}`)
+
+  lines.push('')
+  if (ctx.recipients.length > 0) {
+    lines.push('Recipients on this proof version (strong reference for who is on each card):')
+    for (const r of ctx.recipients) lines.push(`- ${r}`)
+  } else {
+    lines.push('No named recipients — a shared / set design.')
+  }
+
+  lines.push('')
+  lines.push('Account record (WEAK reference — the orderer, often not the cardholder):')
+  lines.push(`- Contact: ${ctx.accountContact.name ?? 'unknown'}${ctx.accountContact.email ? ` <${ctx.accountContact.email}>` : ''}`)
+  lines.push(`- Company: ${ctx.accountContact.company ?? 'none recorded'}`)
+
+  lines.push('')
+  if (ctx.qrs.length > 0) {
+    lines.push(`QR codes stored on this proof version (${ctx.qrs.length} — payloads are exact decoded text):`)
+    ctx.qrs.forEach((qr, i) => {
+      const who = qr.associatedName ? `for ${qr.associatedName}` : 'shared (prints on every card)'
+      const side = qr.side ? `, ${qr.side}` : ''
+      lines.push(`${i + 1}. kind=${qr.kind}, ${who}${side}:`)
+      lines.push(qr.decoded)
+      if (qr.snapshot != null) {
+        lines.push(`Hosted vCard contact snapshot: ${JSON.stringify(qr.snapshot)}`)
+      }
+    })
+  } else {
+    lines.push('No QR codes are stored on this proof version.')
+  }
+  if (ctx.artworkDecodedQrs.length > 0) {
+    lines.push(`QR codes decoded straight from the proof images (${ctx.artworkDecodedQrs.length} — read off the images by the studio's own scanner; authoritative for what the cards carry, even if never registered on the proof):`)
+    ctx.artworkDecodedQrs.forEach((d, i) => lines.push(`A${i + 1}. ${d}`))
+  } else if (ctx.proofImagesRead.length > 0) {
+    lines.push('The proof images were scanned for QR codes and none decoded — so any QR visibly shown on them is UNVERIFIED.')
+  }
+
+  lines.push('')
+  if (ctx.threadText) {
+    lines.push('CUSTOMER THREAD (Help Scout, oldest → newest — the PRIMARY reference):')
+    lines.push(ctx.threadText)
+  } else {
+    lines.push(`CUSTOMER THREAD: ${ctx.threadGapNote ?? 'not available'} — treat the supplied details as unavailable (reference gap), not as evidence of error.`)
+  }
+
+  lines.push('')
+  if (ctx.proofImagesRead.length > 0) {
+    lines.push(`PROOF IMAGES (${ctx.proofImagesRead.length} — the artwork being checked, attached as images in this order):`)
+    ctx.proofImagesRead.forEach((n, i) => lines.push(`${i + 1}. ${n}`))
+  }
+  if (ctx.proofImagesSkipped.length > 0) {
+    lines.push('Version images NOT readable for this check (mention relevant ones in reference_gaps):')
+    for (const s of ctx.proofImagesSkipped) lines.push(`- ${s.name} — ${s.reason}`)
+  }
+
+  lines.push('')
+  if (ctx.attachmentsRead.length > 0) {
+    lines.push(`CUSTOMER ATTACHMENTS READ (${ctx.attachmentsRead.length} — provided after the proof images, treat as supplied reference material):`)
+    ctx.attachmentsRead.forEach((a, i) => lines.push(`${i + 1}. ${a.name} (${a.at})`))
+  } else {
+    lines.push('No customer attachments were readable for this check.')
+  }
+  if (ctx.attachmentsSkipped.length > 0) {
+    lines.push('Customer attachments NOT read (keep as reference gaps where relevant):')
+    for (const s of ctx.attachmentsSkipped) lines.push(`- ${s.name} — ${s.reason}`)
+  }
+
+  return lines.join('\n')
+}
+
+export const PROOF_FINAL_INSTRUCTION =
+  'Compare the proof images above against the supplied details and produce the report. The thread is the primary reference and the latest supplied value wins; the proof image is the truth for what is on the card. Walk every change request to its latest state. Do not flag what you cannot clearly see.'
+
+export function buildProofInputs(
+  ctx: ProofCheckContext,
+  threadMessages: number,
+  threadFound: boolean,
+): ReportInputs {
+  return {
+    check_kind: 'proof',
+    print_files: [],
+    skipped_files: [],
+    thread_messages: threadMessages,
+    thread_found: threadFound,
+    qr_count: ctx.qrs.length,
+    recipients: ctx.recipients,
+    attachments_read: ctx.attachmentsRead,
+    attachments_skipped: ctx.attachmentsSkipped,
+    proof_images_read: ctx.proofImagesRead,
+    proof_images_skipped: ctx.proofImagesSkipped,
     qr_decoded_from_artwork: ctx.artworkDecodedQrs.length,
   }
 }

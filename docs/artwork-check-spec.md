@@ -621,6 +621,36 @@ reach the API; a SQL-set value outside the list is preserved. Live state at ship
 mode=live, **required=true** (Rob flipped the gate on during settling-in — now visible on
 the tab), model=null (default).
 
+**Pre-send proof check: BUILT 2026-07-23** (migration 000343; branch
+`feat/pre-send-proof-check`). The designer-triggered sibling of the order check, run at
+the FIRST gate: a proof version's own images vs the Help Scout thread + attachments +
+QR contents, BEFORE the customer sees the proof — the "complex change requests split
+across several emails" catch, while a fix is still free. Rob's ask 2026-07-23; the
+standalone-tools-tab and project-Dropbox-source options were analysed and rejected
+(the check is project-anchored, and the proof JPEG is what the customer sees — the
+print-drift legs belong to the order gate). Shape: **no Dropbox at all** — the card
+side is the version's `proof-images` storage files (picked by the Leg C gallery logic,
+QR-scanned by `qrDecode.ts` on the way, 18 MB pool before attachments); no approved-
+proof leg and no defect category 3 (nothing is approved yet). Same edge function
+(`artwork-check` takes `proof_version_id` XOR `order_id`; shared target resolution,
+investigation, cached fast path, persistence — reports land on
+`proof_versions.artwork_check/checked_at/verdict`, same column trio as orders). Its own
+prompt (`PROOF_SYSTEM_PROMPT` — a separate literal so the validated order prompt stays
+byte-stable; adds the walk-every-change-request rule and the redesign-is-not-a-flag
+rule, keeps latest-wins/severity/allow-list; guarded both ways by tests, 173 checks).
+Gate: `settings.proof_check_enabled` boolean (default OFF — deliberately not the
+off/shadow/live enum; a manual button is offered or it isn't), read as a SEPARATE
+settings query so a pre-000343 DB can't null the order check's mode read. UI: a
+Proof-check panel above the Versions panel on `/proofs/:id` (idle row + Run check →
+spinner → the shared `ArtworkCheckReportView` with heading "Proof check", Re-check,
+and per-flag Investigate); Admin → Artwork check gains the "Pre-send proof check —
+before the customer" toggle card, with the page copy reframed around the two gates.
+Deliberately NO auto-run trigger — versions are created far more often than orders;
+the button puts the cost where the judgement is (background auto-run on version save
+is the possible later upgrade once real use proves worth it). ⚠ Deploy order:
+migration FIRST (ProofDetailPage's version select and the function's version-target
+select both name the new columns), then the function, then the frontend merge.
+
 **Deferred to Phase 3:** a print-file staleness guard for content changes inside an
 unchanged folder link (re-link and Re-run cover it meanwhile), admin-editable *rules*
 (the prompt allow-list — step 2 of the admin graduation, distinct from the model picker),

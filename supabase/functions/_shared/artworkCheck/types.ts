@@ -77,12 +77,19 @@ export type ArtworkCheckVerdict = 'clear' | 'flagged' | 'defect' | 'error'
 // What actually gets fetched and fed to the model — stored on the report so a
 // shadow-mode review can see what each run was grounded on.
 export interface ReportInputs {
+  // 'proof' on pre-send proof-check reports (proof_versions.artwork_check);
+  // absent on order-time reports (orders.artwork_check).
+  check_kind?: 'order' | 'proof'
   print_files: string[]
   skipped_files: { name: string; reason: string }[]
   thread_messages: number
   thread_found: boolean
   qr_count: number
   recipients: string[]
+  // Pre-send proof check — the version images provided as the card side, and
+  // the ones passed over. Absent on order-time reports.
+  proof_images_read?: string[]
+  proof_images_skipped?: { name: string; reason: string }[]
   // Phase 2a — customer-thread attachments read as reference material, and
   // the ones passed over (type/size/budget/fetch/parse), with reasons.
   // Absent on pre-Phase-2a reports.

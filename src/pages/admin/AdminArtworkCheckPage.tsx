@@ -15,6 +15,9 @@ interface ArtworkSettings {
   artwork_check_mode: Mode
   artwork_check_required: boolean
   artwork_check_model: string | null
+  // Pre-send proof check (000343) — the designer-triggered sibling that runs
+  // on a proof version's own images before the customer sees the proof.
+  proof_check_enabled: boolean
 }
 
 // The default the edge function falls back to when no model is set — and the
@@ -41,7 +44,7 @@ export default function AdminArtworkCheckPage() {
   useEffect(() => {
     void supabase
       .from('settings')
-      .select('artwork_check_mode, artwork_check_required, artwork_check_model')
+      .select('artwork_check_mode, artwork_check_required, artwork_check_model, proof_check_enabled')
       .eq('id', 1)
       .single()
       .then(({ data, error }) => {
@@ -105,14 +108,18 @@ export default function AdminArtworkCheckPage() {
     <div className="mx-auto max-w-[760px]">
       <h1 className="text-xl font-semibold text-ink">Artwork check</h1>
       <p className="mt-1 text-sm text-ink-soft">
-        Before an order is placed, an AI check compares what the customer supplied (the Help Scout
-        thread, any QR contents, and readable attachments) against the actual Dropbox print files
-        and the approved proof, and shows a supplied-vs-printed report on the Place order screen.
-        Advisory — a flagged result never blocks; a human always decides.
+        An AI check that compares what the customer supplied (the Help Scout thread, any QR
+        contents, and readable attachments) against the artwork, shown as a supplied-vs-printed
+        report. It runs at two gates: the <span className="font-medium text-ink">order check</span>{' '}
+        reads the actual Dropbox print files and the approved proof before a job goes to
+        production; the <span className="font-medium text-ink">pre-send proof check</span> is a
+        button designers press on a proof page to check a version against the thread before the
+        customer ever sees it. Advisory throughout — a flagged result never blocks; a human always
+        decides.
       </p>
 
       <section className={`${CARD} mt-6`}>
-        <h2 className="mb-4 text-sm font-semibold text-ink">Rollout</h2>
+        <h2 className="mb-4 text-sm font-semibold text-ink">Order check — before production</h2>
         <div className="space-y-5">
           <FieldRow
             label="Mode"
@@ -150,11 +157,31 @@ export default function AdminArtworkCheckPage() {
       </section>
 
       <section className={`${CARD} mt-5`}>
+        <h2 className="mb-4 text-sm font-semibold text-ink">Pre-send proof check — before the customer</h2>
+        <div className="space-y-5">
+          <FieldRow
+            label="Offer the check to designers"
+            help="When on, every proof page gets a Proof check panel: one click compares the current version’s images against everything the customer sent (the thread, attachments, QR contents) and reports typos and missed change requests before the proof goes out. It never runs by itself — a designer presses the button when a revision history is messy enough to warrant it. Each run takes about half a minute and has an AI cost, which is why it’s a button rather than automatic."
+            saved={recentlySaved('proof_check_enabled')}
+            working={working.proof_check_enabled}
+            error={errors.proof_check_enabled}
+          >
+            <Toggle
+              value={settings.proof_check_enabled}
+              onChange={(v) => void save('proof_check_enabled', v)}
+              disabled={!!working.proof_check_enabled}
+              label="Offer the pre-send proof check"
+            />
+          </FieldRow>
+        </div>
+      </section>
+
+      <section className={`${CARD} mt-5`}>
         <h2 className="mb-4 text-sm font-semibold text-ink">Model</h2>
         <div className="space-y-5">
           <FieldRow
             label="Claude model"
-            help="Which Claude model the check runs on. Opus 4.8 is the validated recommendation. Changing this takes effect on the next check with no redeploy — but re-run a few known orders to sanity-check any other model before relying on it, since the rules were tuned on Opus 4.8."
+            help="Which Claude model both checks run on (the order check and the pre-send proof check). Opus 4.8 is the validated recommendation. Changing this takes effect on the next check with no redeploy — but re-run a few known orders to sanity-check any other model before relying on it, since the rules were tuned on Opus 4.8."
             saved={recentlySaved('artwork_check_model')}
             working={working.artwork_check_model}
             error={errors.artwork_check_model}

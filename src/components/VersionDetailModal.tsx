@@ -121,6 +121,13 @@ export interface ModalVersion {
   front_colour_id: string | null
   core_colour_id: string | null
   back_colour_id: string | null
+  // Pre-send proof check (migration 000343). The latest stored report for
+  // this version + its code-derived verdict; ProofDetailPage renders these on
+  // the current version's Proof-check panel. Optional so callers that select
+  // narrower version shapes stay valid; not rendered inside this modal.
+  artwork_check?: unknown
+  artwork_checked_at?: string | null
+  artwork_check_verdict?: 'clear' | 'flagged' | 'defect' | 'error' | null
 }
 
 interface ModalImage {

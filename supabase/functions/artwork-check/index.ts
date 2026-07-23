@@ -40,6 +40,7 @@ import {
   APPROVED_IMAGE_MAX_BYTES,
   approvedImageBudget,
   pickApprovedImages,
+  PROOF_IMAGES_TOTAL_MAX_BYTES,
 } from '../_shared/artworkCheck/approvedProof.ts'
 import { decodeQrsFromImage } from '../_shared/artworkCheck/qrDecode.ts'
 import {
@@ -62,9 +63,14 @@ import { threadToText } from '../_shared/artworkCheck/threadText.ts'
 import {
   buildContextText,
   buildInputs,
+  buildProofContextText,
+  buildProofInputs,
   FINAL_INSTRUCTION,
+  PROOF_FINAL_INSTRUCTION,
+  PROOF_SYSTEM_PROMPT,
   SYSTEM_PROMPT,
   type CheckContext,
+  type ProofCheckContext,
   type QrContext,
 } from '../_shared/artworkCheck/prompts.ts'
 import { bytesToBase64, callArtworkCheck, modelId, type ContentBlock } from '../_shared/artworkCheck/anthropic.ts'
@@ -122,16 +128,29 @@ async function requireCaller(req: Request): Promise<{ admin: SupabaseClient } | 
 // existing yet (deployable before migration 000336 — same idiom as
 // place-order's loadHandoffMode). The required gate only means anything in
 // live mode: a shadow/off check isn't a precondition a reviewer can see.
-async function loadCheckSettings(admin: SupabaseClient): Promise<{ mode: 'off' | 'shadow' | 'live'; required: boolean; model: string | null }> {
+//
+// proof_check_enabled (000343, the pre-send proof-check gate) is read in a
+// SEPARATE query, deliberately: supabase-js reports an unknown column as an
+// error (data null), so bundling it into the main select would silently read
+// the ORDER check's mode as off on a pre-000343 database. Two reads keep the
+// function deployable before the migration — the proof mode just reads as off.
+async function loadCheckSettings(admin: SupabaseClient): Promise<{ mode: 'off' | 'shadow' | 'live'; required: boolean; proofEnabled: boolean; model: string | null }> {
+  let mode: 'off' | 'shadow' | 'live' = 'off'
+  let required = false
+  let model: string | null = null
+  let proofEnabled = false
   try {
     const { data } = await admin.from('settings').select('artwork_check_mode, artwork_check_required, artwork_check_model').limit(1).maybeSingle()
     const raw = (data as { artwork_check_mode?: string | null; artwork_check_required?: boolean | null; artwork_check_model?: string | null } | null)
-    const mode = raw?.artwork_check_mode === 'shadow' ? 'shadow' : raw?.artwork_check_mode === 'live' ? 'live' : 'off'
-    const model = typeof raw?.artwork_check_model === 'string' && raw.artwork_check_model.trim() ? raw.artwork_check_model.trim() : null
-    return { mode, required: mode === 'live' && raw?.artwork_check_required === true, model }
-  } catch {
-    return { mode: 'off', required: false, model: null }
-  }
+    mode = raw?.artwork_check_mode === 'shadow' ? 'shadow' : raw?.artwork_check_mode === 'live' ? 'live' : 'off'
+    model = typeof raw?.artwork_check_model === 'string' && raw.artwork_check_model.trim() ? raw.artwork_check_model.trim() : null
+    required = mode === 'live' && raw?.artwork_check_required === true
+  } catch { /* defaults stand */ }
+  try {
+    const { data } = await admin.from('settings').select('proof_check_enabled').limit(1).maybeSingle()
+    proofEnabled = (data as { proof_check_enabled?: boolean | null } | null)?.proof_check_enabled === true
+  } catch { /* pre-000343 → proof mode off */ }
+  return { mode, required, proofEnabled, model }
 }
 
 Deno.serve(async (req) => {
@@ -149,25 +168,88 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: 'Invalid JSON body' }, 400)
   }
   const orderId = String(body.order_id ?? '').trim()
+  const proofVersionId = String(body.proof_version_id ?? '').trim()
   const force = body.force === true
-  if (!orderId) return json({ ok: false, error: 'order_id is required' }, 400)
+  if (!orderId && !proofVersionId) return json({ ok: false, error: 'order_id or proof_version_id is required' }, 400)
+  if (orderId && proofVersionId) return json({ ok: false, error: 'Pass either order_id or proof_version_id, not both.' }, 400)
 
-  const { mode, required, model: settingModel } = await loadCheckSettings(admin)
+  const { mode, required, proofEnabled, model: settingModel } = await loadCheckSettings(admin)
   // The model this run uses everywhere (the call, the stored report's `model`,
   // error reports): the admin pick, else the env / compiled default.
   const runModel = settingModel || modelId()
-  if (mode === 'off') return json({ ok: true, mode, required })
 
-  // The order (incl. the cached report — this select names the 000336 columns,
-  // so the function needs the migration applied; pre-migration it errors here,
-  // which the page treats as "check unavailable" and renders nothing).
-  const { data: order, error: orderErr } = await admin
-    .from('orders')
-    .select('id, proof_id, dropbox_folder_url, material_id, stock_order_number, project_name, person_quantities, artwork_check, artwork_checked_at')
-    .eq('id', orderId)
-    .maybeSingle()
-  if (orderErr) return json({ ok: false, error: `Order lookup failed: ${orderErr.message}` }, 500)
-  if (!order) return json({ ok: false, error: 'Order not found.' }, 404)
+  // ── Resolve the check target ───────────────────────────────────────────────
+  // Two targets share one function: an ORDER (the 000336 pre-print check —
+  // Dropbox print files vs the thread) or a PROOF VERSION (the 000343 pre-send
+  // check — the version's own proof images vs the thread, run by a designer
+  // BEFORE the customer sees the proof). Investigation, the cached fast path
+  // and persistence all work off this resolution; the gather paths split below.
+  type OrderRow = {
+    id: string
+    proof_id: string
+    dropbox_folder_url: string | null
+    material_id: string | null
+    stock_order_number: number | null
+    project_name: string | null
+    person_quantities: unknown
+    artwork_check: unknown
+    artwork_checked_at: string | null
+  }
+  type VersionTargetRow = {
+    id: string
+    proof_id: string
+    version_number: number
+    is_current: boolean
+    material_id: string | null
+    material_display: string | null
+    names: string[] | null
+    artwork_check: unknown
+    materials: { code: string; display_name: string | null } | null
+  }
+  let order: OrderRow | null = null
+  let versionTarget: VersionTargetRow | null = null
+
+  if (orderId) {
+    if (mode === 'off') return json({ ok: true, mode, required })
+    // The order (incl. the cached report — this select names the 000336
+    // columns, so the function needs the migration applied; pre-migration it
+    // errors here, which the page treats as "check unavailable").
+    const { data, error: orderErr } = await admin
+      .from('orders')
+      .select('id, proof_id, dropbox_folder_url, material_id, stock_order_number, project_name, person_quantities, artwork_check, artwork_checked_at')
+      .eq('id', orderId)
+      .maybeSingle()
+    if (orderErr) return json({ ok: false, error: `Order lookup failed: ${orderErr.message}` }, 500)
+    if (!data) return json({ ok: false, error: 'Order not found.' }, 404)
+    order = data as OrderRow
+  } else {
+    // Pre-send proof check — its own boolean gate, independent of the order
+    // check's mode. enabled:false tells the proof page to render nothing.
+    if (!proofEnabled) return json({ ok: true, kind: 'proof', enabled: false })
+    const { data, error: verErr } = await admin
+      .from('proof_versions')
+      .select('id, proof_id, version_number, is_current, material_id, material_display, names, artwork_check, materials(code, display_name)')
+      .eq('id', proofVersionId)
+      .maybeSingle()
+    if (verErr) return json({ ok: false, error: `Version lookup failed: ${verErr.message}` }, 500)
+    if (!data) return json({ ok: false, error: 'Proof version not found.' }, 404)
+    versionTarget = data as unknown as VersionTargetRow
+  }
+
+  const targetProofId = order ? order.proof_id : versionTarget!.proof_id
+  const existingReport = (order ? order.artwork_check : versionTarget!.artwork_check) as ArtworkCheckReport | null
+  // Response fields the clients key off: the review page reads mode/required
+  // (order), the proof page reads kind/enabled (proof).
+  const respBase: Record<string, unknown> = order ? { mode, required } : { kind: 'proof', enabled: true }
+  // One persist path for both targets — the report columns share their names.
+  async function persistReportPatch(patch: Record<string, unknown>): Promise<boolean> {
+    const q = order
+      ? admin.from('orders').update(patch).eq('id', order.id)
+      : admin.from('proof_versions').update(patch).eq('id', versionTarget!.id)
+    const { error: updErr } = await q
+    if (updErr) console.error('[artwork-check] persist failed:', updErr.message)
+    return !updErr
+  }
 
   // ── Flag investigation (designer-triggered escalation) ────────────────────
   // Scoped to ONE flag: walks the flagged card's artwork across every proof
@@ -176,7 +258,7 @@ Deno.serve(async (req) => {
   // automatically — only from the Investigate button on a rendered flag.
   const investigateReq = body.investigate as { card?: string; field?: string } | undefined
   if (investigateReq) {
-    const report = order.artwork_check as ArtworkCheckReport | null
+    const report = existingReport
     if (!report) return json({ ok: false, error: 'Run the artwork check first — there is no report to investigate.' }, 400)
     const card = String(investigateReq.card ?? '')
     const field = String(investigateReq.field ?? '')
@@ -187,14 +269,14 @@ Deno.serve(async (req) => {
 
     const key = investigationKey(card, field)
     const existing = (report as { investigations?: Record<string, Investigation> }).investigations?.[key]
-    if (existing && !force) return json({ ok: true, mode, required, cached: true, key, investigation: existing })
+    if (existing && !force) return json({ ok: true, ...respBase, cached: true, key, investigation: existing })
 
     try {
       // Every round of this proof, oldest first — the walk reads forward.
       const { data: verRows } = await admin
         .from('proof_versions')
         .select('id, version_number, created_at, material_display, names')
-        .eq('proof_id', order.proof_id)
+        .eq('proof_id', targetProofId)
         .order('version_number', { ascending: true })
       const versions = (verRows ?? []) as (VersionRowLite & { names: string[] | null })[]
       if (versions.length === 0) return json({ ok: false, error: 'No proof versions found.' }, 404)
@@ -217,7 +299,7 @@ Deno.serve(async (req) => {
       const { data: invProof } = await admin
         .from('proofs')
         .select('helpscout_conversation_id')
-        .eq('id', order.proof_id)
+        .eq('id', targetProofId)
         .maybeSingle()
       const conversationId = (invProof as { helpscout_conversation_id: string | null } | null)?.helpscout_conversation_id ?? null
       let threadText = ''
@@ -309,9 +391,8 @@ Deno.serve(async (req) => {
         ...report,
         investigations: { ...((report as { investigations?: Record<string, Investigation> }).investigations ?? {}), [key]: investigation },
       }
-      const { error: updErr } = await admin.from('orders').update({ artwork_check: updated }).eq('id', orderId)
-      if (updErr) console.error('[artwork-check] investigation persist failed:', updErr.message)
-      return json({ ok: true, mode, required, key, investigation, persisted: !updErr })
+      const persisted = await persistReportPatch({ artwork_check: updated })
+      return json({ ok: true, ...respBase, key, investigation, persisted })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error('[artwork-check] investigation failed:', msg)
@@ -319,22 +400,23 @@ Deno.serve(async (req) => {
     }
   }
 
-  if (order.artwork_check && !force) {
-    return json({ ok: true, mode, required, cached: true, report: order.artwork_check as ArtworkCheckReport })
+  if (existingReport && !force) {
+    return json({ ok: true, ...respBase, cached: true, report: existingReport })
   }
 
-  // ── Gather the order context (names, QRs, account fields) ─────────────────
+  // ── Gather the shared context (proof, names, QRs, account fields) ──────────
   const { data: proof } = await admin
     .from('proofs')
     .select('id, helpscout_conversation_id, contacts:contact_id ( full_name, email, companies:company_id ( name ) )')
-    .eq('id', order.proof_id)
+    .eq('id', targetProofId)
     .maybeSingle()
   const conversationId = (proof as { helpscout_conversation_id: string | null } | null)?.helpscout_conversation_id ?? null
   const contact = (proof as { contacts?: { full_name?: string | null; email?: string | null; companies?: { name?: string | null } | null } | null } | null)?.contacts ?? null
 
-  // The version this ORDER was placed against — the version whose material
-  // matches the order's, not blindly the current one (place-order's rule; a
-  // proof can carry orders in two materials).
+  // The version being checked. Proof mode: the target version itself. Order
+  // mode: the version this ORDER was placed against — the version whose
+  // material matches the order's, not blindly the current one (place-order's
+  // rule; a proof can carry orders in two materials).
   type VersionRow = {
     id: string
     version_number: number
@@ -344,19 +426,25 @@ Deno.serve(async (req) => {
     names: string[] | null
     materials: { code: string; display_name: string | null } | null
   }
-  const { data: versionRows } = await admin
-    .from('proof_versions')
-    .select('id, version_number, is_current, material_id, material_display, names, materials(code, display_name)')
-    .eq('proof_id', order.proof_id)
-    .order('version_number', { ascending: false })
-  const allVersions = (versionRows ?? []) as VersionRow[]
-  const orderMaterialId = (order as { material_id: string | null }).material_id ?? null
-  const materialMatches = orderMaterialId ? allVersions.filter((v) => v.material_id === orderMaterialId) : []
-  const pv = materialMatches.find((v) => v.is_current) ?? materialMatches[0] ?? allVersions.find((v) => v.is_current) ?? null
-  if (!pv) return json({ ok: false, error: 'No proof version found.' }, 404)
+  let pv: VersionRow
+  if (order) {
+    const { data: versionRows } = await admin
+      .from('proof_versions')
+      .select('id, version_number, is_current, material_id, material_display, names, materials(code, display_name)')
+      .eq('proof_id', order.proof_id)
+      .order('version_number', { ascending: false })
+    const allVersions = (versionRows ?? []) as VersionRow[]
+    const orderMaterialId = order.material_id ?? null
+    const materialMatches = orderMaterialId ? allVersions.filter((v) => v.material_id === orderMaterialId) : []
+    const picked = materialMatches.find((v) => v.is_current) ?? materialMatches[0] ?? allVersions.find((v) => v.is_current) ?? null
+    if (!picked) return json({ ok: false, error: 'No proof version found.' }, 404)
+    pv = picked
+  } else {
+    pv = versionTarget!
+  }
 
   const recipients = (Array.isArray(pv.names) ? pv.names : []).map((n) => String(n).trim()).filter(Boolean)
-  const rawSplit = Array.isArray(order.person_quantities) ? order.person_quantities : []
+  const rawSplit = order && Array.isArray(order.person_quantities) ? order.person_quantities : []
   const quantitySplit = rawSplit
     .filter((p: { name?: unknown; quantity?: unknown }) => p && typeof p.name === 'string' && p.name.trim() && Number(p.quantity) > 0)
     .map((p: { name: string; quantity: unknown }) => `${p.name.trim()} — ${Number(p.quantity)}`)
@@ -397,6 +485,174 @@ Deno.serve(async (req) => {
     })
   }
 
+  // ── Pre-send proof check: gather + call ────────────────────────────────────
+  // The card side is this version's own proof images (no Dropbox — the images
+  // ARE the artwork being checked), scanned for QR payloads on the way, with
+  // the thread + customer attachments as the reference side. No approved-proof
+  // leg: nothing is approved yet. Self-contained; the order path continues
+  // below untouched.
+  if (versionTarget) {
+    const vt = versionTarget
+    const proofCtx: ProofCheckContext = {
+      proofLabel: contact?.companies?.name ?? contact?.full_name ?? 'Customer',
+      versionNumber: vt.version_number,
+      materialDisplay: pv.materials?.display_name ?? pv.material_display ?? null,
+      materialCode: pv.materials?.code ?? null,
+      cutThrough: isCutThroughMaterial(pv.materials?.code),
+      recipients,
+      accountContact: {
+        name: contact?.full_name ?? null,
+        email: contact?.email ?? null,
+        company: contact?.companies?.name ?? null,
+      },
+      qrs,
+      artworkDecodedQrs: [],
+      threadText: '',
+      threadGapNote: null,
+      proofImagesRead: [],
+      proofImagesSkipped: [],
+      attachmentsRead: [],
+      attachmentsSkipped: [],
+    }
+    let threadMessages = 0
+    let threadFound = false
+    let hsToken: string | null = null
+    let hsThreads: HsThreadWithAttachments[] | null = null
+
+    // Persist + respond, success or error alike — an errored run is a stored
+    // report with a Re-check, never a stranded button.
+    async function finishProof(report: ArtworkCheckReport): Promise<Response> {
+      const persisted = await persistReportPatch({
+        artwork_check: report,
+        artwork_checked_at: report.checked_at,
+        artwork_check_verdict: report.verdict,
+      })
+      return json({ ok: true, ...respBase, report, persisted })
+    }
+
+    try {
+      // The thread — the labelled twin of the order path's read (same full,
+      // raw, paginated fetch; an outage degrades to a reference gap).
+      if (conversationId) {
+        const appId = Deno.env.get('HELPSCOUT_APP_ID')?.trim()
+        const appSecret = Deno.env.get('HELPSCOUT_APP_SECRET')?.trim()
+        if (!appId || !appSecret) {
+          proofCtx.threadGapNote = 'Help Scout credentials not configured'
+        } else {
+          try {
+            const token = await getAccessToken(appId, appSecret)
+            const threads = await fetchAllConversationThreads(token, conversationId)
+            if (threads === null) {
+              proofCtx.threadGapNote = 'the linked Help Scout conversation no longer exists'
+            } else {
+              hsToken = token
+              hsThreads = threads
+              const flat = threadToText(threads)
+              proofCtx.threadText = flat.text
+              threadMessages = flat.messageCount
+              threadFound = flat.messageCount > 0
+              if (!threadFound) proofCtx.threadGapNote = 'the linked conversation has no readable messages'
+            }
+          } catch (e) {
+            proofCtx.threadGapNote = `Help Scout could not be read (${e instanceof HsError ? e.status : 'error'})`
+          }
+        }
+      } else {
+        proofCtx.threadGapNote = 'this proof has no linked Help Scout conversation'
+      }
+
+      // The version's images — picked and labelled exactly like Leg C's
+      // gallery order, QR-scanned before the size gate.
+      const imageBlocks: ContentBlock[] = []
+      let imagesRawTotal = 0
+      const artworkQrSeen = new Set<string>()
+      {
+        const { picks, skipped } = pickApprovedImages(allImageRows)
+        proofCtx.proofImagesSkipped.push(...skipped)
+        for (const pick of picks) {
+          try {
+            const { data: blob, error: dlErr } = await admin.storage.from('proof-images').download(pick.path)
+            if (dlErr || !blob) {
+              proofCtx.proofImagesSkipped.push({ name: pick.label, reason: 'download failed' })
+              continue
+            }
+            const bytes = new Uint8Array(await blob.arrayBuffer())
+            for (const qr of await decodeQrsFromImage(bytes)) {
+              if (!artworkQrSeen.has(qr.data)) {
+                artworkQrSeen.add(qr.data)
+                proofCtx.artworkDecodedQrs.push(qr.data)
+              }
+            }
+            if (bytes.length > APPROVED_IMAGE_MAX_BYTES) {
+              proofCtx.proofImagesSkipped.push({ name: pick.label, reason: 'over the size limit' })
+              continue
+            }
+            if (imagesRawTotal + bytes.length > PROOF_IMAGES_TOTAL_MAX_BYTES) {
+              proofCtx.proofImagesSkipped.push({ name: pick.label, reason: 'size budget reached' })
+              continue
+            }
+            imagesRawTotal += bytes.length
+            proofCtx.proofImagesRead.push(pick.label)
+            imageBlocks.push({ type: 'text', text: `Proof image ${proofCtx.proofImagesRead.length}: ${pick.label}:` })
+            imageBlocks.push({ type: 'image', source: { type: 'base64', media_type: pick.mediaType, data: bytesToBase64(bytes) } })
+          } catch {
+            proofCtx.proofImagesSkipped.push({ name: pick.label, reason: 'download failed' })
+          }
+        }
+      }
+      if (imageBlocks.length === 0) {
+        return await finishProof(buildErrorReport(runModel, 'no readable proof images on this version', buildProofInputs(proofCtx, threadMessages, threadFound)))
+      }
+
+      // Customer attachments — same best-effort read as the order path, the
+      // byte budget sized around what the images used. Staff attachments are
+      // excluded inside pickAttachments.
+      const routedAttachments: RoutedAttachment[] = []
+      if (conversationId && hsToken && hsThreads) {
+        const { picks, skipped } = pickAttachments(hsThreads, imagesRawTotal)
+        proofCtx.attachmentsSkipped.push(...skipped)
+        for (const meta of picks) {
+          try {
+            const bytes = await fetchAttachmentData(hsToken, conversationId, meta.id)
+            if (!bytes) {
+              proofCtx.attachmentsSkipped.push({ name: meta.filename, reason: 'download failed' })
+              continue
+            }
+            const routed = await routeAttachment(meta, bytes)
+            if (!routed) {
+              proofCtx.attachmentsSkipped.push({ name: meta.filename, reason: 'contents not readable' })
+              continue
+            }
+            routedAttachments.push(routed)
+            proofCtx.attachmentsRead.push({ name: meta.filename, at: attachmentDateLabel(meta.at) })
+          } catch {
+            proofCtx.attachmentsSkipped.push({ name: meta.filename, reason: 'download failed' })
+          }
+        }
+      }
+      const attachmentBlocks = routedToBlocks(routedAttachments)
+
+      const content: ContentBlock[] = [
+        { type: 'text', text: buildProofContextText(proofCtx) },
+        { type: 'text', text: 'PROOF IMAGES (the artwork being checked, labelled per card):' },
+        ...imageBlocks,
+        ...(attachmentBlocks.length > 0
+          ? [{ type: 'text', text: 'CUSTOMER-SUPPLIED ATTACHMENTS (reference material, labelled per file):' } as ContentBlock, ...attachmentBlocks]
+          : []),
+        { type: 'text', text: PROOF_FINAL_INSTRUCTION },
+      ]
+      const { result, usage } = await callArtworkCheck(PROOF_SYSTEM_PROMPT, content, runModel)
+      return await finishProof(buildReport(runModel, result, buildProofInputs(proofCtx, threadMessages, threadFound), usage))
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[artwork-check] proof-check run failed:', msg)
+      return await finishProof(buildErrorReport(runModel, msg.slice(0, 500), buildProofInputs(proofCtx, threadMessages, threadFound)))
+    }
+  }
+
+  // ── Order mode from here down ──────────────────────────────────────────────
+  if (!order) return json({ ok: false, error: 'No check target resolved.' }, 500)
+
   const orderLabel = `Order ${order.stock_order_number ?? ''} — ${order.project_name ?? contact?.companies?.name ?? contact?.full_name ?? 'customer'}`.trim()
 
   // Inputs accumulate as gathering proceeds so an error report still records
@@ -434,16 +690,12 @@ Deno.serve(async (req) => {
   // Persist + respond with a report (success or error alike) — an errored run
   // still stamps artwork_checked_at, deliberately (non-stranding gate).
   async function finish(report: ArtworkCheckReport): Promise<Response> {
-    const { error: updErr } = await admin
-      .from('orders')
-      .update({
-        artwork_check: report,
-        artwork_checked_at: report.checked_at,
-        artwork_check_verdict: report.verdict,
-      })
-      .eq('id', orderId)
-    if (updErr) console.error('[artwork-check] persist failed:', updErr.message)
-    return json({ ok: true, mode, required, report, persisted: !updErr })
+    const persisted = await persistReportPatch({
+      artwork_check: report,
+      artwork_checked_at: report.checked_at,
+      artwork_check_verdict: report.verdict,
+    })
+    return json({ ok: true, ...respBase, report, persisted })
   }
 
   try {

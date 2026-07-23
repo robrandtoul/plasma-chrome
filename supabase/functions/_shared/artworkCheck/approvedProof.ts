@@ -33,6 +33,11 @@ export const APPROVED_IMAGE_MAX_BYTES = 4 * 1024 * 1024
 export function approvedImageBudget(printsRawBytes: number, attachmentsRawBytes: number): number {
   return Math.max(0, Math.min(6 * 1024 * 1024, 24 * 1024 * 1024 - printsRawBytes - attachmentsRawBytes))
 }
+// Pre-send proof check: the version images ARE the card side (there are no
+// print files), so they lead the byte pool — up to 18 MB of the ~24 MB
+// request budget, leaving headroom for attachments (whose picker is then
+// sized around what the images actually used, same as the order path).
+export const PROOF_IMAGES_TOTAL_MAX_BYTES = 18 * 1024 * 1024
 
 const IMAGE_MEDIA: Record<string, string> = {
   jpg: 'image/jpeg',
