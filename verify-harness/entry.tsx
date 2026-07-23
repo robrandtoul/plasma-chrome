@@ -33,6 +33,8 @@ import AdminSettingsPage from '../src/pages/admin/AdminSettingsPage'
 import AdminArtworkCheckPage from '../src/pages/admin/AdminArtworkCheckPage'
 import { SpreadQuoteResults } from '../src/components/quote/SpreadQuoteResults'
 import { RecapArtwork, buildRecapTiles } from '../src/components/ArtworkFade'
+import ArtworkCheckReportView, { type ArtworkCheckReport } from '../src/components/ArtworkCheckReportView'
+import { ButtonGhost } from '../src/design'
 import type { GridImage } from '../src/components/ImageGrid'
 import { useEffect } from 'react'
 import '../src/index.css'
@@ -128,6 +130,76 @@ function RecapZoomRig() {
   )
 }
 
+// ?path=/artwork-report mounts the shared artwork-check report card on its own
+// with a representative report (a defect flag, a review flag, an unpicked
+// correction, notes, reference gaps, and a comparison table) so the
+// glanceability formatting can be eyeballed without a live edge-function run.
+// Left column = the review-page treatment (Re-run action); right = the
+// Orders-page archive modal treatment (no action).
+const ARTWORK_REPORT_FIXTURE: ArtworkCheckReport = {
+  verdict: 'defect',
+  summary:
+    'Checked the two printed cards against the Help Scout thread and the approved proof. One name looks wrong outright and one correction the customer sent hasn’t been picked up; a couple of smaller things are worth a glance.',
+  cards: [
+    {
+      label: 'Front — Sarah Whitehall',
+      findings: [
+        { field: 'name', supplied: 'Sarah Whitehall', printed: 'Sara Whitehall', status: 'flag', severity: 'defect', note: 'Missing the “h” — the customer signs off “Sarah” throughout the thread.' },
+        { field: 'job_title', supplied: 'Managing Director', printed: 'Managing Director', status: 'match', note: '' },
+        { field: 'email', supplied: 'sarah@whitehall.capital', printed: 'sarah@whitehall.capital', status: 'match', note: '' },
+        { field: 'phone', supplied: '', printed: '+44 20 7946 0102', status: 'not_supplied', note: '' },
+      ],
+    },
+    {
+      label: 'Back — logo side',
+      findings: [
+        { field: 'website', supplied: 'whitehall.capital', printed: 'whitehallcapital.com', status: 'flag', severity: 'review', note: 'Domain differs from the one in the signature — may be intentional, worth a glance.' },
+        { field: 'tagline', supplied: 'Private capital, personally managed', printed: 'Private capital, personally managed', status: 'match', note: '' },
+      ],
+    },
+  ],
+  corrections: [
+    { quote: 'Actually please make my title “Founder & CEO”, not Managing Director.', resolved: false, severity: 'defect', note: 'Sent 14 Jul; the printed card still reads Managing Director.' },
+  ],
+  notes: [
+    'Both cards use the Stainless Steel finish the customer approved on v3.',
+    'The QR on the front decodes to the vCard URL that matches the approved proof.',
+  ],
+  reference_gaps: [
+    'No phone number was supplied in the thread, so the printed number couldn’t be verified.',
+  ],
+  checked_at: '2026-07-23T09:14:00.000Z',
+}
+function ArtworkReportRig() {
+  return (
+    <div className="min-h-screen bg-canvas">
+      <div className="mx-auto grid max-w-5xl gap-6 px-4 py-10 lg:grid-cols-2">
+        <div>
+          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-mute">Place-order review card</p>
+          <div className="rounded-lg bg-out-soft px-3.5 py-3 ring-1 ring-out">
+            <ArtworkCheckReportView
+              report={ARTWORK_REPORT_FIXTURE}
+              action={<button type="button" className="text-[13px] font-medium text-brand hover:underline">Re-run</button>}
+            />
+          </div>
+        </div>
+        <div>
+          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-mute">Orders-page archive modal</p>
+          <div className="rounded-lg border border-line bg-surface p-5 shadow-sm">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Order 403910 · Whitehall Capital</p>
+            <div className="mt-2">
+              <ArtworkCheckReportView report={ARTWORK_REPORT_FIXTURE} />
+            </div>
+            <div className="mt-4 flex justify-end">
+              <ButtonGhost size="sm">Close</ButtonGhost>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Elsewhere() {
   return <div style={{ padding: 40 }} data-nav-target>navigated away</div>
 }
@@ -144,6 +216,8 @@ const tree = requestedPath === '/quote-spread' ? (
   <QuoteSpreadRig />
 ) : requestedPath === '/recap-zoom' ? (
   <RecapZoomRig />
+) : requestedPath === '/artwork-report' ? (
+  <ArtworkReportRig />
 ) : requestedPath === '/palette' ? (
   <MemoryRouter initialEntries={['/']}>
     <Routes>

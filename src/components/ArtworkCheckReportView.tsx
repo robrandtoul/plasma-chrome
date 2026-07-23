@@ -1,7 +1,9 @@
-// The artwork sanity-check report body (docs/artwork-check-spec.md) — shared
-// between the Place-order review card (OrderReviewPage, which wraps it with
-// its own headline + Re-run) and the Orders-page report modal (the in-app
-// archive for past checks). One renderer so the two can't drift.
+// The artwork sanity-check report (docs/artwork-check-spec.md) — shared
+// between the Place-order review card (OrderReviewPage) and the Orders-page
+// report modal (the in-app archive). Renders its own verdict headline (icon +
+// text, with an optional right-side action like Re-run) so both surfaces stay
+// identical and can't drift.
+import type { ReactNode } from 'react'
 
 export interface ArtworkFinding {
   field: string
@@ -93,13 +95,37 @@ export function artworkCheckedAtLabel(report: ArtworkCheckReport): string {
   })
 }
 
+// The verdict icon + headline text, shared so the review card and the archive
+// modal read identically.
+export function artworkVerdict(report: ArtworkCheckReport): { icon: string; text: string } {
+  if (report.verdict === 'clear') return { icon: '✅', text: 'Artwork check — all clear' }
+  if (report.verdict === 'defect') {
+    const n = artworkDefectCount(report)
+    return { icon: '❌', text: `Artwork check — ${n} item${n === 1 ? ' looks' : 's look'} wrong` }
+  }
+  if (report.verdict === 'flagged') {
+    const n = artworkFlagCount(report)
+    return { icon: '⚠️', text: `Artwork check — ${n} thing${n === 1 ? '' : 's'} to check` }
+  }
+  return { icon: '⚠️', text: 'Artwork check couldn’t run' }
+}
+
+// Small eyebrow label above the "Good to know" / "Couldn't check" groups.
+function GroupLabel({ children }: { children: ReactNode }) {
+  return <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-mute">{children}</p>
+}
+
 export default function ArtworkCheckReportView({
   report,
+  action,
   onInvestigate,
   investigatingKey,
   investigationError,
 }: {
   report: ArtworkCheckReport
+  // Optional control shown at the top-right of the headline (the review page's
+  // Re-run); the read-only archive modal passes none.
+  action?: ReactNode
   // When provided, each flag offers "Investigate the history" — the
   // designer-triggered walk of that card's artwork across the proof rounds.
   // Deliberately a button, never automatic: the designer decides per-flag
@@ -114,36 +140,56 @@ export default function ArtworkCheckReportView({
     .sort((a, b) => (a.severity === 'defect' ? 0 : 1) - (b.severity === 'defect' ? 0 : 1))
   const correctionsOpen = report.corrections.filter((c) => !c.resolved)
   const fieldsChecked = report.cards.reduce((s, c) => s + c.findings.length, 0)
+  const { icon, text } = artworkVerdict(report)
 
   return (
-    <>
-      <p className="mt-1 text-ink-soft">{report.summary}</p>
+    <div className="text-[14px] leading-relaxed text-ink">
+      <div className="flex items-start justify-between gap-3">
+        <p className="flex items-baseline gap-2 font-semibold">
+          <span className="text-[20px] leading-none">{icon}</span>
+          <span>{text}</span>
+        </p>
+        {action && <div className="shrink-0">{action}</div>}
+      </div>
+
+      <p className="mt-2 text-ink-soft">{report.summary}</p>
+
       {flags.length > 0 && (
-        <ul className="mt-2 space-y-1.5">
+        <ul className="mt-3 space-y-2.5">
           {flags.map((f, i) => {
             const key = investigationKey(f.card, f.field)
             const inv = report.investigations?.[key]
             const busy = investigatingKey === key
             const invError = investigationError?.key === key ? investigationError.message : null
+            const defect = f.severity === 'defect'
             return (
-              <li key={i} className="break-words">
-                {f.severity === 'defect' && <span className="font-semibold text-out">✗ </span>}
-                <span className="font-medium">{f.card} · {f.field.replace(/_/g, ' ')}:</span>{' '}
-                printed <span className="font-mono text-[12px]">“{f.printed}”</span>
-                {f.supplied && <> vs supplied <span className="font-mono text-[12px]">“{f.supplied}”</span></>}
-                {f.note && <span className="text-ink-soft"> — {f.note}</span>}
+              <li
+                key={i}
+                className={`break-words rounded-lg border-l-[3px] py-2 pl-3 pr-2 ${
+                  defect ? 'border-out bg-out-soft/40' : 'border-low bg-[var(--c-low-soft)]/40'
+                }`}
+              >
+                <p className="font-semibold">
+                  <span className="mr-1">{defect ? '❌' : '⚠️'}</span>
+                  {f.card} · {f.field.replace(/_/g, ' ')}
+                </p>
+                <p className="mt-1 text-ink-soft">
+                  printed <span className="font-mono text-[12.5px]">“{f.printed}”</span>
+                  {f.supplied && <> vs supplied <span className="font-mono text-[12.5px]">“{f.supplied}”</span></>}
+                </p>
+                {f.note && <p className="mt-1 text-ink-soft">{f.note}</p>}
                 {inv ? (
-                  <div className="mt-1.5 rounded-lg border border-line-soft bg-canvas/60 px-2.5 py-2">
-                    <p className="text-[12px] font-semibold text-ink">History: {FAULT_LABELS[inv.fault]}</p>
-                    <p className="mt-0.5 text-[12px] text-ink-soft">{inv.conclusion}</p>
+                  <div className="mt-2 rounded-lg border border-line-soft bg-canvas/70 px-3 py-2">
+                    <p className="text-[13px] font-semibold text-ink">History: {FAULT_LABELS[inv.fault]}</p>
+                    <p className="mt-1 text-[13px] text-ink-soft">{inv.conclusion}</p>
                     {inv.timeline.length > 0 && (
-                      <details className="mt-1">
-                        <summary className="cursor-pointer text-[11px] font-medium text-ink-mute">Timeline</summary>
-                        <ul className="mt-1 space-y-0.5 text-[12px] text-ink-soft">
+                      <details className="mt-1.5">
+                        <summary className="cursor-pointer text-[12px] font-medium text-ink-mute">Timeline</summary>
+                        <ul className="mt-1.5 space-y-1 text-[13px] text-ink-soft">
                           {inv.timeline.map((t, j) => (
                             <li key={j} className="break-words">
                               <span className="text-ink-mute">{t.at}</span>{' '}
-                              <span className={t.kind === 'instruction' ? 'font-medium text-ink' : 'font-medium'}>{t.label}:</span>{' '}
+                              <span className="font-medium">{t.label}:</span>{' '}
                               {t.detail}
                             </li>
                           ))}
@@ -152,22 +198,22 @@ export default function ArtworkCheckReportView({
                     )}
                   </div>
                 ) : onInvestigate ? (
-                  <div className="mt-1">
+                  <div className="mt-1.5">
                     <button
                       type="button"
                       onClick={() => onInvestigate({ card: f.card, field: f.field })}
                       disabled={!!investigatingKey}
-                      className="text-[12px] font-medium text-brand hover:underline disabled:opacity-50"
+                      className="text-[13px] font-medium text-brand hover:underline disabled:opacity-50"
                     >
                       {busy && <InlineSpinner className="mr-1.5 h-3 w-3" />}
                       {busy ? 'Reconstructing the history…' : 'Investigate the history'}
                     </button>
                     {busy && (
-                      <span className="ml-2 text-[11px] text-ink-mute">
+                      <span className="ml-2 text-[12px] text-ink-mute">
                         Reading this card’s artwork across every round — takes half a minute or so.
                       </span>
                     )}
-                    {invError && <p className="mt-0.5 text-[12px] text-out">{invError}</p>}
+                    {invError && <p className="mt-1 text-[13px] text-out">{invError}</p>}
                   </div>
                 ) : null}
               </li>
@@ -175,35 +221,70 @@ export default function ArtworkCheckReportView({
           })}
         </ul>
       )}
+
       {correctionsOpen.length > 0 && (
-        <ul className="mt-2 space-y-1.5">
-          {correctionsOpen.map((c, i) => (
-            <li key={i} className="break-words">
-              {c.severity === 'defect' && <span className="font-semibold text-out">✗ </span>}
-              <span className="font-medium">Customer correction not picked up:</span>{' '}
-              “{c.quote}”{c.note && <span className="text-ink-soft"> — {c.note}</span>}
-            </li>
-          ))}
+        <ul className="mt-3 space-y-2.5">
+          {correctionsOpen.map((c, i) => {
+            const defect = c.severity === 'defect'
+            return (
+              <li
+                key={i}
+                className={`break-words rounded-lg border-l-[3px] py-2 pl-3 pr-2 ${
+                  defect ? 'border-out bg-out-soft/40' : 'border-low bg-[var(--c-low-soft)]/40'
+                }`}
+              >
+                <p className="font-semibold">
+                  <span className="mr-1">{defect ? '❌' : '⚠️'}</span>
+                  Customer correction not picked up
+                </p>
+                <p className="mt-1 text-ink-soft">“{c.quote}”</p>
+                {c.note && <p className="mt-1 text-ink-soft">{c.note}</p>}
+              </li>
+            )
+          })}
         </ul>
       )}
-      {(report.notes.length > 0 || report.reference_gaps.length > 0) && (
-        <ul className="mt-2 space-y-0.5 text-[12px] text-ink-soft">
-          {report.notes.map((n, i) => <li key={`n-${i}`} className="break-words">{n}</li>)}
-          {report.reference_gaps.map((g, i) => <li key={`g-${i}`} className="break-words">Couldn’t check: {g}</li>)}
-        </ul>
+
+      {report.notes.length > 0 && (
+        <div className="mt-4">
+          <GroupLabel>Good to know</GroupLabel>
+          <ul className="space-y-1.5 text-[13px] text-ink-soft">
+            {report.notes.map((n, i) => (
+              <li key={i} className="flex gap-2 break-words">
+                <span aria-hidden className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-ink-mute" />
+                <span>{n}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
+
+      {report.reference_gaps.length > 0 && (
+        <div className="mt-4">
+          <GroupLabel>Couldn’t check</GroupLabel>
+          <ul className="space-y-1.5 text-[13px] text-ink-soft">
+            {report.reference_gaps.map((g, i) => (
+              <li key={i} className="flex gap-2 break-words">
+                <span aria-hidden className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-ink-mute" />
+                <span>{g}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {report.cards.length > 0 && (
-        <details className="mt-2">
-          <summary className="cursor-pointer text-[12px] font-medium text-ink-soft">Full comparison table</summary>
-          <div className="mt-1 space-y-2">
+        <details className="mt-4">
+          <summary className="cursor-pointer text-[13px] font-medium text-ink-soft">Full comparison table</summary>
+          <div className="mt-2 space-y-3">
             {report.cards.map((c, i) => (
               <div key={i}>
-                <p className="text-[12px] font-medium text-ink">{c.label}</p>
-                <ul className="mt-0.5 space-y-0.5 text-[12px] text-ink-soft">
+                <p className="text-[13px] font-semibold text-ink">{c.label}</p>
+                <ul className="mt-1 space-y-1 text-[13px] text-ink-soft">
                   {c.findings.map((f, j) => (
                     <li key={j} className="break-words">
-                      {f.status === 'flag' ? (f.severity === 'defect' ? '✗' : '⚠️') : f.status === 'match' ? '✓' : '—'}{' '}
-                      {f.field.replace(/_/g, ' ')}: {f.printed}
+                      {f.status === 'flag' ? (f.severity === 'defect' ? '❌' : '⚠️') : f.status === 'match' ? '✓' : '—'}{' '}
+                      <span className="text-ink">{f.field.replace(/_/g, ' ')}:</span> {f.printed}
                       {f.status === 'not_supplied' ? ' (not supplied by customer)' : ''}
                       {f.status === 'flag' && f.supplied ? ` (supplied: ${f.supplied})` : ''}
                     </li>
@@ -214,12 +295,13 @@ export default function ArtworkCheckReportView({
           </div>
         </details>
       )}
-      <p className="mt-1.5 text-[12px] text-ink-mute">
+
+      <p className="mt-4 border-t border-line-soft pt-2.5 text-[12px] text-ink-mute">
         {report.verdict !== 'error' && fieldsChecked > 0 && `${fieldsChecked} field${fieldsChecked === 1 ? '' : 's'} compared. `}
-        {report.verdict === 'defect' && '✗ items look wrong outright — resolve them before placing. Everything here stays advisory. '}
+        {report.verdict === 'defect' && 'The ❌ items look wrong outright — resolve them before placing. Everything here stays advisory. '}
         {report.verdict === 'flagged' && 'Flags are advisory — review them, then place the order when you’re satisfied. '}
         Checked {artworkCheckedAtLabel(report)}.
       </p>
-    </>
+    </div>
   )
 }

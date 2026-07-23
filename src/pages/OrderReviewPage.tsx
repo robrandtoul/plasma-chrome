@@ -5,7 +5,7 @@ import { DesignerChrome, PanelShell, ButtonCoral, ButtonGhost } from '../design'
 import { ImageCard, type GridImage } from '../components/ImageGrid'
 import Modal from '../components/Modal'
 import { checkEditedMessage } from '../lib/handoffMessageCheck'
-import ArtworkCheckReportView, { InlineSpinner, artworkDefectCount, artworkFlagCount, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
+import ArtworkCheckReportView, { InlineSpinner, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
 
 // OrderReviewPage (/orders/:id/place) — the review-and-confirm screen for placing
 // a PAID order into production. Shows the artwork, spec, quantities, destination
@@ -454,11 +454,9 @@ export default function OrderReviewPage() {
   const handoffWarnings = preview?.handoff_validation?.warnings ?? []
   const showHandoffChecks = handoffProblems.length > 0 || handoffWarnings.length > 0
 
-  // Artwork check card derivations; the body rendering lives in the shared
-  // ArtworkCheckReportView (also used by the Orders-page report modal).
+  // Artwork check card derivations; the headline + body rendering both live in
+  // the shared ArtworkCheckReportView (also used by the Orders-page report modal).
   const artworkReport = artworkCheck.report
-  const artworkFlagTotal = artworkReport ? artworkFlagCount(artworkReport) : 0
-  const artworkDefectTotal = artworkReport ? artworkDefectCount(artworkReport) : 0
   const showArtworkCard = artworkCheck.live && (artworkCheck.status === 'running' || artworkReport != null)
 
   // The editable hand-off message — identical control for both routes (only the
@@ -743,7 +741,7 @@ export default function OrderReviewPage() {
                 feature mode is live. */}
             {showArtworkCard && (
               <div
-                className={`mt-4 rounded-lg px-3 py-3 text-[13px] text-ink ring-1 ${
+                className={`mt-4 rounded-lg px-3.5 py-3 ring-1 ${
                   artworkCheck.status === 'running' || !artworkReport
                     ? 'bg-canvas/60 ring-line'
                     : artworkReport.verdict === 'clear'
@@ -753,37 +751,28 @@ export default function OrderReviewPage() {
                         : 'bg-low-soft ring-low'
                 }`}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <p className="font-medium">
-                    {artworkCheck.status === 'running'
-                      ? <><InlineSpinner className="mr-2" />Checking the artwork against the customer’s details…</>
-                      : artworkReport?.verdict === 'clear'
-                        ? '✅ Artwork check — all clear'
-                        : artworkReport?.verdict === 'defect'
-                          ? `❌ Artwork check — ${artworkDefectTotal} item${artworkDefectTotal === 1 ? ' looks' : 's look'} wrong`
-                          : artworkReport?.verdict === 'flagged'
-                            ? `⚠️ Artwork check — ${artworkFlagTotal} thing${artworkFlagTotal === 1 ? '' : 's'} to check`
-                            : '⚠️ Artwork check couldn’t run'}
+                {artworkCheck.status === 'running' ? (
+                  <p className="flex items-center gap-2 font-medium text-ink">
+                    <InlineSpinner />Checking the artwork against the customer’s details…
                   </p>
-                  {artworkCheck.status !== 'running' && (
-                    <button
-                      type="button"
-                      onClick={() => void runArtworkCheck(true)}
-                      disabled={confirming}
-                      className="shrink-0 text-[12px] font-medium text-brand hover:underline"
-                    >
-                      Re-run
-                    </button>
-                  )}
-                </div>
-                {artworkCheck.status !== 'running' && artworkReport && (
+                ) : artworkReport ? (
                   <ArtworkCheckReportView
                     report={artworkReport}
+                    action={
+                      <button
+                        type="button"
+                        onClick={() => void runArtworkCheck(true)}
+                        disabled={confirming}
+                        className="text-[13px] font-medium text-brand hover:underline"
+                      >
+                        Re-run
+                      </button>
+                    }
                     onInvestigate={(flag) => void investigateFlag(flag)}
                     investigatingKey={investigatingKey}
                     investigationError={investigationError}
                   />
-                )}
+                ) : null}
               </div>
             )}
 

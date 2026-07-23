@@ -26,7 +26,7 @@ import { useConfirm } from '../components/ConfirmDialog'
 import SendPayLinkModal from '../components/SendPayLinkModal'
 import DesignerAvatar from '../components/DesignerAvatar'
 import ApprovedArtworkPanel from '../components/ApprovedArtworkPanel'
-import ArtworkCheckReportView, { artworkDefectCount, artworkFlagCount, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
+import ArtworkCheckReportView, { type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
 import { ChevronDown, ChevronRight, StickyNote } from 'lucide-react'
 
 // Orders / "to order" surface (Ordering & checkout, Step 6 — overhauled).
@@ -2257,23 +2257,14 @@ export default function OrdersPage() {
               {artworkReportModal.loading ? (
                 <p className="mt-2 text-sm text-ink-mute">Loading the report…</p>
               ) : artworkReportModal.report ? (
-                <>
-                  <p className="mt-1 font-medium">
-                    {artworkReportModal.report.verdict === 'clear'
-                      ? '✅ Artwork check — all clear'
-                      : artworkReportModal.report.verdict === 'defect'
-                        ? `❌ Artwork check — ${artworkDefectCount(artworkReportModal.report)} item${artworkDefectCount(artworkReportModal.report) === 1 ? ' looks' : 's look'} wrong`
-                        : artworkReportModal.report.verdict === 'flagged'
-                          ? `⚠️ Artwork check — ${artworkFlagCount(artworkReportModal.report)} thing${artworkFlagCount(artworkReportModal.report) === 1 ? '' : 's'} to check`
-                          : '⚠️ Artwork check couldn’t run'}
-                  </p>
+                <div className="mt-2">
                   <ArtworkCheckReportView
                     report={artworkReportModal.report}
                     onInvestigate={(flag) => void investigateFlag(artworkReportModal.orderId, flag)}
                     investigatingKey={investigatingKey}
                     investigationError={investigationError}
                   />
-                </>
+                </div>
               ) : (
                 <p className="mt-2 text-sm text-ink-mute">No stored report for this order yet — open its Place order screen to run one.</p>
               )}
