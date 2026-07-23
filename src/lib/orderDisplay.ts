@@ -67,3 +67,58 @@ export function customerLabel(
 ): string {
   return companyName?.trim() || contactName?.trim() || '—'
 }
+
+// ── US import-duty billing ───────────────────────────────────────────────────
+// US-bound orders are charged a flat US tariff & customs-handling service by
+// default (migration 000249), which the customer can OPT OUT of at checkout. The
+// choice decides who the courier duties & taxes get billed to on the FedEx /
+// customs paperwork — and it wasn't surfaced anywhere for fulfilment, so the
+// shipping step couldn't tell whether to bill our account or the recipient.
+//
+// This resolves that choice into a display + a plain-English paperwork
+// instruction, so it can sit next to the delivery address on every order
+// surface (the Orders work queue, the admin Order log, and Admin → Shipping).
+
+export interface UsTariffDutyBilling {
+  optedOut: boolean
+  // Who the courier duties & taxes should be billed to on the paperwork.
+  billTo: 'sender' | 'recipient'
+  // The customer's checkout choice, in plain words.
+  choice: string
+  // What that choice means for the shipping/customs paperwork.
+  action: string
+}
+
+// Resolve the US import-duty billing from a US-bound order's checkout choice, or
+// null when there's nothing to show (a non-US order, or one with no tariff
+// service recorded — e.g. an offline order that never ran through checkout).
+//
+// The signal: the tariff service is only ever offered on, and charged to,
+// US-bound orders — so an explicit opt-out OR a stamped tariff line
+// (amount_us_tariff > 0) both mean "this is a US order and the customer made a
+// choice". When neither holds there's no captured choice to surface.
+//
+// ⚠ Combined-payment members carry the tariff on the GROUP row, not the member
+// (create-checkout-session zeroes the member's amount_us_tariff and bills the
+// tariff once at group level). For a grouped order, pass the GROUP's values.
+export function usTariffDutyBilling(o: {
+  us_tariff_opted_out?: boolean | null
+  amount_us_tariff: number | null
+}): UsTariffDutyBilling | null {
+  const optedOut = o.us_tariff_opted_out === true
+  const charged = o.amount_us_tariff != null && Number(o.amount_us_tariff) > 0
+  if (!optedOut && !charged) return null
+  return optedOut
+    ? {
+        optedOut: true,
+        billTo: 'recipient',
+        choice: 'Opted out of the US import-duty service',
+        action: 'Bill duties & taxes to the recipient',
+      }
+    : {
+        optedOut: false,
+        billTo: 'sender',
+        choice: 'US import-duty service included',
+        action: 'Bill duties & taxes to us (the sender)',
+      }
+}

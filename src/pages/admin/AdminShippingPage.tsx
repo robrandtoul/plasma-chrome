@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { PanelShell, Pill, Field, Input, ButtonInk, ButtonGhost, ButtonCoral } from '../../design'
 import Modal from '../../components/Modal'
-import { customerLabel as customerLabelShared, specLabel as specLabelShared } from '../../lib/orderDisplay'
+import { customerLabel as customerLabelShared, specLabel as specLabelShared, usTariffDutyBilling } from '../../lib/orderDisplay'
 import { logAudit } from '../../lib/audit'
 import { deriveParcelWeightGrams } from '../../lib/quote/shipping'
 import { SHIP_COUNTRIES } from '../../lib/shipCountries'
@@ -79,6 +79,12 @@ interface OrderRow {
   // Optional customer VAT / EORI number from EU checkout (migration 000341),
   // for the customs paperwork; also staff-editable here.
   customs_tax_id: string | null
+  // US import-duty (tariff) choice from checkout (migrations 000249 / 000342),
+  // read-only here — it decides who duties are billed to on the paperwork. On a
+  // grouped order the tariff lives on the group, so read it from order_groups.
+  amount_us_tariff: number | null
+  us_tariff_opted_out: boolean | null
+  order_groups: { us_tariff_opted_out: boolean | null; amount_us_tariff: number | null } | null
   ship_to_address: ShipAddress | null
   ship_dest_country: string | null
   ship_dest_postcode: string | null
@@ -95,7 +101,8 @@ const SELECT = `
   id, status, payment_method, order_kind, payment_reference, currency, quantity, quantity_open,
   custom_quote_total, material_id, material_variant_id, names_count, paid_at, fulfilled_at,
   order_group_id, proof_id, ship_to_name, ship_to_email, ship_to_phone, ship_to_address,
-  customs_tax_id, ship_dest_country, ship_dest_postcode,
+  customs_tax_id, amount_us_tariff, us_tariff_opted_out, ship_dest_country, ship_dest_postcode,
+  order_groups(us_tariff_opted_out, amount_us_tariff),
   material_variants(display_name, weight_grams, materials(code, display_name)),
   material_options(display_name),
   proofs(contacts(full_name, companies(name)))
@@ -425,6 +432,17 @@ function ShippingCard({
               <span className="text-ink-mute">VAT/EORI:</span> {order.customs_tax_id || '—'}
             </p>
           )}
+          {(() => {
+            // Group-aware: the tariff lives on the group for a combined payment.
+            const src = order.order_group_id && order.order_groups ? order.order_groups : order
+            const t = usTariffDutyBilling(src)
+            if (!t) return null
+            return (
+              <p className={`mt-0.5 text-[13px] ${t.optedOut ? 'font-medium text-low' : 'text-ink-soft'}`}>
+                <span className="text-ink-mute">US duties:</span> {t.choice} — {t.action}.
+              </p>
+            )
+          })()}
 
           {flags.length > 0 && (
             <div className="mt-2 flex flex-wrap items-center gap-1.5">

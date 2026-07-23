@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { downloadBlob } from '../../lib/downloadFile'
 import { formatPrice } from '../../lib/currency'
-import { orderTotal, specLabel, customerLabel } from '../../lib/orderDisplay'
+import { orderTotal, specLabel, customerLabel, usTariffDutyBilling } from '../../lib/orderDisplay'
 import { Pill, type PillColour } from '../../design'
 import type { Currency } from '../../lib/types'
 
@@ -57,6 +57,10 @@ interface OrderLogRow {
   ship_to_phone: string | null
   // Optional customer VAT / EORI number from EU checkout (migration 000341).
   customs_tax_id: string | null
+  // US-bound checkout: did the customer opt out of the import-duty service?
+  // (migrations 000249 / 000342.) Decides who duties are billed to on the
+  // courier paperwork. Null on grouped members (the tariff lives on the group).
+  us_tariff_opted_out: boolean | null
   ship_to_address: {
     line1?: string | null
     line2?: string | null
@@ -593,6 +597,15 @@ function OrderDetailModal({ order: o, onClose }: { order: OrderLogRow; onClose: 
               {o.ship_to_email && <p className="mt-1 text-xs text-ink-dim">{o.ship_to_email}</p>}
               {o.ship_to_phone && <p className="text-xs text-ink-dim">{o.ship_to_phone}</p>}
               {o.customs_tax_id && <p className="text-xs text-ink-dim">VAT/EORI: {o.customs_tax_id}</p>}
+              {(() => {
+                const t = usTariffDutyBilling(o)
+                if (!t) return null
+                return (
+                  <p className={`mt-1 text-xs ${t.optedOut ? 'font-medium text-low' : 'text-ink-dim'}`}>
+                    US duties: {t.choice} — {t.action}.
+                  </p>
+                )
+              })()}
             </Section>
           )}
 
