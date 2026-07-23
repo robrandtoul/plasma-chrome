@@ -1533,6 +1533,15 @@ export default function EditVersionPage() {
           && !isVariantRound
           && names.map((n) => n.trim()).filter(Boolean).length >= 2
           && teamSharingEnabled,
+        // Pre-send proof check (000343): editing a version invalidates any
+        // stored report — a report must only ever describe the exact artwork
+        // it was run against, so every edit-save clears it. The designer
+        // re-runs from the preview gate they're about to pass through (which
+        // always checks fresh); superseded versions keep their reports
+        // because editing is only possible on this page.
+        artwork_check: null,
+        artwork_checked_at: null,
+        artwork_check_verdict: null,
       })
       .eq('id', versionId!)
 

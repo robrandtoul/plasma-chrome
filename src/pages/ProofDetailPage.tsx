@@ -37,7 +37,7 @@ import { formatPrice } from '../lib/currency'
 // QuoteLink now lives inside DesignerChrome (PR 31).
 import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill, PanelShell, tokens } from '../design'
 import { ChevronRight, ChevronLeft, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle, Send, Eye, Flag, MessageSquare, Clock, Activity, Package, HelpCircle, ThumbsDown, ScanSearch } from 'lucide-react'
-import ArtworkCheckReportView, { InlineSpinner, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
+import ArtworkCheckReportView, { InlineSpinner, artworkVerdict, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
 import { useProofCheck } from '../lib/useProofCheck'
 import {
   computeViewedState,
@@ -615,6 +615,26 @@ export default function ProofDetailPage() {
     pcCurrentVersion?.id ?? null,
     (pcCurrentVersion?.artwork_check ?? null) as ArtworkCheckReport | null,
   )
+  // Per-version report archive: a checked version keeps its report forever
+  // (a new version starts unchecked; only an edit clears it), and the chip on
+  // its Versions-list row opens that stored report here, read-only.
+  const [versionReportModal, setVersionReportModal] = useState<ModalVersion | null>(null)
+  // A fresh run persists server-side but the versions array still holds the
+  // row as loaded — mirror the new report onto it so the row's verdict chip
+  // appears immediately rather than on the next reload. The !== guard makes
+  // this settle after one pass (the hook then just re-seeds the same object).
+  useEffect(() => {
+    const report = proofCheck.report
+    if (!report || !pcCurrentVersion) return
+    setVersions((prev) => {
+      if (!prev.some((v) => v.id === pcCurrentVersion.id && v.artwork_check !== report)) return prev
+      return prev.map((v) =>
+        v.id === pcCurrentVersion.id
+          ? { ...v, artwork_check: report, artwork_check_verdict: report.verdict, artwork_checked_at: report.checked_at }
+          : v,
+      )
+    })
+  }, [proofCheck.report])
   // Approved artwork table data. Null = not loaded yet (project may
   // not be approved, or the fetch hasn't run); [] = approved but no
   // matching images (approval row with every slot's images deleted
@@ -3866,6 +3886,35 @@ export default function ProofDetailPage() {
                               Customer approved
                             </span>
                           )}
+                        {/* Pre-send proof-check verdict (000343). Every
+                            checked version keeps its report; the chip opens
+                            it read-only — the per-version archive. Stops
+                            propagation so the row's own click (the version
+                            modal) doesn't also fire. */}
+                        {v.artwork_check_verdict && (() => {
+                          const rowReport = (v.artwork_check ?? null) as ArtworkCheckReport | null
+                          const verdictInfo = rowReport ? artworkVerdict(rowReport, 'Proof check') : null
+                          const pillStyle = v.artwork_check_verdict === 'clear'
+                            ? { color: 'var(--c-in-stock)', backgroundColor: 'var(--c-in-stock-soft)' }
+                            : v.artwork_check_verdict === 'defect'
+                              ? { color: 'var(--c-out)', backgroundColor: 'var(--c-out-soft)' }
+                              : { color: 'var(--c-low)', backgroundColor: 'var(--c-low-soft)' }
+                          return (
+                            <button
+                              type="button"
+                              onClick={(ev) => {
+                                ev.stopPropagation()
+                                setVersionReportModal(v)
+                              }}
+                              onKeyDown={(ev) => ev.stopPropagation()}
+                              title={`${verdictInfo?.text ?? 'Proof check'} — open the report`}
+                              className="pill transition-opacity hover:opacity-75"
+                              style={pillStyle}
+                            >
+                              <span aria-hidden="true">{verdictInfo?.icon ?? '⚠️'}</span> Proof check
+                            </button>
+                          )
+                        })()}
                         {/* View-state dot — preserves the existing
                             three-state semantic at a glance. */}
                         <span
@@ -4215,6 +4264,41 @@ export default function ProofDetailPage() {
             setStatusDialog('delete')
           }}
         />
+      )}
+
+      {/* Per-version proof-check report archive — the stored report for
+          whichever row's chip was clicked, read-only (Re-check and the
+          history investigation live on the CURRENT version's panel; a
+          superseded version's report is a frozen record of what was checked
+          before that round went out). Same capped, internally-scrolling
+          panel as the Orders-page archive modal. */}
+      {versionReportModal && (
+        <Modal
+          open
+          onClose={() => setVersionReportModal(null)}
+          ariaLabel="Proof check report"
+          panelClassName="w-full max-w-xl rounded-2xl bg-white shadow-xl md:flex md:max-h-[85vh] md:flex-col"
+        >
+          <div className="shrink-0 px-5 pt-5 pb-3">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">
+              Proof check · v{versionReportModal.version_number}
+              {!versionReportModal.is_current && ' · superseded version'}
+            </p>
+          </div>
+          <div className="px-5 text-[13px] text-ink md:min-h-0 md:flex-1 md:overflow-y-auto">
+            {versionReportModal.artwork_check ? (
+              <ArtworkCheckReportView
+                report={versionReportModal.artwork_check as ArtworkCheckReport}
+                heading="Proof check"
+              />
+            ) : (
+              <p className="text-sm text-ink-mute">The stored report for this version couldn’t be read.</p>
+            )}
+          </div>
+          <div className="mt-1 flex shrink-0 justify-end border-t border-line-soft px-5 py-3">
+            <ButtonGhost size="sm" onClick={() => setVersionReportModal(null)}>Close</ButtonGhost>
+          </div>
+        </Modal>
       )}
 
       {/* Approve confirm dialog */}

@@ -665,6 +665,20 @@ the gate both consume it, so the function contract has ONE client. The gate alwa
 runs `force: true` (on the edit flow a stored report predates the just-saved edit).
 Frontend-only — no migration or function change. Harness rig: `?path=/preview-gate`.
 
+**Report lifecycle (Rob's question, same day):** the rule is *"a report always
+belongs to exactly the artwork it was run on; every checked version keeps its report
+forever; anything unchecked plainly says so."* Three mechanics deliver it: (1) a new
+version is born with empty check columns (the insert never copies them), so v3 can
+never wear v2's verdict — the panel and gate read idle; (2) **an edit-save clears
+the version's stored report** (EditVersionPage nulls the three columns) so a report
+can never describe artwork it wasn't run against — the designer re-runs from the
+gate they're already passing through; (3) **every checked version keeps its report**,
+now visible via a verdict pill (✅/⚠️/❌ "Proof check") on its Versions-list row that
+opens the stored report read-only in the capped modal — the per-version archive
+(Re-check + the history investigation stay on the CURRENT version's panel; a
+superseded version's report is a frozen record). A fresh panel run also mirrors its
+report onto the row so the pill appears without a reload.
+
 **Deferred to Phase 3:** a print-file staleness guard for content changes inside an
 unchanged folder link (re-link and Re-run cover it meanwhile), admin-editable *rules*
 (the prompt allow-list — step 2 of the admin graduation, distinct from the model picker),
