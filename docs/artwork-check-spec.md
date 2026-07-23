@@ -651,6 +651,20 @@ is the possible later upgrade once real use proves worth it). ⚠ Deploy order:
 migration FIRST (ProofDetailPage's version select and the function's version-target
 select both name the new columns), then the function, then the frontend merge.
 
+**Follow-up same day (Rob): the check surfaced IN the save flow.** The proof detail
+page sits outside the designers' typical workflow, so the check now also lives in
+`VersionPreviewGate` — the forced post-save preview both New- and Edit-version pages
+already route through. A "Run proof check" chip sits right-aligned in the gate's
+checklist row (visually apart from the required review chips — it never gates the
+confirm): idle → spinner while the run continues server-side (confirming mid-run
+loses nothing; the report persists and shows on the project page) → a verdict chip
+("❌ Proof check · 2 items look wrong") that opens the full report in a capped
+scrollable modal (Re-check + per-flag Investigate inside). The run/investigate/gate
+state moved into the shared `src/lib/useProofCheck.ts` hook — ProofDetailPage and
+the gate both consume it, so the function contract has ONE client. The gate always
+runs `force: true` (on the edit flow a stored report predates the just-saved edit).
+Frontend-only — no migration or function change. Harness rig: `?path=/preview-gate`.
+
 **Deferred to Phase 3:** a print-file staleness guard for content changes inside an
 unchanged folder link (re-link and Re-run cover it meanwhile), admin-editable *rules*
 (the prompt allow-list — step 2 of the admin graduation, distinct from the model picker),

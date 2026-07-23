@@ -58,10 +58,13 @@
 // audit ledger carries the durable record instead.
 
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDown, Check, Eye } from 'lucide-react'
+import { ArrowDown, Check, Eye, ScanSearch } from 'lucide-react'
 import { logAudit } from '../lib/audit'
 import { customerProofPath } from '../lib/customerProofUrl'
 import { asPreviewPageMessage, postShowTab } from '../lib/previewBridge'
+import Modal from './Modal'
+import ArtworkCheckReportView, { InlineSpinner, artworkVerdict } from './ArtworkCheckReportView'
+import { useProofCheck } from '../lib/useProofCheck'
 import {
   initialProgress,
   outstandingTabs,
@@ -119,6 +122,18 @@ export default function VersionPreviewGate({
   // Wall-clock start for the audit entry's preview_seconds.
   const openedAtRef = useRef(Date.now())
   const [progress, setProgress] = useState(initialProgress)
+
+  // Pre-send proof check (migration 000343) — the AI comparison of this
+  // version's images against the customer's thread, offered right here in the
+  // save flow so a designer can catch typos and missed change requests before
+  // the customer sees the proof. Deliberately ADVISORY: it never gates the
+  // confirm button, and it never runs by itself (each run costs real money —
+  // the designer presses it when the revision history warrants it). The run
+  // continues + persists server-side even if the designer confirms mid-run,
+  // so the report is never lost — it shows on the project page afterwards.
+  // Always force=true: on the edit flow a stored report predates the edit.
+  const proofCheck = useProofCheck(versionId, null)
+  const [reportOpen, setReportOpen] = useState(false)
 
   // Build the iframe URL. ?preview=1 keeps the designer's hits out
   // of the customer-view audit ledger; ?v= pins to the specific
@@ -349,6 +364,46 @@ export default function VersionPreviewGate({
               {complete && <span className="text-xs text-ink-dim">All checked — over to you</span>}
             </>
           )}
+
+          {/* Pre-send proof check chip — pushed right so it reads as the
+              optional extra beside the required review checklist. Idle →
+              run; running → spinner (the designer keeps reviewing, the run
+              continues server-side regardless); done → the verdict, click
+              for the full report. */}
+          {proofCheck.enabled && (proofCheck.check.status === 'running' ? (
+            <span className={`${chipBase} ml-auto text-ink-dim`}>
+              <InlineSpinner className="h-3 w-3" />
+              Checking against the customer’s details…
+            </span>
+          ) : proofCheck.check.report ? (
+            (() => {
+              const v = artworkVerdict(proofCheck.check.report, 'Proof check')
+              const suffix = v.text.startsWith('Proof check — ')
+                ? v.text.slice('Proof check — '.length)
+                : 'couldn’t run'
+              return (
+                <button
+                  type="button"
+                  onClick={() => setReportOpen(true)}
+                  title={`${v.text} — open the report`}
+                  className={`${chipBase} ml-auto text-on-ink hover:bg-ink`}
+                >
+                  <span aria-hidden="true">{v.icon}</span>
+                  Proof check · {suffix}
+                </button>
+              )
+            })()
+          ) : (
+            <button
+              type="button"
+              onClick={() => void proofCheck.run(true)}
+              title={proofCheck.runError ?? 'Optional: check this version against everything the customer sent — the thread, attachments and QR contents — before they see it. Takes about half a minute.'}
+              className={`${chipBase} ml-auto text-on-ink hover:bg-ink`}
+            >
+              <ScanSearch size={12} aria-hidden="true" />
+              {proofCheck.runError ? 'Proof check — retry' : 'Run proof check'}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -366,6 +421,58 @@ export default function VersionPreviewGate({
         title={`Preview of version v${versionNumber} as the customer will see it`}
         className="flex-1 w-full border-0 bg-surface"
       />
+
+      {/* The proof-check report — same capped, internally-scrolling panel as
+          the Orders-page archive modal (pinned label + Close, long reports
+          scroll between). Renders above the gate via the Modal portal. */}
+      {reportOpen && proofCheck.check.report && (
+        <Modal
+          open
+          onClose={() => setReportOpen(false)}
+          ariaLabel="Proof check report"
+          panelClassName="w-full max-w-xl rounded-2xl bg-white shadow-xl md:flex md:max-h-[85vh] md:flex-col"
+        >
+          <div className="shrink-0 px-5 pt-5 pb-3">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">
+              Proof check · v{versionNumber}
+            </p>
+          </div>
+          <div className="px-5 text-[13px] text-ink md:min-h-0 md:flex-1 md:overflow-y-auto">
+            {proofCheck.check.status === 'running' && (
+              <p className="mb-3 flex items-center gap-2 text-[13px] text-ink-mute">
+                <InlineSpinner className="h-3 w-3" />
+                Re-checking — the report below is the previous run…
+              </p>
+            )}
+            <ArtworkCheckReportView
+              report={proofCheck.check.report}
+              heading="Proof check"
+              action={
+                <button
+                  type="button"
+                  onClick={() => void proofCheck.run(true)}
+                  disabled={proofCheck.check.status === 'running'}
+                  className="text-[13px] font-medium text-brand hover:underline disabled:opacity-50"
+                >
+                  Re-check
+                </button>
+              }
+              onInvestigate={(flag) => void proofCheck.investigate(flag)}
+              investigatingKey={proofCheck.investigatingKey}
+              investigationError={proofCheck.investigationError}
+            />
+          </div>
+          <div className="mt-1 flex shrink-0 justify-end border-t border-line-soft px-5 py-3">
+            <button
+              type="button"
+              onClick={() => setReportOpen(false)}
+              className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-ink-soft ring-1 ring-line hover:bg-canvas"
+            >
+              Close
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }

@@ -38,6 +38,7 @@ import { formatPrice } from '../lib/currency'
 import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill, PanelShell, tokens } from '../design'
 import { ChevronRight, ChevronLeft, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle, Send, Eye, Flag, MessageSquare, Clock, Activity, Package, HelpCircle, ThumbsDown, ScanSearch } from 'lucide-react'
 import ArtworkCheckReportView, { InlineSpinner, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
+import { useProofCheck } from '../lib/useProofCheck'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -598,12 +599,22 @@ export default function ProofDetailPage() {
   const [orders, setOrders] = useState<ProofOrder[] | null>(null)
   // Pre-send proof check (migration 000343). Designer-triggered — the current
   // version's images vs the customer's thread, run BEFORE the proof is sent.
-  // Gated on settings.proof_check_enabled (read once on mount); the stored
-  // report seeds from the current version row so a past run shows instantly.
-  const [proofCheckEnabled, setProofCheckEnabled] = useState(false)
-  const [proofCheck, setProofCheck] = useState<{ status: 'idle' | 'running' | 'done'; report: ArtworkCheckReport | null }>({ status: 'idle', report: null })
-  const [pcInvestigatingKey, setPcInvestigatingKey] = useState<string | null>(null)
-  const [pcInvestigationError, setPcInvestigationError] = useState<{ key: string; message: string } | null>(null)
+  // All the state + calls live in the shared useProofCheck hook (also used by
+  // the VersionPreviewGate's post-save chip); the stored report seeds from the
+  // current version row so a past run shows instantly.
+  const pcCurrentVersion = versions.find((v) => v.is_current) ?? null
+  const {
+    enabled: proofCheckEnabled,
+    check: proofCheck,
+    run: runProofCheck,
+    investigate: investigateProofFlag,
+    runError: proofCheckRunError,
+    investigatingKey: pcInvestigatingKey,
+    investigationError: pcInvestigationError,
+  } = useProofCheck(
+    pcCurrentVersion?.id ?? null,
+    (pcCurrentVersion?.artwork_check ?? null) as ArtworkCheckReport | null,
+  )
   // Approved artwork table data. Null = not loaded yet (project may
   // not be approved, or the fetch hasn't run); [] = approved but no
   // matching images (approval row with every slot's images deleted
@@ -628,85 +639,6 @@ export default function ProofDetailPage() {
   useEffect(() => {
     if (id) loadProof(id)
   }, [id])
-
-  // Pre-send proof check: is the feature on? One cheap read; off (or a failed
-  // read, or a pre-000343 DB) simply hides the panel.
-  useEffect(() => {
-    void supabase
-      .from('settings')
-      .select('proof_check_enabled')
-      .eq('id', 1)
-      .maybeSingle()
-      .then(({ data }) => {
-        if ((data as { proof_check_enabled?: boolean | null } | null)?.proof_check_enabled === true) {
-          setProofCheckEnabled(true)
-        }
-      })
-  }, [])
-
-  // Seed the proof-check panel from the current version's stored report so a
-  // past run shows instantly on load (and after loadProof refreshes). Never
-  // clobbers an in-flight run — the run's own response wins.
-  useEffect(() => {
-    const cv = versions.find((v) => v.is_current)
-    const stored = (cv?.artwork_check ?? null) as ArtworkCheckReport | null
-    setProofCheck((prev) => (prev.status === 'running' ? prev : { status: stored ? 'done' : 'idle', report: stored }))
-  }, [versions])
-
-  // Run (or force re-run) the pre-send proof check on the current version.
-  // A failed invoke keeps any previous report — never empties good state.
-  async function runProofCheck(force: boolean) {
-    const cv = versions.find((v) => v.is_current)
-    if (!cv || proofCheck.status === 'running') return
-    setProofCheck((prev) => ({ ...prev, status: 'running' }))
-    try {
-      const { data } = await supabase.functions.invoke<{
-        ok: boolean
-        enabled?: boolean
-        report?: ArtworkCheckReport
-        error?: string
-      }>('artwork-check', { body: { proof_version_id: cv.id, ...(force ? { force: true } : {}) } })
-      if (!data?.ok || data.enabled === false || !data.report) {
-        if (data?.enabled === false) setProofCheckEnabled(false)
-        setProofCheck((prev) => ({ status: prev.report ? 'done' : 'idle', report: prev.report }))
-        if (data?.error) showToast(data.error)
-        return
-      }
-      setProofCheck({ status: 'done', report: data.report })
-    } catch {
-      setProofCheck((prev) => ({ status: prev.report ? 'done' : 'idle', report: prev.report }))
-      showToast('The proof check couldn’t run — try again.')
-    }
-  }
-
-  // Per-flag history walk on a proof-check flag — same designer-triggered
-  // escalation as the order check's, cached server-side on the report.
-  async function investigateProofFlag(flag: { card: string; field: string }) {
-    const cv = versions.find((v) => v.is_current)
-    if (!cv) return
-    const key = `${flag.card}::${flag.field}`
-    setPcInvestigatingKey(key)
-    setPcInvestigationError(null)
-    try {
-      const { data } = await supabase.functions.invoke<{
-        ok: boolean
-        investigation?: NonNullable<ArtworkCheckReport['investigations']>[string]
-        error?: string
-      }>('artwork-check', { body: { proof_version_id: cv.id, investigate: flag } })
-      if (data?.ok && data.investigation) {
-        const inv = data.investigation
-        setProofCheck((prev) => prev.report
-          ? { ...prev, report: { ...prev.report, investigations: { ...(prev.report.investigations ?? {}), [key]: inv } } }
-          : prev)
-      } else {
-        setPcInvestigationError({ key, message: data?.error ?? 'The investigation couldn’t run — try again.' })
-      }
-    } catch {
-      setPcInvestigationError({ key, message: 'The investigation couldn’t run — try again.' })
-    } finally {
-      setPcInvestigatingKey(null)
-    }
-  }
 
   // Is this project flagged with an un-resolved card? (proof_id = the route id.)
   // A live card flips the header Flag button to "Flagged".
@@ -3781,6 +3713,9 @@ export default function ProofDetailPage() {
                   Run check
                 </ButtonGhost>
               </div>
+            )}
+            {proofCheckRunError && proofCheck.status !== 'running' && (
+              <p className="mt-2 text-[13px] text-out">{proofCheckRunError}</p>
             )}
           </section>
         )}

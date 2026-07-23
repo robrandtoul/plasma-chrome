@@ -34,6 +34,7 @@ import AdminArtworkCheckPage from '../src/pages/admin/AdminArtworkCheckPage'
 import { SpreadQuoteResults } from '../src/components/quote/SpreadQuoteResults'
 import { RecapArtwork, buildRecapTiles } from '../src/components/ArtworkFade'
 import ArtworkCheckReportView, { type ArtworkCheckReport } from '../src/components/ArtworkCheckReportView'
+import VersionPreviewGate from '../src/components/VersionPreviewGate'
 import Modal from '../src/components/Modal'
 import { ButtonGhost } from '../src/design'
 import type { GridImage } from '../src/components/ImageGrid'
@@ -262,6 +263,26 @@ function ArtworkReportModalRig() {
   )
 }
 
+// ?path=/preview-gate mounts the post-save VersionPreviewGate with fixture
+// ids so the banner layout — review checklist + the pre-send proof-check
+// chip (settings fixture has proof_check_enabled: true) — can be checked
+// without saving a real version. The iframe target doesn't resolve to a real
+// customer page here; the gate treats that as "Loading preview…", which is
+// fine for banner checks.
+function PreviewGateRig() {
+  return (
+    <VersionPreviewGate
+      proofId="demo-proof"
+      versionId="demo-version"
+      versionNumber={3}
+      currency="GBP"
+      onConfirm={() => {}}
+      onEdit={() => {}}
+      confirmLabel="Looks good — write the reply"
+    />
+  )
+}
+
 function Elsewhere() {
   return <div style={{ padding: 40 }} data-nav-target>navigated away</div>
 }
@@ -282,6 +303,8 @@ const tree = requestedPath === '/quote-spread' ? (
   <ArtworkReportRig />
 ) : requestedPath === '/artwork-report-modal' ? (
   <ArtworkReportModalRig />
+) : requestedPath === '/preview-gate' ? (
+  <PreviewGateRig />
 ) : requestedPath === '/palette' ? (
   <MemoryRouter initialEntries={['/']}>
     <Routes>
