@@ -6,7 +6,7 @@ import { useAuth } from '../lib/auth'
 import { formatPrice } from '../lib/currency'
 import { getExchangeRates, currencyToGbp, type ExchangeRates } from '../lib/exchangeRates'
 import { customerOrderUrl, customerOrderGroupUrl } from '../lib/customerOrderUrl'
-import { orderTotal, specLabel as specLabelShared, customerLabel as customerLabelShared } from '../lib/orderDisplay'
+import { orderTotal, specLabel as specLabelShared, customerLabel as customerLabelShared, usTariffDutyBilling } from '../lib/orderDisplay'
 import { logAudit } from '../lib/audit'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
 import { keepApprovedNoOrder, invalidateApprovedNoOrderCount } from '../lib/approvedNoOrder'
@@ -80,6 +80,10 @@ interface OrderRow {
   amount_personalisation: number | null
   amount_shipping: number | null
   amount_us_tariff: number | null
+  // US-bound checkout: did the customer opt out of the import-duty service?
+  // (migration 000249.) On a grouped member this is false/0 — the tariff is
+  // billed once at group level, so read it from the group there.
+  us_tariff_opted_out: boolean | null
   // Designer-set cards discount: the config + the amount stamped at checkout.
   card_discount_type: 'none' | 'percent' | 'fixed' | null
   card_discount_value: number | null
@@ -147,7 +151,7 @@ interface OrderRow {
 
 const SELECT = `
   id, status, token, expires_at, sent_at, pay_link_opened_at, help_requested_at, thickness_open, finish_open, quantity_open, order_group_id, material_id, material_variant_id, material_option_id, currency, quantity, names_count, has_personalisation,
-  custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff,
+  custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, us_tariff_opted_out,
   card_discount_type, card_discount_value, amount_card_discount, payment_method, order_kind,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, revised_at,
   artwork_check_verdict, artwork_checked_at,
@@ -194,6 +198,10 @@ interface OrderGroupRow {
   pay_link_opened_at: string | null
   xero_invoice_id: string | null
   xero_invoice_error: string | null
+  // The tariff is billed once at group level (members are zeroed), so the
+  // US import-duty choice for a grouped order lives here.
+  amount_us_tariff: number | null
+  us_tariff_opted_out: boolean | null
 }
 
 // Can this awaiting-payment order join a combined payment? Mirrors the
@@ -1099,7 +1107,7 @@ export default function OrdersPage() {
       if (groupIds.length > 0) {
         void supabase
           .from('order_groups')
-          .select('id, status, currency, token, payment_reference, expires_at, pay_link_opened_at, xero_invoice_id, xero_invoice_error')
+          .select('id, status, currency, token, payment_reference, expires_at, pay_link_opened_at, xero_invoice_id, xero_invoice_error, amount_us_tariff, us_tariff_opted_out')
           .in('id', groupIds)
           .then(({ data: groupRows }) => {
             if (cancelled || !groupRows) return
@@ -2067,6 +2075,7 @@ export default function OrdersPage() {
                             onRetryInvoice={() => void retryInvoice(o)}
                             showArtworkChip={artworkChipsOn}
                             onOpenArtworkReport={() => void openArtworkReport(o)}
+                            usTariff={usTariffDutyBilling(o.order_group_id ? groups[o.order_group_id] ?? o : o)}
                           />
                         </div>
                       ))}
@@ -2113,6 +2122,7 @@ export default function OrdersPage() {
                       onRetryInvoice={() => void retryInvoice(o)}
                       showArtworkChip={artworkChipsOn}
                       onOpenArtworkReport={() => void openArtworkReport(o)}
+                      usTariff={usTariffDutyBilling(o.order_group_id ? groups[o.order_group_id] ?? o : o)}
                     />
                   ))}
                 </div>
@@ -2394,6 +2404,7 @@ function OrderCard({
   proofMaterialCode,
   showArtworkChip = false,
   onOpenArtworkReport,
+  usTariff = null,
 }: {
   order: OrderRow
   thumb: ThumbInfo | null
@@ -2412,6 +2423,8 @@ function OrderCard({
   proofMaterialCode: string | null
   showArtworkChip?: boolean
   onOpenArtworkReport?: () => void
+  /** US import-duty billing, resolved group-aware by the caller. */
+  usTariff?: ReturnType<typeof usTariffDutyBilling>
 }) {
   const total = orderTotal(order)
   const invoiceError = !order.xero_invoice_id ? friendlyInvoiceError(order.xero_invoice_error) : null
@@ -2897,6 +2910,11 @@ function OrderCard({
                 {order.ship_to_email && <span className="block text-ink-mute">{order.ship_to_email}</span>}
                 {order.ship_to_phone && <span className="block text-ink-mute">{order.ship_to_phone}</span>}
                 {order.customs_tax_id && <span className="block text-ink-mute">VAT/EORI: {order.customs_tax_id}</span>}
+                {usTariff && (
+                  <span className={`mt-1 block ${usTariff.optedOut ? 'font-medium text-low' : 'text-ink-mute'}`}>
+                    US duties: {usTariff.choice} — {usTariff.action}.
+                  </span>
+                )}
               </div>
               {/* Mobile: a 48px disclosure with the postcode line as a peek so
                   the full address doesn't stretch the card. */}
@@ -2912,6 +2930,11 @@ function OrderCard({
                   {order.ship_to_email && <span className="block text-ink-mute">{order.ship_to_email}</span>}
                   {order.ship_to_phone && <span className="block text-ink-mute">{order.ship_to_phone}</span>}
                   {order.customs_tax_id && <span className="block text-ink-mute">VAT/EORI: {order.customs_tax_id}</span>}
+                  {usTariff && (
+                    <span className={`mt-1 block ${usTariff.optedOut ? 'font-medium text-low' : 'text-ink-mute'}`}>
+                      US duties: {usTariff.choice} — {usTariff.action}.
+                    </span>
+                  )}
                 </div>
               </details>
             </>
