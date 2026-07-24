@@ -48,13 +48,16 @@ interface ApiMessage {
 }
 
 // Build the API `system` field from parts. A cacheable part gets a
-// cache_control breakpoint so its tokens are written once and re-read at
-// ~0.1x within the 5-minute cache window.
-function buildSystemField(parts: SystemPart[]): { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }[] {
+// cache_control breakpoint with the 1-hour TTL: inbound mail is spaced
+// ~8–20 minutes apart on live, so default 5-minute entries usually expired
+// unread and every run re-paid the write premium. The 1h write costs 2x
+// base input (vs 1.25x for 5m) and needs the prefix re-read within the
+// hour to pay off — live spacing gives ~77–92% of runs a same-hour repeat.
+function buildSystemField(parts: SystemPart[]): { type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl: '1h' } }[] {
   return parts.map((p) => ({
     type: 'text' as const,
     text: p.text,
-    ...(p.cache ? { cache_control: { type: 'ephemeral' as const } } : {}),
+    ...(p.cache ? { cache_control: { type: 'ephemeral' as const, ttl: '1h' as const } } : {}),
   }))
 }
 
