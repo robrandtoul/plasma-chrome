@@ -823,12 +823,25 @@ Deno.serve(async (req) => {
     (supplierIdOverride ? suppliers.find((s) => s.id === supplierIdOverride) ?? null : null) ||
     (suppliers.length === 1 ? suppliers[0] : null)
 
-  // Must ship by = date required − the chosen supplier's transit days. Before a
-  // pick (several allowed), preview against the longest window so the date is a
-  // safe lower bound; it re-resolves once the placer chooses.
+  // Must ship by = date required − a shipping buffer. A supplier's configured
+  // transit (default_shipping_days) wins; a DOMESTIC supplier with none set still
+  // needs a working buffer — 2 days: one for the supplier to reach us, one for us
+  // to reach the customer (Rob's rule, 2026-07-23) — so must-ship-by is never the
+  // customer's required date itself, which left the supplier plus our own
+  // finishing + delivery with zero slack (found in shadow on order 403917; Swype
+  // and Solopress are both domestic with no configured transit). International
+  // suppliers with no transit set stay at 0 (unchanged). Before a pick (several
+  // allowed) preview against the longest window as a safe lower bound; it
+  // re-resolves once the placer chooses. See docs/order-handoff-spec.md.
+  const DOMESTIC_SHIP_BUFFER_DAYS = 2
+  const shipBufferDays = (s: { default_shipping_days: number | null; is_international: boolean }): number => {
+    const configured = Number(s.default_shipping_days ?? 0)
+    if (configured > 0) return configured
+    return s.is_international ? 0 : DOMESTIC_SHIP_BUFFER_DAYS
+  }
   const shipDays = chosen
-    ? Number(chosen.default_shipping_days ?? 0)
-    : suppliers.reduce((m, s) => Math.max(m, Number(s.default_shipping_days ?? 0)), 0)
+    ? shipBufferDays(chosen)
+    : suppliers.reduce((m, s) => Math.max(m, shipBufferDays(s)), 0)
   const dr = new Date(order.date_required as string)
   const shipBy = new Date(dr)
   if (Number.isFinite(shipDays) && shipDays > 0) shipBy.setDate(shipBy.getDate() - shipDays)

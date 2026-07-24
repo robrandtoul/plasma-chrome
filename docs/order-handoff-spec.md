@@ -188,6 +188,16 @@ label byte-identical to today. The payload carries both `customer_name` (company
 (folder) as distinct facts; the RPC picks per route and echoes its choice back in
 `resolution.customer` so the shadow parity check reads the decision rather than re-deriving the rule.
 
+**Supplier "must ship by" always leaves a delivery buffer** (a shadow finding on 2026-07-23, order
+403917). It's computed in `place-order` as `date_required − shipping_buffer`, and feeds both the
+supplier email and the payload's `must_ship_by` from the same value, so they never disagree within a
+placement. A supplier's configured `default_shipping_days` wins; a **domestic** supplier with none
+set (Swype, Solopress) now gets a **2-day buffer** — one day supplier→Plasma, one day
+Plasma→customer (Rob's rule) — instead of the old zero, which told the supplier to ship on the very
+day the customer needed the cards. International suppliers with no transit set stay at 0. This is a
+`place-order`-only change (no migration; the RPC faithfully writes whatever `must_ship_by` the
+payload carries) and it improves live supplier emails today, not just Phase 2.
+
 ### 3.4 Confirm sequence and failure surfacing
 
 Confirm becomes **RPC-first**:
