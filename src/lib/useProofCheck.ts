@@ -10,8 +10,38 @@
 // seed from, so a past run shows instantly without a network call.
 
 import { useEffect, useRef, useState } from 'react'
+import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from './supabase'
 import type { ArtworkCheckReport } from '../components/ArtworkCheckReportView'
+
+// Invoke artwork-check and surface the REAL failure. supabase-js parks a
+// non-2xx response behind `error.context` (data stays null), so a caller that
+// reads only `data` reduces every failure — a genuine server error, or a
+// transient gateway 502 that never reached the function at all — to one
+// generic line. That's exactly what hid the cause of the first live
+// investigation failure (2026-07-24): a platform blip looked identical to a
+// broken feature. Now: an HTTP error yields the function's own message; a
+// fetch/relay failure yields an honest "network blip, try again".
+export async function invokeArtworkCheck<T>(
+  body: Record<string, unknown>,
+): Promise<{ data: T | null; errMsg: string | null }> {
+  try {
+    const { data, error } = await supabase.functions.invoke<T>('artwork-check', { body })
+    if (!error) return { data, errMsg: null }
+    if (error instanceof FunctionsHttpError) {
+      try {
+        const parsed = (await error.context.json()) as { error?: unknown }
+        if (typeof parsed?.error === 'string' && parsed.error) {
+          return { data: null, errMsg: parsed.error }
+        }
+      } catch { /* non-JSON error body */ }
+      return { data: null, errMsg: 'The check service returned an error — try again.' }
+    }
+    return { data: null, errMsg: 'Couldn’t reach the check service — usually a momentary network blip. Try again.' }
+  } catch {
+    return { data: null, errMsg: 'Couldn’t reach the check service — usually a momentary network blip. Try again.' }
+  }
+}
 
 export interface ProofCheckState {
   status: 'idle' | 'running' | 'done'
@@ -63,22 +93,19 @@ export function useProofCheck(
     setRunError(null)
     setCheck((prev) => ({ ...prev, status: 'running' }))
     try {
-      const { data } = await supabase.functions.invoke<{
+      const { data, errMsg } = await invokeArtworkCheck<{
         ok: boolean
         enabled?: boolean
         report?: ArtworkCheckReport
         error?: string
-      }>('artwork-check', { body: { proof_version_id: versionId, ...(force ? { force: true } : {}) } })
+      }>({ proof_version_id: versionId, ...(force ? { force: true } : {}) })
       if (!data?.ok || data.enabled === false || !data.report) {
         if (data?.enabled === false) setEnabled(false)
         setCheck((prev) => ({ status: prev.report ? 'done' : 'idle', report: prev.report }))
-        setRunError(data?.error ?? (data?.enabled === false ? null : 'The proof check couldn’t run — try again.'))
+        setRunError(errMsg ?? data?.error ?? (data?.enabled === false ? null : 'The proof check couldn’t run — try again.'))
         return
       }
       setCheck({ status: 'done', report: data.report })
-    } catch {
-      setCheck((prev) => ({ status: prev.report ? 'done' : 'idle', report: prev.report }))
-      setRunError('The proof check couldn’t run — try again.')
     } finally {
       runningRef.current = false
     }
@@ -92,21 +119,19 @@ export function useProofCheck(
     setInvestigatingKey(key)
     setInvestigationError(null)
     try {
-      const { data } = await supabase.functions.invoke<{
+      const { data, errMsg } = await invokeArtworkCheck<{
         ok: boolean
         investigation?: NonNullable<ArtworkCheckReport['investigations']>[string]
         error?: string
-      }>('artwork-check', { body: { proof_version_id: versionId, investigate: flag } })
+      }>({ proof_version_id: versionId, investigate: flag })
       if (data?.ok && data.investigation) {
         const inv = data.investigation
         setCheck((prev) => prev.report
           ? { ...prev, report: { ...prev.report, investigations: { ...(prev.report.investigations ?? {}), [key]: inv } } }
           : prev)
       } else {
-        setInvestigationError({ key, message: data?.error ?? 'The investigation couldn’t run — try again.' })
+        setInvestigationError({ key, message: errMsg ?? data?.error ?? 'The investigation couldn’t run — try again.' })
       }
-    } catch {
-      setInvestigationError({ key, message: 'The investigation couldn’t run — try again.' })
     } finally {
       setInvestigatingKey(null)
     }

@@ -6,6 +6,7 @@ import { ImageCard, type GridImage } from '../components/ImageGrid'
 import Modal from '../components/Modal'
 import { checkEditedMessage } from '../lib/handoffMessageCheck'
 import ArtworkCheckReportView, { InlineSpinner, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
+import { invokeArtworkCheck } from '../lib/useProofCheck'
 
 // OrderReviewPage (/orders/:id/place) — the review-and-confirm screen for placing
 // a PAID order into production. Shows the artwork, spec, quantities, destination
@@ -331,21 +332,22 @@ export default function OrderReviewPage() {
     setInvestigatingKey(key)
     setInvestigationError(null)
     try {
-      const { data } = await supabase.functions.invoke<{
+      // invokeArtworkCheck surfaces the server's real message (or an honest
+      // network-blip line) instead of collapsing every failure to a generic
+      // string — see useProofCheck.ts.
+      const { data, errMsg } = await invokeArtworkCheck<{
         ok: boolean
         investigation?: NonNullable<ArtworkCheckReport['investigations']>[string]
         error?: string
-      }>('artwork-check', { body: { order_id: id, investigate: flag } })
+      }>({ order_id: id, investigate: flag })
       if (data?.ok && data.investigation) {
         const inv = data.investigation
         setArtworkCheck((prev) => prev.report
           ? { ...prev, report: { ...prev.report, investigations: { ...(prev.report.investigations ?? {}), [key]: inv } } }
           : prev)
       } else {
-        setInvestigationError({ key, message: data?.error ?? 'The investigation couldn’t run — try again.' })
+        setInvestigationError({ key, message: errMsg ?? data?.error ?? 'The investigation couldn’t run — try again.' })
       }
-    } catch {
-      setInvestigationError({ key, message: 'The investigation couldn’t run — try again.' })
     } finally {
       setInvestigatingKey(null)
     }
