@@ -665,6 +665,21 @@ the gate both consume it, so the function contract has ONE client. The gate alwa
 runs `force: true` (on the edit flow a stored report predates the just-saved edit).
 Frontend-only — no migration or function change. Harness rig: `?path=/preview-gate`.
 
+**Report readability v2 (Rob's review of live reports, 2026-07-24):** the report now
+reads verdict → summary → **the side-by-side table** (open, promoted — "second most
+valuable thing after the headline"): a real grid per card, Field | On the card |
+Supplied, with flagged rows tinted rose/amber so the table carries the severity
+signal alone (the old collapsed `<details>` is gone, and matches now show their
+supplied value too). The detailed flag blocks follow, then **Couldn't check as an
+amber-accented block** — inside a green all-clear card the unverified bits no longer
+read as verified (the VERDICT stays green deliberately: nearly every report has some
+gap, so demoting the traffic light would make green meaningless). **Good to know**
+drops to last, and both prompts' notes[] rules were sharpened (at most three, plain
+English a non-specialist reads at a glance, never pipeline narration, never restating
+the table/gaps; gaps one plain sentence each) — prompt changes affect NEW runs only.
+Layout is the shared component, so it applies to stored reports instantly on every
+surface. Function redeploy required for the prompt half.
+
 **Report lifecycle (Rob's question, same day):** the rule is *"a report always
 belongs to exactly the artwork it was run on; every checked version keeps its report
 forever; anything unchecked plainly says so."* Three mechanics deliver it: (1) a new

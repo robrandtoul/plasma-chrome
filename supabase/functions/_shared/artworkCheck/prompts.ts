@@ -88,8 +88,8 @@ OUTPUT
 - summary: one line, issues-first.
 - cards[]: one entry per person/card design, labelled clearly ("Derrick Smith — front/back", "Shared front card"). Include ALL checked fields — matches too — so the reviewer gets the full side-by-side table.
 - corrections[]: every later revision found in the thread, resolved or not.
-- notes[]: expected/no-action observations.
-- reference_gaps[]: what couldn't be checked and why.
+- notes[]: sparingly — at most three, often none. One short sentence each, in plain English a non-specialist reads at a glance; describe the thing itself, never the pipeline ("The back reads reversed because the design cuts right through the card", not "the cut-through mirroring convention applies"; "The print files match the proof the customer approved", not "no post-approval drift detected"). Only a note that genuinely reassures or warns the reviewer earns its place; never restate what the field table or a reference gap already covers.
+- reference_gaps[]: what couldn't be checked and why — one plain-English sentence each, no pipeline jargon.
 - British English. Terse and factual; every flag must quote the exact printed and supplied values.`
 
 // ── Pre-send proof check (the designer-triggered sibling) ───────────────────
@@ -173,8 +173,8 @@ OUTPUT
 - summary: one line, issues-first.
 - cards[]: one entry per person/card design, labelled clearly ("Derrick Smith — front/back", "Shared front card"). Include ALL checked fields — matches too — so the designer gets the full side-by-side table.
 - corrections[]: every later revision found in the thread, resolved or not.
-- notes[]: expected/no-action observations.
-- reference_gaps[]: what couldn't be checked and why.
+- notes[]: sparingly — at most three, often none. One short sentence each, in plain English a non-specialist reads at a glance; describe the thing itself, never the pipeline ("The back reads reversed because the design cuts right through the card", not "the cut-through mirroring convention applies"; "The print files match the proof the customer approved", not "no post-approval drift detected"). Only a note that genuinely reassures or warns the reviewer earns its place; never restate what the field table or a reference gap already covers.
+- reference_gaps[]: what couldn't be checked and why — one plain-English sentence each, no pipeline jargon.
 - British English. Terse and factual; every flag must quote the exact proof and supplied values.`
 
 // ── User-content context ─────────────────────────────────────────────────────

@@ -160,6 +160,54 @@ export default function ArtworkCheckReportView({
 
       <p className="mt-2 text-ink-soft">{report.summary}</p>
 
+      {/* The side-by-side comparison — second only to the verdict (Rob,
+          2026-07-24), so it renders open and up top: every checked field per
+          card, what's on the artwork vs what was supplied, flagged rows
+          tinted so the table carries the severity signal on its own. The
+          detailed flag blocks below explain the WHY. */}
+      {report.cards.length > 0 && (
+        <div className="mt-4">
+          <GroupLabel>Field by field</GroupLabel>
+          <div className="space-y-3">
+            {report.cards.map((c, i) => (
+              <div key={i}>
+                <p className="text-[13px] font-semibold text-ink">{c.label}</p>
+                <div className="mt-1 overflow-hidden rounded-lg border border-line-soft">
+                  <div className="grid grid-cols-[minmax(72px,0.9fr)_1.3fr_1.3fr] gap-x-3 border-b border-line-soft bg-canvas/60 px-2.5 py-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-ink-mute">
+                    <span>Field</span>
+                    <span>On the card</span>
+                    <span>Supplied</span>
+                  </div>
+                  {c.findings.map((f, j) => {
+                    const isFlag = f.status === 'flag'
+                    const isDefect = isFlag && f.severity === 'defect'
+                    return (
+                      <div
+                        key={j}
+                        className={`grid grid-cols-[minmax(72px,0.9fr)_1.3fr_1.3fr] gap-x-3 px-2.5 py-1.5 text-[13px] ${
+                          j > 0 ? 'border-t border-line-soft' : ''
+                        } ${isDefect ? 'bg-out-soft/40' : isFlag ? 'bg-[var(--c-low-soft)]/40' : ''}`}
+                      >
+                        <span className="break-words font-medium text-ink">
+                          <span aria-hidden="true" className={`mr-1 ${f.status === 'match' ? 'text-in-stock' : ''}`}>
+                            {isFlag ? (isDefect ? '❌' : '⚠️') : f.status === 'match' ? '✓' : '—'}
+                          </span>
+                          {f.field.replace(/_/g, ' ')}
+                        </span>
+                        <span className="break-words text-ink-soft">{f.printed || '—'}</span>
+                        <span className={`break-words ${f.status === 'not_supplied' ? 'italic text-ink-mute' : 'text-ink-soft'}`}>
+                          {f.status === 'not_supplied' ? 'Not supplied' : f.supplied || '—'}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {flags.length > 0 && (
         <ul className="mt-3 space-y-2.5">
           {flags.map((f, i) => {
@@ -251,22 +299,13 @@ export default function ArtworkCheckReportView({
         </ul>
       )}
 
-      {report.notes.length > 0 && (
-        <div className="mt-4">
-          <GroupLabel>Good to know</GroupLabel>
-          <ul className="space-y-1.5 text-[13px] text-ink-soft">
-            {report.notes.map((n, i) => (
-              <li key={i} className="flex gap-2 break-words">
-                <span aria-hidden className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-ink-mute" />
-                <span>{n}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
+      {/* Unverified ≠ verified: the gaps render amber-accented so that inside
+          a green all-clear card they still read as "these bits were NOT
+          checked" (Rob, 2026-07-24). The verdict itself stays green on
+          purpose — nearly every report has some gap, and demoting the
+          traffic light for gaps would make green meaningless. */}
       {report.reference_gaps.length > 0 && (
-        <div className="mt-4">
+        <div className="mt-4 rounded-lg border-l-[3px] border-low bg-[var(--c-low-soft)]/40 py-2 pl-3 pr-2">
           <GroupLabel>Couldn’t check</GroupLabel>
           <ul className="space-y-1.5 text-[13px] text-ink-soft">
             {report.reference_gaps.map((g, i) => (
@@ -279,27 +318,18 @@ export default function ArtworkCheckReportView({
         </div>
       )}
 
-      {report.cards.length > 0 && (
-        <details className="mt-4">
-          <summary className="cursor-pointer text-[13px] font-medium text-ink-soft">Full comparison table</summary>
-          <div className="mt-2 space-y-3">
-            {report.cards.map((c, i) => (
-              <div key={i}>
-                <p className="text-[13px] font-semibold text-ink">{c.label}</p>
-                <ul className="mt-1 space-y-1 text-[13px] text-ink-soft">
-                  {c.findings.map((f, j) => (
-                    <li key={j} className="break-words">
-                      {f.status === 'flag' ? (f.severity === 'defect' ? '❌' : '⚠️') : f.status === 'match' ? '✓' : '—'}{' '}
-                      <span className="text-ink">{f.field.replace(/_/g, ' ')}:</span> {f.printed}
-                      {f.status === 'not_supplied' ? ' (not supplied by customer)' : ''}
-                      {f.status === 'flag' && f.supplied ? ` (supplied: ${f.supplied})` : ''}
-                    </li>
-                  ))}
-                </ul>
-              </div>
+      {report.notes.length > 0 && (
+        <div className="mt-4">
+          <GroupLabel>Good to know</GroupLabel>
+          <ul className="space-y-1.5 text-[13px] text-ink-soft">
+            {report.notes.map((n, i) => (
+              <li key={i} className="flex gap-2 break-words">
+                <span aria-hidden className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-ink-mute" />
+                <span>{n}</span>
+              </li>
             ))}
-          </div>
-        </details>
+          </ul>
+        </div>
       )}
 
       <p className="mt-4 border-t border-line-soft pt-2.5 text-[12px] text-ink-mute">

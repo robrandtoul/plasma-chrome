@@ -589,6 +589,16 @@ eq('shared card matches nobody', matchCardToRecipient('Shared front card', ['Chr
   check('order prompt: three defect categories intact', SYSTEM_PROMPT.includes('ONLY three categories qualify'))
   check('order prompt: drift category intact', SYSTEM_PROMPT.includes('post-approval DRIFT'))
   check('order prompt: print-file framing intact', SYSTEM_PROMPT.includes('The print file is the truth'))
+
+  // Notes discipline (Rob's 2026-07-24 report review): both prompts demand
+  // few, plain-English notes and jargon-free gaps; the loose old wording is
+  // gone from both.
+  for (const [name, prompt] of [['order', SYSTEM_PROMPT], ['proof', PROOF_SYSTEM_PROMPT]] as const) {
+    check(`${name} prompt: notes capped and plain`, prompt.includes('at most three, often none') && prompt.includes('plain English a non-specialist'))
+    check(`${name} prompt: notes never restate the table`, prompt.includes('never restate what the field table'))
+    check(`${name} prompt: gaps jargon-free`, prompt.includes('no pipeline jargon'))
+    check(`${name} prompt: old notes wording gone`, !prompt.includes('expected/no-action observations'))
+  }
 }
 
 const proofCtx: ProofCheckContext = {
