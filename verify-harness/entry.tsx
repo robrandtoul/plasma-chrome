@@ -185,7 +185,10 @@ function ArtworkReportRig() {
       <div className="mx-auto grid max-w-5xl gap-6 px-4 py-10 lg:grid-cols-2">
         <div>
           <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-mute">Place-order review card</p>
-          <div className="rounded-lg bg-out-soft px-3.5 py-3 ring-1 ring-out">
+          {/* Mirrors the live card treatment for a defect verdict: neutral
+              surface + slim verdict outline (the solid wash is gone — it made
+              every table row read as flagged). */}
+          <div className="rounded-lg bg-surface px-3.5 py-3 ring-1 ring-[var(--c-out)]/50">
             <ArtworkCheckReportView
               report={ARTWORK_REPORT_FIXTURE}
               action={<button type="button" className="text-[13px] font-medium text-brand hover:underline">Re-run</button>}

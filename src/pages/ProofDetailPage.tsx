@@ -3717,6 +3717,12 @@ export default function ProofDetailPage() {
             Admin → Artwork check toggle is on. Deliberately a button, never
             auto-run: versions are created far more often than orders, so the
             cost stays where the judgement is. */}
+        {/* Card tint: all-clear keeps its green wash (green showing through
+            the table's match rows reads as "everything green" — correct);
+            flagged/defect cards go NEUTRAL with a slim verdict-coloured
+            outline so only the flagged rows and blocks carry red/amber —
+            a solid wash behind the table made every row look flagged
+            (Rob, 2026-07-24). Error keeps the amber wash (no table inside). */}
         {proofCheckEnabled && currentVersion && (
           <section
             className={`rounded-[14px] px-4 py-4 ring-1 ${
@@ -3726,8 +3732,10 @@ export default function ProofDetailPage() {
                   ? proofCheck.report.verdict === 'clear'
                     ? 'bg-[var(--c-in-stock-soft)]/50 ring-[var(--c-in-stock)]/40'
                     : proofCheck.report.verdict === 'defect'
-                      ? 'bg-out-soft ring-out'
-                      : 'bg-low-soft ring-low'
+                      ? 'bg-surface ring-[var(--c-out)]/50'
+                      : proofCheck.report.verdict === 'flagged'
+                        ? 'bg-surface ring-[var(--c-low)]/60'
+                        : 'bg-low-soft ring-low'
                   : 'bg-surface ring-line'
             }`}
           >

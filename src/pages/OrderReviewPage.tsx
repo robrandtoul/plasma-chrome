@@ -739,6 +739,10 @@ export default function OrderReviewPage() {
                 flagged verdict never disables Confirm — the reviewer
                 adjudicates each flag right here. Renders only when the
                 feature mode is live. */}
+            {/* Card tint mirrors the proof-page panel: green wash for
+                all-clear, NEUTRAL surface + slim verdict outline for
+                flagged/defect (a solid wash behind the field table made
+                every row look flagged), amber wash for error only. */}
             {showArtworkCard && (
               <div
                 className={`mt-4 rounded-lg px-3.5 py-3 ring-1 ${
@@ -747,8 +751,10 @@ export default function OrderReviewPage() {
                     : artworkReport.verdict === 'clear'
                       ? 'bg-[var(--c-in-stock-soft)]/50 ring-[var(--c-in-stock)]/40'
                       : artworkReport.verdict === 'defect'
-                        ? 'bg-out-soft ring-out'
-                        : 'bg-low-soft ring-low'
+                        ? 'bg-surface ring-[var(--c-out)]/50'
+                        : artworkReport.verdict === 'flagged'
+                          ? 'bg-surface ring-[var(--c-low)]/60'
+                          : 'bg-low-soft ring-low'
                 }`}
               >
                 {artworkCheck.status === 'running' ? (
