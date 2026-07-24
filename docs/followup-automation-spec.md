@@ -273,6 +273,20 @@ with these corrections and guards:
     card chases per-card on its own `/p/` link (Rob, 2026-07-15). The
     collapse/decision live in `groupSendables` + `decideForBundle`; the per-set
     ledger is `proof_nudges` rows with `rule_code = 'bundle'` + `proof_set_id`.
+  - **Unsent-set widening (2026-07-24).** The collapse originally required the
+    set to be SENT (`sent_at` non-null), so a set whose cards were built as a
+    bundle but sent as individual `/p/` links fell back to sibling suppression —
+    on every run, forever, with In-follow-up reading "Reminder 0 of N" (the
+    Shard Global Ltd case: two cards, twice-daily `suppressed_sibling` for a
+    week, zero emails). `bundleChaseable` in `nudgeDecision.ts` now also
+    collapses an UNSENT set when **every outstanding card's current version has
+    its own send evidence** (`last_reply_sent_at` — strict, so a card sent only
+    via an untracked Help Scout reply, a shell still being built, or a fresh
+    unsent draft version keeps the suppression). Safe because the bundle link
+    shows the customer nothing they weren't already sent, and `nudge_bundle`'s
+    body reads naturally as a first introduction of that link. On the first
+    LIVE bundle send the sender stamps `proof_sets.sent_at` (guarded
+    `is('sent_at', null)`), so the set is a normal sent bundle from then on.
 
 **Send identity & visibility.** Sender resolution: current version's
 `created_by` → `profiles.helpscout_user_id` → the HS conversation assignee →

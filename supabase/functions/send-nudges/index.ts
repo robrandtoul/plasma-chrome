@@ -50,6 +50,7 @@ import {
   type TemplateContext,
 } from '../_shared/replyTemplates.ts'
 import {
+  bundleChaseable,
   bundleNudgeNumber,
   capRows,
   decideForBundle,
@@ -500,15 +501,21 @@ async function run(admin: Admin): Promise<Response> {
     }
 
     // ── Bundle grouping (migration 000317) ───────────────────────────────────
-    // A card in a SENT bundle with ≥2 still-outstanding cards is tagged with its
-    // set id, so groupSendables collapses the bundle's due cards into ONE
-    // reminder rather than suppressing them as siblings. A bundle down to its
-    // last outstanding card stays untagged and chases per-card on its own link
+    // A card in a chaseable bundle with ≥2 still-outstanding cards is tagged
+    // with its set id, so groupSendables collapses the bundle's due cards into
+    // ONE reminder rather than suppressing them as siblings. Chaseable
+    // (bundleChaseable) = the bundle was SENT, or it was never sent as a bundle
+    // but every outstanding card already went out individually — that second
+    // shape used to suppress forever (two due cards, one customer, and the
+    // "human sends one combined message" hand-off never visibly happened). On
+    // the first live bundle send for such a set the sender stamps sent_at, so
+    // it is a normal sent bundle from then on. A bundle down to its last
+    // outstanding card stays untagged and chases per-card on its own link
     // (Rob, 2026-07-15). Best-effort: any failure leaves cards untagged, which
     // is exactly the pre-000317 behaviour (siblings suppressed → a human sends).
-    const sentSetById = new Map<
+    const setInfoById = new Map<
       string,
-      { id: string; token: string; conversationId: string | null }
+      { id: string; token: string; conversationId: string | null; sentAt: string | null }
     >()
     const bundleLedgerBySet = new Map<string, LedgerRow[]>()
     if (eligible.length > 0) {
@@ -524,39 +531,59 @@ async function run(admin: Admin): Promise<Response> {
         }
         const setIds = [...new Set(setByProof.values())]
         if (setIds.length > 0) {
-          // Only SENT bundles are chaseable as a unit — an unsent bundle has no
-          // shared review link yet, so its cards keep their own /p/ links.
           const { data: setRows } = await admin
             .from('proof_sets')
             .select('id, token, sent_at, helpscout_conversation_id')
             .in('id', setIds)
-            .not('sent_at', 'is', null)
           for (const s of setRows ?? []) {
-            sentSetById.set(s.id as string, {
+            setInfoById.set(s.id as string, {
               id: s.id as string,
               token: s.token as string,
               conversationId: (s.helpscout_conversation_id as string | null),
+              sentAt: (s.sent_at as string | null),
             })
           }
-          const sentSetIds = [...sentSetById.keys()]
-          if (sentSetIds.length > 0) {
+          if (setInfoById.size > 0) {
+            const allSetIds = [...setInfoById.keys()]
             // Outstanding = still in_progress and not set aside by the customer.
             const { data: outstanding } = await admin
               .from('proofs')
               .select('id, proof_set_id')
-              .in('proof_set_id', sentSetIds)
+              .in('proof_set_id', allSetIds)
               .eq('status', 'in_progress')
               .is('set_discarded_at', null)
-            const outstandingCount = new Map<string, number>()
+            const outstandingBySet = new Map<string, string[]>()
             for (const r of outstanding ?? []) {
               const setId = r.proof_set_id as string
-              outstandingCount.set(setId, (outstandingCount.get(setId) ?? 0) + 1)
+              const list = outstandingBySet.get(setId) ?? []
+              list.push(r.id as string)
+              outstandingBySet.set(setId, list)
+            }
+            // Send evidence per outstanding card's current version — the
+            // unsent-set arm of bundleChaseable needs to know every card
+            // already went out individually before the bundle link may lead
+            // the chase.
+            const outstandingIds = [...outstandingBySet.values()].flat()
+            const evidenceByProof = new Map<string, string | null>()
+            if (outstandingIds.length > 0) {
+              const { data: versions } = await admin
+                .from('proof_versions')
+                .select('proof_id, last_reply_sent_at')
+                .eq('is_current', true)
+                .in('proof_id', outstandingIds)
+              for (const v of versions ?? []) {
+                evidenceByProof.set(v.proof_id as string, (v.last_reply_sent_at as string | null))
+              }
+            }
+            const chaseableSetIds = new Set<string>()
+            for (const [setId, info] of setInfoById) {
+              const members = outstandingBySet.get(setId) ?? []
+              const evidence = members.map((id) => evidenceByProof.get(id) ?? null)
+              if (bundleChaseable(info.sentAt, evidence)) chaseableSetIds.add(setId)
             }
             for (const c of eligible) {
               const setId = setByProof.get(c.proofId)
-              if (setId && sentSetById.has(setId) && (outstandingCount.get(setId) ?? 0) >= 2) {
-                c.bundleId = setId
-              }
+              if (setId && chaseableSetIds.has(setId)) c.bundleId = setId
             }
             // Bundle ledger (rule_code='bundle') for the per-set cap + cooldown.
             const taggedSetIds = [...new Set(
@@ -709,6 +736,10 @@ async function run(admin: Admin): Promise<Response> {
         maxNudges: number
         link: string // {url} — a /p/ card link or a /bundle/ review link
         proofSetId: string | null
+        // Bundle whose set was never formally "sent": stamp proof_sets.sent_at
+        // after a successful live send — the reminder itself just introduced
+        // the review link, so the set is genuinely sent from that moment.
+        markSetSentOnSend?: boolean
         // Current versions to re-stamp with send evidence on a successful send
         // (all the bundle's due cards; the single card for a per-card chase).
         stampVersions: Array<{ proofId: string; versionId: string }>
@@ -1014,6 +1045,15 @@ async function run(admin: Admin): Promise<Response> {
               .eq('id', v.versionId)
               .eq('proof_id', v.proofId)
           }
+          if (job.kind === 'bundle' && job.proofSetId && job.markSetSentOnSend) {
+            // First bundle send for a never-sent set (see bundleChaseable's
+            // unsent arm). The `is null` guard keeps a genuine designer send
+            // that raced this run as the authoritative sent_at.
+            await admin.from('proof_sets')
+              .update({ sent_at: stampedAt })
+              .eq('id', job.proofSetId)
+              .is('sent_at', null)
+          }
           await logFolded()
 
           // Audit trail (the ledger row is the canonical record; this makes
@@ -1109,7 +1149,7 @@ async function run(admin: Admin): Promise<Response> {
       // with the bundle review link.
       for (const bg of grouped.bundles) {
         if (haltForRateLimit) break
-        const set = sentSetById.get(bg.bundleId)
+        const set = setInfoById.get(bg.bundleId)
         // The set must exist and have somewhere to post. A missing conversation
         // (older sets predate the field) falls back to the rep's own thread.
         const conversationId = set?.conversationId ?? bg.rep.conversationId
@@ -1150,6 +1190,7 @@ async function run(admin: Admin): Promise<Response> {
           maxNudges: BUNDLE_MAX_NUDGES,
           link: baseUrl ? `${baseUrl}/bundle/${set.id}?token=${set.token}` : '',
           proofSetId: bg.bundleId,
+          markSetSentOnSend: set.sentAt == null,
           stampVersions: bg.members.map((m) => ({ proofId: m.proofId, versionId: m.versionId })),
           foldMembers: bg.members
             .filter((m) => m.proofId !== bg.rep.proofId)

@@ -98,13 +98,13 @@ export interface CandidateFacts {
   currency: string | null
   /**
    * The proof set (bundle) this card belongs to, IFF the sender has determined
-   * the bundle is SENT and still has ≥2 outstanding cards — the trigger to
+   * the bundle is chaseable as a unit (bundleChaseable) — the trigger to
    * collapse the bundle's due cards into ONE reminder (migration 000317).
-   * Null/undefined for a standalone proof, an unsent bundle, or a bundle down
-   * to its last outstanding card (that lone card chases individually, per Rob's
-   * 2026-07-15 decision). Set by the sender after decideForProof; read only by
-   * groupSendables. Absent on the candidate SQL — a sender concern, not the
-   * database's.
+   * Null/undefined for a standalone proof, a bundle that fails bundleChaseable,
+   * or a bundle down to its last outstanding card (that lone card chases
+   * individually, per Rob's 2026-07-15 decision). Set by the sender after
+   * decideForProof; read only by groupSendables. Absent on the candidate SQL —
+   * a sender concern, not the database's.
    */
   bundleId?: string | null
 }
@@ -489,7 +489,7 @@ function byOverdue<T extends CandidateFacts>(a: T, b: T): number {
  *                   each other out.
  *
  * A "logical item" is one bundle OR one standalone proof (`bundleId ?? proofId`).
- * The tag on `bundleId` is the sender's call (sent bundle + ≥2 outstanding
+ * The tag on `bundleId` is the sender's call (bundleChaseable + ≥2 outstanding
  * cards); here it just decides collapse vs. per-card.
  *
  * Rules preserved from the pre-bundle version:
@@ -568,6 +568,42 @@ export function groupSendables<T extends CandidateFacts>(eligible: T[]): Grouped
 }
 
 // ── Bundle-level decision (migration 000317) ─────────────────────────────────
+
+/**
+ * Is a bundle chaseable as a single unit? Two ways in:
+ *   * the bundle was formally SENT (the customer has the review link), or
+ *   * it was never sent as a bundle, but every outstanding card's current
+ *     version went out individually — the Shard Global shape (2026-07-24):
+ *     a designer builds the set but sends per-card links, so the cards then
+ *     suppress each other as siblings on every run, forever, while the
+ *     dashboard's In-follow-up promises "automation will handle it". Chasing
+ *     such a set as a bundle is safe precisely because every card is already
+ *     in front of the customer — the bundle link shows nothing they haven't
+ *     been sent — and the nudge_bundle template reads naturally as a first
+ *     introduction of that link. The sender stamps proof_sets.sent_at on the
+ *     first live bundle send, so the set is genuinely sent from then on and
+ *     every surface (workspace, front-door open-tracking, the next run) agrees.
+ *
+ * A card with NO send evidence on its current version (a shell still being
+ * built, or a fresh unsent draft version) blocks the unsent-set path — the
+ * bundle page would show the customer something never sent to them. Those
+ * sets keep the sibling suppression (a human sends one combined message).
+ * Fewer than 2 outstanding cards is never a bundle chase: the last card
+ * chases individually on its own /p/ link (Rob, 2026-07-15).
+ *
+ * `outstandingSendEvidence` carries one entry per outstanding card
+ * (in_progress, not set aside): its current version's last_reply_sent_at,
+ * null when there is none (deliberately strict — a card sent only via an
+ * untracked Help Scout reply falls back to suppression, never a wrong chase).
+ */
+export function bundleChaseable(
+  sentAt: string | null,
+  outstandingSendEvidence: Array<string | null>,
+): boolean {
+  if (outstandingSendEvidence.length < 2) return false
+  if (sentAt != null) return true
+  return outstandingSendEvidence.every((e) => e != null)
+}
 
 export interface BundleConfig {
   /** Auto-reminder cap for the whole bundle. Mirrors a single card's cap. */

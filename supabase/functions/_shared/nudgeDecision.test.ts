@@ -7,6 +7,7 @@
 // no test framework in this repo; exits 1 on any failure.)
 
 import {
+  bundleChaseable,
   bundleNudgeNumber,
   calendarDaysBetween,
   capRows,
@@ -569,6 +570,23 @@ eq('number past a lowered cap still resolves to _final', nudgeTemplateIds('nudge
   // Dry rows never count toward the bundle cap/cooldown (capRows filter).
   eq('dry bundle rows do not advance the number',
     bundleNudgeNumber([row({ state: 'dry_run', outcome: 'would_send' })]), 1)
+}
+
+// ── bundleChaseable (unsent-set widening, the Shard Global case 2026-07-24) ──
+
+{
+  const SENT = '2026-06-01T10:00:00Z'
+  eq('sent bundle with 2 outstanding is chaseable regardless of evidence',
+    bundleChaseable(SENT, [null, null]), true)
+  eq('unsent bundle whose cards all went out individually is chaseable',
+    bundleChaseable(null, ['2026-06-01T10:00:00Z', '2026-06-01T11:00:00Z']), true)
+  eq('unsent bundle with one never-sent card keeps sibling suppression',
+    bundleChaseable(null, ['2026-06-01T10:00:00Z', null]), false)
+  eq('a bundle down to one outstanding card is never a bundle chase',
+    bundleChaseable(SENT, ['2026-06-01T10:00:00Z']), false)
+  eq('an empty set is not chaseable', bundleChaseable(null, []), false)
+  eq('three individually-sent cards of an unsent set collapse too',
+    bundleChaseable(null, ['2026-06-01T10:00:00Z', '2026-06-02T10:00:00Z', '2026-06-03T10:00:00Z']), true)
 }
 
 // ── Calendar-mode threshold (the live rules carry per-rule calendar flags) ──
