@@ -678,7 +678,14 @@ drops to last, and both prompts' notes[] rules were sharpened (at most three, pl
 English a non-specialist reads at a glance, never pipeline narration, never restating
 the table/gaps; gaps one plain sentence each) — prompt changes affect NEW runs only.
 Layout is the shared component, so it applies to stored reports instantly on every
-surface. Function redeploy required for the prompt half.
+surface. Function redeploy required for the prompt half. **Same-day follow-up (the
+Daniel Barrera all-clear):** two more output-discipline rules in BOTH prompts —
+reference_gaps[] is only for material that EXISTS but couldn't be verified ("no QR
+codes and none requested" is not a gap; an empty gaps list is the normal state of a
+fully-checked job, so the amber block stops decorating clean reports), and a field
+absent from BOTH the card and every reference earns no table row (nothing-vs-nothing
+padding), while requested absence ("leave my address off") stays a recorded match —
+verified absence is a real check.
 
 **Report lifecycle (Rob's question, same day):** the rule is *"a report always
 belongs to exactly the artwork it was run on; every checked version keeps its report

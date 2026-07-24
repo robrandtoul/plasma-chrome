@@ -598,6 +598,14 @@ eq('shared card matches nobody', matchCardToRecipient('Shared front card', ['Chr
     check(`${name} prompt: notes never restate the table`, prompt.includes('never restate what the field table'))
     check(`${name} prompt: gaps jargon-free`, prompt.includes('no pipeline jargon'))
     check(`${name} prompt: old notes wording gone`, !prompt.includes('expected/no-action observations'))
+    // 2026-07-24 output discipline (the Daniel Barrera all-clear): a gap is
+    // only for material that exists but couldn't be verified, and a field
+    // absent from both sides earns no row — while requested absence stays a
+    // real, recorded check.
+    check(`${name} prompt: gaps require real material`, prompt.includes('EXISTS but couldn’t be verified') || prompt.includes("EXISTS but couldn't be verified"))
+    check(`${name} prompt: none-and-none-requested is not a gap`, prompt.includes('absence of something nobody asked for is not a gap'))
+    check(`${name} prompt: nothing-vs-nothing rows omitted`, prompt.includes('absent from BOTH the card and every reference'))
+    check(`${name} prompt: requested absence stays a check`, prompt.includes('Absence the customer ASKED FOR'))
   }
 }
 
