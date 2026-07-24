@@ -18,6 +18,7 @@ import { createRoot } from 'react-dom/client'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import OrdersPage from '../src/pages/OrdersPage'
 import OrderReviewPage from '../src/pages/OrderReviewPage'
+import ProofDetailPage from '../src/pages/ProofDetailPage'
 import DashboardPage from '../src/pages/DashboardPage'
 import FlaggedPage from '../src/pages/FlaggedPage'
 import FeedbackPage from '../src/pages/FeedbackPage'
@@ -350,6 +351,17 @@ const tree = requestedPath === '/quote-spread' ? (
       <Route path="*" element={<Elsewhere />} />
     </Routes>
   </MemoryRouter>
+) : requestedPath?.startsWith('/proofs/') ? (
+  // ?path=/proofs/p-a1 — the proof detail page against the approved fixture
+  // project (use an id containing 'open', e.g. /proofs/p-open, for the
+  // in_progress branch). Used to verify the header overflow menu (Duplicate
+  // project) + its confirm dialog.
+  <MemoryRouter initialEntries={[requestedPath]}>
+    <Routes>
+      <Route path="/proofs/:id" element={<ProofDetailPage />} />
+      <Route path="*" element={<Elsewhere />} />
+    </Routes>
+  </MemoryRouter>
 ) : requestedPath?.startsWith('/orders/') ? (
   // ?path=/orders/o1/place — the place-order review screen against the
   // fixture place-order preview (incl. the Stock Control hand-off checks).
@@ -368,4 +380,11 @@ const tree = requestedPath === '/quote-spread' ? (
   </MemoryRouter>
 )
 
-createRoot(document.getElementById('root')!).render(<StrictMode>{tree}</StrictMode>)
+// Log uncaught render errors with their real message + component stack —
+// React's default logging flattens the Error into a %s placeholder, which
+// headless console readers can't recover.
+createRoot(document.getElementById('root')!, {
+  onUncaughtError: (error, errorInfo) => {
+    console.error('[harness] uncaught render error:', error, errorInfo?.componentStack ?? '')
+  },
+}).render(<StrictMode>{tree}</StrictMode>)

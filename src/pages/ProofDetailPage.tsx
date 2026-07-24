@@ -29,6 +29,7 @@ import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { deriveSharedApprovalState, type SharedApprovalState } from '../lib/sharedApproval'
 import { findStrandedMaterialApprovals } from '../lib/strandedApprovals'
 import { addCardToSet, attachProofToSet, createSetFromProof, markSetReviewLinkSent, setReviewPath } from '../lib/proofSets'
+import { duplicateProof } from '../lib/duplicateProof'
 import ExistingProjectPicker from '../components/ExistingProjectPicker'
 import { useLiveProofViews } from '../lib/useLiveProofViews'
 import { downloadBlob } from '../lib/downloadFile'
@@ -392,6 +393,30 @@ export default function ProofDetailPage() {
     setAddMaterialDialog(false)
     setAddMaterialError(null)
     setAddMaterialMode('intent')
+  }
+
+  // ── Duplicate project (the repeat-order path) ──────────────────────
+  // A finished order's customer wants more cards: rather than rebuilding
+  // from scratch, copy the current design into a fresh open project as
+  // its v1. All the copy rules live in src/lib/duplicateProof.ts.
+  const [duplicateDialog, setDuplicateDialog] = useState(false)
+  const [duplicateBusy, setDuplicateBusy] = useState(false)
+  const [duplicateError, setDuplicateError] = useState<string | null>(null)
+  async function handleDuplicateProject() {
+    if (!proof || !session?.user.id || duplicateBusy) return
+    setDuplicateBusy(true)
+    setDuplicateError(null)
+    try {
+      const newProofId = await duplicateProof(proof.id, session.user.id)
+      setDuplicateDialog(false)
+      // Route-param change re-runs loadProof, so the page lands on the
+      // freshly-created duplicate.
+      navigate(`/proofs/${newProofId}`)
+    } catch (e) {
+      setDuplicateError((e as Error).message)
+    } finally {
+      setDuplicateBusy(false)
+    }
   }
   // Bring an existing standalone project of this customer into the set
   // (creating the set around this proof first if there isn't one).
@@ -3027,6 +3052,11 @@ export default function ProofDetailPage() {
                           // version — offered on approved proofs too, which is
                           // exactly where the Novion-style ask lands.
                           { label: 'Add another material', onClick: () => void openAddMaterialDialog() },
+                          // Repeat-order path: copy this design into a fresh
+                          // open project as its v1. Needs a version to copy.
+                          ...(versions.length > 0
+                            ? [{ label: 'Duplicate project', onClick: () => { setDuplicateError(null); setDuplicateDialog(true) } }]
+                            : []),
                           ...(isApproved && orderingEnabled === true && hasOpenOrder && !hasLiveLink
                             ? [{
                                 label: 'Create another order',
@@ -3040,6 +3070,9 @@ export default function ProofDetailPage() {
                         ]
                       : [
                           { label: 'Add another material', onClick: () => void openAddMaterialDialog() },
+                          ...(versions.length > 0
+                            ? [{ label: 'Duplicate project', onClick: () => { setDuplicateError(null); setDuplicateDialog(true) } }]
+                            : []),
                           { label: 'Mark as approved', tone: 'approve', onClick: () => setStatusDialog('approve') },
                           { label: 'Abandon project', tone: 'danger', onClick: () => setStatusDialog('abandon') },
                         ]
@@ -4322,6 +4355,19 @@ export default function ProofDetailPage() {
           working={statusWorking}
           onConfirm={guardStatusAction(handleAbandon)}
           onCancel={() => setStatusDialog(null)}
+        />
+      )}
+
+      {/* Duplicate project confirm dialog (repeat-order path) */}
+      {duplicateDialog && proof && (
+        <ConfirmDialog
+          title="Duplicate this project"
+          message={`Start a new project for ${proof.contacts.full_name} with the current design copied across as v1 — images, material, names and QR codes. Approvals, orders and the Help Scout conversation stay with this project, and the new one starts open, showing today's prices.`}
+          confirmLabel="Duplicate project"
+          working={duplicateBusy}
+          errorMsg={duplicateError}
+          onConfirm={() => void handleDuplicateProject()}
+          onCancel={() => { setDuplicateDialog(false); setDuplicateError(null) }}
         />
       )}
 

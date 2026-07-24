@@ -463,7 +463,23 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
   } else if (table === 'order_link_notes') {
     rows = [{ proof_id: 'p-a1', note: 'Waiting on metal thickness — chased today.', created_by_name: 'Chris Jackson', created_by_initials: 'CJ', created_by_colour: 'teal', updated_at: daysAgo(0.1) }]
   } else if (table === 'proof_versions') {
-    if (select.includes('materials(code)')) {
+    if (select.includes('materials(display_quantities)')) {
+      // ProofDetailPage's versions list — one current v1 for the fixture
+      // project above.
+      const pid = filters['eq:proof_id'] ?? 'p-a1'
+      rows = [{
+        id: `ver-${pid}`, version_number: 1, material_id: 'm-steel', material_display: 'Stainless Steel',
+        ink_names: [], currency: 'GBP', is_current: true, created_at: daysAgo(22), created_by: 'user-rob',
+        change_notes: null, pricing_snapshot: null, shipping_note: '', custom_quote: false,
+        names: ['Valentina Ring'], card_type: 'business', shape: 'recipients',
+        last_reply_sent_at: daysAgo(21), last_reply_sent_by: null, displayed_variant_ids: [],
+        is_variant_round: false, is_per_direction_pricing: false, material_options: [],
+        has_personalisation: false, team_sharing_enabled: false,
+        front_colour_id: null, core_colour_id: null, back_colour_id: null,
+        artwork_check: null, artwork_checked_at: null, artwork_check_verdict: null,
+        materials: { display_quantities: null },
+      }]
+    } else if (select.includes('materials(code)')) {
       const ids: string[] = filters['in:proof_id'] ?? []
       rows = ids.map((pid) => ({ proof_id: pid, materials: { code: PROOF_MATERIAL[pid] ?? 'metal_steel' } }))
     } else {
@@ -471,7 +487,32 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
       rows = pid ? [{ id: `ver-${pid}`, material_id: ORDERS.find((o) => o.proof_id === pid)?.material_id ?? 'm-steel', is_current: true, version_number: 3, shape: null }] : []
     }
   } else if (table === 'proofs') {
-    rows = [{ approved_at: daysAgo(1) }]
+    if (select.includes('contacts(')) {
+      // ProofDetailPage's header select — a full approved fixture project so
+      // the detail page (overflow menu, dialogs, facts rail) can be verified.
+      // An id containing 'open' renders the in_progress (unlocked) branch.
+      const pid = filters['eq:id'] ?? 'p-a1'
+      const isOpen = String(pid).includes('open')
+      rows = [{
+        id: pid,
+        status: isOpen ? 'in_progress' : 'approved',
+        approved_at: isOpen ? null : daysAgo(20),
+        abandoned_at: null,
+        helpscout_thread_url: null,
+        helpscout_conversation_id: null,
+        helpscout_conversation_url: null,
+        helpscout_override_reason: 'Fixture project — no conversation',
+        internal_notes: null,
+        created_at: daysAgo(22),
+        disclaimer_acknowledged_at: null,
+        proof_set_id: null,
+        set_discarded_at: null,
+        contact_id: 'c-1',
+        contacts: { full_name: 'Valentina Ring', email: 'valentina@realise.example', companies: { name: 'Realise' } },
+      }]
+    } else {
+      rows = [{ approved_at: daysAgo(1) }]
+    }
   } else if (table === 'proof_version_images') {
     // Two approved files (front + back, shared artwork) so the To-order card's
     // Approved artwork panel renders a populated list.
@@ -714,11 +755,31 @@ export const supabase: any = {
     signOut: async () => ({ error: null }),
     onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
   },
+  // Realtime no-op — pages subscribe on mount (live proof views, chat) and
+  // the harness has no socket; a chainable stub keeps those effects inert.
+  channel: (_name: string) => {
+    const ch: any = {
+      on: () => ch,
+      subscribe: () => ch,
+      unsubscribe: async () => 'ok',
+      send: async () => 'ok',
+      track: async () => 'ok',
+      untrack: async () => 'ok',
+      presenceState: () => ({}),
+    }
+    return ch
+  },
+  removeChannel: async () => 'ok',
   storage: {
     // Return a data-URL "signed URL" so the Approved artwork downloads work in
     // the harness (fetch(dataUrl) → blob) without a real storage backend.
     from: (_bucket: string) => ({
       createSignedUrl: async (path: string) => ({ data: { signedUrl: swatch('#334155', path.slice(-8)) }, error: null }),
+      // Batch variant (thumbnail loaders on ProofDetailPage / the dashboard).
+      createSignedUrls: async (paths: string[]) => ({
+        data: paths.map((p) => ({ error: null, path: p, signedUrl: swatch('#334155', p.slice(-8)) })),
+        error: null,
+      }),
     }),
   },
   supabaseUrl: 'https://example.supabase.co',
