@@ -1,0 +1,42 @@
+# Runs the unit tests and the type check on every pull request.
+#
+# Why this exists: until now nothing ran the tests automatically — Netlify's
+# deploy build runs `pnpm build` (which type-checks and bundles) but never the
+# test suite. That's how nine test files ended up with no script pointing at
+# them and went unrun for months, two of them failing. `pnpm test` discovers
+# every test file from disk, so this job covers new tests the day they land
+# without anyone remembering to wire them up.
+#
+# This reports as a check on the PR. It does not block merging unless the
+# branch protection rules are changed to make it required.
+
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm exec tsc -b
+
+      - name: Unit tests
+        run: pnpm test

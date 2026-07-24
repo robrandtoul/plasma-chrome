@@ -231,7 +231,7 @@ export default function VersionPreviewGate({
   const handleConfirm = () => {
     void logAudit({
       action: 'version.preview_confirmed',
-      targetType: 'proof_version',
+      targetType: 'version',
       targetId: versionId,
       targetLabel: `v${versionNumber}`,
       metadata: auditMetadata(),
@@ -247,7 +247,7 @@ export default function VersionPreviewGate({
     // quiet round-trip before the form re-appears.
     await logAudit({
       action: 'version.preview_edit_return',
-      targetType: 'proof_version',
+      targetType: 'version',
       targetId: versionId,
       targetLabel: `v${versionNumber}`,
       metadata: auditMetadata(),

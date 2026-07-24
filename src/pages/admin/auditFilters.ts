@@ -151,6 +151,10 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'material_option.created',                   label: 'Material option created' },
     { code: 'material_option.updated',                   label: 'Material option updated' },
     { code: 'material_option.deleted',                   label: 'Material option deleted' },
+    { code: 'material.finish_photo_uploaded',            label: 'Finish photo uploaded' },
+    { code: 'material.finish_photo_removed',             label: 'Finish photo removed' },
+    { code: 'material.finish_description_updated',       label: 'Finish description updated' },
+    { code: 'material.stock_material_mapping_updated',   label: 'Stock Control material mapping updated' },
   ]},
   { name: 'Pricing', actions: [
     { code: 'price_tier_created',                          label: 'Price tier created' },
@@ -166,6 +170,7 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'addon_prices.seeded',                         label: 'Add-on prices seeded' },
     { code: 'addon_prices.tier_created',                   label: 'Add-on price tier created' },
     { code: 'pricing.imported',                            label: 'Pricing imported' },
+    { code: 'prototype_prices.updated',                    label: 'Prototype prices updated' },
   ]},
   { name: 'Customers', actions: [
     { code: 'company.created', label: 'Company created' },
@@ -189,6 +194,16 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'proof.unsnoozed',                 label: 'Project unsnoozed' },
     { code: 'proof.reply_sent',                label: 'Reply sent to customer' },
     { code: 'proof.internal_notes_updated',    label: 'Internal notes updated' },
+    { code: 'proof.duplicated',                label: 'Project duplicated' },
+    { code: 'version.preview_confirmed',       label: 'Proof preview confirmed' },
+    { code: 'version.preview_edit_return',     label: 'Returned to edit from preview' },
+  ]},
+  { name: 'Bundles', actions: [
+    { code: 'proof_set.created',      label: 'Bundle created' },
+    { code: 'proof_set.card_added',   label: 'Card added to bundle' },
+    { code: 'proof_set.card_removed', label: 'Card removed from bundle' },
+    { code: 'proof_set.sent',         label: 'Bundle sent to customer' },
+    { code: 'proof_set.deleted',      label: 'Bundle deleted' },
   ]},
   { name: 'Orders', actions: [
     { code: 'order.created',                  label: 'Order created' },
@@ -199,6 +214,14 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'order.invoice_retried',          label: 'Invoice retried' },
     { code: 'order.invoice_retry_failed',     label: 'Invoice retry failed' },
     { code: 'order.auto_reminder_sent',       label: 'Order reminder sent' },
+  ]},
+  { name: 'Flagged & reprints', actions: [
+    { code: 'watch.flagged',          label: 'Project flagged' },
+    { code: 'watch.status_changed',   label: 'Flag status changed' },
+    { code: 'watch.update_added',     label: 'Flag update added' },
+    { code: 'watch.removed',          label: 'Flag removed' },
+    { code: 'watch.reprint_created',  label: 'Reprint created' },
+    { code: 'watch.reprint_reopen',   label: 'Reprint reopened project' },
   ]},
   { name: 'Customer-facing', actions: [
     { code: 'version.viewed',                label: 'Proof viewed' },
@@ -212,6 +235,13 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'ai_draft_house_rule.updated', label: 'AI draft house rule updated' },
     { code: 'ai_draft_exemplar.created',   label: 'AI draft exemplar added' },
     { code: 'ai_draft_exemplar.updated',   label: 'AI draft exemplar updated' },
+  ]},
+  { name: 'Team', actions: [
+    { code: 'announcement.created',     label: 'Announcement posted' },
+    { code: 'announcement.removed',     label: 'Announcement removed' },
+    { code: 'feedback.created',         label: 'Feedback posted' },
+    { code: 'feedback.status_changed',  label: 'Feedback status changed' },
+    { code: 'feedback.deleted',         label: 'Feedback deleted' },
   ]},
   { name: 'Settings', actions: [
     { code: 'setting.disclaimer_updated',                       label: 'Disclaimer copy updated' },
@@ -265,6 +295,16 @@ export const TARGET_TYPE_OPTIONS: ActionDef[] = [
   { code: 'ai_draft_house_rule', label: 'AI draft house rule' },
   { code: 'ai_draft_exemplar',   label: 'AI draft exemplar' },
   { code: 'ai_draft_proposal',   label: 'AI draft proposal' },
+  { code: 'order_group',   label: 'Combined payment' },
+  { code: 'proof_set',     label: 'Bundle' },
+  { code: 'watch_item',    label: 'Flagged project' },
+  { code: 'feedback',      label: 'Feedback item' },
+  { code: 'announcement',  label: 'Announcement' },
+  { code: 'prototype_prices', label: 'Prototype prices' },
+  // Legacy: the preview gate emitted 'proof_version' where every other version
+  // site emits 'version'. The emitter is now aligned, but rows written before
+  // that fix keep the old value, so the option stays for them to be reachable.
+  { code: 'proof_version', label: 'Proof version (legacy)' },
 ]
 
 /** Flat lookup: action code → human label. Falls back to the raw code. */

@@ -35,7 +35,16 @@
     "test:ai-drafts": "tsx supabase/functions/_shared/aiDrafts/guardrails.test.ts",
     "test:artwork-check": "tsx supabase/functions/_shared/artworkCheck/artworkCheck.test.ts",
     "test:currency": "tsx src/lib/currencyResolver.test.ts",
-    "test:duplicate": "tsx src/lib/duplicateProof.test.ts"
+    "test:duplicate": "tsx src/lib/duplicateProof.test.ts",
+    "test:admin-search": "tsx src/lib/adminSearch.test.ts",
+    "test:audit-filters": "tsx src/pages/admin/auditFilters.test.ts",
+    "test:dashboard-grouping": "tsx src/lib/dashboardGrouping.test.ts",
+    "test:proof-snapshot": "tsx src/lib/proofSnapshot.test.ts",
+    "test:proof-timeline": "tsx src/lib/proofTimeline.test.ts",
+    "test:qr-carry-forward": "tsx src/lib/qrCarryForward.test.ts",
+    "test:vcard-client": "tsx src/lib/vcardClient.test.ts",
+    "test:vcard-qr": "tsx src/lib/vcardQr.test.ts",
+    "test": "tsx scripts/run-tests.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

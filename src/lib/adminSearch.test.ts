@@ -130,7 +130,11 @@ test('sidebar nav is derived from the registry', () => {
   const navPaths = ADMIN_NAV_GROUPS.flatMap((g) => g.tabs.map((t) => t.to)).sort()
   const flagged = ADMIN_DESTINATIONS.filter((d) => d.sidebar).map((d) => d.path).sort()
   assertEqual(navPaths.join(','), flagged.join(','))
-  assertEqual(navPaths.length, 14)
+  // Deliberate tripwire for the house rule in CLAUDE.md: a new per-material or
+  // per-variant value becomes a Catalogue data tab and a new toggle becomes a
+  // Settings section — only a genuinely new *job* earns a sidebar entry. Bump
+  // this only alongside such a job (last: Artwork check, PR #532).
+  assertEqual(navPaths.length, 15)
 })
 
 test('sidebar groups carry the full destinations (for the home hub cards)', () => {
@@ -141,7 +145,7 @@ test('sidebar groups carry the full destinations (for the home hub cards)', () =
     ADMIN_NAV_GROUPS.map((g) => g.label).join(','),
   )
   const items = ADMIN_SIDEBAR_GROUPS.flatMap((g) => g.items)
-  assertEqual(items.length, 14)
+  assertEqual(items.length, 15)
   assertEqual(items.every((d) => d.sidebar === true && !!d.description), true)
 })
 
