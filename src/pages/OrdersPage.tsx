@@ -97,6 +97,21 @@ interface OrderRow {
   paid_at: string | null
   fulfilled_at: string | null
   revised_at: string | null
+  // Hand-off to Stock Control (000332, docs/order-handoff-spec.md §3.4).
+  // Placing an order now writes the workshop's job FIRST and sends the human
+  // message SECOND, so the two can fail apart: handoff_at set = the job exists;
+  // the route's send stamp says whether the message that goes with it actually
+  // left. handoff_error is the last failure of the write itself, cleared on
+  // success — and in shadow mode carries harmless notes prefixed "shadow:".
+  handoff_at: string | null
+  handoff_error: string | null
+  production_note_posted_at: string | null
+  supplier_email_sent_at: string | null
+  // Stamped when the order was placed with a supplier — replayed on a retry so
+  // the message goes to the same supplier, with the same spoilage overs, as the
+  // job already sitting in Stock Control.
+  supplier_id: string | null
+  supplier_overs: number | null
   // Artwork sanity check (000336): the latest run's verdict + stamp — the chip
   // on To-order / Recently-ordered cards. The full report jsonb is fetched
   // lazily when the chip is clicked, never in the list select.
@@ -154,6 +169,7 @@ const SELECT = `
   custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, us_tariff_opted_out,
   card_discount_type, card_discount_value, amount_card_discount, payment_method, order_kind,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, revised_at,
+  handoff_at, handoff_error, production_note_posted_at, supplier_email_sent_at, supplier_id, supplier_overs,
   artwork_check_verdict, artwork_checked_at,
   date_required, dropbox_folder_url, stock_order_number, project_name, stock_colour, person_quantities,
   ship_to_name, ship_to_email, ship_to_phone, ship_to_address, customs_tax_id, ship_dest_country, proof_id,
@@ -224,6 +240,67 @@ function canJoinGroup(o: OrderRow): boolean {
 function routeOf(o: OrderRow): 'in_house' | 'supplier' | null {
   const r = o.material_variants?.materials?.production_route
   return r === 'supplier' ? 'supplier' : r === 'in_house' ? 'in_house' : null
+}
+
+// ── Hand-off to Stock Control (docs/order-handoff-spec.md §3.4) ─────────────
+// Placing an order writes the workshop's job first and sends the human message
+// (the in-house production note / the supplier email) second, so there are now
+// three states worth showing:
+//   'failed' — Stock Control wouldn't take the order. Nothing was written and
+//              nothing was sent, so placing it again is safe.
+//   'unsent' — the job IS in Stock Control, but its message never left. The
+//              order is invisible to whoever has to make it until it does.
+//   'done'   — job written, message sent. The quiet happy path.
+type HandoffState =
+  | { kind: 'none' }
+  | { kind: 'failed'; reason: string }
+  | { kind: 'unsent'; what: 'note' | 'email' | 'message' }
+  | { kind: 'done' }
+
+function handoffState(o: OrderRow): HandoffState {
+  if (!o.handoff_at) {
+    const reason = (o.handoff_error ?? '').trim()
+    // While the direct hand-off is in shadow mode the same column records
+    // harmless "here's what wouldn't have mapped" notes, prefixed "shadow:".
+    // Nothing failed in that case, so those must never read as a problem.
+    if (!reason || reason.toLowerCase().startsWith('shadow:')) return { kind: 'none' }
+    return { kind: 'failed', reason }
+  }
+  const route = routeOf(o)
+  if (route === 'supplier') return o.supplier_email_sent_at ? { kind: 'done' } : { kind: 'unsent', what: 'email' }
+  if (route === 'in_house') return o.production_note_posted_at ? { kind: 'done' } : { kind: 'unsent', what: 'note' }
+  // Route unknown (custom quote — no priced material on the order). Only claim
+  // a message is missing when neither one went, so we can never nag about a
+  // message that did in fact send.
+  if (o.production_note_posted_at || o.supplier_email_sent_at) return { kind: 'done' }
+  return { kind: 'unsent', what: 'message' }
+}
+
+// Plain-English name for the message that goes out with an order.
+function handoffMessageName(what: 'note' | 'email' | 'message'): string {
+  return what === 'email' ? 'supplier email' : what === 'note' ? 'workshop note' : 'order message'
+}
+
+// Keep a raw Stock Control / Help Scout error readable inside a card or chip.
+function shorten(text: string, max = 200): string {
+  const s = text.trim()
+  return s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s
+}
+
+// Edge functions return their failures as a non-2xx body, which supabase-js
+// hands back on error.context rather than in `data`. Read whichever is
+// populated so the real message is never lost. (Mirrors OrderReviewPage's
+// helper of the same name — kept local so the two pages stay independent.)
+async function readFnErrorBody(err: unknown): Promise<{ error?: string; code?: string } | null> {
+  const ctx = (err as { context?: { json?: () => Promise<unknown> } } | null)?.context
+  if (ctx && typeof ctx.json === 'function') {
+    try {
+      return (await ctx.json()) as { error?: string; code?: string }
+    } catch {
+      /* body wasn't JSON — fall back to the error message */
+    }
+  }
+  return null
 }
 
 // The suppliers a supplier-route order may go to, from the material's
@@ -640,6 +717,42 @@ function ArtworkChip({ verdict, onOpen }: { verdict: 'clear' | 'flagged' | 'defe
   )
 }
 
+// Where an order got to on its way into Stock Control, as a chip in the same
+// family as PrepChip / ArtworkChip. Green when the job is in and its message
+// went out (quiet — this is the happy path); amber when the job is in but the
+// message never left; rose when Stock Control refused the order outright. The
+// fix lives next to the chip, not on it: the card's own error block for a
+// refused order, the "Needs action" panel for an unsent message.
+function HandoffChip({ state }: { state: HandoffState }) {
+  if (state.kind === 'none') return null
+  const base = 'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1'
+  if (state.kind === 'done') {
+    return (
+      <span className={`${base} bg-[var(--c-in-stock-soft)] text-in-stock ring-[var(--c-in-stock)]/40`} title="This order is in Stock Control and the message that goes with it was sent.">
+        ✓ In Stock Control
+      </span>
+    )
+  }
+  if (state.kind === 'unsent') {
+    const name = handoffMessageName(state.what)
+    return (
+      <span
+        className={`${base} bg-[var(--c-low-soft)] text-low ring-[var(--c-low)]/40`}
+        title={`The order reached Stock Control, but the ${name} never went. Send it from the Needs action panel.`}
+      >
+        ⚠ {name.charAt(0).toUpperCase()}{name.slice(1)} not sent
+      </span>
+    )
+  }
+  // Rose, matching the blocking treatment the card's own error block uses (and
+  // the failed-invoice pill): this order isn't going anywhere until it's fixed.
+  return (
+    <span className={`${base} bg-[var(--c-out-soft)] text-out ring-[var(--c-out)]/40`} title={shorten(state.reason, 300)}>
+      ⚠ Not in Stock Control
+    </span>
+  )
+}
+
 // A between-tiles flow chevron, signalling the header reads left-to-right as a
 // pipeline. Shown only at sm+ (single row); on the mobile 2×2 grid it's hidden
 // (display:none) so it doesn't consume a grid cell.
@@ -716,6 +829,11 @@ export default function OrdersPage() {
   const [materialThumbs, setMaterialThumbs] = useState<Record<string, ThumbInfo>>({})
   const [busyId, setBusyId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  // The order whose hand-off to Stock Control is being finished off right now,
+  // plus the last failure per order so the message stays on the card / row it
+  // belongs to instead of vanishing with a toast.
+  const [handoffBusyId, setHandoffBusyId] = useState<string | null>(null)
+  const [handoffErrors, setHandoffErrors] = useState<Record<string, string>>({})
   // Artwork check (000336): chips render only when the feature is live; the
   // full report jsonb is fetched lazily per click, never in the list select.
   const [artworkChipsOn, setArtworkChipsOn] = useState(false)
@@ -1243,6 +1361,20 @@ export default function OrdersPage() {
     window.setTimeout(() => setFlashOrderId((v) => (v === orderId ? null : v)), 2600)
   }
 
+  // Same jump, for an order that has already been placed — those live in the
+  // Recently-ordered list, which only shows in the "everything" view and starts
+  // collapsed, so open it before scrolling.
+  function jumpToPlacedOrder(orderId: string) {
+    setSearch('')
+    setView('all')
+    setRecentOpen(true)
+    setFlashOrderId(orderId)
+    window.setTimeout(() => {
+      document.getElementById(`order-card-${orderId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 80)
+    window.setTimeout(() => setFlashOrderId((v) => (v === orderId ? null : v)), 2600)
+  }
+
   // Persist a single order field (the date / Dropbox folder edits), merging into
   // local state so the gate + UI reflect it immediately. Returns whether the
   // write actually landed — these two fields gate placing the order, so a silent
@@ -1292,6 +1424,52 @@ export default function OrdersPage() {
       })
     } finally {
       setBusyId(null)
+    }
+  }
+
+  // Finish a hand-off that stopped half way (docs/order-handoff-spec.md §3.4).
+  // One call covers both stuck states, because both are fixed the same way —
+  // by confirming the order again:
+  //   · Stock Control wouldn't take it — nothing was written, nothing sent, so
+  //     this simply places it again.
+  //   · Stock Control took it but the note / supplier email never went — the
+  //     place-order function recognises that and re-sends the message only. It
+  //     cannot create a second job or email a supplier twice.
+  // The supplier and any spoilage overs are replayed from the order so a
+  // re-sent email matches the job already sitting in Stock Control.
+  async function retryHandoff(o: OrderRow) {
+    setHandoffBusyId(o.id)
+    setHandoffErrors((prev) => {
+      const next = { ...prev }
+      delete next[o.id]
+      return next
+    })
+    try {
+      const { data, error } = await supabase.functions.invoke<{ ok: boolean; error?: string; code?: string }>(
+        'place-order',
+        {
+          body: {
+            order_id: o.id,
+            mode: 'confirm',
+            ...(o.supplier_id ? { supplier_id: o.supplier_id } : {}),
+            ...(o.supplier_overs && o.supplier_overs > 0 ? { supplier_overs: o.supplier_overs } : {}),
+          },
+        },
+      )
+      // Failures come back as a non-2xx body on error.context, not in `data`.
+      const body = data ?? (await readFnErrorBody(error))
+      if (error || !data?.ok) {
+        setHandoffErrors((prev) => ({
+          ...prev,
+          [o.id]: body?.error ?? error?.message ?? 'Couldn’t send it. Please try again.',
+        }))
+        return
+      }
+      // Pick up the new stamps so the chips and the panel settle immediately.
+      // place-order writes its own audit rows, so nothing to log here.
+      await refetchOrder(o.id)
+    } finally {
+      setHandoffBusyId(null)
     }
   }
 
@@ -1684,7 +1862,22 @@ export default function OrdersPage() {
   const invoiceFailedItems = orders
     .filter((o) => o.status === 'paid' && hasInvoiceProblem(o))
     .map((o) => ({ orderId: o.id, label: customerLabel(o) }))
-  const hasStalled = coldItems.length + invoiceFailedItems.length > 0
+  // Orders that reached Stock Control but whose workshop note / supplier email
+  // never went (docs/order-handoff-spec.md §3.4). Nobody is making these until
+  // the message goes, and nothing else on the page would say so — the order has
+  // already dropped out of "To order" into the collapsed Recently-ordered list.
+  const unsentMessageItems = orders.flatMap((o) => {
+    const state = handoffState(o)
+    if (state.kind !== 'unsent') return []
+    return [{
+      orderId: o.id,
+      label: o.stock_order_number ? `Order ${o.stock_order_number} · ${customerLabel(o)}` : customerLabel(o),
+      reason: `In Stock Control, but the ${handoffMessageName(state.what)} wasn’t sent.`,
+      busy: handoffBusyId === o.id,
+      error: handoffErrors[o.id] ?? null,
+    }]
+  })
+  const hasStalled = coldItems.length + invoiceFailedItems.length + unsentMessageItems.length > 0
 
   return (
     <DesignerChrome active="orders">
@@ -1723,8 +1916,14 @@ export default function OrdersPage() {
                 <OrdersPipelineCard
                   cold={coldItems}
                   invoiceFailed={invoiceFailedItems}
+                  unsentMessage={unsentMessageItems}
                   onSelectCold={(orderId) => jumpToOrder(orderId, 'awaiting')}
                   onSelectInvoiceFailed={(orderId) => jumpToOrder(orderId, 'to_order')}
+                  onSelectUnsentMessage={jumpToPlacedOrder}
+                  onSendMessage={(orderId) => {
+                    const o = orders.find((r) => r.id === orderId)
+                    if (o) void retryHandoff(o)
+                  }}
                 />
               </aside>
             )}
@@ -2073,6 +2272,9 @@ export default function OrdersPage() {
                             onCopy={() => void copyLink(o)}
                             onSaveField={(patch) => saveOrderField(o.id, patch)}
                             onRetryInvoice={() => void retryInvoice(o)}
+                            handoffBusy={handoffBusyId === o.id}
+                            handoffError={handoffErrors[o.id] ?? null}
+                            onRetryHandoff={() => void retryHandoff(o)}
                             showArtworkChip={artworkChipsOn}
                             onOpenArtworkReport={() => void openArtworkReport(o)}
                             usTariff={usTariffDutyBilling(o.order_group_id ? groups[o.order_group_id] ?? o : o)}
@@ -2120,6 +2322,9 @@ export default function OrdersPage() {
                       onCopy={() => void copyLink(o)}
                       onSaveField={(patch) => saveOrderField(o.id, patch)}
                       onRetryInvoice={() => void retryInvoice(o)}
+                      handoffBusy={handoffBusyId === o.id}
+                      handoffError={handoffErrors[o.id] ?? null}
+                      onRetryHandoff={() => void retryHandoff(o)}
                       showArtworkChip={artworkChipsOn}
                       onOpenArtworkReport={() => void openArtworkReport(o)}
                       usTariff={usTariffDutyBilling(o.order_group_id ? groups[o.order_group_id] ?? o : o)}
@@ -2154,7 +2359,13 @@ export default function OrdersPage() {
                     <>
                       <div className="mt-3 divide-y divide-line-soft rounded-xl border border-line bg-surface">
                         {recentlyOrdered.map((o) => (
-                          <div key={o.id} className="flex items-center justify-between gap-4 px-4 py-3 text-sm">
+                          <div
+                            key={o.id}
+                            id={`order-card-${o.id}`}
+                            className={`flex items-center justify-between gap-4 px-4 py-3 text-sm transition-shadow duration-500 ${
+                              flashOrderId === o.id ? 'rounded-lg ring-2 ring-[var(--c-brand)]' : ''
+                            }`}
+                          >
                             <div className="min-w-0">
                               <Link to={`/proofs/${o.proof_id}`} className="font-medium text-ink hover:underline">
                                 {customerLabel(o)}
@@ -2162,6 +2373,11 @@ export default function OrdersPage() {
                               <span className="ml-2 text-ink-mute">{o.payment_reference}</span>
                             </div>
                             <div className="flex items-center gap-3 text-ink-soft">
+                              {/* Did this order actually land in Stock Control, message
+                                  and all? Quiet green when it did; amber when the
+                                  message still needs sending (the Needs action panel
+                                  above carries the button). */}
+                              <HandoffChip state={handoffState(o)} />
                               {artworkChipsOn && o.artwork_check_verdict && (
                                 <ArtworkChip verdict={o.artwork_check_verdict} onOpen={() => void openArtworkReport(o)} />
                               )}
@@ -2402,6 +2618,9 @@ function OrderCard({
   onCopy,
   onSaveField,
   onRetryInvoice,
+  handoffBusy = false,
+  handoffError = null,
+  onRetryHandoff,
   proofMaterialCode,
   showArtworkChip = false,
   onOpenArtworkReport,
@@ -2421,6 +2640,11 @@ function OrderCard({
   onCopy: () => void
   onSaveField: (patch: Partial<OrderRow>) => Promise<boolean>
   onRetryInvoice: () => void
+  /** True while this order's hand-off to Stock Control is being retried. */
+  handoffBusy?: boolean
+  /** Why the last retry didn't work, if it didn't. */
+  handoffError?: string | null
+  onRetryHandoff?: () => void
   proofMaterialCode: string | null
   showArtworkChip?: boolean
   onOpenArtworkReport?: () => void
@@ -2429,6 +2653,11 @@ function OrderCard({
 }) {
   const total = orderTotal(order)
   const invoiceError = !order.xero_invoice_id ? friendlyInvoiceError(order.xero_invoice_error) : null
+  // Where this order got to on its way into Stock Control. On a card that means
+  // one of two things: nothing happened yet ('none'), or the last attempt to
+  // write the job was refused ('failed') — the placed states belong to orders
+  // that have already left this list.
+  const handoff = handoffState(order)
   const addr = order.ship_to_address
   // Address lines in postal order — county (region) sits between the town/
   // postcode line and the country, matching the admin Order log. Stripe stores
@@ -2445,9 +2674,11 @@ function OrderCard({
   // readiness ticks), expanding to the full prep form — date required, the
   // Dropbox folder, stock colour, delivery details — for the one order being
   // worked on. Embedding the form in every card made seven paid orders nearly
-  // a whole page of form fields. A failed invoice auto-expands so the error
-  // and its fix are in view without a tap.
-  const [expanded, setExpanded] = useState<boolean>(() => !order.xero_invoice_id && !!order.xero_invoice_error)
+  // a whole page of form fields. A failed invoice — or an order Stock Control
+  // refused — auto-expands so the problem and its fix are in view without a tap.
+  const [expanded, setExpanded] = useState<boolean>(
+    () => (!order.xero_invoice_id && !!order.xero_invoice_error) || handoffState(order).kind === 'failed',
+  )
 
   // Local drafts for the two placement fields. Date seeds from the saved value,
   // else the lead-time suggestion (the designer still has to engage with it to
@@ -2696,6 +2927,7 @@ function OrderCard({
             <PrepChip ok={folderVerified} label="Folder" />
             <PrepChip ok={datePersisted} label="Date" />
             {needsColour && <PrepChip ok={!!order.stock_colour} label="Colour" />}
+            <HandoffChip state={handoff} />
             {showArtworkChip && order.artwork_check_verdict && onOpenArtworkReport && (
               <ArtworkChip verdict={order.artwork_check_verdict} onOpen={onOpenArtworkReport} />
             )}
@@ -2742,6 +2974,29 @@ function OrderCard({
               {order.payment_method !== 'offline' && (
                 <ButtonInk size="sm" onClick={onRetryInvoice} disabled={busy} className="mt-2 max-md:h-11">
                   {busy ? 'Retrying…' : 'Retry invoice'}
+                </ButtonInk>
+              )}
+            </div>
+          )}
+
+          {/* Stock Control refused the order the last time it was placed. Nothing
+              was written and nothing was sent, so trying again is safe — but the
+              reason usually needs fixing first (an unmapped material, a folder
+              name with no order number in it). The card opens itself in this
+              state, so the explanation is in view without a tap; the rose chip
+              above keeps saying so if someone collapses it again. */}
+          {expanded && handoff.kind === 'failed' && (
+            <div className="mt-2 rounded-lg bg-out-soft px-3 py-2 ring-1 ring-out">
+              <p className="break-words text-[13px] text-out">
+                <span className="font-medium">Stock Control wouldn’t accept this order.</span>{' '}
+                {shorten(handoffError ?? handoff.reason)}
+              </p>
+              <p className="mt-1 text-[12px] text-ink-soft">
+                Nothing was sent — fix the reason above, then try again.
+              </p>
+              {onRetryHandoff && (
+                <ButtonInk size="sm" onClick={onRetryHandoff} disabled={handoffBusy} className="mt-2 max-md:h-11">
+                  {handoffBusy ? 'Trying again…' : 'Try again'}
                 </ButtonInk>
               )}
             </div>

@@ -327,14 +327,51 @@ branch 1 — the 1:1 families; satin/tinted/acrylic, wood and letterpress need n
 parser actually created for the same order numbers (material id, qty, deadline, product type,
 ship-by, letterpress trio). Fix divergences until clean.
 
-**Phase 2 — live, parser as backstop.** Flip to `'live'` (needs the Phase 2 place-order deploy —
-until then the shipped code deliberately treats `'live'` as `'shadow'`, so flipping early is
-harmless). Direct write first (`import_source='direct'`), note/email after, **wording still
-strict** — `checkEditedMessage` and the format rules stay in force so the parser remains a fully
-functional backstop. The same PR ships the Needs-action surfacing (§3.4) and the automated alarm:
-a fulfilled proof-viewer order whose Stock Control row has `import_source` NULL (i.e. the backstop
-caught something the direct path missed) surfaces on an admin surface automatically — **not** a
-weekly query someone has to remember.
+**Phase 2 — live, parser as backstop. BUILT 2026-07-24.** Direct write first
+(`import_source='direct'`), note/email after, **wording still strict** — `checkEditedMessage` and
+the format rules stay in force so the parser remains a fully functional backstop. Shipped in one PR:
+the RPC-first confirm sequence, the Needs-action surfacing + one-click retry (§3.4), and migration
+**000345** hardening the supplier insert. Flipping `direct_handoff_mode` to `'live'` is the cutover
+and is reversible in seconds.
+
+⚠ **`loadHandoffMode` no longer coerces `'live'`→`'shadow'`**, so with this deploy in place the
+setting IS the switch — deploy first, then flip.
+
+Hard-won details from the pre-go-live review (all fixed; each was a real defect):
+
+- **The supplier insert had no dedupe key of its own** — `handoff_at` was the only one, and it lives
+  on the *caller's* row. Two designers confirming at once, or a re-place retried after a timeout,
+  could email a supplier twice = a duplicate production run and a real bill. Migration **000345**
+  gives the supplier branch its own idempotency (trimmed ref + supplier + quantity, non-cancelled
+  `import_source='direct'` rows from the last 14 days) and sets `already_imported` on that route so
+  the caller can tell. `place-order` then **refuses to send** when the RPC reports the job was
+  already there (except on a deliberate message retry). Verified on live in a rolled-back
+  transaction: no duplicate job, retry reuses the same job, duplicate confirm writes nothing.
+- **`already_imported` is ambiguous** — it means both "nothing happened" (the early return) and "an
+  existing job was adopted". `sc_order_id == null` is the unambiguous discriminator and is what
+  decides whether to audit.
+- **The supplier send is stamped the instant Help Scout accepts it**, before the best-effort
+  customer-thread copy — otherwise a timeout after a large attachment upload leaves no evidence and
+  a retry emails the supplier again.
+- **A re-place must clear `handoff_at`** or the RPC treats it as already-imported and silently
+  creates nothing. It only ever clears while the order is still `revision`; once the RPC commits,
+  a retry is classified as a *message retry* instead, which is what stops a second job.
+- **Placement gates (artwork check, proof-approved) are skipped on a message retry** — the job is
+  already in production, so re-gating would strand it with the workshop never told.
+- **`isMessageRetryCandidate` is gated on live mode**, so a rollback to `shadow` restores the old
+  gates exactly.
+- A post-commit `return` inside the supplier `try` (unresolvable mailbox) **throws** instead, so it
+  can't report a placed order as a plain failure with no retry affordance.
+
+Deferred, deliberately: the `import_source`-NULL backstop alarm has no bespoke admin widget — it
+rides the daily scheduled shadow/parity report, which is automatic and Rob-facing. Build the widget
+if the report ever stops being read.
+
+⚠ **Migration numbering:** this work's files collide on `000335` (with `000335_proof_images_allow_png`)
+because a number was picked by incrementing instead of running `ls supabase/migrations/`. The repo
+already tolerates duplicate prefixes (000217, 000228–000230, 000279, 000307), and each file is
+applied via MCP under its own name, so the collision is cosmetic — but it is exactly the footgun
+CLAUDE.md warns about. `000345` was chosen correctly by listing.
 
 **Phase 3 — free the wording.** Exit criteria are coverage-based, not calendar-based (Rob,
 2026-07-20): a clean Phase-2 window that has included at least one each of — letterpress order,

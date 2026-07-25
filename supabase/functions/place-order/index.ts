@@ -450,18 +450,41 @@ Deno.serve(async (req) => {
   // ── Load order + proof + current version ──────────────────────────────────
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, status, quantity, person_quantities, has_personalisation, custom_quote_total, order_kind, date_required, stock_order_number, project_name, stock_colour, proof_id, ship_dest_country, ship_to_address, material_id, material_variant_id, material_option_id, dropbox_folder_url, payment_reference, currency, fulfilled_at')
+    .select('id, status, quantity, person_quantities, has_personalisation, custom_quote_total, order_kind, date_required, stock_order_number, project_name, stock_colour, proof_id, ship_dest_country, ship_to_address, material_id, material_variant_id, material_option_id, dropbox_folder_url, payment_reference, currency, fulfilled_at, handoff_at, production_note_posted_at, supplier_email_sent_at, supplier_helpscout_conversation_id')
     .eq('id', orderId)
     .maybeSingle()
   if (orderErr) return json({ ok: false, error: `Order lookup failed: ${orderErr.message}` }, 500)
   if (!order) return json({ ok: false, error: 'Order not found.' }, 404)
-  if (order.status !== 'paid' && order.status !== 'revision') return json({ ok: false, error: `Order is ${order.status}, not paid — it can't be placed.` }, 409)
+
+  // Read the rollout mode BEFORE any of the gates below — the message-retry
+  // state is a live-mode concept, and if the setting is ever rolled back to
+  // shadow/off those gates must behave exactly as they did pre-Phase-2.
+  const handoffMode = await loadHandoffMode(admin)
+
+  // MESSAGE RETRY (live mode only). Phase 2 writes the Stock Control job before
+  // sending the human note/email, so a send failure leaves a placed order whose
+  // message never went. Confirming again is the retry — and it is safe because
+  // create_order_handoff is idempotent on `handoff_at` (a second call returns
+  // already_imported without writing), so the re-run only re-sends the message.
+  // Allowed ONLY in that exact state: fulfilled + the job exists + at least one
+  // send stamp still missing. The route-specific check happens once the route is
+  // known (a supplier order never has production_note_posted_at, and vice versa,
+  // so the precise test can't be made here). See docs/order-handoff-spec.md §3.4.
+  const isMessageRetryCandidate = handoffMode === 'live' &&
+    order.status === 'fulfilled' &&
+    !!order.handoff_at &&
+    (!order.production_note_posted_at || !order.supplier_email_sent_at)
+  if (order.status !== 'paid' && order.status !== 'revision' && !isMessageRetryCandidate) {
+    return json({ ok: false, error: `Order is ${order.status}, not paid — it can't be placed.` }, 409)
+  }
   // A non-null fulfilled_at means this order already had a Stock Control job
   // (scenario 4: paid AND placed, then revised). Re-placing requires the
   // designer to confirm they've cancelled that old job. A first-ever placement
   // (fulfilled_at null, incl. scenario 3) needs no ack. Enforced on confirm only
-  // so the review screen can still preview a re-place.
-  const isReplace = !!order.fulfilled_at
+  // so the review screen can still preview a re-place. A message retry is NOT a
+  // re-place — the job it would duplicate is the one this order already owns —
+  // so it must never demand the cancel attestation.
+  const isReplace = !!order.fulfilled_at && !isMessageRetryCandidate
   if (mode === 'confirm' && isReplace && !oldJobCancelled) {
     return json({ ok: false, code: 'old_job_not_cancelled', error: 'Cancel the old Stock Control job first, then confirm the re-place.' }, 409)
   }
@@ -476,7 +499,11 @@ Deno.serve(async (req) => {
   // even error) satisfies it — the human adjudicates flags on the review page.
   // The artwork_checked_at read is a separate query so the main order select
   // stays free of 000336 columns (pre-migration deploy safety).
-  if (mode === 'confirm' && await loadArtworkCheckGate(admin)) {
+  // Skipped on a message retry: the job is already IN production, so this is a
+  // "send the message" action, not a placement decision. Re-gating it would
+  // strand a placed order with its workshop/supplier never told (e.g. the proof
+  // was reopened for a tweak between the failed send and the retry).
+  if (mode === 'confirm' && !isMessageRetryCandidate && await loadArtworkCheckGate(admin)) {
     const { data: chk } = await admin.from('orders').select('artwork_checked_at').eq('id', orderId).maybeSingle()
     if (!(chk as { artwork_checked_at: string | null } | null)?.artwork_checked_at) {
       return json({ ok: false, code: 'artwork_check_required', error: 'Run the artwork check before placing this order.' }, 409)
@@ -493,7 +520,10 @@ Deno.serve(async (req) => {
   // in_progress with approvals cleared, so this blocks handing off artwork that
   // hasn't been re-approved. Confirm only, so the review screen can still preview.
   const proofStatus = (proof as { status?: string | null } | null)?.status ?? null
-  if (mode === 'confirm' && proofStatus !== 'approved') {
+  // Skipped on a message retry — see the artwork-check gate above. The approval
+  // gate protects the decision to hand artwork to production; that decision was
+  // already taken and executed, and the message is chasing it.
+  if (mode === 'confirm' && !isMessageRetryCandidate && proofStatus !== 'approved') {
     return json({ ok: false, error: "The proof isn't approved — re-approve it before placing this order." }, 409)
   }
   const conversationId = (proof as { helpscout_conversation_id: string | null } | null)?.helpscout_conversation_id ?? null
@@ -631,15 +661,6 @@ Deno.serve(async (req) => {
   const packaging = destCountry ? (destCountry === 'GB' ? 'Domestic' : 'International') : null
   const dateRequiredStr = fmtDate(order.date_required)
 
-  // Direct hand-off rollout switch (docs/order-handoff-spec.md §3.6). 'off' =
-  // this function behaves exactly as before. 'shadow' (and, until the Phase 2
-  // code ships, 'live' too) = the composed contract payload is validated via
-  // public.create_order_handoff(p_validate_only) and stored on the order for
-  // the parity check — today's Help Scout hand-off is untouched either way.
-  // Reading the column pre-migration just leaves the mode 'off', so this
-  // function is safe to deploy before 000332 is applied.
-  const handoffMode = await loadHandoffMode(admin)
-
   // Supplier quantity = customer quantity + spoilage overs, but ONLY on the
   // supplier route (overs are meaningless for an in-house job). This is the
   // number the supplier is told to make; `qty` stays the customer's quantity
@@ -760,6 +781,39 @@ Deno.serve(async (req) => {
     if (!appId || !appSecret) return json({ ok: false, error: 'Help Scout credentials not configured.' }, 500)
     const userId = await resolveUserId(admin, callerId)
     if (userId == null) return json({ ok: false, error: 'No Help Scout author id available (set HELPSCOUT_DEFAULT_USER_ID).' }, 500)
+
+    // A retry whose message already went out has nothing left to do — guard
+    // before re-posting a duplicate note.
+    if (isMessageRetryCandidate && order.production_note_posted_at) {
+      return json({ ok: false, error: 'This order is already placed and its production note was sent.' }, 409)
+    }
+
+    // LIVE: write the Stock Control job FIRST — one transaction that also marks
+    // the order placed, so the two can never drift apart. Nothing has been sent
+    // at this point, so a failure here is clean and freely retryable.
+    if (handoffMode === 'live') {
+      // A re-place must produce a NEW job, so drop the previous placement's
+      // stamps first (see clearHandoffStampsForReplace).
+      if (isReplace) {
+        const cleared = await clearHandoffStampsForReplace(admin, orderId)
+        if (!cleared.ok) {
+          return json({ ok: false, code: 'handoff_failed', error: `Couldn’t prepare this order for re-placing (${cleared.error}). Nothing has been sent — try again.` }, 500)
+        }
+      }
+      const wrote = await executeHandoff(pub, handoffPayload, orderSpecSnapshot)
+      if (!wrote.ok) {
+        await stampHandoffError(admin, orderId, wrote.error ?? 'unknown error')
+        return json({ ok: false, code: 'handoff_failed', error: `Stock Control couldn’t accept this order: ${wrote.error}. Nothing has been sent — fix that and try again.` }, 400)
+      }
+      // Audit whenever a job was actually resolved for this order (including an
+      // adopted hand-keyed job — that IS a placement); skip only the no-op
+      // early return. Carries the re-place attestation, which markPlaced used to
+      // record and which is the only trail behind a duplicate-job decision.
+      if (!wrote.wroteNothing) {
+        await auditPlaced(admin, orderId, callerId, { route, subject, sc_order_id: wrote.scOrderId, ...(isReplace ? { old_job_cancelled: oldJobCancelled } : {}) })
+      }
+    }
+
     try {
       const token = await getAccessToken(appId, appSecret)
       await setConversationSubject(token, conversationId, subject)
@@ -773,9 +827,26 @@ Deno.serve(async (req) => {
       }
       await createNote(token, conversationId, userId, customMessage ? htmlifyMessage(customMessage) : lines.join('<br>'), attachments)
     } catch (e) {
+      const msg = e instanceof HsError ? `Help Scout: ${e.message}` : `${(e as Error)?.message ?? 'unknown'}`
+      // LIVE: the job is ALREADY in Stock Control (committed above) — only the
+      // human note failed. Never report this as a failed placement, or someone
+      // will place it again and duplicate the job. The Orders page keys its
+      // "Send it now" retry on production_note_posted_at staying null.
+      if (handoffMode === 'live') {
+        await stampHandoffError(admin, orderId, `production note not sent: ${msg}`)
+        return json({ ok: false, code: 'placed_message_not_sent', error: `The order is in Stock Control, but the production note couldn’t be posted (${msg}). The order IS placed — don’t place it again; use “Send it now” on the Orders page to retry the note.` }, 502)
+      }
       if (e instanceof HsError) return json({ ok: false, error: `Help Scout: ${e.message}` }, 502)
-      return json({ ok: false, error: `Hand-off failed: ${(e as Error)?.message ?? 'unknown'}` }, 502)
+      return json({ ok: false, error: `Hand-off failed: ${msg}` }, 502)
     }
+
+    // LIVE: the RPC already flipped the order to placed, so all that's left is
+    // the done-once stamp confirming the note went out.
+    if (handoffMode === 'live') {
+      await stampMessageSent(admin, orderId, { production_note_posted_at: new Date().toISOString() })
+      return json({ ok: true, route, placed: true })
+    }
+
     const placed = await markPlaced(admin, orderId, callerId, orderSpecSnapshot, { route, subject, ...(isReplace ? { old_job_cancelled: oldJobCancelled } : {}) })
     if (!placed.ok) {
       // The note WAS posted to Help Scout, but the status flip failed. Surface a
@@ -978,6 +1049,56 @@ Deno.serve(async (req) => {
   if (!appId || !appSecret) return json({ ok: false, error: 'Help Scout credentials not configured.' }, 500)
   const userId = await resolveUserId(admin, callerId)
   if (userId == null) return json({ ok: false, error: 'No Help Scout author id available (set HELPSCOUT_DEFAULT_USER_ID).' }, 500)
+
+  // A retry must never email a supplier twice — a duplicate order email can
+  // become a duplicate production run, which is not merely cosmetic. If the
+  // conversation id is already on the order the email DID go (only the stamp
+  // was lost), so repair the stamp and stop.
+  // Either stamp proves the email already went out. Repair the missing one if
+  // needed, then STOP — re-emailing a supplier can become a duplicate
+  // production run, so this route refuses rather than risking it.
+  if (isMessageRetryCandidate && (order.supplier_helpscout_conversation_id || order.supplier_email_sent_at)) {
+    if (!order.supplier_email_sent_at) {
+      await stampMessageSent(admin, orderId, { supplier_email_sent_at: new Date().toISOString() })
+    }
+    return json({ ok: false, code: 'already_sent', error: `This order is already placed and ${chosen.name} was already emailed — nothing further was sent.` }, 409)
+  }
+
+  // LIVE: write the Stock Control job FIRST (see the in-house route). Nothing
+  // has been emailed yet, so a failure here is clean and freely retryable.
+  if (handoffMode === 'live') {
+    // A re-place must produce a NEW job, so drop the previous placement's
+    // stamps first (see clearHandoffStampsForReplace).
+    if (isReplace) {
+      const cleared = await clearHandoffStampsForReplace(admin, orderId)
+      if (!cleared.ok) {
+        return json({ ok: false, code: 'handoff_failed', error: `Couldn’t prepare this order for re-placing (${cleared.error}). Nothing has been sent — try again.` }, 500)
+      }
+    }
+    const wrote = await executeHandoff(pub, handoffPayload, orderSpecSnapshot)
+    if (!wrote.ok) {
+      await stampHandoffError(admin, orderId, wrote.error ?? 'unknown error')
+      return json({ ok: false, code: 'handoff_failed', error: `Stock Control couldn’t accept this order: ${wrote.error}. Nothing has been sent — fix that and try again.` }, 400)
+    }
+    // CRITICAL on this route: if the RPC did not create a job for this call,
+    // some other call already did — either a concurrent Confirm that won the
+    // row lock, or a retry landing on the 000345 idempotency guard. That other
+    // call is sending (or has sent) the supplier email. Sending here too would
+    // put a SECOND identical order in front of the supplier, which becomes a
+    // duplicate production run and a real bill. Stop, and report it honestly.
+    // (A deliberate message RETRY is the one case where already_imported is
+    // expected and sending is exactly what we're here to do — the guards above
+    // have already proved this order's email never went out.)
+    if (wrote.alreadyImported && !isMessageRetryCandidate) {
+      return json({
+        ok: false,
+        code: 'already_placed',
+        error: `This order is already in Stock Control${wrote.wroteNothing ? '' : ' (it matched an existing job)'} — it has not been emailed again. Check the Orders page before placing it once more.`,
+      }, 409)
+    }
+    await auditPlaced(admin, orderId, callerId, { route, subject, sc_order_id: wrote.scOrderId, supplier_id: chosen.id, supplier_name: chosen.name, supplier_overs: supplierOvers, ...(isReplace ? { old_job_cancelled: oldJobCancelled } : {}) })
+  }
+
   let newConvId: string | null = null
   try {
     const token = await getAccessToken(appId, appSecret)
@@ -987,7 +1108,11 @@ Deno.serve(async (req) => {
       const envMb = Number(Deno.env.get('HELPSCOUT_MAILBOX_ID') ?? '')
       mailboxId = Number.isInteger(envMb) && envMb > 0 ? envMb : null
     }
-    if (mailboxId == null) return json({ ok: false, error: 'Could not resolve a Help Scout mailbox to send from.' }, 502)
+    // THROW, don't return: in live mode the Stock Control job is already
+    // committed by this point, and a bare return here would skip the catch
+    // below — leaving a placed order reported as a plain failure, with no
+    // handoff_error and no retry affordance, while the supplier is never told.
+    if (mailboxId == null) throw new HsError(502, 'Could not resolve a Help Scout mailbox to send from.')
     // Download + attach the prepped artwork (best-effort, same as in-house). The
     // Dropbox link stays in the email body so anything too big to attach (Help
     // Scout caps a file at 10 MB) is still reachable.
@@ -1008,6 +1133,17 @@ Deno.serve(async (req) => {
       text: handoffBody,
       attachments,
     })
+    // Stamp the send THE MOMENT Help Scout accepts it, before the best-effort
+    // copy below. The email is irreversible from here, so the record of it must
+    // not depend on anything that follows: if the invocation dies later (a
+    // timeout after a 20 MB attachment upload is the realistic case), a retry
+    // would otherwise find no evidence and email the supplier a second time.
+    if (handoffMode === 'live') {
+      await stampMessageSent(admin, orderId, {
+        supplier_email_sent_at: new Date().toISOString(),
+        ...(newConvId ? { supplier_helpscout_conversation_id: newConvId } : {}),
+      })
+    }
     // Best-effort: file a copy of exactly what was sent to the supplier as an
     // internal note on the customer's proof thread. Help Scout notes are never
     // emailed or shown to the customer, so this just gives the project thread a
@@ -1028,9 +1164,24 @@ Deno.serve(async (req) => {
       } catch { /* best-effort copy; the supplier email is the hand-off that matters */ }
     }
   } catch (e) {
+    const msg = e instanceof HsError ? `Help Scout: ${e.message}` : `${(e as Error)?.message ?? 'unknown'}`
+    // LIVE: the job is ALREADY in Stock Control — only the supplier email
+    // failed. Report it as placed-but-unsent so nobody re-places (which would
+    // duplicate the job); the Orders page offers the single-purpose retry.
+    if (handoffMode === 'live') {
+      await stampHandoffError(admin, orderId, `supplier email not sent: ${msg}`)
+      return json({ ok: false, code: 'placed_message_not_sent', error: `The order is in Stock Control, but the email to ${chosen.name} couldn’t be sent (${msg}). The order IS placed — don’t place it again; use “Send it now” on the Orders page to retry the email.` }, 502)
+    }
     if (e instanceof HsError) return json({ ok: false, error: `Help Scout: ${e.message}` }, 502)
-    return json({ ok: false, error: `Hand-off failed: ${(e as Error)?.message ?? 'unknown'}` }, 502)
+    return json({ ok: false, error: `Hand-off failed: ${msg}` }, 502)
   }
+
+  // LIVE: the RPC flipped the order to placed and the send was stamped the
+  // instant Help Scout accepted it (above), so there is nothing left to do.
+  if (handoffMode === 'live') {
+    return json({ ok: true, route, placed: true, supplier: chosen.name })
+  }
+
   const placed = await markPlaced(admin, orderId, callerId, orderSpecSnapshot, {
     route,
     subject,
@@ -1109,23 +1260,146 @@ async function markPlaced(
   return { ok: true }
 }
 
-// ── Direct hand-off (shadow phase) ──────────────────────────────────────────
-// docs/order-handoff-spec.md §3.6 / §6 Phase 1. Everything here is best-effort
-// and additive: a failure in any of it must never affect the Help Scout
-// hand-off, which remains the live path until Phase 2.
+// ── Direct hand-off ─────────────────────────────────────────────────────────
+// docs/order-handoff-spec.md §3.4 / §3.6 / §6.
+//   'off'    → this function behaves exactly as it did pre-Phase-1.
+//   'shadow' → the Help Scout note/email is still THE hand-off; the contract
+//              payload is validated + stored alongside for the parity check.
+//              Everything shadow does is best-effort and can never fail a
+//              placement.
+//   'live'   → Phase 2: the direct write into Stock Control IS the hand-off and
+//              runs FIRST (atomically with marking the order placed); the
+//              note/email follow as human messages. The parser stays deployed
+//              as a backstop, so the strict wording rules remain in force.
+type HandoffMode = 'off' | 'shadow' | 'live'
 
 // Read settings.direct_handoff_mode. Any error (including the column not
 // existing yet — this function is deployable before migration 000332) = 'off'.
-// NOTE: until the Phase 2 code ships, 'live' deliberately behaves as 'shadow'
-// here — flipping the setting early can't make an undeployed code path run.
-async function loadHandoffMode(admin: SupabaseClient): Promise<'off' | 'shadow'> {
+async function loadHandoffMode(admin: SupabaseClient): Promise<HandoffMode> {
   try {
     const { data } = await admin.from('settings').select('direct_handoff_mode').limit(1).maybeSingle()
     const m = (data as { direct_handoff_mode?: string | null } | null)?.direct_handoff_mode
-    return m === 'shadow' || m === 'live' ? 'shadow' : 'off'
+    return m === 'live' ? 'live' : m === 'shadow' ? 'shadow' : 'off'
   } catch {
     return 'off'
   }
+}
+
+// Execute the direct hand-off: create_order_handoff with p_validate_only=false.
+// ONE transaction on the database side — it inserts the Stock Control job AND
+// flips proofs.orders to fulfilled with the handoff stamps, or does neither. A
+// failure here therefore means nothing changed anywhere and the caller can
+// retry freely, which is why this runs BEFORE anything is sent.
+// `already_imported` is success: the job exists (this is the message-retry path).
+async function executeHandoff(
+  pub: SupabaseClient,
+  payload: Record<string, unknown>,
+  snapshot: OrderSpecSnapshot,
+): Promise<{ ok: boolean; error?: string; alreadyImported?: boolean; wroteNothing?: boolean; scOrderId?: string | null }> {
+  try {
+    const { data, error } = await pub.rpc('create_order_handoff', {
+      p_payload: payload,
+      p_spec_snapshot: snapshot,
+      p_validate_only: false,
+    })
+    if (error) return { ok: false, error: error.message }
+    const d = data as { ok?: boolean; already_imported?: boolean; sc_order_id?: string | null; problems?: { message: string }[] } | null
+    if (!d?.ok) {
+      const msg = (d?.problems ?? []).map((p) => p.message).join(' | ')
+      return { ok: false, error: msg || 'Stock Control did not accept the order.' }
+    }
+    // Two different "already imported" meanings, and they need different
+    // handling, so distinguish them by the one unambiguous signal: the RPC's
+    // early return (this order was already handed off) omits sc_order_id, while
+    // every path that actually resolved a job includes it.
+    //   * wroteNothing  → the early return: nothing happened this call.
+    //   * alreadyImported with an sc_order_id → a job was ADOPTED (a hand-keyed
+    //     in-house job, or the supplier idempotency guard from 000345). The
+    //     order IS placed against that job — but the message must not be re-sent.
+    return {
+      ok: true,
+      alreadyImported: d.already_imported === true,
+      wroteNothing: d.sc_order_id == null,
+      scOrderId: d.sc_order_id ?? null,
+    }
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message ?? 'unknown error' }
+  }
+}
+
+// The RPC does the status flip in live mode, so it never passes through
+// markPlaced — which is where the `order.placed` audit row used to be written.
+// Write it here instead, or a live placement would leave no trail. Skipped on a
+// message retry (already_imported), which isn't a new placement.
+async function auditPlaced(
+  admin: SupabaseClient,
+  orderId: string,
+  callerId: string,
+  detail: Record<string, unknown>,
+): Promise<void> {
+  await admin.from('audit_log').insert({
+    actor_id: callerId,
+    action: 'order.placed',
+    target_type: 'order',
+    target_id: orderId,
+    target_label: `Order ${orderId}`,
+    after_value: { ...detail, via: 'direct_handoff' },
+  }).then(undefined, () => {})
+}
+
+// A re-place (revision flow) needs a genuinely NEW Stock Control job — the
+// human has already cancelled the old one. But create_order_handoff is
+// idempotent on `handoff_at`, so the stamp left by the FIRST placement would
+// make it return already_imported and quietly create nothing. Clear the
+// placement stamps first so the re-place writes a fresh job, and clear the send
+// stamps too since a new message is about to go out.
+//
+// This only ever runs while the order is still 'revision'. Once the RPC commits
+// it flips to 'fulfilled' with a fresh handoff_at, so a retry after a timeout is
+// classified as a MESSAGE RETRY instead and never re-enters here — which is what
+// stops a second job being created. The previous placement's supplier
+// conversation id is deliberately cleared (the retry logic must not mistake the
+// old thread for the new send); it remains recoverable from that placement's
+// `order.placed` audit row.
+async function clearHandoffStampsForReplace(admin: SupabaseClient, orderId: string): Promise<{ ok: boolean; error?: string }> {
+  const { error } = await admin
+    .from('orders')
+    .update({
+      handoff_at: null,
+      handoff_error: null,
+      production_note_posted_at: null,
+      supplier_email_sent_at: null,
+      supplier_helpscout_conversation_id: null,
+    })
+    .eq('id', orderId)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true }
+}
+
+// Record why a hand-off couldn't complete, so the Orders page can show it from
+// persisted state rather than a toast the designer may have dismissed. Cleared
+// on the next success (the RPC nulls it; the send stamps below null it too).
+async function stampHandoffError(admin: SupabaseClient, orderId: string, message: string): Promise<void> {
+  await admin
+    .from('orders')
+    .update({ handoff_error: message.slice(0, 500) })
+    .eq('id', orderId)
+    .then(({ error }) => {
+      if (error) console.error('stampHandoffError failed:', error.message)
+    })
+}
+
+// Stamp the done-once flag once the human message has actually gone out. These
+// are what the Orders page keys its "placed but not sent" retry on, so a miss
+// here shows as an actionable row rather than silence.
+async function stampMessageSent(admin: SupabaseClient, orderId: string, patch: Record<string, unknown>): Promise<void> {
+  await admin
+    .from('orders')
+    .update({ ...patch, handoff_error: null })
+    .eq('id', orderId)
+    .then(({ error }) => {
+      if (error) console.error('stampMessageSent failed:', error.message)
+    })
 }
 
 // Read settings.artwork_check_mode + artwork_check_required, tolerant of the
@@ -1152,7 +1426,7 @@ interface HandoffValidation {
 // Validate the contract payload against public.create_order_handoff without
 // writing anything. Null when the mode is off or the RPC isn't reachable
 // (pre-migration deploy) — the review page renders nothing for null.
-async function runHandoffValidation(pub: SupabaseClient, mode: 'off' | 'shadow', payload: Record<string, unknown>): Promise<HandoffValidation | null> {
+async function runHandoffValidation(pub: SupabaseClient, mode: HandoffMode, payload: Record<string, unknown>): Promise<HandoffValidation | null> {
   if (mode === 'off') return null
   try {
     const { data, error } = await pub.rpc('create_order_handoff', { p_payload: payload, p_validate_only: true })
@@ -1168,8 +1442,11 @@ async function runHandoffValidation(pub: SupabaseClient, mode: 'off' | 'shadow',
 // for the Phase 1 parity check, and surface validation problems via
 // handoff_error (prefixed "shadow:") so the mapping gaps get fixed during the
 // shadow window rather than discovered at cutover.
-async function recordShadowHandoff(admin: SupabaseClient, pub: SupabaseClient, mode: 'off' | 'shadow', orderId: string, payload: Record<string, unknown>): Promise<void> {
-  if (mode === 'off') return
+async function recordShadowHandoff(admin: SupabaseClient, pub: SupabaseClient, mode: HandoffMode, orderId: string, payload: Record<string, unknown>): Promise<void> {
+  // Shadow ONLY. In live mode the RPC itself stamps handoff_payload inside the
+  // placement transaction, so re-writing it here would be redundant at best and
+  // could clobber the authoritative record at worst.
+  if (mode !== 'shadow') return
   try {
     const validation = await runHandoffValidation(pub, mode, payload)
     const problems = validation?.problems ?? []

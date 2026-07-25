@@ -70,6 +70,13 @@ function order(partial: FixtureOrder): FixtureOrder {
     paid_at: null,
     fulfilled_at: null,
     revised_at: null,
+    // Direct hand-off to Stock Control (000332) — nothing attempted by default.
+    handoff_at: null,
+    handoff_error: null,
+    production_note_posted_at: null,
+    supplier_email_sent_at: null,
+    supplier_id: null,
+    supplier_overs: 0,
     date_required: null,
     dropbox_folder_url: null,
     stock_order_number: null,
@@ -247,6 +254,9 @@ const ORDERS: FixtureOrder[] = [
     artwork_check_verdict: 'defect',
     artwork_checked_at: daysAgo(0.2),
     artwork_check: ARTWORK_REPORT_FLAGGED,
+    // Stock Control refused the order last time it was placed — nothing was
+    // written, nothing was sent (the amber chip + "Try again" block).
+    handoff_error: 'material "Letterpress" is not mapped to a Stock Control material',
     proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-4', contacts: contact('Initech', 'Bill Lumbergh') },
   }),
   // Being revised — paid + placed, artwork being redone.
@@ -259,9 +269,11 @@ const ORDERS: FixtureOrder[] = [
     xero_invoice_id: 'xi-3',
     proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-5', contacts: contact('Hooli', 'Gavin Belson') },
   }),
-  // Recently ordered.
-  order({ id: 'o9', status: 'fulfilled', paid_at: daysAgo(8), fulfilled_at: daysAgo(5), artwork_check_verdict: 'clear', artwork_checked_at: daysAgo(5), artwork_check: ARTWORK_REPORT_CLEAR, proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Pied Piper', 'Richard Hendricks') } }),
-  order({ id: 'o10', status: 'fulfilled', paid_at: daysAgo(15), fulfilled_at: daysAgo(12), proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact(null, 'Jian Yang') } }),
+  // Recently ordered — placed cleanly: job in Stock Control, workshop note sent.
+  order({ id: 'o9', status: 'fulfilled', paid_at: daysAgo(8), fulfilled_at: daysAgo(5), handoff_at: daysAgo(5), production_note_posted_at: daysAgo(5), stock_order_number: '403910', artwork_check_verdict: 'clear', artwork_checked_at: daysAgo(5), artwork_check: ARTWORK_REPORT_CLEAR, proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Pied Piper', 'Richard Hendricks') } }),
+  // Recently ordered — the new half-way failure: the job IS in Stock Control
+  // but the workshop note never went, so nobody knows to make it.
+  order({ id: 'o10', status: 'fulfilled', paid_at: daysAgo(15), fulfilled_at: daysAgo(12), handoff_at: daysAgo(12), production_note_posted_at: null, stock_order_number: '403912', proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact(null, 'Jian Yang') } }),
 ].map((o, i) => ({ ...o, proof_id: `p-${o.id}` }))
 
 // Approved proofs with no order yet — the Links-to-send worklist. approved_at
