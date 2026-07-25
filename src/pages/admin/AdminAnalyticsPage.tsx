@@ -137,6 +137,52 @@ function daysAgoLabel(days: number): string {
   return `${Math.round(days)} days ago`
 }
 
+// ── Pay-link conversion ──────────────────────────────────────────────────────
+// Moved here from the Orders page header. Same arithmetic it used there, so the
+// figure doesn't change meaning in the move: paid ÷ links sent, plus the median
+// gap between sending a link and being paid.
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+interface PayLinkRow {
+  sent_at: string | null
+  paid_at: string | null
+}
+
+interface PayLinkStat {
+  sent: number
+  paid: number
+  medianDays: number | null
+}
+
+// Median of a numeric list (even length → mean of the two middles). Null when empty.
+function median(xs: number[]): number | null {
+  if (xs.length === 0) return null
+  const s = [...xs].sort((a, b) => a - b)
+  const mid = Math.floor(s.length / 2)
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2
+}
+
+export function summarisePayLinks(rows: PayLinkRow[]): PayLinkStat {
+  const sent = rows.filter((r) => r.sent_at).length
+  const paid = rows.filter((r) => r.paid_at).length
+  const durations = rows
+    .filter((r) => r.sent_at && r.paid_at)
+    .map((r) => new Date(r.paid_at!).getTime() - new Date(r.sent_at!).getTime())
+    // Guard against clock skew / bad data producing a negative or NaN gap,
+    // which would drag the median somewhere impossible.
+    .filter((ms) => Number.isFinite(ms) && ms >= 0)
+  const med = median(durations)
+  return { sent, paid, medianDays: med != null ? med / DAY_MS : null }
+}
+
+// Human label for a time-to-pay measured in days.
+function payDurationLabel(days: number): string {
+  if (days < 1) return 'a day'
+  const n = Math.round(days)
+  return `${n} day${n === 1 ? '' : 's'}`
+}
+
 export default function AdminAnalyticsPage() {
   const [tab, setTab] = useState<Tab>('funnel')
   const [loading, setLoading] = useState(true)
@@ -148,6 +194,14 @@ export default function AdminAnalyticsPage() {
   const [segments, setSegments] = useState<Record<string, SegmentRow[]>>({})
   const [hotLeads, setHotLeads] = useState<HotLead[]>([])
   const [lossReasons, setLossReasons] = useState<LossReason[]>([])
+  // Pay-link conversion, moved here from the top of the Orders page — a work
+  // queue is the wrong home for a since-launch trend, and this is where the
+  // rest of the funnel figures live. Deliberately NOT the same figure as the
+  // "Paid rate" tile: that one is paid ÷ every proof, this one is paid ÷ links
+  // actually sent, which is what tells you whether the pay page converts.
+  // Read straight from `orders` rather than analytics_funnel() because the
+  // median time-to-pay isn't in that RPC and adding it would need a migration.
+  const [payLinks, setPayLinks] = useState<PayLinkStat | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -170,6 +224,14 @@ export default function AdminAnalyticsPage() {
         const firstErr = [f, w, d, sMat, sCur, sShape, sRec, sRet, h, lr].find((r) => r.error)?.error
         if (firstErr) throw firstErr
         if (cancelled) return
+        // Separate read, and deliberately not inside the Promise.all above: a
+        // failure here must leave the rest of the page working, so it sets null
+        // (the line simply doesn't render) instead of throwing to the catch.
+        const { data: linkRows, error: linkErr } = await supabase
+          .from('orders')
+          .select('sent_at, paid_at')
+          .not('sent_at', 'is', null)
+        if (!cancelled) setPayLinks(linkErr ? null : summarisePayLinks((linkRows ?? []) as PayLinkRow[]))
         setFunnel(f.data as Funnel)
         setWeekly((w.data ?? []) as WeekRow[])
         setDesigners((d.data ?? []) as DesignerRow[])
@@ -241,7 +303,9 @@ export default function AdminAnalyticsPage() {
         </div>
       ) : (
         <>
-          {tab === 'funnel' && funnel && <FunnelSection funnel={funnel} weekly={weekly} lossReasons={lossReasons} />}
+          {tab === 'funnel' && funnel && (
+            <FunnelSection funnel={funnel} weekly={weekly} lossReasons={lossReasons} payLinks={payLinks} />
+          )}
           {tab === 'hot' && <HotLeadsSection leads={hotLeads} />}
           {tab === 'team' && <TeamSection rows={designers} />}
           {tab === 'products' && <ProductsSection segments={segments} />}
@@ -252,7 +316,17 @@ export default function AdminAnalyticsPage() {
 }
 
 // ── 1. Funnel & trend ────────────────────────────────────────────────────────
-function FunnelSection({ funnel, weekly, lossReasons }: { funnel: Funnel; weekly: WeekRow[]; lossReasons: LossReason[] }) {
+function FunnelSection({
+  funnel,
+  weekly,
+  lossReasons,
+  payLinks,
+}: {
+  funnel: Funnel
+  weekly: WeekRow[]
+  lossReasons: LossReason[]
+  payLinks: PayLinkStat | null
+}) {
   const total = funnel.total_proofs || 1
   const stages: { key: string; label: string; value: number; colour: string; note?: string }[] = [
     { key: 'enq', label: 'Qualified enquiries (proofs)', value: funnel.total_proofs, colour: 'var(--c-ink-mute)' },
@@ -287,6 +361,22 @@ function FunnelSection({ funnel, weekly, lossReasons }: { funnel: Funnel; weekly
           sub="when it converts"
         />
       </div>
+
+      {/* Pay-link conversion. Its old home was the top of the Orders page,
+          where a since-launch trend competed with the day's work; the Orders
+          page now spends that line on what needs doing instead. Distinct from
+          the "Paid rate" tile above — that divides by every proof, this divides
+          by links actually sent, so it isolates how well the pay page itself
+          converts. Renders nothing if the read failed or no link has gone out. */}
+      {payLinks && payLinks.sent > 0 && (
+        <p className="text-[13px] text-ink-soft">
+          <span className="font-semibold text-ink">Pay links:</span>{' '}
+          {fmtPct(pct(payLinks.paid, payLinks.sent))} paid
+          {payLinks.medianDays != null ? `, usually within ${payDurationLabel(payLinks.medianDays)}` : ''} · from{' '}
+          {payLinks.sent} link{payLinks.sent === 1 ? '' : 's'} sent since launch
+          {payLinks.sent < 10 ? ' · still early days' : ''}
+        </p>
+      )}
 
       {/* The leak callout */}
       <div className="rounded-xl bg-out-soft px-4 py-3 text-sm ring-1 ring-out">

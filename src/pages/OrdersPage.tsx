@@ -10,12 +10,12 @@ import { orderTotal, specLabel as specLabelShared, customerLabel as customerLabe
 import { logAudit } from '../lib/audit'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
 import { keepApprovedNoOrder, invalidateApprovedNoOrderCount } from '../lib/approvedNoOrder'
+import { splitByChaseNeed, chaseReason, groupNeedsAttention, type TriageOrder } from '../lib/ordersTriage'
 import { materialNeedsStockColour, fetchStockColours, type StockColour } from '../lib/stockColours'
 import { downloadBlob } from '../lib/downloadFile'
 import { signThumbnails, type ThumbInfo } from '../lib/thumbnails'
 import type { Currency } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
-import OrdersPipelineCard from '../components/OrdersPipelineCard'
 import OrderBuilderModal from '../components/OrderBuilderModal'
 import GroupOrdersModal, { type GroupCandidate } from '../components/GroupOrdersModal'
 import RecordOfflinePaymentModal from '../components/RecordOfflinePaymentModal'
@@ -27,7 +27,7 @@ import SendPayLinkModal from '../components/SendPayLinkModal'
 import DesignerAvatar from '../components/DesignerAvatar'
 import ApprovedArtworkPanel from '../components/ApprovedArtworkPanel'
 import ArtworkCheckReportView, { type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
-import { ChevronDown, ChevronRight, StickyNote } from 'lucide-react'
+import { ChevronDown, StickyNote } from 'lucide-react'
 
 // Orders / "to order" surface (Ordering & checkout, Step 6 — overhauled).
 //
@@ -619,62 +619,11 @@ function matchesSearch(o: OrderRow, q: string): boolean {
   return haystack.includes(q)
 }
 
-// Which work-queue section is shown. 'all' shows every section; the others
-// narrow to one so a busy queue can be focused. Selected by tapping a
-// pipeline tile (tap again to clear) — the same tiles-as-filters pattern the
-// dashboard's stat tiles established. Recently ordered isn't a pipeline
-// stage; it renders as a collapsed section at the foot of the 'all' view.
-type ViewKey = 'all' | 'links' | 'awaiting' | 'to_order' | 'revised'
-
-// One tile in the action-led pipeline header — and the section filter: tap to
-// show just that stage's list, tap again to show everything (aria-pressed
-// carries the state). The headline is a COUNT (the useful figure for a
-// pipeline stage — "how many", not a part-known "how much"), with an optional
-// money line shown only where the value is real (paid orders awaiting
-// placement). `emphasis` marks the stages that need the team's action so they
-// stand out from the passive waiting states.
-function FunnelStat({
-  label,
-  count,
-  money,
-  detail,
-  emphasis = false,
-  active,
-  onClick,
-}: {
-  label: string
-  count: number
-  money?: string | null
-  detail?: string | null
-  emphasis?: boolean
-  active: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      title={active ? 'Showing this section — tap to show everything' : `Show only ${label}`}
-      className={[
-        'min-w-0 rounded-xl border px-4 py-3 text-left transition-colors sm:flex-1',
-        'focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]',
-        active
-          ? 'border-ink bg-surface shadow-[inset_0_0_0_1px_var(--c-ink)]'
-          : emphasis
-            ? 'border-line bg-surface hover:bg-canvas'
-            : 'border-line-soft bg-canvas hover:bg-surface',
-      ].join(' ')}
-    >
-      <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">{label}</span>
-      <span className="mt-0.5 flex items-baseline gap-1.5">
-        <span className={`text-xl font-semibold ${emphasis || active ? 'text-ink' : 'text-ink-soft'}`}>{count}</span>
-        {money ? <span className="text-[12px] font-medium text-ink-soft">{money}</span> : null}
-      </span>
-      {detail ? <span className="mt-0.5 block text-[12px] text-ink-mute">{detail}</span> : null}
-    </button>
-  )
-}
+// Which work-queue section a Fix pointer row should reveal. There is no
+// longer a user-facing stage filter — the four pipeline tiles that set it are
+// gone (a count can't tell you what to do next, and every count was already
+// repeated in the section heading a scroll below).
+type ViewKey = 'awaiting' | 'to_order'
 
 // One tick in a To-order card's readiness row: the prep steps (folder / date /
 // colour) as scannable chips, so a collapsed card still says exactly what's
@@ -753,17 +702,6 @@ function HandoffChip({ state }: { state: HandoffState }) {
   )
 }
 
-// A between-tiles flow chevron, signalling the header reads left-to-right as a
-// pipeline. Shown only at sm+ (single row); on the mobile 2×2 grid it's hidden
-// (display:none) so it doesn't consume a grid cell.
-function FlowArrow() {
-  return (
-    <div className="hidden shrink-0 items-center self-center text-ink-mute sm:flex" aria-hidden="true">
-      <ChevronRight size={18} />
-    </div>
-  )
-}
-
 // A short GBP figure for the To-order value / section subtotals.
 function gbpLabel(amount: number): string {
   return formatPrice(Math.round(amount), 'GBP')
@@ -776,21 +714,6 @@ function gbpLabel(amount: number): string {
 // sections short enough).
 const SECTION_HEADER_STICKY =
   'max-md:sticky max-md:top-[calc(env(safe-area-inset-top)+50px)] max-md:z-[4] max-md:-mx-4 max-md:px-4 max-md:py-2 max-md:bg-canvas/95 max-md:backdrop-blur-sm'
-
-// Median of a numeric list (even length → mean of the two middles). Null when empty.
-function median(xs: number[]): number | null {
-  if (xs.length === 0) return null
-  const s = [...xs].sort((a, b) => a - b)
-  const mid = Math.floor(s.length / 2)
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2
-}
-
-// Human label for a time-to-pay measured in days.
-function payDurationLabel(days: number): string {
-  if (days < 1) return 'a day'
-  const n = Math.round(days)
-  return `${n} day${n === 1 ? '' : 's'}`
-}
 
 export default function OrdersPage() {
   const { session, role } = useAuth()
@@ -924,13 +847,17 @@ export default function OrdersPage() {
   const [rates, setRates] = useState<ExchangeRates | null>(null)
   // Work-queue search + which section is shown (picked via the pipeline tiles).
   const [search, setSearch] = useState('')
-  const [view, setView] = useState<ViewKey>('all')
   // The order card a "Needs action" row just jumped to — briefly ringed so the
   // eye lands on the right card after the scroll.
   const [flashOrderId, setFlashOrderId] = useState<string | null>(null)
   // Recently ordered is reference material, not work, so it starts collapsed;
   // an active search auto-opens it so matches there aren't invisible.
-  const [recentOpen, setRecentOpen] = useState(false)
+  // Collapsed-by-default reference sections. null = "follow the default",
+  // true/false = "the designer has chosen". Not a plain boolean because a search
+  // transiently opens them, and with `search || open` the toggle flipped a value
+  // the OR already overrode — it did visibly nothing while searching.
+  const [recentOpen, setRecentOpen] = useState<boolean | null>(null)
+  const [waitingOpen, setWaitingOpen] = useState<boolean | null>(null)
   // Approved proofs with no order link sent yet — the "Links to send" worklist.
   // Fetched separately because these have no order row, so they appear nowhere
   // else on this page.
@@ -958,7 +885,6 @@ export default function OrdersPage() {
   const [reloadKey, setReloadKey] = useState(0)
   // Conversion health since launch: how many sent pay links were paid, and how
   // quickly. Computed across all orders (the work-queue fetch is status-scoped).
-  const [conversion, setConversion] = useState<{ sent: number; paid: number; medianDays: number | null } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -1068,15 +994,6 @@ export default function OrdersPage() {
         ])
         if (cancelled) return
         const orderList = (orderRows ?? []) as { proof_id: string; created_at: string | null; sent_at: string | null; paid_at: string | null }[]
-        // Conversion health (since launch): paid vs sent links, median time-to-pay.
-        const sentCount = orderList.filter((r) => r.sent_at).length
-        const paidCount = orderList.filter((r) => r.paid_at).length
-        const durations = orderList
-          .filter((r) => r.sent_at && r.paid_at)
-          .map((r) => new Date(r.paid_at!).getTime() - new Date(r.sent_at!).getTime())
-          .filter((ms) => Number.isFinite(ms) && ms >= 0)
-        const med = median(durations)
-        setConversion({ sent: sentCount, paid: paidCount, medianDays: med != null ? med / DAY_MS : null })
         // The worklist shows every approved proof with no order link sent —
         // immediately, so it's a live to-do, not a delayed nag. The shared
         // keepApprovedNoOrder filter (no order of any status, approved on/after
@@ -1347,13 +1264,17 @@ export default function OrdersPage() {
     return (o.material_id ? materialThumbs[`${o.proof_id}:${o.material_id}`] : undefined) ?? thumbs[o.proof_id] ?? null
   }
 
-  // Jump from a "Needs action" row to the stalled order's card in the queue:
-  // focus the right section, clear any search that could hide the card, then
-  // scroll to it and ring it briefly. The short delay lets the section render
-  // before we look the card up.
+  // Jump from a Fix pointer row to the order's card further down the page:
+  // clear any search that could hide it, make sure the section holding it is
+  // open, then scroll to it and ring it briefly.
+  //
+  // Since the stage filter was retired every work row is always on the page, so
+  // this no longer has to focus a section — it only has to OPEN one, because
+  // Waiting and Recently ordered are collapsed by default and a jump into a
+  // closed section would otherwise scroll to nothing.
   function jumpToOrder(orderId: string, section: ViewKey) {
     setSearch('')
-    setView(section)
+    if (section === 'awaiting') setWaitingOpen(true)
     setFlashOrderId(orderId)
     window.setTimeout(() => {
       document.getElementById(`order-card-${orderId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -1362,11 +1283,11 @@ export default function OrdersPage() {
   }
 
   // Same jump, for an order that has already been placed — those live in the
-  // Recently-ordered list, which only shows in the "everything" view and starts
-  // collapsed, so open it before scrolling.
+  // Recently-ordered list, which starts collapsed, so open it before scrolling.
+  // (It no longer has to clear a stage filter: that filter is gone, and every
+  // section is always on the page.)
   function jumpToPlacedOrder(orderId: string) {
     setSearch('')
-    setView('all')
     setRecentOpen(true)
     setFlashOrderId(orderId)
     window.setTimeout(() => {
@@ -1805,7 +1726,6 @@ export default function OrdersPage() {
     })
   }, [approvedNoOrder, search, linksSort, notesByProof])
 
-  const showSection = (key: ViewKey) => view === 'all' || view === key
 
   // Combined-payment derivations (bundle orders Slice 2). Eligible = the
   // awaiting-payment orders the combine action could actually group; active
@@ -1842,6 +1762,67 @@ export default function OrdersPage() {
   )
   const ungroupedAwaiting = awaitingPayment.filter((o) => !groupedAwaitingIds.has(o.id))
 
+  // ── Work vs waiting ────────────────────────────────────────────────────────
+  // The one question that decides where a row goes: if nobody opens this page
+  // today, does something go wrong? An unpaid link is NOT work by default —
+  // send-order-reminders has chased them automatically since 28 June 2026, and
+  // each card says so ("Next reminder due …"). A person is needed only when the
+  // automation has run out of road or the customer has spoken.
+  //
+  // The predicate lives in src/lib/ordersTriage.ts with tests proving the two
+  // buckets are exact complements: collapsing rows into WAITING is the one
+  // change here that could genuinely lose work, so the split is property-tested
+  // rather than trusted. One call returns both lists, so they can't drift.
+  const triageOf = (o: OrderRow): TriageOrder => ({
+    expired: isExpired(o),
+    remindersSent: reminders[o.id]?.highestSentNo ?? 0,
+    // The customer used "Not sure? Ask us" on the pay page (000298). Nothing
+    // automatic answers a question, so this always wants a person.
+    askedForHelp: o.help_requested_at != null,
+  })
+  const { needsYou: awaitingNeedsYou, waiting: awaitingHealthy } = splitByChaseNeed(
+    ungroupedAwaiting,
+    triageOf,
+    cadence.max,
+  )
+  const chaseReasonFor = (o: OrderRow) => chaseReason(triageOf(o), cadence.max)
+  // A group whose own link has expired needs a person; the automatic chaser
+  // skips grouped orders entirely, so an expired group is chased by nothing.
+  const groupIsExpired = (g: OrderGroupRow) => groupNeedsAttention(g.expires_at)
+  const groupsNeedingYou = activeGroups.filter(groupIsExpired)
+  const groupsWaiting = activeGroups.filter((g) => !groupIsExpired(g))
+  // Paid orders whose invoice failed live in PLACE (you must place them
+  // regardless) and appear in Fix as a pointer row that jumps to the card.
+  const invoiceFailedOrders = toOrder.filter(hasInvoiceProblem)
+  const waitingCountShown = awaitingHealthy.length + groupsWaiting.length + beingRevised.length
+
+  // A being-revised order's card. Extracted only so the Waiting block can render
+  // it without duplicating a dozen props — identical to the card the standalone
+  // "Being revised" section used before it moved in there.
+  const revisedCard = (o: OrderRow) => (
+    <OrderCard
+      order={o}
+      thumb={thumbs[o.proof_id] ?? null}
+      route={routeOf(o)}
+      supplierLabels={allowedSupplierLabels(o, supplierNames)}
+      supplierCount={o.material_variants?.materials?.outsourced_supplier_ids?.length ?? 0}
+      suggested={suggestedDate(o)}
+      proofMaterialCode={proofMaterialCodes[o.proof_id] ?? null}
+      busy={busyId === o.id}
+      copied={copiedId === o.id}
+      onReview={() => navigate(`/orders/${o.id}/place`)}
+      onCopy={() => void copyLink(o)}
+      onSaveField={(patch) => saveOrderField(o.id, patch)}
+      onRetryInvoice={() => void retryInvoice(o)}
+      handoffBusy={handoffBusyId === o.id}
+      handoffError={handoffErrors[o.id] ?? null}
+      onRetryHandoff={() => void retryHandoff(o)}
+      showArtworkChip={artworkChipsOn}
+      onOpenArtworkReport={() => void openArtworkReport(o)}
+      usTariff={usTariffDutyBilling(o.order_group_id ? groups[o.order_group_id] ?? o : o)}
+    />
+  )
+
   // Whole-pipeline counts for the header tiles (unfiltered — the header is a
   // status overview, independent of the queue's search/filter). The £ on To
   // order is the one figure that's real: paid money awaiting placement.
@@ -1849,19 +1830,6 @@ export default function OrdersPage() {
   const paidAll = orders.filter((o) => o.status === 'paid')
   const revisionCount = orders.filter((o) => o.status === 'revision').length
 
-  // "Needs action" buckets (computed from the full order set, independent of
-  // the queue's search/filter — a whole-pipeline overview). Rows jump to the
-  // order's card in the relevant section.
-  const coldItems = orders
-    .filter((o) => o.status === 'sent' && (isExpired(o) || (reminders[o.id]?.highestSentNo ?? 0) >= cadence.max))
-    .map((o) => ({
-      orderId: o.id,
-      label: customerLabel(o),
-      reason: isExpired(o) ? 'Link expired' : 'Reminders done, unpaid',
-    }))
-  const invoiceFailedItems = orders
-    .filter((o) => o.status === 'paid' && hasInvoiceProblem(o))
-    .map((o) => ({ orderId: o.id, label: customerLabel(o) }))
   // Orders that reached Stock Control but whose workshop note / supplier email
   // never went (docs/order-handoff-spec.md §3.4). Nobody is making these until
   // the message goes, and nothing else on the page would say so — the order has
@@ -1877,7 +1845,39 @@ export default function OrdersPage() {
       error: handoffErrors[o.id] ?? null,
     }]
   })
-  const hasStalled = coldItems.length + invoiceFailedItems.length + unsentMessageItems.length > 0
+  const fixCount =
+    unsentMessageItems.length + invoiceFailedOrders.length + groupsNeedingYou.length + awaitingNeedsYou.length
+
+  // The summary line's two figures, computed from the SAME splits the sections
+  // below use, over the UNFILTERED order list, and counting ROWS rather than
+  // orders — a combined payment is one row holding several orders. Counting
+  // orders instead made the header disagree with the section headings, which is
+  // exactly the tile-vs-list drift the dashboard has been bitten by twice.
+  const sentGroupedIds = new Set(
+    Object.values(groups)
+      .filter((g) => g.status === 'sent')
+      .flatMap((g) => sentAll.filter((o) => o.order_group_id === g.id).map((o) => o.id)),
+  )
+  const sentUngroupedAll = sentAll.filter((o) => !sentGroupedIds.has(o.id))
+  const sentNeedsYouAll = splitByChaseNeed(sentUngroupedAll, triageOf, cadence.max).needsYou
+  const sentGroupsAll = Object.values(groups).filter(
+    (g) => g.status === 'sent' && sentAll.some((o) => o.order_group_id === g.id),
+  )
+  // invoiceFailedOrders is deliberately NOT added: those rows are status 'paid'
+  // and already inside paidAll, and their Fix entry is only a pointer to the
+  // card in PLACE. unsentMessageItems IS added — those are status 'fulfilled',
+  // so they overlap nothing else here.
+  const toDoCount =
+    sentNeedsYouAll.length +
+    sentGroupsAll.filter(groupIsExpired).length +
+    approvedNoOrder.length +
+    paidAll.length +
+    unsentMessageItems.length
+  const waitingCount =
+    sentUngroupedAll.length -
+    sentNeedsYouAll.length +
+    sentGroupsAll.filter((g) => !groupIsExpired(g)).length +
+    revisionCount
 
   return (
     <DesignerChrome active="orders">
@@ -1908,101 +1908,48 @@ export default function OrdersPage() {
         {loading ? (
           <p className="mt-8 text-sm text-ink-mute">Loading orders…</p>
         ) : (
-          <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-start">
-            {/* Only when something is actually stalled — an empty "nothing
-                stalled" panel was spending the top of the page saying nothing. */}
-            {hasStalled && (
-              <aside className="lg:order-2 lg:w-[320px] lg:shrink-0">
-                <OrdersPipelineCard
-                  cold={coldItems}
-                  invoiceFailed={invoiceFailedItems}
-                  unsentMessage={unsentMessageItems}
-                  onSelectCold={(orderId) => jumpToOrder(orderId, 'awaiting')}
-                  onSelectInvoiceFailed={(orderId) => jumpToOrder(orderId, 'to_order')}
-                  onSelectUnsentMessage={jumpToPlacedOrder}
-                  onSendMessage={(orderId) => {
-                    const o = orders.find((r) => r.id === orderId)
-                    if (o) void retryHandoff(o)
-                  }}
-                />
-              </aside>
-            )}
-            <div className="min-w-0 lg:order-1 lg:flex-1">
+          /* Single column. The right-hand "Needs action" sidebar is gone — its
+             rows are the FIX section now, with the fix on the row itself. The
+             panel's idea was the best thing on this page, but a 320px static
+             column was the wrong container: it used ~6% of its own height,
+             scrolled away for good, and between 768 and 1023px it rendered
+             full-width above everything, pushing the whole queue below the fold
+             (its desktop/mobile split keyed on `md` while this layout only
+             became two-column at `lg`). Dropping the column removes that whole
+             class of bug rather than patching the breakpoint. */
+          <div className="mt-6">
+            <div className="min-w-0">
             {(orders.length > 0 || approvedNoOrder.length > 0) && (
-              <>
-                {/* Action-led pipeline header — and the section filter. Each
-                    tile counts a funnel stage and taps to show just that
-                    stage's list (tap again for everything), the same
-                    tiles-as-filters pattern as the dashboard. The two stages
-                    that need our action — links to send, orders to place — are
-                    emphasised. Money shows only on To order, where it's real
-                    (paid). Awaiting payment leads with a count + at-risk
-                    rather than a value: most links are open-quantity, so the
-                    value isn't knowable until the customer checks out.
-                    Chevrons between tiles (sm+) read the row left-to-right as
-                    a flow; on mobile it falls back to a 2×2 grid in the same
-                    reading order. */}
-                <div className="mb-2 flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-ink-mute">
-                  Order pipeline
-                  <ChevronRight size={12} aria-hidden="true" />
-                  <span className="normal-case tracking-normal text-ink-dim">tap a stage to focus it</span>
-                </div>
-                <div className="grid grid-cols-2 gap-3 sm:flex sm:items-stretch sm:gap-1.5">
-                  <FunnelStat
-                    label="Links to send"
-                    count={approvedNoOrder.length}
-                    detail="approved, no link"
-                    emphasis
-                    active={view === 'links'}
-                    onClick={() => setView(view === 'links' ? 'all' : 'links')}
-                  />
-                  <FlowArrow />
-                  <FunnelStat
-                    label="Awaiting payment"
-                    count={sentAll.length}
-                    detail={coldItems.length > 0 ? `${coldItems.length} need a chase` : 'out with customers'}
-                    active={view === 'awaiting'}
-                    onClick={() => setView(view === 'awaiting' ? 'all' : 'awaiting')}
-                  />
-                  <FlowArrow />
-                  <FunnelStat
-                    label="To order"
-                    count={paidAll.length}
-                    money={paidAll.length > 0 ? gbpLabel(sumGbp(paidAll, rates)) : null}
-                    detail="paid, to place"
-                    emphasis
-                    active={view === 'to_order'}
-                    onClick={() => setView(view === 'to_order' ? 'all' : 'to_order')}
-                  />
-                  <FlowArrow />
-                  <FunnelStat
-                    label="Being revised"
-                    count={revisionCount}
-                    detail="on hold"
-                    active={view === 'revised'}
-                    onClick={() => setView(view === 'revised' ? 'all' : 'revised')}
-                  />
-                </div>
-                {/* When a tile filter is on, say so in words with an obvious
-                    way back — the tinted tile alone is easy to miss. */}
-                {view !== 'all' && (
-                  <p className="mt-1.5 text-[12px] text-ink-soft">
-                    Showing one stage only ·{' '}
-                    <button type="button" onClick={() => setView('all')} className="font-medium text-ink underline underline-offset-2 hover:no-underline">
-                      Show everything
-                    </button>
-                  </p>
+              /* One line of plain text where four tappable tiles used to be.
+                 The tiles counted a page you're already standing on — every
+                 figure was repeated in the section heading a scroll below, and
+                 a count can't tell you what to do next — so they were deleted
+                 along with the stage filter they doubled as. What survives is
+                 the only genuinely useful pair: how much is waiting on you, and
+                 the one money figure that's real (paid, awaiting placement).
+                 Awaiting-payment value is deliberately absent: most links are
+                 open-quantity, so it isn't knowable until checkout.
+                 Deliberately not a button and not a box — nothing left to
+                 ignore. The conversion-rate line moved to Admin → Analytics,
+                 where the rest of the funnel figures live. */
+              <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px] text-ink-soft">
+                <span className="whitespace-nowrap">
+                  <span className="font-semibold text-ink">{toDoCount}</span> to do
+                </span>
+                <span aria-hidden="true" className="text-ink-dim">·</span>
+                <span className="whitespace-nowrap">
+                  <span className="font-semibold text-ink">{waitingCount}</span> waiting
+                </span>
+                {paidAll.length > 0 && (
+                  <>
+                    <span aria-hidden="true" className="text-ink-dim">·</span>
+                    <span className="whitespace-nowrap">
+                      <span className="font-semibold text-ink">{gbpLabel(sumGbp(paidAll, rates))}</span> paid and
+                      waiting to be placed
+                    </span>
+                  </>
                 )}
-                {/* Conversion trivia earns a line on desktop; on mobile the
-                    space goes to the worklists. */}
-                {conversion && conversion.sent > 0 && (
-                  <p className="mt-1.5 hidden text-[12px] text-ink-mute md:block">
-                    Since launch: {Math.round((conversion.paid / conversion.sent) * 100)}% of pay links paid
-                    {conversion.medianDays != null ? `, usually within ${payDurationLabel(conversion.medianDays)}` : ''}
-                    {conversion.sent < 10 ? ' · still early days' : ''}
-                  </p>
-                )}
-              </>
+              </p>
             )}
 
             {(orders.length > 0 || approvedNoOrder.length > 0) && (
@@ -2025,170 +1972,142 @@ export default function OrdersPage() {
               </>
             )}
 
-            {view === 'all' && search.trim() &&
+            {search.trim() &&
               filteredLinks.length + awaitingPayment.length + toOrder.length + beingRevised.length + recentlyOrdered.length === 0 && (
                 <PanelShell className="mt-6 text-center">
                   <p className="text-sm text-ink-soft">No orders match “{search.trim()}”.</p>
                 </PanelShell>
               )}
 
-            {showSection('links') && (filteredLinks.length > 0 || view === 'links') && (
-              <section className="mt-6">
-                <div className={`flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 ${SECTION_HEADER_STICKY}`}>
-                  <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">
-                    Links to send · {filteredLinks.length}
-                  </h2>
-                  <label className="flex items-center gap-2">
-                    <span className="text-[12px] text-ink-mute">Sort</span>
-                    <select
-                      value={linksSort}
-                      onChange={(e) => setLinksSort(e.target.value as 'oldest' | 'newest')}
-                      className="h-8 rounded-lg border border-line bg-surface px-2 text-[12px] text-ink-soft focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
-                    >
-                      <option value="oldest">Oldest approved first</option>
-                      <option value="newest">Newest approved first</option>
-                    </select>
-                  </label>
-                </div>
-                <p className="mt-1 text-[13px] text-ink-mute">
-                  Approved proofs with no order link sent yet. Work down the list and send each customer their link.
-                </p>
-                {filteredLinks.length === 0 && (
-                  <PanelShell className="mt-3 text-center">
-                    <p className="text-sm text-ink-soft">
-                      {search.trim() ? 'No links to send match your search.' : 'No links waiting to be sent — all caught up.'}
-                    </p>
-                  </PanelShell>
-                )}
-                <div className="mt-3 space-y-3">
-                  {filteredLinks.map((item) => (
-                    <LinkToSendCard
-                      key={item.proofId}
-                      item={item}
-                      thumb={thumbs[item.proofId] ?? null}
-                      preparing={preparingProofId === item.proofId}
-                      canCreateOrder={orderingEnabled === true}
-                      onCreate={() => void openOrderBuilder(item)}
-                      note={notesByProof[item.proofId] ?? null}
-                      canEditNote={userId != null}
-                      onSaveNote={(text) => saveLinkNote(item.proofId, text)}
-                      onClearNote={() => clearLinkNote(item.proofId)}
-                    />
-                  ))}
-                </div>
-              </section>
-            )}
+            {/* ── FIX ───────────────────────────────────────────────────────
+                Gone wrong or gone quiet, across every stage. This is the old
+                right-hand "Needs action" sidebar promoted to the top of the
+                page: the panel's idea was right (look across all stages, show
+                only exceptions) but it lived in a 320px static column that was
+                ~6% used, scrolled away for good, and rendered full-width and
+                broken between 768 and 1023px.
 
-            {showSection('awaiting') && (awaitingPayment.length > 0 || view === 'awaiting') && (
+                Renders nothing at all, heading included, when the list is
+                empty, so a good day opens straight onto SEND. */}
+            {fixCount > 0 && (
               <section className="mt-6">
-                <div className={`flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 ${SECTION_HEADER_STICKY}`}>
-                  <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">
-                    Awaiting payment · {awaitingPayment.length}
+                <div className={SECTION_HEADER_STICKY}>
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-out">
+                    Fix · {fixCount}
                   </h2>
-                  {/* Combine payments (bundle orders Slice 2): tick 2+ orders
-                      for one customer → one pay link, one payment, one
-                      invoice. Only shown when at least two orders could join.
-                      A solid primary button — the subtle pill was too easy to
-                      miss (Rob, 9 Jul). */}
-                  {eligibleForGroup.length >= 2 && (
-                    <ButtonInk
-                      size="sm"
-                      onClick={() => { setSelectMode((v) => !v); setGroupSelect(new Set()) }}
-                    >
-                      {selectMode ? 'Done selecting' : 'Combine payments…'}
-                    </ButtonInk>
-                  )}
+                  <p className="mt-1 text-[13px] text-ink-mute">
+                    Gone wrong or gone quiet — the automatic chaser can't clear these.
+                  </p>
                 </div>
-                <p className="mt-1 text-[13px] text-ink-mute">
-                  Payment links that have been sent but not paid yet. Copy a link to re-send it, or reactivate an expired one (extends it {ORDER_EXPIRY_DAYS} days).
-                  {selectMode ? ' Tick two or more orders for the same customer to combine them into one payment.' : ''}
-                </p>
-                {awaitingPayment.length === 0 && (
-                  <PanelShell className="mt-3 text-center">
-                    <p className="text-sm text-ink-soft">
-                      {search.trim() ? 'No awaiting-payment orders match your search.' : 'No payment links out at the moment.'}
-                    </p>
-                  </PanelShell>
-                )}
 
-                {/* Each unpaid combined payment renders as ONE tinted block:
-                    the group header (its link is the live, payable one) with
-                    the member cards nested inside it, so the grouping reads
-                    as containment rather than a banner + matching reference
-                    codes on cards that may sit anywhere in the list. */}
-                {activeGroups.map((g) => {
-                  const memberOrders = awaitingPayment.filter((o) => o.order_group_id === g.id)
-                  const groupExpired = g.expires_at != null && new Date(g.expires_at).getTime() < Date.now()
-                  return (
-                    <div key={g.id} className="mt-3 rounded-2xl border border-[var(--c-brand)]/50 bg-[var(--c-brand)]/[0.05] p-3">
-                      <div className="flex flex-col gap-2 px-1 md:flex-row md:items-center md:justify-between">
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-ink">
-                            Combined payment {g.payment_reference}
-                            <span className="font-normal text-ink-soft"> · these {memberOrders.length} orders, one pay link</span>
-                            {groupExpired && <span className="font-normal text-out"> · link expired</span>}
-                          </p>
-                          <p className="mt-0.5 text-[13px] text-ink-mute">
-                            {g.expires_at ? `${groupExpired ? 'Expired' : 'Expires'} ${formatDate(g.expires_at)} · ` : ''}
-                            {/* The group's own opened stamp — the members' stamps stay
-                                frozen while grouped (their links are dormant), so this
-                                is the only honest "has the customer seen it" signal. */}
-                            {g.pay_link_opened_at
-                              ? <span title={formatAbsoluteDateTime(g.pay_link_opened_at)}>pay link opened {relativeTime(g.pay_link_opened_at)}</span>
-                              : 'pay link not opened yet'}
-                            {' · automatic reminders pause while the orders are grouped.'}
-                          </p>
-                        </div>
-                        <div className="flex shrink-0 flex-wrap gap-2">
-                          <ButtonGhost size="sm" onClick={() => void copyGroupLink(g)} className="max-md:h-11">
-                            {copiedId === g.id ? 'Copied' : 'Copy combined link'}
-                          </ButtonGhost>
-                          {groupExpired && (
-                            <ButtonInk size="sm" onClick={() => void reactivateGroup(g)} disabled={busyId === g.id} className="max-md:h-11">
-                              {busyId === g.id ? 'Reactivating…' : 'Reactivate link'}
-                            </ButtonInk>
-                          )}
-                          <ButtonGhost size="sm" onClick={() => void dissolveGroup(g)} disabled={busyId === g.id} className="max-md:h-11">
-                            Split back up
+                {/* First: an order the workshop or the supplier hasn't been told
+                    about. The customer has paid and nothing is being made, so
+                    this outranks everything else here. Carries its own send
+                    button (docs/order-handoff-spec.md §3.4). */}
+                {unsentMessageItems.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {unsentMessageItems.map((i) => (
+                      <div
+                        key={`fix-msg-${i.orderId}`}
+                        className="rounded-xl border border-l-[3px] border-line border-l-[var(--c-critical)] bg-surface px-4 py-3"
+                      >
+                        <p className="text-sm text-ink">
+                          <span className="font-semibold">Not sent to production</span>
+                          <span className="text-ink-soft"> — {i.label}</span>
+                        </p>
+                        <p className="mt-0.5 text-[12.5px] text-ink-mute">{i.reason}</p>
+                        {i.error && <p className="mt-0.5 break-words text-[12.5px] text-out">{i.error}</p>}
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <ButtonInk
+                            size="sm"
+                            disabled={i.busy}
+                            onClick={() => {
+                              const o = orders.find((r) => r.id === i.orderId)
+                              if (o) void retryHandoff(o)
+                            }}
+                            className="max-md:h-11"
+                          >
+                            {i.busy ? 'Sending…' : 'Send it now'}
+                          </ButtonInk>
+                          <ButtonGhost size="sm" onClick={() => jumpToPlacedOrder(i.orderId)} className="max-md:h-11">
+                            Go to it
                           </ButtonGhost>
                         </div>
                       </div>
-                      <div className="mt-3 space-y-3">
-                        {memberOrders.map((o) => (
-                          <div key={o.id} id={`order-card-${o.id}`}>
-                            <AwaitingPaymentCard
-                              order={o}
-                              thumb={thumbForOrder(o)}
-                              expired={isExpired(o)}
-                              busy={busyId === o.id}
-                              copied={copiedId === o.id}
-                              flash={flashOrderId === o.id}
-                              nested
-                              summary={reminders[o.id] ?? null}
-                              cadence={cadence}
-                              group={g}
-                              selectable={false}
-                              selected={false}
-                              onToggleSelect={() => {}}
-                              onRelease={() => void releaseFromGroup(o)}
-                              onCopy={() => void copyLink(o)}
-                              onReactivate={() => void reactivate(o)}
-                              onSendLink={() => setSendLinkFor(o)}
-                              onEdit={() => setEditingOrder(o)}
-                              onCancel={() => { setCancelNotify(true); setCancelError(null); setCancelTarget(o) }}
-                              onRecordOffline={() => setRecordOffline(o)}
-                            />
-                          </div>
-                        ))}
+                    ))}
+                  </div>
+                )}
+
+                {/* Paid orders whose invoice failed keep their canonical home in
+                    PLACE (they must be placed regardless), so Fix carries a
+                    pointer row that jumps to and rings the card. */}
+                {invoiceFailedOrders.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {invoiceFailedOrders.map((o) => (
+                      <div
+                        key={`fix-inv-${o.id}`}
+                        className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl border border-l-[3px] border-line border-l-[var(--c-critical)] bg-surface px-4 py-3"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm text-ink">
+                            <span className="font-semibold">Invoice didn't go out</span>
+                            <span className="text-ink-soft"> — {customerLabel(o)}</span>
+                          </p>
+                          <p className="mt-0.5 text-[12.5px] text-ink-mute">
+                            Paid, but Xero rejected the invoice. Fix it on the card below.
+                          </p>
+                        </div>
+                        <ButtonGhost size="sm" onClick={() => jumpToOrder(o.id, 'to_order')} className="max-md:h-11">
+                          Go to it
+                        </ButtonGhost>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* An expired combined payment: the automatic chaser skips
+                    grouped orders entirely, so nothing is chasing this. */}
+                {groupsNeedingYou.map((g) => {
+                  const memberOrders = awaitingPayment.filter((o) => o.order_group_id === g.id)
+                  return (
+                    <div
+                      key={`fix-grp-${g.id}`}
+                      className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl border border-l-[3px] border-line border-l-[var(--c-out)] bg-surface px-4 py-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm text-ink">
+                          <span className="font-semibold">Combined pay link expired</span>
+                          <span className="text-ink-soft"> — {g.payment_reference}</span>
+                        </p>
+                        <p className="mt-0.5 text-[12.5px] text-ink-mute">
+                          {memberOrders.length} order{memberOrders.length === 1 ? '' : 's'} in one payment · expired{' '}
+                          {g.expires_at ? formatDate(g.expires_at) : ''} · automatic reminders don't run on grouped orders
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap gap-2">
+                        <ButtonInk size="sm" onClick={() => void reactivateGroup(g)} disabled={busyId === g.id} className="max-md:h-11">
+                          {busyId === g.id ? 'Reactivating…' : 'Reactivate link'}
+                        </ButtonInk>
+                        <ButtonGhost size="sm" onClick={() => void copyGroupLink(g)} className="max-md:h-11">
+                          {copiedId === g.id ? 'Copied' : 'Copy link'}
+                        </ButtonGhost>
                       </div>
                     </div>
                   )
                 })}
 
+                {/* Unpaid links the chaser can no longer help: expired, out of
+                    reminders, or the customer asked a question. Full cards, not
+                    pointers — every action that clears them is already on one. */}
                 <div className="mt-3 space-y-3">
-                  {ungroupedAwaiting.map((o) => (
-                    <div key={o.id} id={`order-card-${o.id}`}>
-                      <AwaitingPaymentCard
+                  {awaitingNeedsYou.map((o) => (
+                    /* The reason and its card read as one unit: a shared left
+                       accent ties "why this is here" to the card that clears it,
+                       rather than leaving a red sentence floating above an
+                       otherwise ordinary card. */
+                    <div key={o.id} id={`order-card-${o.id}`} className="border-l-[3px] border-l-[var(--c-out)] pl-3">
+                      <p className="mb-1.5 text-[12.5px] font-medium text-out">{chaseReasonFor(o)}</p>
+        <AwaitingPaymentCard
                         order={o}
                         thumb={thumbForOrder(o)}
                         expired={isExpired(o)}
@@ -2215,11 +2134,51 @@ export default function OrdersPage() {
               </section>
             )}
 
-            {showSection('to_order') && (
+            {filteredLinks.length > 0 && (
+              <section className="mt-6">
+                <div className={`flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 ${SECTION_HEADER_STICKY}`}>
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-ink">
+                    Send · {filteredLinks.length}
+                  </h2>
+                  <label className="flex items-center gap-2">
+                    <span className="text-[12px] text-ink-mute">Sort</span>
+                    <select
+                      value={linksSort}
+                      onChange={(e) => setLinksSort(e.target.value as 'oldest' | 'newest')}
+                      className="h-8 rounded-lg border border-line bg-surface px-2 text-[12px] text-ink-soft focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                    >
+                      <option value="oldest">Oldest approved first</option>
+                      <option value="newest">Newest approved first</option>
+                    </select>
+                  </label>
+                </div>
+                <p className="mt-1 text-[13px] text-ink-mute">
+                  Approved proofs with no order link sent yet. Work down the list and send each customer their link.
+                </p>
+                <div className="mt-3 space-y-3">
+                  {filteredLinks.map((item) => (
+                    <LinkToSendCard
+                      key={item.proofId}
+                      item={item}
+                      thumb={thumbs[item.proofId] ?? null}
+                      preparing={preparingProofId === item.proofId}
+                      canCreateOrder={orderingEnabled === true}
+                      onCreate={() => void openOrderBuilder(item)}
+                      note={notesByProof[item.proofId] ?? null}
+                      canEditNote={userId != null}
+                      onSaveNote={(text) => saveLinkNote(item.proofId, text)}
+                      onClearNote={() => clearLinkNote(item.proofId)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {(toOrder.length > 0 || !search.trim()) && (
               <section className="mt-10">
                 <div className={`flex items-baseline justify-between gap-3 ${SECTION_HEADER_STICKY}`}>
-                  <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">
-                    To order · {toOrder.length}
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-ink">
+                    Place · {toOrder.length}
                     {toOrder.length > 0 ? ` · ${gbpLabel(sumGbp(toOrder, rates))}` : ''}
                   </h2>
                   {toOrder.length > 0 && <span className="text-[12px] text-ink-mute">Newest paid first</span>}
@@ -2287,57 +2246,209 @@ export default function OrdersPage() {
               </section>
             )}
 
-            {showSection('revised') && (beingRevised.length > 0 || view === 'revised') && (
-              <section className="mt-10">
-                <div className={SECTION_HEADER_STICKY}>
-                  <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">
-                    Being revised · {beingRevised.length}
-                    {beingRevised.length > 0 ? ` · ${gbpLabel(sumGbp(beingRevised, rates))}` : ''}
-                  </h2>
-                </div>
-                <p className="mt-1 text-[13px] text-ink-mute">
-                  Paid orders held while the artwork is being changed. Re-approve the new proof and replace the files in the Dropbox order folder, then review &amp; place again.
-                </p>
-                {beingRevised.length === 0 && (
-                  <PanelShell className="mt-3 text-center">
-                    <p className="text-sm text-ink-soft">
-                      {search.trim() ? 'No orders being revised match your search.' : 'No paid orders are on hold for revision.'}
-                    </p>
-                  </PanelShell>
-                )}
-                <div className="mt-3 space-y-4">
-                  {beingRevised.map((o) => (
-                    <OrderCard
-                      key={o.id}
-                      order={o}
-                      thumb={thumbs[o.proof_id] ?? null}
-                      route={routeOf(o)}
-                      supplierLabels={allowedSupplierLabels(o, supplierNames)}
-                      supplierCount={o.material_variants?.materials?.outsourced_supplier_ids?.length ?? 0}
-                      suggested={suggestedDate(o)}
-                      proofMaterialCode={proofMaterialCodes[o.proof_id] ?? null}
-                      busy={busyId === o.id}
-                      copied={copiedId === o.id}
-                      onReview={() => navigate(`/orders/${o.id}/place`)}
-                      onCopy={() => void copyLink(o)}
-                      onSaveField={(patch) => saveOrderField(o.id, patch)}
-                      onRetryInvoice={() => void retryInvoice(o)}
-                      handoffBusy={handoffBusyId === o.id}
-                      handoffError={handoffErrors[o.id] ?? null}
-                      onRetryHandoff={() => void retryHandoff(o)}
-                      showArtworkChip={artworkChipsOn}
-                      onOpenArtworkReport={() => void openArtworkReport(o)}
-                      usTariff={usTariffDutyBilling(o.order_group_id ? groups[o.order_group_id] ?? o : o)}
-                    />
-                  ))}
-                </div>
-              </section>
-            )}
+            {/* ── WAITING ───────────────────────────────────────────────────
+                Everything the automatic chaser or the customer is already
+                handling: healthy unpaid links, combined payments still in date,
+                and paid orders parked while artwork is redone. Collapsed to a
+                single line by default — these rows were two thirds of the page
+                while needing nothing from anyone.
+
+                Three things keep it trustworthy rather than hiding work: the
+                header states its contents in WORDS rather than a bare number, a
+                search opens it, and every row inside is the same full card it
+                has always been. Any row that develops a problem MOVES up into
+                Fix, which is why the two lists are exact complements of one
+                property-tested predicate. */}
+            {waitingCountShown > 0 && (() => {
+              // Select mode force-opens it and is NOT overridable — the orders
+              // you are ticking live in here. A search only supplies the
+              // DEFAULT (inside the ??, not an ||), so an explicit Hide still
+              // wins while searching.
+              const shown = selectMode || (waitingOpen ?? search.trim().length > 0)
+              const says = [
+                awaitingHealthy.length > 0 ? `${awaitingHealthy.length} chasing ${awaitingHealthy.length === 1 ? 'itself' : 'themselves'}` : null,
+                groupsWaiting.length > 0 ? `${groupsWaiting.length} combined payment${groupsWaiting.length === 1 ? '' : 's'}` : null,
+                beingRevised.length > 0 ? `${beingRevised.length} being revised` : null,
+              ].filter(Boolean).join(' · ')
+              return (
+                <section className="mt-10">
+                  <div className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-2 ${SECTION_HEADER_STICKY}`}>
+                    <h2 className="min-w-0 flex-1 text-sm font-semibold uppercase tracking-wide text-ink-mute">
+                      <button
+                        type="button"
+                        onClick={() => setWaitingOpen(!shown)}
+                        aria-expanded={shown}
+                        className="flex w-full items-center justify-between gap-3 rounded py-1 text-left uppercase tracking-wide focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)] max-md:min-h-[44px]"
+                      >
+                        <span className="min-w-0">
+                          Waiting · {waitingCountShown}
+                          {/* A real separator, not a margin: without it the
+                              button's accessible NAME concatenates to
+                              "Waiting · 42 chasing themselves". */}
+                          {' · '}
+                          <span className="text-[12px] font-normal normal-case tracking-normal text-ink-dim">{says}</span>
+                        </span>
+                        <span className="inline-flex shrink-0 items-center gap-1 text-[12px] font-normal normal-case tracking-normal text-ink-mute">
+                          {shown ? 'Hide' : 'Show'}
+                          <ChevronDown size={14} className={`transition-transform ${shown ? 'rotate-180' : ''}`} aria-hidden="true" />
+                        </span>
+                      </button>
+                    </h2>
+                    {/* Combine payments lives here because the combinable orders
+                        are the healthy unpaid links inside this block; switching
+                        it on force-opens the section. A solid primary button —
+                        the subtle pill was too easy to miss (Rob, 9 Jul). */}
+                    {eligibleForGroup.length >= 2 && (
+                      <ButtonInk
+                        size="sm"
+                        onClick={() => { setSelectMode((v) => !v); setGroupSelect(new Set()) }}
+                      >
+                        {selectMode ? 'Done selecting' : 'Combine payments…'}
+                      </ButtonInk>
+                    )}
+                  </div>
+                  {shown && (
+                    <>
+                      <p className="mt-1 text-[13px] text-ink-mute">
+                        Nothing here needs you. Unpaid links are chased automatically; copy a link to re-send it by hand,
+                        or reactivate an expired one (extends it {ORDER_EXPIRY_DAYS} days).
+                        {selectMode ? ' Tick two or more orders for the same customer to combine them into one payment.' : ''}
+                      </p>
+
+                      {/* Each unpaid combined payment renders as ONE tinted
+                          block: the group header (its link is the live, payable
+                          one) with the member cards nested inside it, so the
+                          grouping reads as containment rather than a banner plus
+                          matching reference codes on cards that may sit anywhere
+                          in the list. */}
+                      {groupsWaiting.map((g) => {
+                        const memberOrders = awaitingPayment.filter((o) => o.order_group_id === g.id)
+                        const groupExpired = g.expires_at != null && new Date(g.expires_at).getTime() < Date.now()
+                        return (
+                          <div key={g.id} className="mt-3 rounded-2xl border border-[var(--c-brand)]/50 bg-[var(--c-brand)]/[0.05] p-3">
+                            <div className="flex flex-col gap-2 px-1 md:flex-row md:items-center md:justify-between">
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-ink">
+                                  Combined payment {g.payment_reference}
+                                  <span className="font-normal text-ink-soft"> · these {memberOrders.length} orders, one pay link</span>
+                                  {groupExpired && <span className="font-normal text-out"> · link expired</span>}
+                                </p>
+                                <p className="mt-0.5 text-[13px] text-ink-mute">
+                                  {g.expires_at ? `${groupExpired ? 'Expired' : 'Expires'} ${formatDate(g.expires_at)} · ` : ''}
+                                  {/* The group's own opened stamp — the members' stamps stay
+                                      frozen while grouped (their links are dormant), so this
+                                      is the only honest "has the customer seen it" signal. */}
+                                  {g.pay_link_opened_at
+                                    ? <span title={formatAbsoluteDateTime(g.pay_link_opened_at)}>pay link opened {relativeTime(g.pay_link_opened_at)}</span>
+                                    : 'pay link not opened yet'}
+                                  {' · automatic reminders pause while the orders are grouped.'}
+                                </p>
+                              </div>
+                              <div className="flex shrink-0 flex-wrap gap-2">
+                                <ButtonGhost size="sm" onClick={() => void copyGroupLink(g)} className="max-md:h-11">
+                                  {copiedId === g.id ? 'Copied' : 'Copy combined link'}
+                                </ButtonGhost>
+                                {groupExpired && (
+                                  <ButtonInk size="sm" onClick={() => void reactivateGroup(g)} disabled={busyId === g.id} className="max-md:h-11">
+                                    {busyId === g.id ? 'Reactivating…' : 'Reactivate link'}
+                                  </ButtonInk>
+                                )}
+                                <ButtonGhost size="sm" onClick={() => void dissolveGroup(g)} disabled={busyId === g.id} className="max-md:h-11">
+                                  Split back up
+                                </ButtonGhost>
+                              </div>
+                            </div>
+                            <div className="mt-3 space-y-3">
+                              {memberOrders.map((o) => (
+                                <div key={o.id} id={`order-card-${o.id}`}>
+                                  <AwaitingPaymentCard
+                                    order={o}
+                                    thumb={thumbForOrder(o)}
+                                    expired={isExpired(o)}
+                                    busy={busyId === o.id}
+                                    copied={copiedId === o.id}
+                                    flash={flashOrderId === o.id}
+                                    nested
+                                    summary={reminders[o.id] ?? null}
+                                    cadence={cadence}
+                                    group={g}
+                                    selectable={false}
+                                    selected={false}
+                                    onToggleSelect={() => {}}
+                                    onRelease={() => void releaseFromGroup(o)}
+                                    onCopy={() => void copyLink(o)}
+                                    onReactivate={() => void reactivate(o)}
+                                    onSendLink={() => setSendLinkFor(o)}
+                                    onEdit={() => setEditingOrder(o)}
+                                    onCancel={() => { setCancelNotify(true); setCancelError(null); setCancelTarget(o) }}
+                                    onRecordOffline={() => setRecordOffline(o)}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })}
+
+                      <div className="mt-3 space-y-3">
+                        {awaitingHealthy.map((o) => (
+                          <div key={o.id} id={`order-card-${o.id}`}>
+                            <AwaitingPaymentCard
+                              order={o}
+                              thumb={thumbForOrder(o)}
+                              expired={isExpired(o)}
+                              busy={busyId === o.id}
+                              copied={copiedId === o.id}
+                              flash={flashOrderId === o.id}
+                              summary={reminders[o.id] ?? null}
+                              cadence={cadence}
+                              group={o.order_group_id ? groups[o.order_group_id] ?? null : null}
+                              selectable={selectMode && canJoinGroup(o)}
+                              selected={groupSelect.has(o.id)}
+                              onToggleSelect={() => toggleGroupSelect(o.id)}
+                              onRelease={() => void releaseFromGroup(o)}
+                              onCopy={() => void copyLink(o)}
+                              onReactivate={() => void reactivate(o)}
+                              onSendLink={() => setSendLinkFor(o)}
+                              onEdit={() => setEditingOrder(o)}
+                              onCancel={() => { setCancelNotify(true); setCancelError(null); setCancelTarget(o) }}
+                              onRecordOffline={() => setRecordOffline(o)}
+                            />
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Paid orders parked while the artwork is redone. They
+                          belong with the other waiting rows: the customer owes
+                          us a re-approval, so nothing here needs us either. */}
+                      {beingRevised.length > 0 && (
+                        <div className="mt-6">
+                          <h3 className="text-[12px] font-semibold uppercase tracking-wide text-ink-mute">
+                            Being revised · {beingRevised.length}
+                            {` · ${gbpLabel(sumGbp(beingRevised, rates))}`}
+                          </h3>
+                          <p className="mt-1 text-[13px] text-ink-mute">
+                            Re-approve the new proof and replace the files in the Dropbox order folder, then review &amp; place again.
+                          </p>
+                          <div className="mt-3 space-y-4">
+                            {beingRevised.map((o) => (
+                              <div key={o.id} id={`order-card-${o.id}`}>
+                                {revisedCard(o)}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </section>
+              )
+            })()}
 
             {/* Recently ordered is reference material, not work — collapsed
                 by default so it doesn't add 30 rows to the everyday scroll.
                 An active search opens it so matches there aren't invisible. */}
-            {view === 'all' && recentlyOrdered.length > 0 && (() => {
+            {recentlyOrdered.length > 0 && (() => {
               const recentShown = recentOpen || search.trim().length > 0
               return (
                 <section className="mt-10">
