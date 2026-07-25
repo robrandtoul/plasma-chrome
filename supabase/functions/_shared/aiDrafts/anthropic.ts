@@ -13,10 +13,16 @@ export const DEFAULT_MODEL = 'claude-opus-4-8'
 const API_URL = 'https://api.anthropic.com/v1/messages'
 const API_VERSION = '2023-06-01'
 
-const ADAPTIVE_THINKING_MODELS = /^claude-(fable-5|opus-4-[6-9]|sonnet-4-6)/
-// effort is supported on Opus 4.5+, Sonnet 4.6, Fable 5 — NOT Haiku 4.5 or
-// Sonnet 4.5 (they 400 on it). Gated so a cheaper-model override stays valid.
-const EFFORT_MODELS = /^claude-(fable-5|opus-4-([5-9])|sonnet-4-6)/
+// NOTE: these gates match on model id, so a new model family needs adding here
+// as well as to the admin dropdowns — a model that isn't matched silently runs
+// WITHOUT adaptive thinking or effort, which is a quiet quality regression
+// rather than an error. `opus-5` / `sonnet-5` are separate alternatives because
+// the `4-x` patterns can't reach them.
+const ADAPTIVE_THINKING_MODELS = /^claude-(fable-5|opus-5|opus-4-[6-9]|sonnet-5|sonnet-4-6)/
+// effort is supported on Opus 4.5+, Opus 5, Sonnet 4.6, Sonnet 5, Fable 5 —
+// NOT Haiku 4.5 or Sonnet 4.5 (they 400 on it). Gated so a cheaper-model
+// override stays valid.
+const EFFORT_MODELS = /^claude-(fable-5|opus-5|opus-4-([5-9])|sonnet-5|sonnet-4-6)/
 
 export function modelId(): string {
   return draftModel() || DEFAULT_MODEL
@@ -174,6 +180,16 @@ export async function callClassify(
 export async function callDraft(
   system: SystemPart[],
   user: string,
+  modelOverride?: string,
 ): Promise<{ result: DraftResult; usage: CallUsage }> {
-  return structuredCall<DraftResult>(system, user, DRAFT_SCHEMA as unknown as Record<string, unknown>)
+  // No effort hint: drafting is the quality-critical call, so it runs at the
+  // API's default. The model is admin-overridable (settings.ai_drafts_model);
+  // empty/null falls back to AI_DRAFT_MODEL then the compiled default.
+  return structuredCall<DraftResult>(
+    system,
+    user,
+    DRAFT_SCHEMA as unknown as Record<string, unknown>,
+    undefined,
+    modelOverride,
+  )
 }

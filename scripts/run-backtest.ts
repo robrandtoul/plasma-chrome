@@ -29,10 +29,12 @@ const REPORT_ROOT = join(import.meta.dirname, '..', 'backtest', 'reports')
 // USD per million tokens [input, output] — cost estimate only. Unknown
 // models fall back to Opus 4.8 rates and the report says so.
 const PRICING: Record<string, [number, number]> = {
+  'claude-opus-5': [5, 25],
   'claude-opus-4-8': [5, 25],
   'claude-opus-4-7': [5, 25],
   'claude-opus-4-6': [5, 25],
   'claude-fable-5': [10, 50],
+  'claude-sonnet-5': [3, 15],
   'claude-sonnet-4-6': [3, 15],
   'claude-haiku-4-5': [1, 5],
 }

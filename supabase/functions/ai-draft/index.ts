@@ -161,14 +161,21 @@ Deno.serve(async (req) => {
     // Mode gate first — 'off' must cost nothing.
     const { data: settings, error: settingsError } = await admin
       .from('settings')
-      .select('ai_drafts_mode, ai_drafts_triage_model')
+      .select('ai_drafts_mode, ai_drafts_triage_model, ai_drafts_model')
       .limit(1)
       .single()
     if (settingsError) return json({ error: `settings read failed: ${settingsError.message}` }, 500)
     const mode = (settings?.ai_drafts_mode ?? 'off') as 'off' | 'shadow' | 'live'
     if (mode === 'off') return json({ ok: true, skipped: 'ai_drafts_mode off' })
-    // Admin-set triage model (cost lever); empty/null → the default model.
-    const triageModel = (settings?.ai_drafts_triage_model as string | null) ?? undefined
+    // Admin-set draft model; empty/null → env AI_DRAFT_MODEL → compiled default.
+    const draftModel = ((settings?.ai_drafts_model as string | null) ?? '').trim() || undefined
+    // Admin-set triage model (cost lever). The raw setting is what we store on
+    // the ledger (null = "same as the draft model"); the RESOLVED value is what
+    // the call uses, and it must fall back to the draft model rather than to
+    // modelId(), or picking a draft model while leaving triage on "Default"
+    // would silently run triage on a different model than the label promises.
+    const triageModelSetting = ((settings?.ai_drafts_triage_model as string | null) ?? '').trim() || null
+    const triageModel = triageModelSetting ?? draftModel
 
     // Fetch the conversation (needed for the dedupe anchor and everything else).
     const hsAppId = Deno.env.get('HELPSCOUT_APP_ID') ?? ''
@@ -210,7 +217,7 @@ Deno.serve(async (req) => {
         dedupe_key: dedupeKey,
         state: 'processing',
         mode,
-        model: modelId(),
+        model: draftModel ?? modelId(),
       })
       .select('id')
       .single()
@@ -239,6 +246,7 @@ Deno.serve(async (req) => {
       grounding,
       briefing,
       triageModel,
+      draftModel,
     )
 
     // Compose the structured internal note once (text for the ledger, HTML
@@ -313,7 +321,7 @@ Deno.serve(async (req) => {
         usage_triage_output: result.triageUsage?.outputTokens ?? null,
         usage_triage_cache_write: result.triageUsage?.cacheWriteTokens ?? null,
         usage_triage_cache_read: result.triageUsage?.cacheReadTokens ?? null,
-        triage_model: triageModel ?? null,
+        triage_model: triageModelSetting,
         hs_draft_thread_id: hsDraftThreadId,
         hs_note_thread_id: hsNoteThreadId,
         completed_at: new Date().toISOString(),

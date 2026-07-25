@@ -75,7 +75,9 @@ const POLL_MS = 25_000
 // reference). Cache read is 0.1x input, cache write 1.25x input (5-minute TTL —
 // the worker's default). Unknown / older model strings fall back to Opus.
 const MODEL_RATES: Record<string, { in: number; out: number }> = {
+  'claude-opus-5': { in: 5, out: 25 },
   'claude-opus-4-8': { in: 5, out: 25 },
+  'claude-sonnet-5': { in: 3, out: 15 },
   'claude-sonnet-4-6': { in: 3, out: 15 },
   'claude-haiku-4-5-20251001': { in: 1, out: 5 },
   'claude-haiku-4-5': { in: 1, out: 5 },
@@ -246,11 +248,27 @@ const MODE_HELP: Record<Mode, string> = {
 // draft step always stays on the default model.
 const TRIAGE_MODELS: { value: string; label: string }[] = [
   { value: '', label: 'Default (same as draft model)' },
+  { value: 'claude-opus-5', label: 'Opus 5 — most capable (same price as Opus 4.8)' },
   { value: 'claude-opus-4-8', label: 'Opus 4.8 — most capable' },
+  { value: 'claude-sonnet-5', label: 'Sonnet 5 — mid (same price as Sonnet 4.6)' },
   { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6 — mid' },
   { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 — cheapest' },
 ]
 const TRIAGE_LABEL = (v: string) => TRIAGE_MODELS.find((m) => m.value === v)?.label ?? v
+
+// Draft-model options ('' = the compiled default / AI_DRAFT_MODEL secret).
+// Drafting is the quality-critical call and runs only on genuine customer mail,
+// so this is a quality dial rather than a cost lever — no Haiku here. Keep the
+// ids in lockstep with the gates in _shared/aiDrafts/anthropic.ts: a model the
+// ADAPTIVE_THINKING_MODELS / EFFORT_MODELS patterns don't match runs without
+// adaptive thinking or effort, silently and with no error.
+const DRAFT_MODELS: { value: string; label: string }[] = [
+  { value: '', label: 'Default (Opus 4.8 unless the AI_DRAFT_MODEL secret is set)' },
+  { value: 'claude-opus-5', label: 'Opus 5 — newer Opus, same price as 4.8' },
+  { value: 'claude-opus-4-8', label: 'Opus 4.8 — the drafting rules were tuned on this' },
+  { value: 'claude-sonnet-5', label: 'Sonnet 5 — faster and cheaper (check draft quality first)' },
+]
+const DRAFT_LABEL = (v: string) => DRAFT_MODELS.find((m) => m.value === v)?.label ?? v
 
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
@@ -271,6 +289,10 @@ export default function AdminAiDraftsPage() {
   const [triageModel, setTriageModel] = useState<string>('')
   const [triageSaving, setTriageSaving] = useState(false)
   const [triageError, setTriageError] = useState<string | null>(null)
+  // Admin draft-model override ('' = AI_DRAFT_MODEL secret / compiled default).
+  const [draftModel, setDraftModel] = useState<string>('')
+  const [draftSaving, setDraftSaving] = useState(false)
+  const [draftError, setDraftError] = useState<string | null>(null)
   // 30-day daily aggregates for the spend + acceptance trend charts. Fetched
   // separately (minimal columns, wider window) so the heavy 7-day decision
   // list query stays small. null until first load.
@@ -281,16 +303,20 @@ export default function AdminAiDraftsPage() {
   // A ref so the (mount-only) poll loop reads the latest value without the
   // interval being torn down and recreated on every keystroke of state.
   const busyRef = useRef(false)
-  useEffect(() => { busyRef.current = pendingMode !== null || modeWorking || triageSaving }, [pendingMode, modeWorking, triageSaving])
+  useEffect(() => {
+    busyRef.current = pendingMode !== null || modeWorking || triageSaving || draftSaving
+  }, [pendingMode, modeWorking, triageSaving, draftSaving])
 
   // One fetch of mode + the last 7 days of decisions. Returns the data, or an
   // error string so callers can decide: the initial load replaces the page
   // with an error card; a background poll swallows it and keeps the last good
   // data, so a momentary network blip never blanks the table.
-  async function fetchData(): Promise<{ mode: Mode; triageModel: string; rows: DraftRow[] } | { error: string }> {
+  async function fetchData(): Promise<
+    { mode: Mode; triageModel: string; draftModel: string; rows: DraftRow[] } | { error: string }
+  > {
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
     const [settingsRes, rowsRes] = await Promise.all([
-      supabase.from('settings').select('ai_drafts_mode, ai_drafts_triage_model').eq('id', 1).single(),
+      supabase.from('settings').select('ai_drafts_mode, ai_drafts_triage_model, ai_drafts_model').eq('id', 1).single(),
       supabase
         .from('ai_drafts')
         .select(
@@ -305,6 +331,7 @@ export default function AdminAiDraftsPage() {
     return {
       mode: (settingsRes.data?.ai_drafts_mode ?? 'off') as Mode,
       triageModel: (settingsRes.data?.ai_drafts_triage_model ?? '') as string,
+      draftModel: (settingsRes.data?.ai_drafts_model ?? '') as string,
       rows: (rowsRes.data ?? []) as DraftRow[],
     }
   }
@@ -335,6 +362,7 @@ export default function AdminAiDraftsPage() {
     if ('error' in res) { setLoadError(res.error); setLoading(false); return }
     setMode(res.mode)
     setTriageModel(res.triageModel)
+    setDraftModel(res.draftModel)
     setRows(res.rows)
     setLastUpdated(new Date())
     setLoading(false)
@@ -348,7 +376,7 @@ export default function AdminAiDraftsPage() {
     const res = await fetchData()
     if ('error' in res) return
     setRows(res.rows)
-    if (!busyRef.current) { setMode(res.mode); setTriageModel(res.triageModel) }
+    if (!busyRef.current) { setMode(res.mode); setTriageModel(res.triageModel); setDraftModel(res.draftModel) }
     setLastUpdated(new Date())
   }
 
@@ -410,6 +438,30 @@ export default function AdminAiDraftsPage() {
       targetId: '1',
       beforeValue: { ai_drafts_triage_model: prev || null },
       afterValue: { ai_drafts_triage_model: next || null },
+    })
+  }
+
+  // Same optimistic-set / rollback-on-error shape as applyTriageModel above.
+  async function applyDraftModel(next: string) {
+    if (next === draftModel) return
+    const prev = draftModel
+    setDraftModel(next)
+    setDraftSaving(true)
+    setDraftError(null)
+    // '' is stored as null so the function falls back to AI_DRAFT_MODEL / the
+    // compiled default rather than sending an empty model id.
+    const { error } = await supabase
+      .from('settings')
+      .update({ ai_drafts_model: next || null, updated_at: new Date().toISOString() })
+      .eq('id', 1)
+    setDraftSaving(false)
+    if (error) { setDraftError(error.message); setDraftModel(prev); return }
+    void logAudit({
+      action: 'setting.ai_drafts_model_updated',
+      targetType: 'setting',
+      targetId: '1',
+      beforeValue: { ai_drafts_model: prev || null },
+      afterValue: { ai_drafts_model: next || null },
     })
   }
 
@@ -569,13 +621,43 @@ export default function AdminAiDraftsPage() {
           </div>
         )}
 
-        {/* Triage model — the cost lever (runs on every inbound; drafting always
-            uses the default model). Saved on select. */}
+        {/* Draft model — the quality dial. Saved on select. */}
+        <div className="mt-4 pt-4 border-t border-line-soft flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <div className="eyebrow text-ink-mute mb-1">Draft model</div>
+            <p className="text-sm text-ink-mute max-w-md">
+              Writes the reply. Only runs on genuine customer email, so this is a quality choice rather than a cost one. Takes effect on the next draft — no redeploy.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <select
+              value={draftModel}
+              onChange={(e) => void applyDraftModel(e.target.value)}
+              disabled={draftSaving}
+              aria-label="Draft model"
+              className="rounded-[8px] border border-line bg-surface px-3 py-1.5 text-[13px] text-ink disabled:opacity-60"
+            >
+              {DRAFT_MODELS.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+            {draftSaving && <span className="text-[11px] text-ink-dim">Saving…</span>}
+          </div>
+        </div>
+        {draftError && <p className="text-sm text-[var(--c-out)] mt-2">{draftError}</p>}
+        {!draftError && draftModel !== '' && (
+          <p className="text-[11px] text-ink-dim mt-2">
+            Drafting on {DRAFT_LABEL(draftModel)}. Compare the acceptance rate below before and after a change — a model swap only shows up in how much the team edits.
+          </p>
+        )}
+
+        {/* Triage model — the cost lever (runs on every inbound, spam included).
+            Saved on select. */}
         <div className="mt-4 pt-4 border-t border-line-soft flex items-start justify-between gap-3 flex-wrap">
           <div>
             <div className="eyebrow text-ink-mute mb-1">Triage model</div>
             <p className="text-sm text-ink-mute max-w-md">
-              Classifies every inbound email. Drafting always uses the default model; a cheaper triage model is the main cost lever, since triage runs on spam too.
+              Classifies every inbound email. A cheaper triage model is the main cost lever, since triage runs on spam too. Left on Default it follows whatever the draft model is set to.
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -595,7 +677,9 @@ export default function AdminAiDraftsPage() {
         </div>
         {triageError && <p className="text-sm text-[var(--c-out)] mt-2">{triageError}</p>}
         {!triageError && triageModel !== '' && (
-          <p className="text-[11px] text-ink-dim mt-2">Triage on {TRIAGE_LABEL(triageModel)}; drafting stays on the default model.</p>
+          <p className="text-[11px] text-ink-dim mt-2">
+            Triage on {TRIAGE_LABEL(triageModel)}; drafting on {draftModel ? DRAFT_LABEL(draftModel) : 'the default model'}.
+          </p>
         )}
       </section>
 

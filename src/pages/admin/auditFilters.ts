@@ -271,6 +271,7 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'setting.auto_nudges_enabled_updated',              label: 'Auto follow-up reminders toggle changed' },
     { code: 'setting.ai_drafts_mode_updated',                   label: 'AI drafts mode changed' },
     { code: 'setting.ai_drafts_triage_model_updated',           label: 'AI drafts triage model changed' },
+    { code: 'setting.ai_drafts_model_updated',                  label: 'AI drafts draft model changed' },
   ]},
 ]
 

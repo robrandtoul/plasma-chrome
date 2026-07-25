@@ -29,7 +29,12 @@ export function modelId(): string {
 const API_URL = 'https://api.anthropic.com/v1/messages'
 const API_VERSION = '2023-06-01'
 
-const ADAPTIVE_THINKING_MODELS = /^claude-(fable-5|opus-4-[6-9]|sonnet-4-6)/
+// Kept in lockstep with the same gate in ../aiDrafts/anthropic.ts. A model id
+// this doesn't match runs WITHOUT adaptive thinking — no error, just a weaker
+// check — so a new family has to be added here as well as to the admin
+// dropdown. `opus-5` / `sonnet-5` need their own alternatives because the
+// `4-x` patterns can't reach them.
+const ADAPTIVE_THINKING_MODELS = /^claude-(fable-5|opus-5|opus-4-[6-9]|sonnet-5|sonnet-4-6)/
 
 // User content blocks: labelled text, base64 PDF documents, and base64 images
 // (customer-supplied attachment photos/screenshots — Phase 2a). `title` names

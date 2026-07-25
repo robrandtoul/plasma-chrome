@@ -29,9 +29,10 @@ const DEFAULT_MODEL = 'claude-opus-4-8'
 // reasoning task, so only the capable tiers are offered; Opus 4.8 is the
 // validated recommendation, the others are available to trial.
 const MODEL_OPTIONS: { value: string; label: string }[] = [
-  { value: 'claude-opus-4-8', label: 'Opus 4.8 — most capable (recommended; the check was tuned on this)' },
+  { value: 'claude-opus-4-8', label: 'Opus 4.8 — validated (recommended; the check was tuned on this)' },
+  { value: 'claude-opus-5', label: 'Opus 5 — newer Opus, same price as 4.8 (re-check accuracy before relying on it)' },
   { value: 'claude-sonnet-5', label: 'Sonnet 5 — faster and cheaper (re-check accuracy before relying on it)' },
-  { value: 'claude-fable-5', label: 'Fable 5 — newest flagship (re-check accuracy before relying on it)' },
+  { value: 'claude-fable-5', label: 'Fable 5 — most capable, ~2x the price (re-check accuracy before relying on it)' },
 ]
 
 export default function AdminArtworkCheckPage() {

@@ -616,8 +616,13 @@ the shared `settingsControls`. **Model** is `settings.artwork_check_model` (null
 default), read by the function in `loadCheckSettings` and threaded through the main call,
 the investigation call, and the stored report's `model` field — precedence
 setting > env `ARTWORK_CHECK_MODEL` > `claude-opus-4-8`, effective next run, no redeploy.
-Curated dropdown (Opus 4.8 recommended/validated; Sonnet 5; Fable 5) so a typo can't
-reach the API; a SQL-set value outside the list is preserved. Live state at ship:
+Curated dropdown (Opus 4.8 recommended/validated; Opus 5; Sonnet 5; Fable 5) so a typo
+can't reach the API; a SQL-set value outside the list is preserved. **Opus 5 added
+2026-07-25** — the compiled default stays Opus 4.8 (the tuned/validated model), so the
+option is there to A/B against, not a silent switch. Note the `ADAPTIVE_THINKING_MODELS`
+gate in `_shared/artworkCheck/anthropic.ts` matches on model id: a family it doesn't match
+runs *without* adaptive thinking, with no error — add new ids there and to the dropdown
+together. Live state at ship:
 mode=live, **required=true** (Rob flipped the gate on during settling-in — now visible on
 the tab), model=null (default).
 

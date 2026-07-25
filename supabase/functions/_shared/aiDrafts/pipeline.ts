@@ -86,9 +86,13 @@ export async function runPipeline(
   // The live worker passes the DB-fetched briefing; the backtest omits it and
   // gets the compiled constants, keeping the laptop run byte-reproducible.
   briefing: Briefing = DEFAULT_BRIEFING,
-  // Optional admin override for the triage model only (settings.ai_drafts_triage_model);
-  // empty/undefined → the default model. The draft call always uses the default.
+  // Optional admin override for the triage model (settings.ai_drafts_triage_model);
+  // empty/undefined → the resolved draft model.
   triageModel?: string,
+  // Optional admin override for the draft model (settings.ai_drafts_model);
+  // empty/undefined → AI_DRAFT_MODEL, then the compiled default. The backtest
+  // omits both so a laptop run stays reproducible.
+  draftModel?: string,
 ): Promise<PipelineResult> {
   const usage = { inputTokens: 0, outputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0 }
 
@@ -204,6 +208,7 @@ export async function runPipeline(
       { text: buildDraftSystemVariable(classification.category, slice) },
     ],
     buildDraftUser(input.thread, input.subject, classification, input.customerFirstName),
+    draftModel,
   )
   addUsage(usage, draftCall.usage)
   const draft = draftCall.result
