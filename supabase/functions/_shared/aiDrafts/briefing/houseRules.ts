@@ -26,7 +26,27 @@ export const HOUSE_RULES: string[] = [
   'Split-name tooling: when one order is split across two or more name versions, the listed price covers the total quantity, plus a per-extra-name tooling charge for each name beyond the first. Metal, carbon fibre and standard paper: £39 / €39 / $49 per extra name. Translucent or tinted or satin plastic, letterpress and acrylic: £25 / €39 / $39. Full colour plastic: £15 / €25 / $25. Wood: no split-name charge.',
 
   // Minimums and samples
-  'Minimum order is normally 25 cards of a given design for metal, 50 for acrylic. Where a one-off single card is essential we can produce one for £180 inc VAT, covering up to two cards. Mention that this charge is non-refundable ONLY when the customer is treating the single card as a trial ahead of a larger run; otherwise omit the caveat.',
+  //
+  // Prototype FEES are deliberately absent from this rule. They are per
+  // material family (metal is not wood), they change when Rob changes them,
+  // and while they lived here as a flat "£180" the drafter quoted that figure
+  // for a wood card whose real price is a third of it
+  // (docs/ai-draft-edit-review-2026-07.md §2.6). They now reach the model as
+  // live data — proofs.prototype_prices via public_get_prototype_prices
+  // (migration 000352), rendered in the PROTOTYPING SERVICE block of the
+  // per-enquiry prompt. What stays here is the behaviour around the fee, which
+  // no table can express. Do NOT reintroduce a figure: it would both contradict
+  // the data and re-enter the guardrail's allowed set by being scraped out of
+  // this text.
+  //
+  // The minimum-order counts below are NOT in prototype_prices and must stay.
+  // They are, however, derivable from the price grid (the per-enquiry prompt
+  // already prints "min quantity N" per material), so moving them to data
+  // eventually would close the last hardcoded number in this rule — noted, not
+  // done here, and worth checking against live before anyone writes a longer
+  // list: the paper/plastic minimums quoted in the review do not match the
+  // price tiers.
+  'Minimum order is normally 25 cards of a given design for metal, 50 for acrylic. Where a single card or a couple of copies is genuinely needed, that goes through our prototyping service rather than the normal price grid: quote the prototype fee for the material family the customer is asking about, taken from the prototyping-service figures given with the pricing data for this enquiry, and never quote one flat prototype price across materials. Say we do not prototype in a material ONLY when that pricing data names it as one we do not offer; if the data simply gives no figure, say we will confirm the cost rather than guessing one or denying the service. Explain that the cost reflects the machine setup and tooling, which are incurred whatever the quantity. Mention that the charge is non-refundable ONLY when the customer is treating the prototype as a trial ahead of a larger run; otherwise omit the caveat.',
   'Sample requests: offer to send samples (asking for a postal address) ONLY when the thread affirmatively shows a UK location — a UK address or city, a +44 number, or similar evidence. A GBP currency guess is NOT location evidence. In every other case, including unknown location, point them to the samples page on our site, where anyone can order a pack and cover the shipping — we do not dispatch free samples internationally. Do not promise specific sample materials or quantities unless the thread already establishes them.',
 
   // Lead times and promises

@@ -98,6 +98,18 @@ export interface MaterialLeadTime {
   lead_time_max_days: number
 }
 
+// One prototyping-service fee, read live from proofs.prototype_prices via
+// public_get_prototype_prices (migration 000352). The fee is per MATERIAL
+// FAMILY ('metal', 'carbon_fibre', 'acrylic', 'wood') and per currency — a
+// wood prototype is £59 where a metal one is £179. There is no single flat
+// prototype price, which is exactly the mistake this data exists to prevent
+// (docs/ai-draft-edit-review-2026-07.md §2.6).
+export interface PrototypePrice {
+  family: string
+  currency: Currency
+  amount: number
+}
+
 export interface GroundingMaterialVariant {
   code: string
   display_name: string
@@ -118,6 +130,12 @@ export interface GroundingData {
   // Full per-currency price catalogue, used for guardrail reconciliation.
   byCurrency: Record<Currency, GroundingMaterial[]>
   leadTimes: MaterialLeadTime[]
+  // Prototyping-service fees for the families we DO offer, all currencies.
+  prototypePrices: PrototypePrice[]
+  // Families we deliberately do not prototype (paper, plastic today). Carried
+  // as data so the prompt can state it without us writing the sentence into a
+  // house rule — the moment an admin switches a family on, this list shrinks.
+  prototypeNotOffered: string[]
   // Flat figure sets per currency (pence-rounded amounts) for the price gate.
   figures: GroundingFigure[]
   fetchedAt: string

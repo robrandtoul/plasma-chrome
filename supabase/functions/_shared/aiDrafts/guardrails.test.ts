@@ -14,7 +14,7 @@ import {
   threadUrlSet,
 } from './guardrails.ts'
 import { htmlToText, looksLikeHtml, normaliseBody } from './htmlText.ts'
-import { buildDraftSystemStable, renderThread } from './prompts.ts'
+import { buildDraftSystemStable, buildDraftSystemVariable, renderThread } from './prompts.ts'
 import { matchMaterials, type GroundingSlice } from './grounding.ts'
 import { isArtworkFormSubmission, isAutomatedNotification } from './pipeline.ts'
 import { latestCustomerThreadId, mapThreads } from './hsMap.ts'
@@ -157,6 +157,8 @@ check('negative sentinel never accepted', !allowed.accepts('GBP', -1))
 const grounding: GroundingData = {
   byCurrency: { GBP: [], EUR: [], USD: [] },
   leadTimes: [],
+  prototypePrices: [],
+  prototypeNotOffered: [],
   figures: [
     { amount: 279, currency: 'GBP', description: 'Gold 500µm x25', kind: 'tier', matKey: 'metal_gold', quantity: 25 },
   ],
@@ -178,13 +180,110 @@ const thread: ThreadMessage[] = [
 ]
 const built = buildAllowedFigures(grounding, thread)
 check('grounding tier allowed', built.accepts('GBP', 27900))
-check('house-rule one-off £180 allowed', built.accepts('GBP', 18000))
+// Any GBP figure the house rules state is a policy price the team may quote.
+// Asked of the rule text rather than hardcoded (it used to name £180 for a
+// one-off card): the rules are admin-editable, and pinning a specific figure
+// in a test is the same brittleness §2.6 of the edit review is about.
+const houseRuleGbp = extractMoneyFigures(HOUSE_RULES.join('\n')).filter(
+  (f) => f.pence > 0 && f.currencies.length === 1 && f.currencies[0] === 'GBP',
+)
+check(
+  'every GBP figure stated in the house rules is allowed',
+  houseRuleGbp.every((f) => built.accepts('GBP', f.pence)),
+)
 check('house-rule shipping £12.90 allowed', built.accepts('GBP', 1290))
 check('house-rule personalisation rate £0.20 allowed', built.accepts('GBP', 20))
 check('house-rule USD per-card rate allowed', built.accepts('USD', 25))
 check('STAFF-quoted figure allowed (echo is safe)', built.accepts('GBP', 64000))
 check('CUSTOMER-quoted figure NOT allowed (cannot seed a price)', !built.accepts('GBP', 99900))
 check('still rejects the unknown', !built.accepts('GBP', 123456))
+
+// ── Prototype fees: grounding, not prose ─────────────────────────────────────
+// The prototyping fee is per material family and lives in prototype_prices
+// (RPC in migration 000352), not in a house rule. House rules are passed as []
+// here on purpose, so these checks prove the figures arrive via grounding
+// rather than by being scraped out of rule text as the old "£180" was.
+
+const protoGrounding: GroundingData = {
+  byCurrency: { GBP: [], EUR: [], USD: [] },
+  leadTimes: [],
+  prototypePrices: [
+    { family: 'wood', currency: 'GBP', amount: 59 },
+    { family: 'acrylic', currency: 'GBP', amount: 89 },
+    { family: 'metal', currency: 'GBP', amount: 179 },
+    { family: 'metal', currency: 'EUR', amount: 189 },
+  ],
+  prototypeNotOffered: ['paper', 'plastic'],
+  figures: [],
+  fetchedAt: 'test',
+}
+const protoAllowed = buildAllowedFigures(protoGrounding, [], undefined, [])
+check('wood prototype fee allowed (£59)', protoAllowed.accepts('GBP', 5900))
+check('metal prototype fee allowed (£179)', protoAllowed.accepts('GBP', 17900))
+check('EUR prototype fee allowed (€189)', protoAllowed.accepts('EUR', 18900))
+check('prototype fee does not leak across currencies', !protoAllowed.accepts('USD', 17900))
+
+// The production property, asserted against the REAL house rules (the default
+// argument) rather than the empty list above. This is the check that matters:
+// the allow-set is also built by scraping money figures out of the rule TEXT,
+// so while rule 12 still named a flat "£180" that figure whitelisted itself
+// and a draft quoting it shipped — no matter how correct the grounding was.
+// Passing houseRules: [] here would have hidden exactly that (and did).
+const realRulesAllowed = buildAllowedFigures(protoGrounding, [])
+check('retired flat £180 is NOT allowed with the real house rules', !realRulesAllowed.accepts('GBP', 18000))
+check('metal/carbon fibre prototype fee £179 allowed with the real house rules', realRulesAllowed.accepts('GBP', 17900))
+check('acrylic prototype fee £89 allowed with the real house rules', realRulesAllowed.accepts('GBP', 8900))
+check('wood prototype fee £59 allowed with the real house rules', realRulesAllowed.accepts('GBP', 5900))
+// And the rules themselves must stay figure-free on this point, in any
+// currency — a reinstated number would quietly re-enter the allow-set above.
+check(
+  'no house rule states the retired flat prototype price',
+  !extractMoneyFigures(HOUSE_RULES.join('\n')).some((f) => f.pence === 18000),
+)
+// A prototype fee behaves like any other house add-on: quotable on its own,
+// and combinable with one price-grid tier (prototype now, full run later).
+const protoWithTier = buildAllowedFigures(
+  { ...protoGrounding, figures: [{ amount: 279, currency: 'GBP', description: 'Gold x25', kind: 'tier', matKey: 'metal_gold', quantity: 25 }] },
+  [],
+  undefined,
+  [],
+)
+check('prototype fee + tier accepted (179+279)', protoWithTier.accepts('GBP', 45800))
+
+// The prompt states the fees per family, symbol-prefixed, and says out loud
+// which families we do not prototype — silence there invites an invented price.
+const protoSlice = {
+  currency: 'GBP',
+  currencyAssumed: false,
+  materials: [],
+  leadTimes: [],
+  prototypePrices: [
+    { family: 'wood', currency: 'GBP', amount: 59 },
+    { family: 'carbon_fibre', currency: 'GBP', amount: 179 },
+  ],
+  prototypeNotOffered: ['paper', 'plastic'],
+  catalogueIndex: [],
+} as unknown as GroundingSlice
+const protoPrompt = buildDraftSystemVariable('quote_request', protoSlice)
+check('prompt renders the wood prototype fee', protoPrompt.includes('- Wood: £59'))
+check('prompt renders the family label readably', protoPrompt.includes('- Carbon fibre: £179'))
+check('prompt names the families we do not prototype', protoPrompt.includes('We do NOT offer a prototype in: Paper, Plastic'))
+const noProtoPrompt = buildDraftSystemVariable('quote_request', { ...protoSlice, prototypePrices: [] } as unknown as GroundingSlice)
+check('no prototype data → the prompt forbids quoting one', noProtoPrompt.includes('No prototype pricing available'))
+
+// The VAT aside follows the currency of the enquiry. It used to read "GBP
+// figures include VAT" on every prompt, so a US customer's briefing said that
+// immediately above dollar figures, which are VAT-free by house convention.
+const usdProtoPrompt = buildDraftSystemVariable('quote_request', {
+  ...protoSlice,
+  currency: 'USD',
+  prototypePrices: [{ family: 'wood', currency: 'USD', amount: 79 }],
+} as unknown as GroundingSlice)
+check('GBP prompt says the figures include VAT', protoPrompt.includes('figures include VAT'))
+check(
+  'USD prompt says VAT-free instead, and never claims VAT is included',
+  usdProtoPrompt.includes('USD figures are VAT-free') && !usdProtoPrompt.includes('figures include VAT'),
+)
 
 // ── runGuardrails ────────────────────────────────────────────────────────────
 
@@ -328,6 +427,8 @@ const discThread: ThreadMessage[] = [
 const discGrounding: GroundingData = {
   byCurrency: { GBP: [], EUR: [], USD: [] },
   leadTimes: [],
+  prototypePrices: [],
+  prototypeNotOffered: [],
   figures: [
     { amount: 299, currency: 'GBP', description: 'Steel 300µm x100', kind: 'tier', matKey: 'metal_steel', quantity: 100 },
   ],

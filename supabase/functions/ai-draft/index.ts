@@ -33,7 +33,7 @@ import { fetchBriefing } from '../_shared/aiDrafts/briefing.ts'
 import { runPipeline } from '../_shared/aiDrafts/pipeline.ts'
 import { latestCustomerThreadId, mapThreads } from '../_shared/aiDrafts/hsMap.ts'
 import { modelId } from '../_shared/aiDrafts/anthropic.ts'
-import { classifyEdit } from '../_shared/aiDrafts/feedback.ts'
+import { classifyEdit, classifyMatch } from '../_shared/aiDrafts/feedback.ts'
 import { composeNote, shouldPostNote } from '../_shared/aiDrafts/composeNote.ts'
 import { normaliseBody } from '../_shared/aiDrafts/htmlText.ts'
 
@@ -82,6 +82,17 @@ async function captureFeedback(admin: AdminClient, conversationId: number | stri
 
   const sentText = normaliseBody(sent.body ?? '')
   const { similarity, editClass } = classifyEdit(row.draft_body as string, sentText)
+  // Was this reply an edit of our draft at all? The newest staff reply is not
+  // always one: it is often a proof delivery, an order link or a chase, and
+  // scoring those as 'discarded' made the acceptance rate read far worse than
+  // reality (39% of discarded rows, review §1). Quality and reason are written
+  // TOGETHER and verbatim — 000348's CHECK allows a reason only alongside
+  // 'unrelated', and classifyMatch already returns a null reason for an edit,
+  // so splitting them would fail the constraint and lose the whole update.
+  const match = classifyMatch(row.draft_body as string, sentText, {
+    draftCreatedAt: row.created_at as string,
+    sentAt: sent.createdAt,
+  })
   const { error: updErr } = await admin
     .from('ai_drafts')
     .update({
@@ -89,6 +100,8 @@ async function captureFeedback(admin: AdminClient, conversationId: number | stri
       sent_at: sent.createdAt ?? new Date().toISOString(),
       edit_similarity: similarity,
       edit_class: editClass,
+      feedback_match_quality: match.quality,
+      feedback_match_reason: match.reason,
       feedback_matched_at: new Date().toISOString(),
     })
     .eq('id', row.id)
@@ -218,6 +231,20 @@ Deno.serve(async (req) => {
         state: 'processing',
         mode,
         model: draftModel ?? modelId(),
+        // The customer's own words, kept so an exemplar — a (customer message,
+        // our reply) pair — can be proposed from a ledger row alone. Without it
+        // the miner would have to invent the customer half, which teaches the
+        // model to answer questions nobody asked.
+        //
+        // normaliseBody first: thread bodies are raw Help Scout HTML, so
+        // without it the cap would count markup and an exemplar could land in
+        // every future prompt as Outlook boilerplate. Same treatment and same
+        // 8k cap as sent_body.
+        customer_message: (() => {
+          const last = thread.filter((m) => m.role === 'customer').at(-1)?.body
+          const text = last ? normaliseBody(last).trim() : ''
+          return text ? text.slice(0, 8000) : null
+        })(),
       })
       .select('id')
       .single()
@@ -322,6 +349,12 @@ Deno.serve(async (req) => {
         usage_triage_cache_write: result.triageUsage?.cacheWriteTokens ?? null,
         usage_triage_cache_read: result.triageUsage?.cacheReadTokens ?? null,
         triage_model: triageModelSetting,
+        // Which briefing wrote this draft, so a rule change can be judged
+        // rather than assumed. Stamped here rather than on the claim insert
+        // because the briefing is not read until the pipeline runs. Passed
+        // straight through: 0 means the compiled fallback, null means the DB
+        // briefing was used but its version could not be read — both honest.
+        briefing_version: briefing.version,
         hs_draft_thread_id: hsDraftThreadId,
         hs_note_thread_id: hsNoteThreadId,
         completed_at: new Date().toISOString(),

@@ -1,6 +1,7 @@
-// Grounding data for the draft pipeline: live pricing + lead times fetched via
-// the same SECURITY DEFINER anon RPCs the marketing site uses
-// (public_get_price_list, migration 000184; public_get_lead_times, 000180).
+// Grounding data for the draft pipeline: live pricing, lead times and
+// prototyping fees fetched via the same SECURITY DEFINER anon RPCs the
+// marketing site uses (public_get_price_list, migration 000184;
+// public_get_lead_times, 000180; public_get_prototype_prices, 000352).
 // Deliberate choice — no service-role key needed locally, and the data is
 // exactly what a customer could already see. See docs/ai-draft-pipeline-spec.md.
 
@@ -11,6 +12,7 @@ import type {
   GroundingFigure,
   GroundingMaterial,
   MaterialLeadTime,
+  PrototypePrice,
 } from './types.ts'
 
 const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
@@ -31,6 +33,13 @@ interface PriceListPayload {
     }[]
     option_surcharges: { option_code: string; quantity: number; surcharge: number }[]
   }[]
+}
+
+// public_get_prototype_prices (000352). "prices" holds only the families that
+// are switched on and priced; "not_offered" names the ones we don't prototype.
+interface PrototypePricesPayload {
+  prices: { family: string; currency: string; amount: number }[]
+  not_offered: string[]
 }
 
 interface Endpoint {
@@ -119,12 +128,40 @@ function collectFigures(byCurrency: Record<Currency, GroundingMaterial[]>): Grou
   return figures
 }
 
+// Guard the numbers coming back from the prototype RPC: skip anything that
+// isn't one of our three currencies or isn't a real positive amount, so a
+// half-configured row can never become a price in front of a customer.
+function toPrototypePrices(payload: PrototypePricesPayload | null): PrototypePrice[] {
+  return (payload?.prices ?? [])
+    .filter((p) => (CURRENCIES as string[]).includes(p.currency))
+    .map((p) => ({ family: p.family, currency: p.currency as Currency, amount: Number(p.amount) }))
+    .filter((p) => Number.isFinite(p.amount) && p.amount > 0)
+}
+
 export async function fetchGrounding(): Promise<GroundingData> {
-  const [gbp, eur, usd, leadTimesRaw] = await Promise.all([
+  const [gbp, eur, usd, leadTimesRaw, prototypesRaw] = await Promise.all([
     callRpc<PriceListPayload>('public_get_price_list', { p_currency: 'GBP' }),
     callRpc<PriceListPayload>('public_get_price_list', { p_currency: 'EUR' }),
     callRpc<PriceListPayload>('public_get_price_list', { p_currency: 'USD' }),
     callRpc<MaterialLeadTime[]>('public_get_lead_times', {}),
+    // Prototype prices arrived after the rest of the grounding (migration
+    // 000352), so this one failure is swallowed rather than thrown: if the
+    // function is deployed before the migration is applied, the RPC 404s and
+    // we simply have no prototype data. The prompt then tells the drafter it
+    // has none and not to quote one — a missing figure, never a wrong one.
+    //
+    // Swallowed, but never silent. A permanent failure here (a rolled-back
+    // 000352, a lost anon grant) degrades every prototype answer for as long
+    // as it lasts, and the drafter cannot tell us — so log it loudly, the way
+    // briefing.ts logs its own fallback. Console only: this runs on the anon
+    // path with no service-role client to write audit_log with.
+    callRpc<PrototypePricesPayload>('public_get_prototype_prices', {}).catch((err) => {
+      console.warn(
+        '[ai-draft] prototype prices unavailable — drafts will offer to confirm the cost instead of quoting:',
+        err instanceof Error ? err.message : String(err),
+      )
+      return null
+    }),
   ])
   const byCurrency: Record<Currency, GroundingMaterial[]> = {
     GBP: toGroundingMaterials(gbp),
@@ -134,6 +171,8 @@ export async function fetchGrounding(): Promise<GroundingData> {
   return {
     byCurrency,
     leadTimes: leadTimesRaw ?? [],
+    prototypePrices: toPrototypePrices(prototypesRaw),
+    prototypeNotOffered: prototypesRaw?.not_offered ?? [],
     figures: collectFigures(byCurrency),
     fetchedAt: new Date().toISOString(),
   }
@@ -206,6 +245,12 @@ export interface GroundingSlice {
   currencyAssumed: boolean
   materials: GroundingMaterial[]
   leadTimes: MaterialLeadTime[]
+  // Prototyping fees for THIS enquiry's currency only. Every family stays in
+  // (not just the matched materials): a customer asking for a one-off is often
+  // still choosing between materials, and the price difference between wood
+  // and metal is the whole point.
+  prototypePrices: PrototypePrice[]
+  prototypeNotOffered: string[]
   catalogueIndex: { code: string; display_name: string; minQuantity: number | null; startingPrice: number | null }[]
 }
 
@@ -232,6 +277,11 @@ export function sliceGrounding(
     currencyAssumed: currencyHint === 'unknown',
     materials,
     leadTimes: grounding.leadTimes,
+    // Scoped to the slice currency the same way the materials are — the fee is
+    // per (family, currency), so quoting the EUR figure to a UK customer would
+    // be the same class of error we are fixing here.
+    prototypePrices: grounding.prototypePrices.filter((p) => p.currency === currency),
+    prototypeNotOffered: grounding.prototypeNotOffered,
     catalogueIndex,
   }
 }

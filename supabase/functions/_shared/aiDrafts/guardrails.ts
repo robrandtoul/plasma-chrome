@@ -5,8 +5,9 @@
 // MONEY GATE. Every money mention in the draft — symbol form (£305), ISO form
 // (GBP 305 / 305 GBP), word form (305 pounds), or pence/cent shorthand
 // (20p, 25c) — must reconcile against the allowed-figure set:
-//   (a) a known figure standing alone (price tier, surcharge, house-rule
-//       charge, or a figure STAFF already stated in the thread), or
+//   (a) a known figure standing alone (price tier, surcharge, prototyping
+//       fee, house-rule charge, or a figure STAFF already stated in the
+//       thread), or
 //   (b) a tier + ONE add-on (an option surcharge for the same material and
 //       quantity, or a house-rule charge like personalisation/shipping) —
 //       never tier+tier or addon+addon, which would make the acceptance set
@@ -375,8 +376,22 @@ export function buildAllowedFigures(
     else if (key) allowed.addSurcharge(f.currency, pence, key)
     else allowed.addHouseAddon(f.currency, pence)
   }
-  // Figures stated in house rules are policy add-ons (one-off £180, shipping
-  // £12.90, personalisation £0.20/£50…).
+  // Prototyping-service fees (£179 metal, £59 wood…). These are POLICY prices,
+  // not price-grid tiers, so they go in as house add-ons — standalone-quotable
+  // and combinable with one tier, exactly how personalisation behaves.
+  //
+  // This loop is load-bearing, not tidying. Until migration 000352 these
+  // figures only reached the allow-set as a side effect: the old "£180" was
+  // typed into house rule 12 and scraped back out by the extractMoneyFigures
+  // pass below. Now that the numbers live in grounding instead of in prose,
+  // that accident no longer happens — without this, a draft quoting the CORRECT
+  // £59 wood prototype would be blocked as an unreconciled figure.
+  for (const p of grounding.prototypePrices ?? []) {
+    const pence = Math.round(p.amount * 100)
+    if (pence > 0) allowed.addHouseAddon(p.currency, pence)
+  }
+  // Figures stated in house rules are policy add-ons (shipping £12.90,
+  // personalisation £0.20/£50…).
   for (const rule of houseRules) {
     for (const f of extractMoneyFigures(rule)) {
       if (f.pence <= 0) continue

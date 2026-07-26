@@ -235,6 +235,14 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'ai_draft_house_rule.updated', label: 'AI draft house rule updated' },
     { code: 'ai_draft_exemplar.created',   label: 'AI draft exemplar added' },
     { code: 'ai_draft_exemplar.updated',   label: 'AI draft exemplar updated' },
+    // Emitted by the edge functions, not from src/, so the taxonomy test below
+    // cannot discover them — they have to be listed by hand or they show up in
+    // Activity as raw codes and never appear in the filter. The unreadable
+    // -version one matters most: migration 000351's whole design rests on an
+    // admin being able to FIND it here when the briefing stamp stops working.
+    { code: 'ai_draft.briefing_fallback',          label: 'AI draft fell back to the built-in briefing' },
+    { code: 'ai_draft.briefing_version_unreadable', label: 'AI draft could not read the briefing version' },
+    { code: 'ai_draft.miner_run',                  label: 'AI draft suggestion miner ran' },
   ]},
   { name: 'Team', actions: [
     { code: 'announcement.created',     label: 'Announcement posted' },
@@ -272,6 +280,7 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'setting.ai_drafts_mode_updated',                   label: 'AI drafts mode changed' },
     { code: 'setting.ai_drafts_triage_model_updated',           label: 'AI drafts triage model changed' },
     { code: 'setting.ai_drafts_model_updated',                  label: 'AI drafts draft model changed' },
+    { code: 'setting.ai_draft_miner_enabled_updated',           label: 'AI drafts suggestion miner switched on or off' },
   ]},
 ]
 

@@ -555,3 +555,11 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # Bearer to be the service-role key or carry the service_role claim.
 [functions.ai-draft]
 verify_jwt = true
+
+# ai-draft-miner: invoked by hand (service-role POST) — no cron yet. Same auth
+# shape as ai-draft and send-nudges: verify_jwt stays ON so the platform checks
+# the JWT first, then the handler requires the Bearer to BE the service-role key
+# (timing-safe) or carry the service_role claim. Stated explicitly rather than
+# leaning on the CLI default, so a plain deploy can never flip it.
+[functions.ai-draft-miner]
+verify_jwt = true

@@ -156,6 +156,58 @@ function catalogueIndexBlock(slice: GroundingSlice): string {
     .join('\n')
 }
 
+// Whether the figures in a block carry VAT depends on the currency, and the
+// briefing used to state "GBP figures include VAT" whatever the enquiry — so a
+// US customer's prompt said that directly above a column of dollar figures,
+// which are VAT-free. Harmless-looking, but the model reasons from this line
+// when it decides whether to write "inc VAT" in the reply.
+function vatNote(currency: GroundingSlice['currency']): string {
+  return currency === 'GBP'
+    ? 'figures include VAT'
+    : `${currency} figures are VAT-free`
+}
+
+// Families come back as catalogue codes ('carbon_fibre'); the prompt wants a
+// word the model would actually write.
+function familyLabel(family: string): string {
+  const words = family.replace(/_/g, ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+// The prototyping fee is a flat charge PER MATERIAL FAMILY, read live from the
+// admin table rather than stated in a house rule. It used to be a hardcoded
+// "£180" in rule 12, which is how a wood enquiry got quoted three times the
+// real price (docs/ai-draft-edit-review-2026-07.md §2.6). Symbol-prefixed like
+// every other figure here so the guardrail reconciles the notation cleanly.
+function prototypePricesBlock(slice: GroundingSlice): string {
+  const sym = CURRENCY_SYMBOL[slice.currency]
+  const prices = slice.prototypePrices ?? []
+  if (prices.length === 0) {
+    // "The table says no" and "we could not read the table" are different
+    // answers and must never collapse into one. An empty price list WITH a
+    // populated not-offered list is a real answer: those families genuinely
+    // have no prototype. Empty on BOTH sides means the RPC gave us nothing —
+    // and rule 12 tells the drafter to say we do not prototype in a material
+    // when no price is given, so left undistinguished a transient outage would
+    // have us telling a wood customer we do not prototype in wood. That is
+    // false, it loses the order, and the money guardrail cannot catch it
+    // because a denial contains no figure to reconcile.
+    return (slice.prototypeNotOffered ?? []).length === 0
+      ? 'Prototyping fees could not be read for this enquiry — do NOT quote a prototype price, and do NOT say we do not prototype in their material. Say we will confirm the cost and come back to them.'
+      : 'No prototype pricing available — do not quote a price for a prototype or a one-off single card.'
+  }
+  const lines = prices.map((p) => `- ${familyLabel(p.family)}: ${sym}${p.amount}`)
+  // Say the "no" out loud. Left silent, the model fills the gap with a price
+  // of its own invention, which is the failure this whole block exists to fix.
+  const notOffered = slice.prototypeNotOffered ?? []
+  if (notOffered.length > 0) {
+    lines.push(
+      `We do NOT offer a prototype in: ${notOffered.map(familyLabel).join(', ')}. If asked, say so plainly — never quote a prototype price for those materials.`,
+    )
+  }
+  return lines.join('\n')
+}
+
 // The stable half of the draft system prompt — tone, rules, pages, and ALL
 // exemplars. Byte-identical on every draft call (within a briefing version), so
 // it is sent with a prompt-cache breakpoint and re-read at ~0.1x cost within the
@@ -187,12 +239,19 @@ ${exemplarBlock}`
 // The per-conversation half: live grounding + the task framing. Changes every
 // call, so it sits after the cache breakpoint.
 export function buildDraftSystemVariable(category: Category, slice: GroundingSlice): string {
-  return `CURRENT PRICING DATA (currency ${slice.currency}${slice.currencyAssumed ? ' — ASSUMED: the thread gives no currency clue. If quoting prices, confirm the customer is UK-based or invite them to say where they are, and record the assumption in note_body' : ''}; GBP figures include VAT):
+  return `CURRENT PRICING DATA (currency ${slice.currency}${slice.currencyAssumed ? ' — ASSUMED: the thread gives no currency clue. If quoting prices, confirm the customer is UK-based or invite them to say where they are, and record the assumption in note_body' : ''}; ${vatNote(slice.currency)}):
 ${materialsBlock(slice)}
 
 CATALOGUE INDEX (grounding for when the customer ASKS about cost or minimums —
 never volunteer these figures unprompted):
 ${catalogueIndexBlock(slice)}
+
+PROTOTYPING SERVICE (for a single card or a couple of copies, below the normal
+minimum order) — a flat fee per MATERIAL FAMILY, not the quantity grid above.
+Raise it only when the customer asks for a single card or fewer than the
+minimum; then quote the fee for the family THEIR material belongs to. There is
+no one flat prototype price across materials (${vatNote(slice.currency)}):
+${prototypePricesBlock(slice)}
 
 CURRENT LEAD TIMES:
 ${leadTimesBlock(slice)}

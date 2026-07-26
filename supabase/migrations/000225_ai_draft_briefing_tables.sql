@@ -1,3 +1,19 @@
+-- ⛔⛔ DO NOT APPLY THIS MIGRATION TO THE LIVE DATABASE. IT IS ALREADY APPLIED. ⛔⛔
+--
+-- It is re-edited from time to time because its seed block is a MIRROR of the
+-- TypeScript briefing constants and `pnpm check:briefing-seed` compares the two
+-- (details at the seed block below). A changed file here therefore does NOT
+-- mean there is anything to run.
+--
+-- Re-running it on prod would `delete ... where source = 'seed'` and re-insert
+-- the frozen 38, while every admin-approved rule (source 'proposal'/'manual')
+-- survives — leaving two contradictory rules sharing one sort_order and a
+-- briefing that tells the drafter opposite things at once. As of 2026-07-26
+-- that would destroy 30 of the 47 live rules and collide on 8 sort_orders.
+--
+-- Live briefing changes go through Admin → AI drafts → Proposals, which is the
+-- only write path with an audit trail. Never through this file.
+--
 -- 000225: AI-draft briefing graduates to the database (Phase 3a).
 --
 -- House rules + exemplars — and ONLY those — move from the TypeScript briefing
@@ -66,6 +82,23 @@ create policy ai_draft_exemplars_rw on proofs.ai_draft_exemplars
 --    supabase/functions/_shared/aiDrafts/briefing/{houseRules,exemplars}.ts.
 --    Idempotent: clears any prior seed rows (never touching admin-edited
 --    'manual' or 'proposal' rows) then re-inserts the frozen set.
+--
+--    ⚠ This block is a MIRROR of the constants, not a historical record, and
+--    the drift check (scripts/briefing-seed.ts --check) compares it against
+--    them — so a later correction to a rule is made HERE as well as in
+--    briefing/houseRules.ts. Rule 12 was corrected in place on 2026-07-26: its
+--    prototype price moved out of prose and into live data (prototype_prices,
+--    exposed to the drafter by migration 000352).
+--
+--    This block is the FRESH-REPLAY baseline and the compiled fallback only.
+--    It deliberately does NOT patch the live row: on prod the briefing has
+--    moved on through admin-approved proposals (proofs.apply_ai_draft_proposal
+--    is the only write path, and approving is a human decision with its own
+--    audit trail). A migration that overwrote a rule an admin had approved
+--    would silently revert that decision and drop the proposal_id linking it,
+--    so live rule changes go through the Proposals queue, never through here.
+--    Expect this seed and the live rows to diverge; that divergence is the
+--    feature working, not drift.
 delete from proofs.ai_draft_house_rules where source = 'seed' and proposal_id is null;
 delete from proofs.ai_draft_exemplars  where source = 'seed' and proposal_id is null;
 
@@ -81,7 +114,7 @@ insert into proofs.ai_draft_house_rules (sort_order, rule_text, source) values
   (9, 'Always write prices with the currency symbol (£, €, $) directly before the amount, in UK number format (comma for thousands, dot for decimals). Never write the ISO currency code or the currency word in place of the symbol, and never use continental number formats.', 'seed'),
   (10, 'Personalisation (a different name or detail on each card, membership-card style): £50 minimum charge in GBP, or £0.20 per card if that is higher. USD: $50 minimum / $0.25 per card. EUR: €50 minimum / €0.25 per card. Available on metal cards, full colour plastic, wood, and acrylic.', 'seed'),
   (11, 'Split-name tooling: when one order is split across two or more name versions, the listed price covers the total quantity, plus a per-extra-name tooling charge for each name beyond the first. Metal, carbon fibre and standard paper: £39 / €39 / $49 per extra name. Translucent or tinted or satin plastic, letterpress and acrylic: £25 / €39 / $39. Full colour plastic: £15 / €25 / $25. Wood: no split-name charge.', 'seed'),
-  (12, 'Minimum order is normally 25 cards of a given design for metal, 50 for acrylic. Where a one-off single card is essential we can produce one for £180 inc VAT, covering up to two cards. Mention that this charge is non-refundable ONLY when the customer is treating the single card as a trial ahead of a larger run; otherwise omit the caveat.', 'seed'),
+  (12, 'Minimum order is normally 25 cards of a given design for metal, 50 for acrylic. Where a single card or a couple of copies is genuinely needed, that goes through our prototyping service rather than the normal price grid: quote the prototype fee for the material family the customer is asking about, taken from the prototyping-service figures given with the pricing data for this enquiry, and never quote one flat prototype price across materials. Say we do not prototype in a material ONLY when that pricing data names it as one we do not offer; if the data simply gives no figure, say we will confirm the cost rather than guessing one or denying the service. Explain that the cost reflects the machine setup and tooling, which are incurred whatever the quantity. Mention that the charge is non-refundable ONLY when the customer is treating the prototype as a trial ahead of a larger run; otherwise omit the caveat.', 'seed'),
   (13, 'Sample requests: offer to send samples (asking for a postal address) ONLY when the thread affirmatively shows a UK location — a UK address or city, a +44 number, or similar evidence. A GBP currency guess is NOT location evidence. In every other case, including unknown location, point them to the samples page on our site, where anyone can order a pack and cover the shipping — we do not dispatch free samples internationally. Do not promise specific sample materials or quantities unless the thread already establishes them.', 'seed'),
   (14, 'Quote lead times only from the lead-time data provided, as a range of working days (for example "13-15 working days"). Never promise a calendar delivery date, and never invent a lead time for a material that has none listed.', 'seed'),
   (15, 'Rush or tight-deadline requests on letterpress, translucent plastic, tinted plastic, satin plastic, wood, or acrylic: never punt to a later reply — time matters to this customer. Write the substantive answer with ONE conspicuous bracketed gap for the verdict, like [CHECK WITH PRODUCTION: can we hit <date>? fill in, or use the fallback sentence from the note], and in the internal note list exactly what to verify (shelf stock, existing commitments), provide a fallback sentence for a no, and flag the urgency prominently. For other materials, lead times are firm — explain that production simply takes that long, kindly.', 'seed'),
