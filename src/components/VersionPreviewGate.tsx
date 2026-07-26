@@ -58,7 +58,7 @@
 // audit ledger carries the durable record instead.
 
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDown, Check, Eye, ScanSearch } from 'lucide-react'
+import { ArrowDown, Check, Eye, MessageSquare, ScanSearch } from 'lucide-react'
 import { logAudit } from '../lib/audit'
 import { customerProofPath } from '../lib/customerProofUrl'
 import { asPreviewPageMessage, postShowTab } from '../lib/previewBridge'
@@ -278,8 +278,19 @@ export default function VersionPreviewGate({
     postShowTab(iframeRef.current?.contentWindow, versionId, code)
   }
 
-  const chipBase =
-    'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 ring-ink'
+  // Two vocabularies, kept apart on purpose. Everything actionable gets a
+  // visible outline; everything that only reports state gets none.
+  //
+  // The old markup gave both `ring-1 ring-ink` — an ink ring on an ink banner,
+  // i.e. invisible — so the secondary buttons read as bare text while the
+  // progress chips read as buttons that did nothing. The only thing that looked
+  // pressable was the green fill.
+  const chipBase = 'inline-flex items-center gap-1.5 text-xs font-medium'
+  const actionBase =
+    'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-on-ink ' +
+    'ring-1 ring-white/30 transition-colors hover:bg-white/10 hover:ring-white/50 ' +
+    'focus:outline-none focus-visible:ring-2 focus-visible:ring-white ' +
+    'disabled:cursor-not-allowed disabled:opacity-40'
 
   return (
     <div className="fixed inset-0 z-40 flex flex-col bg-surface">
@@ -304,12 +315,17 @@ export default function VersionPreviewGate({
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleEdit}
-              className="rounded px-3 py-2 text-sm font-medium text-ink-dim ring-1 ring-ink hover:bg-ink hover:text-on-ink"
-            >
+          {/* Every action lives here, in one cluster, ordered by consequence:
+              optional tools first, then the way back, then the way on. Nothing
+              actionable is left stranded on another row. */}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {calloutsEnabled && (
+              <button type="button" onClick={() => setNotesOpen(true)} className={actionBase}>
+                <MessageSquare size={15} aria-hidden="true" />
+                {noteCount > 0 ? `Notes · ${noteCount}` : 'Add a note'}
+              </button>
+            )}
+            <button type="button" onClick={handleEdit} className={actionBase}>
               Go back and edit
             </button>
             <button
@@ -323,34 +339,12 @@ export default function VersionPreviewGate({
                     ? 'Loading preview…'
                     : 'Finish the checks below first'
               }
-              className="rounded bg-in-stock px-4 py-2 text-sm font-semibold text-on-ink shadow-sm hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-in-stock disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50"
+              className="inline-flex items-center rounded-lg bg-in-stock px-4 py-2 text-sm font-semibold text-on-ink shadow-sm transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40"
             >
               {confirmLabel}
             </button>
           </div>
         </div>
-
-        {/* Notes for the customer. Sits with the pre-send steps rather than in
-            the checklist itself: it is optional on most versions, so it must not
-            gate the confirm button. Hidden entirely while the gate is off. */}
-        {calloutsEnabled && (
-          <div className="mx-auto mt-2.5 flex max-w-6xl flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setNotesOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded border border-line bg-surface px-2.5 py-1 text-xs text-ink-soft transition-colors hover:border-ink-mute hover:text-ink focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]"
-            >
-              {noteCount > 0
-                ? `Notes for the customer · ${noteCount}`
-                : 'Add a note for the customer'}
-            </button>
-            <span className="text-xs text-ink-dim">
-              {noteCount > 0
-                ? 'They appear beside the card, not drawn on it.'
-                : 'Optional — explain a constraint or a decision you made.'}
-            </span>
-          </div>
-        )}
 
         {/* Review checklist. The chips ARE the explanation for the
             disabled button, so they sit directly under it. aria-live
@@ -437,9 +431,9 @@ export default function VersionPreviewGate({
               type="button"
               onClick={() => void proofCheck.run(true)}
               title={proofCheck.runError ?? 'Optional: check this version against everything the customer sent — the thread, attachments and QR contents — before they see it. Takes about half a minute.'}
-              className={`${chipBase} ml-auto text-on-ink hover:bg-ink`}
+              className={`${actionBase} ml-auto !py-1 !text-xs`}
             >
-              <ScanSearch size={12} aria-hidden="true" />
+              <ScanSearch size={13} aria-hidden="true" />
               {proofCheck.runError ? 'Proof check — retry' : 'Run proof check'}
             </button>
           ))}
