@@ -368,6 +368,23 @@ export const ADMIN_DESTINATIONS: AdminDestination[] = [
     keywords: ['audit log', 'history', 'changes', 'who did what', 'audit', 'log', 'trail'],
     description: 'The audit log of who changed what.',
   },
+  {
+    id: 'demo-data',
+    label: 'Demo data',
+    path: '/admin/demo-data',
+    group: 'System',
+    icon: 'settings',
+    // Deliberately NOT sidebar: true. The house rule reserves a sidebar entry for
+    // a genuinely new job, and resetting test fixtures is a tool for demos and
+    // the e2e suite, not something a designer does — it would sit in the nav in
+    // front of five people who never need it. Reachable by admin search and by
+    // its URL, like the Settings sub-features.
+    keywords: [
+      'demo', 'demo data', 'test data', 'fixtures', 'fixture', 'atari', 'reset',
+      'sample', 'seed', 'test project', 'staging', 'e2e', 'playwright',
+    ],
+    description: 'Reset the Atari test projects to a known state for demos and tests.',
+  },
 ]
 
 // ── Sidebar groups, derived from the registry ─────────────────────────────────

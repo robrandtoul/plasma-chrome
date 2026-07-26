@@ -33,6 +33,7 @@ import AdminNeedsAttentionPage from '../src/pages/admin/AdminNeedsAttentionPage'
 import AdminShippingPage from '../src/pages/admin/AdminShippingPage'
 import AdminSettingsPage from '../src/pages/admin/AdminSettingsPage'
 import AdminArtworkCheckPage from '../src/pages/admin/AdminArtworkCheckPage'
+import AdminDemoDataPage from '../src/pages/admin/AdminDemoDataPage'
 import { SpreadQuoteResults } from '../src/components/quote/SpreadQuoteResults'
 import { RecapArtwork, buildRecapTiles } from '../src/components/ArtworkFade'
 import ArtworkCheckReportView, { type ArtworkCheckReport } from '../src/components/ArtworkCheckReportView'
@@ -403,6 +404,7 @@ const tree = requestedPath === '/detail-markers' ? (
         <Route path="needs-attention" element={<AdminNeedsAttentionPage />} />
         <Route path="shipping" element={<AdminShippingPage />} />
         <Route path="settings" element={<AdminSettingsPage />} />
+        <Route path="demo-data" element={<AdminDemoDataPage />} />
         <Route path="*" element={<Stub />} />
       </Route>
       <Route path="*" element={<Elsewhere />} />

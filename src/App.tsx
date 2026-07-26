@@ -55,6 +55,7 @@ const AdminMaterialsPage = lazyWithRetry(() => import('./pages/admin/AdminMateri
 const AdminMaterialEditor = lazyWithRetry(() => import('./pages/admin/AdminMaterialEditor'), 'AdminMaterialEditor')
 const AdminAddOnEditor = lazyWithRetry(() => import('./pages/admin/AdminAddOnEditor'), 'AdminAddOnEditor')
 const AdminActivityPage = lazyWithRetry(() => import('./pages/admin/AdminActivityPage'), 'AdminActivityPage')
+const AdminDemoDataPage = lazyWithRetry(() => import('./pages/admin/AdminDemoDataPage'), 'AdminDemoDataPage')
 const AdminOrderLogPage = lazyWithRetry(() => import('./pages/admin/AdminOrderLogPage'), 'AdminOrderLogPage')
 const AdminSettingsPage = lazyWithRetry(() => import('./pages/admin/AdminSettingsPage'), 'AdminSettingsPage')
 const AdminOutsourcingPage = lazyWithRetry(() => import('./pages/admin/AdminOutsourcingPage'), 'AdminOutsourcingPage')
@@ -206,6 +207,7 @@ function AppShell() {
           <Route path="ai-drafts" element={<AdminAiDraftsPage />} />
           <Route path="artwork-check" element={<AdminArtworkCheckPage />} />
           <Route path="activity" element={<AdminActivityPage />} />
+          <Route path="demo-data" element={<AdminDemoDataPage />} />
           <Route path="settings" element={<AdminSettingsPage />} />
 
           {/* Old flat-nav URLs (pre the 2026-07 admin nav cleanup) —
