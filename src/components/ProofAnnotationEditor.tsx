@@ -93,6 +93,7 @@ export function ProofAnnotationEditor({
   const [error, setError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [imgEl, setImgEl] = useState<HTMLImageElement | null>(null)
+  const [selectedPinId, setSelectedPinId] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
     setError(null)
@@ -179,6 +180,23 @@ export function ProofAnnotationEditor({
     })),
   ]
   const activeItems = active ? items.filter((i) => i.imageId === active.id) : []
+
+  // Customer pins, drawn on the artwork — which they were not, until Rob asked
+  // the obvious question. Their coordinates were being stored and then shown
+  // only as a text list, so the designer read "move this left" with no idea
+  // where: exactly the ambiguity the customer had just resolved by pointing.
+  //
+  // Numbered to match the checklist below, and in their own colour, because
+  // "what they asked for" and "what we told them" are different kinds of thing
+  // and must not read as one sequence of dots.
+  const pinMarkers = pins.map((p, i) => ({
+    pin: p,
+    number: i + 1,
+    imageId: p.proof_version_image_id,
+    x: Number(p.x),
+    y: Number(p.y),
+  }))
+  const activePinMarkers = active ? pinMarkers.filter((m) => m.imageId === active.id) : []
 
   function place(clientX: number, clientY: number) {
     if (!active || !imgEl) return
@@ -322,6 +340,7 @@ export function ProofAnnotationEditor({
               <div className="mb-3 flex flex-wrap gap-1.5">
                 {images.map((img) => {
                   const n = callouts.filter((c) => c.proof_version_image_id === img.id).length
+                  const pinsHere = pins.filter((p) => p.proof_version_image_id === img.id).length
                   const isActive = img.id === active.id
                   const face =
                     img.side === 'front' ? 'Front' : img.side === 'back' ? 'Back' : 'Card'
@@ -338,6 +357,11 @@ export function ProofAnnotationEditor({
                     >
                       {img.associated_name ? `${img.associated_name} · ${face}` : face}
                       {n > 0 && <span className="ml-1 tabular-nums">· {n}</span>}
+                      {pinsHere > 0 && (
+                        <span className="ml-1 tabular-nums text-allocated">
+                          · {pinsHere} pin{pinsHere === 1 ? '' : 's'}
+                        </span>
+                      )}
                     </button>
                   )
                 })}
@@ -372,11 +396,51 @@ export function ProofAnnotationEditor({
                   </span>
                 )
               })}
+
+              {/* Customer pins. Blue rather than coral so a glance separates
+                  "what they asked for" from "what we told them", and clickable
+                  so a dot can find its row in the checklist below. */}
+              {activePinMarkers.map((m) => {
+                const pos = markerPosition(m.x, m.y)
+                const done = m.pin.resolved_at != null
+                const selected = selectedPinId === m.pin.id
+                return (
+                  <button
+                    key={m.pin.id}
+                    type="button"
+                    aria-label={`Customer pin ${m.number}: ${m.pin.body}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSelectedPinId(selected ? null : m.pin.id)
+                    }}
+                    className={`absolute grid h-[22px] w-[22px] place-items-center rounded-full border-2 text-[11px] font-medium leading-none tabular-nums shadow-[0_1px_3px_rgba(22,19,17,0.35)] ${
+                      done
+                        ? 'border-white bg-in-stock text-white'
+                        : 'border-white bg-allocated text-white'
+                    } ${selected ? 'ring-2 ring-ink ring-offset-1' : ''}`}
+                    style={{ left: pos.left, top: pos.top, transform: 'translate(-50%, -50%)' }}
+                  >
+                    {done ? '✓' : m.number}
+                  </button>
+                )
+              })}
             </div>
             <p className="mt-1.5 text-[11.5px] text-ink-mute">
               Click the artwork to add a note. The customer sees these beside their card, never
               drawn on it — a marker only appears if they zoom in.
             </p>
+            {pins.length > 0 && (
+              <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-ink-mute">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-brand" aria-hidden="true" />
+                  your notes
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-allocated" aria-hidden="true" />
+                  what the customer pointed at
+                </span>
+              </p>
+            )}
 
             {items.length > 0 && (
               <ul className="mt-3 grid gap-2">
@@ -467,7 +531,9 @@ export function ProofAnnotationEditor({
               {pins.map((p, i) => (
                 <li
                   key={p.id}
-                  className="flex items-start gap-2.5 border-b border-line-soft py-2.5 last:border-b-0"
+                  className={`flex items-start gap-2.5 border-b border-line-soft py-2.5 last:border-b-0 ${
+                    selectedPinId === p.id ? 'bg-allocated-soft' : ''
+                  }`}
                 >
                   <input
                     type="checkbox"
@@ -476,19 +542,36 @@ export function ProofAnnotationEditor({
                     onChange={() => void toggleResolved(p)}
                     className="mt-1 h-[15px] w-[15px] flex-none accent-[var(--c-in-stock)]"
                   />
-                  <label
-                    htmlFor={`pin-${p.id}`}
-                    className={`cursor-pointer text-[13.5px] ${
-                      p.resolved_at != null ? 'text-ink-mute line-through' : 'text-ink-soft'
-                    }`}
-                  >
-                    <span className="font-medium">
-                      {i + 1}
-                      {p.side ? ` · ${p.side}` : ''}
-                      {p.associated_name ? ` · ${p.associated_name}` : ''}
-                    </span>{' '}
-                    — {p.body}
-                  </label>
+                  <div className="min-w-0 flex-1">
+                    <label
+                      htmlFor={`pin-${p.id}`}
+                      className={`cursor-pointer text-[13.5px] ${
+                        p.resolved_at != null ? 'text-ink-mute line-through' : 'text-ink-soft'
+                      }`}
+                    >
+                      <span className="font-medium">
+                        {i + 1}
+                        {p.side ? ` · ${p.side}` : ''}
+                        {p.associated_name ? ` · ${p.associated_name}` : ''}
+                      </span>{' '}
+                      — {p.body}
+                    </label>
+                    {/* The point of the whole feature: getting from what they
+                        wrote to where they meant. Switches to that side if the
+                        pin is on the other one. */}
+                    {p.proof_version_image_id && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveImageId(p.proof_version_image_id)
+                          setSelectedPinId(p.id)
+                        }}
+                        className="mt-0.5 block bg-transparent p-0 text-[12px] text-allocated underline decoration-1 underline-offset-2"
+                      >
+                        Show me where
+                      </button>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>
