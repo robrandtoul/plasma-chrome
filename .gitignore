@@ -34,3 +34,8 @@ _tmp_*
 # never committed (PII). Regenerate with the pull workflow; see backtest/README.md.
 backtest/fixtures/
 backtest/reports/
+
+# Playwright
+/playwright-report/
+/test-results/
+/blob-report/

@@ -12,6 +12,12 @@ import type { ProofEventState } from '../lib/types'
 import { deriveSharedApprovalState } from '../lib/sharedApproval'
 import { formatPrice } from '../lib/currency'
 import { withDownloadName } from '../lib/downloadFile'
+import { ProofCalloutStrip } from '../components/ProofCalloutStrip'
+import {
+  fetchCustomerCallouts,
+  type CustomerCallout,
+  type DraftPin,
+} from '../lib/proofAnnotations'
 import { type GridImage } from '../components/ImageGrid'
 import { MaterialOptionTabs } from '../components/MaterialOptionTabs'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
@@ -158,6 +164,16 @@ export default function CustomerProofPage() {
   // Null when no detail view is open OR when the visible image has
   // no side value (shared / single-image groups).
   const [detailViewSide, setDetailViewSide] = useState<'front' | 'back' | null>(null)
+
+  // ── Annotations (migration 000347) ────────────────────────────────────────
+  // Designer callouts for the active version, read through the anon RPC. The
+  // RPC returns [] when settings.proof_callouts_enabled is off, so the strip
+  // disappears with the gate without any client-side check.
+  const [callouts, setCallouts] = useState<CustomerCallout[]>([])
+  // Pins the customer has placed but not yet submitted. Cleared whenever the
+  // action panel closes, so an abandoned change request leaves nothing behind.
+  const [draftPins, setDraftPins] = useState<DraftPin[]>([])
+
   function openDetailView(payload: {
     images: GridImage[]
     index: number
@@ -530,6 +546,49 @@ export default function CustomerProofPage() {
     }
   }, [versionImages, activeVersion?.id])
 
+  // Designer callouts for whichever version is on screen. Refetched per version
+  // because a customer can step back through the version selector, and v2's
+  // notes must not appear against v1's artwork. fetchCustomerCallouts never
+  // throws — a proof page must not break because a note failed to load.
+  useEffect(() => {
+    const versionId = activeVersion?.id
+    if (!versionId) {
+      setCallouts([])
+      return
+    }
+    let cancelled = false
+    void fetchCustomerCallouts(versionId).then((rows) => {
+      if (!cancelled) setCallouts(rows)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [activeVersion?.id])
+
+  // Callouts grouped by anchor image, for the zoom view's markers. Only
+  // callouts that were anchored to a specific image can be marked; one with no
+  // image (there is no path that creates those today) simply stays in the strip.
+  const calloutMarkersByImageId: Record<string, { id: string; x: number; y: number }[]> = {}
+  for (const c of callouts) {
+    if (!c.proof_version_image_id) continue
+    const list = calloutMarkersByImageId[c.proof_version_image_id] ?? []
+    list.push({ id: c.id, x: Number(c.x), y: Number(c.y) })
+    calloutMarkersByImageId[c.proof_version_image_id] = list
+  }
+
+  // image id → signed URL, for the cropped detail beside each callout and for
+  // resolving which image a pin belongs to. Built from the images already
+  // resolved into state, so a crop costs no extra request.
+  const activeImageUrls: Record<string, string | undefined> = {}
+  if (activeVersion?.id) {
+    for (const img of versionImages[activeVersion.id] ?? []) {
+      if (img.signed_url) activeImageUrls[img.id] = img.signed_url
+    }
+    for (const img of versionQrImages[activeVersion.id] ?? []) {
+      if (img.signed_url) activeImageUrls[img.id] = img.signed_url
+    }
+  }
+
   // Version filmstrip: keep the card being viewed in sight when it
   // changes. The strip is newest-first so the resting position is
   // already correct on load (current = leftmost card at scrollLeft 0,
@@ -634,6 +693,9 @@ export default function CustomerProofPage() {
   function closeActionPanel() {
     setActionPanel(null)
     setActionError(null)
+    // Abandoning a change request must leave nothing behind — pins are draft
+    // state on that request, not on the proof.
+    setDraftPins([])
     // Drop the confirmation flag so the next open starts on the
     // form. The next open also resets it, but clearing here keeps
     // state consistent if anything else inspects the flag while
@@ -759,6 +821,25 @@ export default function CustomerProofPage() {
           // function pre-Phase-3 ignores the field, so it's safe
           // to send unconditionally.
           side: detailViewSide,
+          // Migration 000347 — optional pins. Only sent on request_changes,
+          // and the edge function discards them anyway unless
+          // settings.proof_pins_enabled is on, so an older function build (or a
+          // flipped-off gate) simply ignores the key. Pins with no text are
+          // dropped here as well as server-side: a marker with no words tells
+          // the designer nothing.
+          ...(actionPanel.type === 'request_changes' && draftPins.length > 0
+            ? {
+                pins: draftPins
+                  .filter((p) => p.body.trim() !== '')
+                  .map((p) => ({
+                    image_id: p.imageId,
+                    side: p.side,
+                    x: p.x,
+                    y: p.y,
+                    body: p.body.trim(),
+                  })),
+              }
+            : {}),
         },
       })
       if (error) {
@@ -1232,6 +1313,41 @@ export default function CustomerProofPage() {
   // inside the Approve modal as a per-action tick box gating
   // Confirm — see the modal block at the bottom of this file.
   // Request changes stays ungated end-to-end.
+  // Designer notes, rendered directly ABOVE the approve / request-changes band.
+  //
+  // They started life lower down the page, below the buttons, and Rob's read was
+  // immediate: a customer who scrolls to the decision and approves never reaches
+  // them. Notes exist to inform that decision, so they belong in front of it.
+  // Expanded, tinted and iconned for the same reason — the rule was never to
+  // clutter the ARTWORK, and being quiet on the page was a different thing that
+  // I had conflated with it.
+  function renderCalloutStrip() {
+    if (callouts.length === 0 || !activeVersion) return null
+    return (
+      <div className="px-5 pt-4">
+        <ProofCalloutStrip
+          callouts={callouts}
+          imageUrls={activeImageUrls}
+          onViewOnCard={(callout) => {
+            const images = versionImages[activeVersion.id] ?? []
+            const index = Math.max(
+              0,
+              images.findIndex((img) => img.id === callout.proof_version_image_id),
+            )
+            if (!images[index]) return
+            openDetailView({
+              images,
+              index,
+              displayLabel: callout.associated_name ?? null,
+              versionId: activeVersion.id,
+              recipientName: callout.associated_name ?? SHARED_APPROVAL_KEY,
+            })
+          }}
+        />
+      </div>
+    )
+  }
+
   function renderActionBand(
     name: string,
     opts?: { headerPillAbove?: boolean; displayName?: string },
@@ -3458,7 +3574,12 @@ export default function CustomerProofPage() {
                       <div className="border-t border-line-soft px-5 py-4">
                         {(activeVersion?.names.length ?? 0) > 0
                           ? renderSharedInfoBand()
-                          : renderActionBand(SHARED_APPROVAL_KEY)}
+                          : (
+                              <>
+                                {renderCalloutStrip()}
+                                {renderActionBand(SHARED_APPROVAL_KEY)}
+                              </>
+                            )}
                       </div>
                     </div>
                     )
@@ -3610,9 +3731,12 @@ export default function CustomerProofPage() {
                               recipient" rather than as a free-floating
                               afterthought. */}
                           {group.heading != null && (
-                            <div className="border-t border-line-soft px-5 py-4">
-                              {renderActionBand(group.heading, { headerPillAbove: pill != null })}
-                            </div>
+                            <>
+                              {renderCalloutStrip()}
+                              <div className="border-t border-line-soft px-5 py-4">
+                                {renderActionBand(group.heading, { headerPillAbove: pill != null })}
+                              </div>
+                            </>
                           )}
                         </div>
                       )
@@ -4041,6 +4165,10 @@ export default function CustomerProofPage() {
           hideRequestChanges={actionPanel != null || isApproved}
           panelOpen={actionPanel != null}
           onCurrentSideChange={setDetailViewSide}
+          // Migration 000347 — designer callouts, grouped by the image each is
+          // anchored to, so the viewer marks only the face currently on screen.
+          // The overview deliberately gets none of this.
+          markersByImageId={calloutMarkersByImageId}
         />
       )}
 
@@ -4096,6 +4224,29 @@ export default function CustomerProofPage() {
           latestVersionNumber={latestVersion?.version_number ?? null}
           actionEarlierVersionAcked={actionEarlierVersionAcked}
           setActionEarlierVersionAcked={setActionEarlierVersionAcked}
+          // Migration 000347 — "point at it". Empty (so the placer renders
+          // nothing) unless the gate is on, this is a change request, and the
+          // version actually has artwork. Variant rounds are excluded: the
+          // customer is choosing between directions there, not marking up one
+          // card, and the roster/side model the pins lean on doesn't apply.
+          pinImages={
+            publicSettings?.proof_pins_enabled &&
+            actionPanel.type === 'request_changes' &&
+            !actionPanel.roundVariant &&
+            activeVersion
+              ? (versionImages[actionPanel.versionId] ?? []).filter((img) => {
+                  // Only the slot's own artwork: a pin on someone else's card
+                  // would arrive attributed to the wrong recipient.
+                  if (actionPanel.name === SHARED_APPROVAL_KEY) return true
+                  return (
+                    img.associated_name == null ||
+                    img.associated_name === actionPanel.name
+                  )
+                })
+              : []
+          }
+          draftPins={draftPins}
+          setDraftPins={setDraftPins}
         />
       )}
     </div>

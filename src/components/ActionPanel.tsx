@@ -2,6 +2,9 @@ import { useEffect, useRef } from 'react'
 import { X, Check, Send } from 'lucide-react'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { ButtonInk, ButtonCoral, ButtonGhost, Pill } from '../design'
+import { ProofPinPlacer } from './ProofPinPlacer'
+import type { GridImage } from './ImageGrid'
+import type { DraftPin } from '../lib/proofAnnotations'
 
 export type ActionPanelProps = {
   // The same actionPanel state shape CustomerProofPage uses.
@@ -83,6 +86,16 @@ export type ActionPanelProps = {
   latestVersionNumber: number | null
   actionEarlierVersionAcked: boolean
   setActionEarlierVersionAcked: (value: boolean) => void
+  // Migration 000347 — optional "point at it" pins on a change request.
+  // pinImages is empty when the gate (settings.proof_pins_enabled) is off, when
+  // the slot has no usable artwork, or on the approve path — the placer renders
+  // nothing in each case, so the panel is byte-identical to its previous shape.
+  // Pins are never required: a change request with zero pins is complete, and
+  // roughly a third of real ones are contact-data edits where pointing adds
+  // nothing at all.
+  pinImages?: GridImage[]
+  draftPins?: DraftPin[]
+  setDraftPins?: (next: DraftPin[]) => void
 }
 
 // Reusable checkbox-card row used by the three approve-only gates
@@ -173,6 +186,9 @@ export function ActionPanel({
   latestVersionNumber,
   actionEarlierVersionAcked,
   setActionEarlierVersionAcked,
+  pinImages,
+  draftPins,
+  setDraftPins,
 }: ActionPanelProps) {
   const isApprove = actionPanel.type === 'approve'
   const firstFieldRef = useRef<HTMLInputElement | null>(null)
@@ -514,6 +530,29 @@ export function ActionPanel({
                     aria-label={textareaLabel}
                     className="mt-2 w-full rounded-[8px] bg-surface border border-line text-ink p-3 text-[17px] sm:flex-1 sm:min-h-0 sm:text-[15px] leading-[1.5] resize-y placeholder:text-ink-dim focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)] transition-colors disabled:bg-canvas disabled:text-ink-mute disabled:cursor-not-allowed"
                   />
+
+                  {/* Optional pins (migration 000347). Sits UNDER the notes box
+                      deliberately: the note is the primary, sufficient input and
+                      must not be displaced by an embellishment. Renders nothing
+                      when the gate is off or the slot has no artwork. */}
+                  {pinImages && pinImages.length > 0 && setDraftPins && (
+                    <div className="mt-4">
+                      <label className="eyebrow block">
+                        Point at it{' '}
+                        <span className="text-ink-mute normal-case tracking-normal text-[12px]">
+                          (optional)
+                        </span>
+                      </label>
+                      <div className="mt-2">
+                        <ProofPinPlacer
+                          images={pinImages}
+                          pins={draftPins ?? []}
+                          setPins={setDraftPins}
+                          disabled={actionSubmitting}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

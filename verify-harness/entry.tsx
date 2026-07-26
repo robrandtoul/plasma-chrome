@@ -19,6 +19,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import OrdersPage from '../src/pages/OrdersPage'
 import OrderReviewPage from '../src/pages/OrderReviewPage'
 import ProofDetailPage from '../src/pages/ProofDetailPage'
+import { ProofDetailView } from '../src/components/ProofDetailView'
 import DashboardPage from '../src/pages/DashboardPage'
 import FlaggedPage from '../src/pages/FlaggedPage'
 import FeedbackPage from '../src/pages/FeedbackPage'
@@ -273,6 +274,53 @@ function ArtworkReportModalRig() {
 // without saving a real version. The iframe target doesn't resolve to a real
 // customer page here; the gate treats that as "Loading preview…", which is
 // fine for banner checks.
+// ?path=/detail-markers mounts the zoom/detail viewer with two designer
+// callouts marked on the artwork (migration 000347). This is the one customer
+// surface where a marker may sit ON the card, so it needs its own rig: the
+// transform moved from the <img> onto a wrapper to carry the markers, and
+// clampTranslate() / applyScaleAround() still read imgRef's rect to recover the
+// unscaled size. Pinch, double-tap and pan must behave exactly as before.
+const MARKER_RIG_CARD =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 428 270'%3E%3Crect width='428' height='270' rx='14' fill='%23d5d2cc'/%3E%3Ccircle cx='58' cy='52' r='17' fill='none' stroke='%23322e29' stroke-width='2.4'/%3E%3Ctext x='40' y='214' font-family='sans-serif' font-size='23' fill='%231d1a17'%3ENolan Bushnell%3C/text%3E%3Ctext x='40' y='235' font-family='sans-serif' font-size='11.5' fill='%234a453e'%3EFOUNDER%3C/text%3E%3C/svg%3E"
+
+function DetailMarkersRig() {
+  const images = [
+    {
+      id: 'img-front',
+      signed_url: MARKER_RIG_CARD,
+      side: 'front' as const,
+      associated_name: 'Nolan Bushnell',
+      original_filename: 'nolan-front.svg',
+    },
+    {
+      id: 'img-back',
+      signed_url: MARKER_RIG_CARD,
+      side: 'back' as const,
+      associated_name: 'Nolan Bushnell',
+      original_filename: 'nolan-back.svg',
+    },
+  ]
+  return (
+    <div className="relative h-dvh w-full bg-canvas">
+      <ProofDetailView
+        images={images}
+        initialIndex={0}
+        displayLabel="Nolan Bushnell"
+        close={() => {}}
+        onRequestChanges={() => {}}
+        hideRequestChanges={false}
+        panelOpen={false}
+        markersByImageId={{
+          'img-front': [
+            { id: 'c1', x: 0.14, y: 0.19 },
+            { id: 'c2', x: 0.16, y: 0.84 },
+          ],
+        }}
+      />
+    </div>
+  )
+}
+
 function PreviewGateRig() {
   return (
     <VersionPreviewGate
@@ -295,11 +343,17 @@ function Stub() {
   return <div style={{ padding: 40 }} data-nav-target>stub admin page</div>
 }
 
-const requestedPath = new URLSearchParams(window.location.search).get('path')
+// ?path=/… is the canonical form, but some embedded preview panes strip the
+// query string on navigation, so #/… is accepted as an equivalent fallback.
+const requestedPath =
+  new URLSearchParams(window.location.search).get('path') ||
+  (window.location.hash ? window.location.hash.replace(/^#/, '') : null)
 
 // ?path=/palette mounts the ⌘K designer command palette on its own, open, so
 // its layout and the fixture-backed proof search can be checked headlessly.
-const tree = requestedPath === '/quote-spread' ? (
+const tree = requestedPath === '/detail-markers' ? (
+  <DetailMarkersRig />
+) : requestedPath === '/quote-spread' ? (
   <QuoteSpreadRig />
 ) : requestedPath === '/recap-zoom' ? (
   <RecapZoomRig />

@@ -28,6 +28,8 @@ import type {
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { deriveSharedApprovalState, type SharedApprovalState } from '../lib/sharedApproval'
 import { findStrandedMaterialApprovals } from '../lib/strandedApprovals'
+import { ProofAnnotationEditor } from '../components/ProofAnnotationEditor'
+import { useCalloutsEnabled } from '../lib/useCalloutsEnabled'
 import { addCardToSet, attachProofToSet, createSetFromProof, markSetReviewLinkSent, setReviewPath } from '../lib/proofSets'
 import { duplicateProof } from '../lib/duplicateProof'
 import ExistingProjectPicker from '../components/ExistingProjectPicker'
@@ -503,6 +505,43 @@ export default function ProofDetailPage() {
     setWatchBusy(false)
   }
   const [selectedVersion, setSelectedVersion] = useState<ModalVersion | null>(null)
+  // Migration 000347 — which version's notes panel is open, plus the gate.
+  // calloutsEnabled starts false so the button never flashes in before the
+  // settings read lands; a gate must fail closed.
+  const [annotationVersion, setAnnotationVersion] = useState<ModalVersion | null>(null)
+  const [annotationCount, setAnnotationCount] = useState(0)
+  // Shared with the post-save preview gate, which is the primary place notes get
+  // written; this page is for adding one later or ticking off customer pins.
+  const calloutsEnabled = useCalloutsEnabled()
+
+  // Note count for the hero-card button. Recounted when the version changes or
+  // after the panel edits anything, so the label never lies about what is there.
+  const currentVersionId = versions.find((v) => v.is_current)?.id ?? null
+  const [annotationsStamp, setAnnotationsStamp] = useState(0)
+  useEffect(() => {
+    if (!calloutsEnabled || !currentVersionId) {
+      setAnnotationCount(0)
+      return
+    }
+    let cancelled = false
+    void supabase
+      .from('proof_annotations')
+      .select('id', { count: 'exact', head: true })
+      .eq('proof_version_id', currentVersionId)
+      .eq('author_kind', 'designer')
+      .then(({ count, error }) => {
+        if (cancelled) return
+        if (error) {
+          console.warn('[annotations] could not count notes', error)
+          return
+        }
+        setAnnotationCount(count ?? 0)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [calloutsEnabled, currentVersionId, annotationsStamp])
+
   // Real (non-bot) view times per version id for the dot indicators
   // and the VersionDetailModal history panel.
   const [viewsByVersion, setViewsByVersion] = useState<Map<string, { viewed_at: string; user_agent: string | null }[]>>(new Map())
@@ -2304,9 +2343,27 @@ export default function ProofDetailPage() {
           <span className="eyebrow text-ink-mute">Current proof</span>
           <span className="font-mono text-[13px] font-semibold text-ink">v{currentVersion.version_number}</span>
         </div>
-        <span className="truncate text-[12px] text-ink-mute" title={currentVersion.material_display}>
-          {currentVersion.material_display}
-        </span>
+        <div className="flex flex-none items-center gap-3">
+          <span className="truncate text-[12px] text-ink-mute" title={currentVersion.material_display}>
+            {currentVersion.material_display}
+          </span>
+          {/* Notes for the customer (migration 000347). Lives on the hero card
+              rather than the Versions panel below: this is the artwork the note
+              is about, and it is what the designer is already looking at.
+              Hidden while settings.proof_callouts_enabled is off. Only ever the
+              current version — a note on a superseded design would never reach
+              the customer. Offered on a locked proof too: an approved customer
+              may still be reading it, and pin tick-off is retrospective. */}
+          {calloutsEnabled && (
+            <button
+              type="button"
+              onClick={() => setAnnotationVersion(currentVersion)}
+              className="flex-none rounded-[6px] border border-line px-2 py-1 text-[12px] text-ink-soft transition-colors hover:border-ink-mute hover:text-ink focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]"
+            >
+              {annotationCount > 0 ? `Notes · ${annotationCount}` : 'Add a note'}
+            </button>
+          )}
+        </div>
       </div>
       {heroImages.length > 0 ? (
         <button
@@ -4306,6 +4363,18 @@ export default function ProofDetailPage() {
             setDeleteError(null)
             setStatusDialog('delete')
           }}
+        />
+      )}
+
+      {/* Designer notes + customer pin tick-off (migration 000347). */}
+      {annotationVersion && session?.user?.id && (
+        <ProofAnnotationEditor
+          open
+          onClose={() => setAnnotationVersion(null)}
+          versionId={annotationVersion.id}
+          versionNumber={annotationVersion.version_number}
+          userId={session.user.id}
+          onChanged={() => setAnnotationsStamp((n) => n + 1)}
         />
       )}
 

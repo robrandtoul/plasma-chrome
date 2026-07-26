@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ChevronLeft, Send } from 'lucide-react'
 import type { GridImage } from './ImageGrid'
 import { ButtonCoral } from '../design'
+import { ProofAnnotationMarkers } from './ProofAnnotationMarkers'
 
 export type ProofDetailViewProps = {
   // Navigable set — typically the clicked image's group (front +
@@ -37,6 +38,13 @@ export type ProofDetailViewProps = {
   // whenever the index changes. Null when the current image has
   // no `side` value (legacy / shared / single-image groups).
   onCurrentSideChange?: (side: 'front' | 'back' | null) => void
+  // Migration 000347 — designer callouts to mark on the artwork, keyed by the
+  // proof_version_images.id they were anchored to. This is the ONLY customer
+  // surface where a marker may sit on the artwork: the overview stays unmarked,
+  // and the customer only gets here by deliberately opening a card to inspect
+  // it. Empty / absent renders nothing, so every pre-annotation proof is
+  // pixel-identical. See docs/proof-annotation-proposal.md §4.1.
+  markersByImageId?: Record<string, { id: string; x: number; y: number }[]>
 }
 
 // Non-modal, light-register replacement for the previous dark
@@ -58,6 +66,7 @@ export function ProofDetailView({
   hideRequestChanges,
   panelOpen,
   onCurrentSideChange,
+  markersByImageId,
 }: ProofDetailViewProps) {
   // Index is local — opening a new detail view re-mounts the
   // component (different key in the parent), so the seed always wins.
@@ -387,6 +396,27 @@ export function ProofDetailView({
           </button>
         )}
         {current?.signed_url ? (
+          /* The transform lives on this wrapper rather than the <img> so
+             percentage-positioned markers can ride the same zoom and pan as
+             the artwork. The wrapper carries no box of its own: with the same
+             max-* constraints and auto width/height, a replaced element fits
+             inside them preserving aspect ratio, so the wrapper shrink-wraps
+             the image exactly and 50%/50% really is the middle of the card.
+
+             clampTranslate() and applyScaleAround() still read imgRef's rect
+             and still divide out scaleRef to recover the unscaled size — that
+             stays correct because getBoundingClientRect() includes ANCESTOR
+             transforms, so the <img> keeps reporting its transformed box even
+             though the transform now sits one level up. */
+          <div
+            className="relative block max-h-full max-w-full"
+            style={{
+              transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+              transformOrigin: 'center center',
+              transition: idle ? 'transform 140ms ease-out' : 'none',
+              willChange: 'transform',
+            }}
+          >
           <img
             ref={imgRef}
             src={current.signed_url}
@@ -398,16 +428,19 @@ export function ProofDetailView({
             onPointerCancel={(e) => releasePointer(e, false)}
             className="block max-h-full max-w-full rounded-[8px] object-contain bg-canvas select-none"
             style={{
-              transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
-              transformOrigin: 'center center',
               // We own the gestures, so stop the browser from also
               // scrolling / page-zooming when fingers land on the image.
               touchAction: 'none',
               cursor: isZoomed ? 'grab' : 'zoom-in',
-              transition: idle ? 'transform 140ms ease-out' : 'none',
-              willChange: 'transform',
             }}
           />
+          {/* Markers are display-only here: they must not swallow the pan
+              gesture, nor the backdrop self-click that closes the view. */}
+          <ProofAnnotationMarkers
+            points={(current.id && markersByImageId?.[current.id]) || []}
+            scale={scale}
+          />
+          </div>
         ) : (
           <div className="h-64 w-full max-w-md rounded-[8px] bg-canvas border border-line" />
         )}

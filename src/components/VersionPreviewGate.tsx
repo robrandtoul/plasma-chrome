@@ -65,6 +65,9 @@ import { asPreviewPageMessage, postShowTab } from '../lib/previewBridge'
 import Modal from './Modal'
 import ArtworkCheckReportView, { InlineSpinner, artworkVerdict } from './ArtworkCheckReportView'
 import { useProofCheck } from '../lib/useProofCheck'
+import { useCalloutsEnabled } from '../lib/useCalloutsEnabled'
+import { ProofAnnotationEditor } from './ProofAnnotationEditor'
+import { useAuth } from '../lib/auth'
 import {
   initialProgress,
   outstandingTabs,
@@ -134,6 +137,20 @@ export default function VersionPreviewGate({
   // Always force=true: on the edit flow a stored report predates the edit.
   const proofCheck = useProofCheck(versionId, null)
   const [reportOpen, setReportOpen] = useState(false)
+
+  // Notes for the customer (migration 000347), offered HERE because this is
+  // where the designer already is: the flow runs save -> review the preview ->
+  // write the reply that sends the URL. Making them confirm, leave, find the
+  // project page, add notes and come back would be a detour out of the one flow
+  // that ends in sending. Post-save also means the image rows exist, so a note
+  // can anchor to a real image rather than a not-yet-uploaded file.
+  //
+  // Deliberately not part of the checklist that gates the confirm button —
+  // most versions want no notes at all.
+  const calloutsEnabled = useCalloutsEnabled()
+  const { session } = useAuth()
+  const [notesOpen, setNotesOpen] = useState(false)
+  const [noteCount, setNoteCount] = useState(0)
 
   // Build the iframe URL. ?preview=1 keeps the designer's hits out
   // of the customer-view audit ledger; ?v= pins to the specific
@@ -313,6 +330,28 @@ export default function VersionPreviewGate({
           </div>
         </div>
 
+        {/* Notes for the customer. Sits with the pre-send steps rather than in
+            the checklist itself: it is optional on most versions, so it must not
+            gate the confirm button. Hidden entirely while the gate is off. */}
+        {calloutsEnabled && (
+          <div className="mx-auto mt-2.5 flex max-w-6xl flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setNotesOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded border border-line bg-surface px-2.5 py-1 text-xs text-ink-soft transition-colors hover:border-ink-mute hover:text-ink focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]"
+            >
+              {noteCount > 0
+                ? `Notes for the customer · ${noteCount}`
+                : 'Add a note for the customer'}
+            </button>
+            <span className="text-xs text-ink-dim">
+              {noteCount > 0
+                ? 'They appear beside the card, not drawn on it.'
+                : 'Optional — explain a constraint or a decision you made.'}
+            </span>
+          </div>
+        )}
+
         {/* Review checklist. The chips ARE the explanation for the
             disabled button, so they sit directly under it. aria-live
             lets screen readers hear items ticking off. */}
@@ -473,6 +512,25 @@ export default function VersionPreviewGate({
             </button>
           </div>
         </Modal>
+      )}
+
+      {/* Notes editor (migration 000347). On close the preview iframe is
+          reloaded, so the designer immediately sees the note exactly as the
+          customer will — beside the card, in the collapsed strip — rather than
+          having to take it on trust. */}
+      {notesOpen && session?.user?.id && (
+        <ProofAnnotationEditor
+          open
+          onClose={() => {
+            setNotesOpen(false)
+            const frame = iframeRef.current
+            if (frame) frame.src = frame.src
+          }}
+          versionId={versionId}
+          versionNumber={versionNumber}
+          userId={session.user.id}
+          onCountChange={setNoteCount}
+        />
       )}
     </div>
   )

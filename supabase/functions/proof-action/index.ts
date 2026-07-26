@@ -118,7 +118,58 @@ const CORS_HEADERS = {
 const MAX_COMMENT_BYTES = 10 * 1024
 const MAX_ACTOR_NAME_BYTES = 200
 
+// Customer pins (migration 000347). Caps exist because this is an anonymous
+// write path: a change request is a handful of points, not a canvas.
+const MAX_PINS = 8
+const MAX_PIN_BODY_CHARS = 600
+
 type EventType = 'approve' | 'request_changes'
+
+interface IncomingPin {
+  imageId: string | null
+  side: 'front' | 'back' | null
+  x: number
+  y: number
+  body: string
+}
+
+/**
+ * Normalise the client's pins array, discarding anything malformed rather than
+ * failing the whole request.
+ *
+ * The customer's change request is the thing that must not be lost — a pin is
+ * an optional embellishment on it. So a bad coordinate drops that pin and lets
+ * the note through; it never turns a genuine change request into a 400. Same
+ * spirit as the pricing-snapshot block further down, which logs and proceeds
+ * rather than failing the customer's action.
+ */
+function parsePins(raw: unknown): IncomingPin[] {
+  if (!Array.isArray(raw)) return []
+  const out: IncomingPin[] = []
+  for (const entry of raw) {
+    if (out.length >= MAX_PINS) break
+    if (!entry || typeof entry !== 'object') continue
+
+    const e = entry as Record<string, unknown>
+    const body = typeof e.body === 'string' ? e.body.trim().slice(0, MAX_PIN_BODY_CHARS) : ''
+    if (!body) continue
+
+    const x = typeof e.x === 'number' ? e.x : Number.NaN
+    const y = typeof e.y === 'number' ? e.y : Number.NaN
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+    if (x < 0 || x > 1 || y < 0 || y > 1) continue
+
+    const rawImage = e.image_id
+    const imageId =
+      typeof rawImage === 'string' && UUID_RE.test(rawImage.trim()) ? rawImage.trim() : null
+
+    const rawSide = e.side
+    const pinSide = rawSide === 'front' || rawSide === 'back' ? rawSide : null
+
+    out.push({ imageId, side: pinSide, x, y, body })
+  }
+  return out
+}
 
 type FailedReason =
   | 'validation'
@@ -258,6 +309,10 @@ function buildCustomerThreadText(
   // toggle position isn't a real finish choice (finish is settled over
   // email for metal), so the confirmation must not assert one.
   hasMultipleOptions: boolean,
+  // Pins the customer placed alongside a change request (migration 000347).
+  // Only ever non-empty on the request_changes branch — the approve path does
+  // not offer pinning, so approvals keep their exact previous wording.
+  pins: IncomingPin[] = [],
 ): string {
   // SHARED_APPROVAL_KEY suppresses the "for {name}" suffix — the
   // shared section IS the whole proof (all-shared / membership /
@@ -333,8 +388,26 @@ function buildCustomerThreadText(
   }
 
   // request_changes — comment is required and always present.
+  //
+  // Pins list ABOVE the note, because each pin already carries the specific
+  // instruction while the note is usually the general framing. Because every
+  // pin has text, this degrades to a plain numbered list — which reads better
+  // in Help Scout than today's single prose blob, with no attachment needed.
+  // Empty when there are no pins, leaving the output byte-identical to the
+  // pre-pins shape.
+  const pinBlock =
+    pins.length > 0
+      ? pins
+          .map((p, i) => {
+            const face = p.side ? ` (${p.side})` : ''
+            return `${i + 1}.${face} ${p.body}`
+          })
+          .join('\n') + '\n\n'
+      : ''
+
   return (
     `Changes requested by ${actorName}${recipientSuffix}${optionSuffix}.\n\n` +
+    pinBlock +
     `"${comment ?? ''}"\n\n` +
     `Version: ${fileLine}\n` +
     urlLine +
@@ -742,6 +815,16 @@ Deno.serve(async (req) => {
   // two values plus null, so anything weirder than that would
   // 23514 anyway; the parser pre-empts it with a clean null.
   let side: 'front' | 'back' | null
+  // Optional coordinate-anchored pins accompanying a change request — the
+  // customer's "point at it" (docs/proof-annotation-proposal.md). Always
+  // optional: zero pins is a complete, valid change request, and roughly a
+  // third of real change requests are contact-data edits where pointing adds
+  // nothing. Gated by settings.proof_pins_enabled, re-checked server-side
+  // below alongside approvals_enabled rather than trusted from the client.
+  //
+  // x/y are normalised 0-1 fractions of the image box, not pixels — so they
+  // survive any display size or zoom level. See the migration 000347 header.
+  let pins: IncomingPin[]
   try {
     const parsed = await req.json()
     proofVersionId = typeof parsed?.proof_version_id === 'string' ? parsed.proof_version_id.trim() : ''
@@ -764,6 +847,7 @@ Deno.serve(async (req) => {
     qrConfirmed = parsed?.qr_confirmed === true
     const rawSide = parsed?.side
     side = rawSide === 'front' || rawSide === 'back' ? rawSide : null
+    pins = parsePins(parsed?.pins)
   } catch {
     return failed('validation', 400, 'invalid JSON body')
   }
@@ -790,9 +874,10 @@ Deno.serve(async (req) => {
   }
 
   // ── approvals_enabled re-check (defence in depth) ─────────────────────────
+  // Also reads the customer-pin gate in the same round trip.
   const { data: settingsRow, error: settingsErr } = await admin
     .from('settings')
-    .select('approvals_enabled')
+    .select('approvals_enabled, proof_pins_enabled')
     .eq('id', 1)
     .single()
   if (settingsErr) {
@@ -801,6 +886,21 @@ Deno.serve(async (req) => {
   }
   if (!settingsRow?.approvals_enabled) {
     return failed('approvals_disabled', 400)
+  }
+
+  // Pins only ride along with a change request, and only while the gate is on.
+  // Dropping them silently (rather than 400-ing) is deliberate: the gate could
+  // be flipped off between the page loading and the customer pressing send, and
+  // losing their change request over a disabled embellishment would be the
+  // worse failure. Same reasoning as parsePins discarding malformed entries.
+  if (eventType !== 'request_changes' || !settingsRow?.proof_pins_enabled) {
+    if (pins.length > 0) {
+      console.log(
+        `[proof-action] discarding ${pins.length} pin(s): ` +
+          `event_type=${eventType} pins_enabled=${settingsRow?.proof_pins_enabled === true}`,
+      )
+    }
+    pins = []
   }
 
   // ── Look up the version + parent proof + image filenames ─────────────────
@@ -1155,6 +1255,42 @@ Deno.serve(async (req) => {
   }
   const eventId = (eventRow as { id: string }).id
 
+  // ── Customer pins (migration 000347) ─────────────────────────────────────
+  // Written AFTER the event so each pin can carry proof_event_id, which is what
+  // lets the designer surface group "these pins came with this note".
+  //
+  // Best-effort by design, matching the pricing-snapshot block above: the
+  // customer's change request is already durably recorded by this point, and
+  // losing a coordinate must never retract it. A failure here is logged and the
+  // request still succeeds — the note (which carries the actual instruction)
+  // survives, and the reply text below degrades to prose.
+  //
+  // associated_name mirrors the approval slot so a pin on a multi-recipient
+  // proof is attributable to the right person's card. '__shared__' is a slot
+  // key, not a real recipient, so it is stored as null.
+  let pinsWritten: IncomingPin[] = []
+  if (pins.length > 0) {
+    const { error: pinErr } = await admin.from('proof_annotations').insert(
+      pins.map((p) => ({
+        proof_version_id: proofVersionId,
+        proof_version_image_id: p.imageId,
+        side: p.side ?? side,
+        associated_name: recipientName === SHARED_APPROVAL_KEY ? null : recipientName,
+        x: p.x,
+        y: p.y,
+        body: p.body,
+        author_kind: 'customer',
+        author_name: actorName,
+        proof_event_id: eventId,
+      })),
+    )
+    if (pinErr) {
+      console.error('[proof-action] pin insert failed (change request kept)', pinErr)
+    } else {
+      pinsWritten = pins
+    }
+  }
+
   // ── Mirror state into proof_name_approvals (dual-write) ─────────────────
   // Upsert keyed on (proof_version_id, name). Mirrors the column
   // shape VersionDetailModal's upsertApproval writes — the designer
@@ -1419,6 +1555,9 @@ Deno.serve(async (req) => {
     optionDimensionLabel,
     variantDisplayName,
     hasMultipleOptions,
+    // Only the pins that actually persisted — if the insert failed, the note
+    // must not promise the designer a numbered list that isn't in the app.
+    pinsWritten,
   )
 
   // Token + ownership ids carry forward into the confirmation-reply

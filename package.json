@@ -37,6 +37,7 @@
     "test:currency": "tsx src/lib/currencyResolver.test.ts",
     "test:duplicate": "tsx src/lib/duplicateProof.test.ts",
     "test:admin-search": "tsx src/lib/adminSearch.test.ts",
+    "test:annotations": "tsx src/lib/proofAnnotationGeometry.test.ts",
     "test:audit-filters": "tsx src/pages/admin/auditFilters.test.ts",
     "test:dashboard-grouping": "tsx src/lib/dashboardGrouping.test.ts",
     "test:proof-snapshot": "tsx src/lib/proofSnapshot.test.ts",
@@ -44,7 +45,10 @@
     "test:qr-carry-forward": "tsx src/lib/qrCarryForward.test.ts",
     "test:vcard-client": "tsx src/lib/vcardClient.test.ts",
     "test:vcard-qr": "tsx src/lib/vcardQr.test.ts",
-    "test": "tsx scripts/run-tests.ts"
+    "test": "tsx scripts/run-tests.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:customer": "playwright test --project=customer",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",
@@ -66,6 +70,7 @@
     ]
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.0",
     "@tailwindcss/vite": "^4.1.4",
     "@types/node": "^25.6.0",
     "@types/qrcode": "^1.5.6",

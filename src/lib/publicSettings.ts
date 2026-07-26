@@ -57,6 +57,10 @@ export interface PublicSettings {
   us_tariff_fee_usd: number
   us_tariff_intro_copy: string
   us_tariff_optout_warning: string
+  // Migration 000347 — whether the customer may place pins alongside a change
+  // request. The callout gate needs no counterpart here: the annotations RPC
+  // returns [] when it is off, so the note strip disappears on its own.
+  proof_pins_enabled: boolean
 }
 
 const TTL_MS = 60_000
@@ -106,6 +110,8 @@ const DEFAULTS: PublicSettings = {
   us_tariff_fee_usd: 39,
   us_tariff_intro_copy: US_TARIFF_INTRO_COPY_DEFAULT,
   us_tariff_optout_warning: US_TARIFF_OPTOUT_WARNING_DEFAULT,
+  // Off unless the DB says otherwise — a gate must fail closed.
+  proof_pins_enabled: false,
 }
 
 // Trim-guarded string pick: returns the RPC value when it's a non-empty
@@ -167,6 +173,9 @@ export async function getPublicSettings(): Promise<PublicSettings> {
         us_tariff_fee_usd: pickNum(data?.us_tariff_fee_usd, DEFAULTS.us_tariff_fee_usd),
         us_tariff_intro_copy: pickStr(data?.us_tariff_intro_copy, DEFAULTS.us_tariff_intro_copy),
         us_tariff_optout_warning: pickStr(data?.us_tariff_optout_warning, DEFAULTS.us_tariff_optout_warning),
+        // Strict === true so a missing key (an older public_settings() build
+        // that predates migration 000347) reads as off rather than truthy.
+        proof_pins_enabled: data?.proof_pins_enabled === true,
       }
       cache = { value, fetchedAt: Date.now() }
       return value

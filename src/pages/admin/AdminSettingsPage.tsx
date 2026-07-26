@@ -25,6 +25,8 @@ interface Settings {
   default_currency: CurrencyValue | null
   /** Phase 2 customer approval flow (migration 000116). */
   approvals_enabled: boolean
+  proof_callouts_enabled: boolean
+  proof_pins_enabled: boolean
   approve_confirmation_copy: string
   request_changes_confirmation_copy: string
   /** Ordering & checkout master switch (migration 000228). Off keeps the
@@ -136,6 +138,8 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   default_pricing_display:           'setting.default_pricing_display_updated',
   default_currency:                  'setting.default_currency_updated',
   approvals_enabled:                 'setting.approvals_enabled_updated',
+  proof_callouts_enabled:            'setting.proof_callouts_enabled_updated',
+  proof_pins_enabled:                'setting.proof_pins_enabled_updated',
   approve_confirmation_copy:         'setting.approve_confirmation_copy_updated',
   request_changes_confirmation_copy: 'setting.request_changes_confirmation_copy_updated',
   ordering_enabled:                  'setting.ordering_enabled_updated',
@@ -327,7 +331,7 @@ export default function AdminSettingsPage() {
   async function load() {
     const { data, error } = await supabase
       .from('settings')
-      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, xero_stripe_account_code, xero_eu_tax_type, xero_row_tax_type, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent, hot_leads_panel_enabled, push_enabled')
+      .select('default_pricing_display, default_currency, approvals_enabled, proof_callouts_enabled, proof_pins_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, xero_stripe_account_code, xero_eu_tax_type, xero_row_tax_type, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent, hot_leads_panel_enabled, push_enabled')
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
@@ -389,6 +393,8 @@ export default function AdminSettingsPage() {
     invalidatePublicSettings()
     if (
       field === 'approvals_enabled' ||
+      field === 'proof_callouts_enabled' ||
+      field === 'proof_pins_enabled' ||
       field === 'approve_confirmation_copy' ||
       field === 'request_changes_confirmation_copy'
     ) {
@@ -630,6 +636,39 @@ export default function AdminSettingsPage() {
               onChange={(v) => void saveField('approvals_enabled', v)}
               disabled={!!working.approvals_enabled}
               label="Customer-facing approval flow enabled"
+            />
+          </FieldRow>
+
+          {/* Proof annotations (migration 000347). Two switches rather than one,
+              so the designer half can go live without opening the anonymous
+              write path — the phasing in docs/proof-annotation-proposal.md. */}
+          <FieldRow
+            label="Designer notes on proofs"
+            help="Lets designers leave notes on a proof for the customer to read. They appear beside the card as a collapsed strip, never drawn on the artwork; a numbered marker only shows if the customer zooms in. Off hides both the authoring button and the customer-facing strip."
+            saved={recentlySaved('proof_callouts_enabled')}
+            working={working.proof_callouts_enabled}
+            error={errors.proof_callouts_enabled}
+          >
+            <Toggle
+              value={settings.proof_callouts_enabled}
+              onChange={(v) => void saveField('proof_callouts_enabled', v)}
+              disabled={!!working.proof_callouts_enabled}
+              label="Designer notes on proofs"
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="Let customers point at what they mean"
+            help="Adds an optional step to Request changes where the customer can tap the artwork to place a pin and describe that spot. The notes box stays primary — a change request with no pins is still complete. Pins arrive as a tickable checklist on the proof page and as a numbered list on the Help Scout thread."
+            saved={recentlySaved('proof_pins_enabled')}
+            working={working.proof_pins_enabled}
+            error={errors.proof_pins_enabled}
+          >
+            <Toggle
+              value={settings.proof_pins_enabled}
+              onChange={(v) => void saveField('proof_pins_enabled', v)}
+              disabled={!!working.proof_pins_enabled}
+              label="Let customers point at what they mean"
             />
           </FieldRow>
 
@@ -1553,6 +1592,8 @@ function humanFieldLabel(field: keyof Settings): string {
     default_pricing_display: 'Default pricing display',
     default_currency: 'Default currency',
     approvals_enabled: 'Customer-facing approval flow enabled',
+    proof_callouts_enabled: 'Designer notes on proofs',
+    proof_pins_enabled: 'Let customers point at what they mean',
     approve_confirmation_copy: 'Approve confirmation copy',
     request_changes_confirmation_copy: 'Request changes confirmation copy',
     ordering_enabled: 'Ordering & checkout enabled',
