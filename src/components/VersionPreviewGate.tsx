@@ -287,37 +287,49 @@ export default function VersionPreviewGate({
   // pressable was the green fill.
   const chipBase = 'inline-flex items-center gap-1.5 text-xs font-medium'
   const actionBase =
-    'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-on-ink ' +
-    'ring-1 ring-white/30 transition-colors hover:bg-white/10 hover:ring-white/50 ' +
-    'focus:outline-none focus-visible:ring-2 focus-visible:ring-white ' +
-    'disabled:cursor-not-allowed disabled:opacity-40'
+    'inline-flex items-center gap-1.5 rounded-lg border border-line bg-canvas px-3 py-2 ' +
+    'text-sm font-medium text-ink-soft transition-colors hover:border-ink-mute hover:text-ink ' +
+    'focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 ' +
+    'focus-visible:outline-[var(--c-brand)] disabled:cursor-not-allowed disabled:opacity-40'
 
   return (
-    <div className="fixed inset-0 z-40 flex flex-col bg-surface">
+    <div className="fixed inset-0 z-40 flex flex-col bg-canvas">
       {/* Banner — gray-900 so it's unambiguously app chrome, not part
           of the customer page rendered below. Row 1: label + actions;
           row 2: the review checklist. Collapses cleanly on narrow
           viewports. */}
-      <div className="border-b border-ink bg-ink px-4 py-3 text-on-ink sm:px-6">
+      {/* Light, because this IS the app — the same chrome as every other
+          designer surface. It used to be gray-900, which sat directly above the
+          customer page's own black masthead with no boundary between them, so
+          our controls and their design read as one undifferentiated mass. That
+          blur was the real reason the banner felt unstructured; making the
+          secondary buttons visible (PR #559) helped but could not fix it.
+
+          A light banner also lets the buttons be ordinary buttons instead of
+          hand-tuned outlines on a dark ground. */}
+      <div
+        data-testid="preview-gate-banner"
+        className="border-b border-line bg-surface px-4 py-3 text-ink shadow-[0_1px_0_rgba(22,19,17,0.06)] sm:px-6"
+      >
         <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <div className="flex items-center gap-2">
-              <Eye size={16} className="text-ink-dim" aria-hidden="true" />
+              <Eye size={16} className="text-ink-mute" aria-hidden="true" />
               <span className="text-sm font-semibold">Preview — what the customer will see</span>
             </div>
-            <div className="flex items-center gap-3 text-xs text-ink-dim">
+            <div className="flex items-center gap-3 text-xs text-ink-mute">
               <span>Version v{versionNumber}</span>
               {currency && (
                 <>
-                  <span aria-hidden="true" className="text-ink-soft">·</span>
+                  <span aria-hidden="true" className="text-line">·</span>
                   <span>Currency {currency}</span>
                 </>
               )}
             </div>
           </div>
-          {/* Every action lives here, in one cluster, ordered by consequence:
-              optional tools first, then the way back, then the way on. Nothing
-              actionable is left stranded on another row. */}
+          {/* The things you might DO before sending sit together: add a note,
+              run the proof check, then send. "Go back and edit" is the escape
+              hatch rather than a step, so it drops to the row below. */}
           <div className="flex flex-wrap items-center justify-end gap-2">
             {calloutsEnabled && (
               <button type="button" onClick={() => setNotesOpen(true)} className={actionBase}>
@@ -325,9 +337,40 @@ export default function VersionPreviewGate({
                 {noteCount > 0 ? `Notes · ${noteCount}` : 'Add a note'}
               </button>
             )}
-            <button type="button" onClick={handleEdit} className={actionBase}>
-              Go back and edit
-            </button>
+            {proofCheck.enabled && (proofCheck.check.status === 'running' ? (
+              <span className={`${actionBase} pointer-events-none text-ink-mute`}>
+                <InlineSpinner className="h-3 w-3" />
+                Checking…
+              </span>
+            ) : proofCheck.check.report ? (
+              (() => {
+                const v = artworkVerdict(proofCheck.check.report, 'Proof check')
+                const suffix = v.text.startsWith('Proof check — ')
+                  ? v.text.slice('Proof check — '.length)
+                  : 'couldn’t run'
+                return (
+                  <button
+                    type="button"
+                    onClick={() => setReportOpen(true)}
+                    title={`${v.text} — open the report`}
+                    className={actionBase}
+                  >
+                    <span aria-hidden="true">{v.icon}</span>
+                    Proof check · {suffix}
+                  </button>
+                )
+              })()
+            ) : (
+              <button
+                type="button"
+                onClick={() => void proofCheck.run(true)}
+                title={proofCheck.runError ?? 'Optional: check this version against everything the customer sent — the thread, attachments and QR contents — before they see it. Takes about half a minute.'}
+                className={actionBase}
+              >
+                <ScanSearch size={15} aria-hidden="true" />
+                {proofCheck.runError ? 'Proof check — retry' : 'Run proof check'}
+              </button>
+            ))}
             <button
               type="button"
               onClick={handleConfirm}
@@ -339,7 +382,7 @@ export default function VersionPreviewGate({
                     ? 'Loading preview…'
                     : 'Finish the checks below first'
               }
-              className="inline-flex items-center rounded-lg bg-in-stock px-4 py-2 text-sm font-semibold text-on-ink shadow-sm transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40"
+              className="inline-flex items-center rounded-lg bg-in-stock px-4 py-2 text-sm font-semibold text-on-ink shadow-sm transition-opacity hover:opacity-90 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40"
             >
               {confirmLabel}
             </button>
@@ -403,40 +446,13 @@ export default function VersionPreviewGate({
               run; running → spinner (the designer keeps reviewing, the run
               continues server-side regardless); done → the verdict, click
               for the full report. */}
-          {proofCheck.enabled && (proofCheck.check.status === 'running' ? (
-            <span className={`${chipBase} ml-auto text-ink-dim`}>
-              <InlineSpinner className="h-3 w-3" />
-              Checking against the customer’s details…
-            </span>
-          ) : proofCheck.check.report ? (
-            (() => {
-              const v = artworkVerdict(proofCheck.check.report, 'Proof check')
-              const suffix = v.text.startsWith('Proof check — ')
-                ? v.text.slice('Proof check — '.length)
-                : 'couldn’t run'
-              return (
-                <button
-                  type="button"
-                  onClick={() => setReportOpen(true)}
-                  title={`${v.text} — open the report`}
-                  className={`${chipBase} ml-auto text-on-ink hover:bg-ink`}
-                >
-                  <span aria-hidden="true">{v.icon}</span>
-                  Proof check · {suffix}
-                </button>
-              )
-            })()
-          ) : (
-            <button
-              type="button"
-              onClick={() => void proofCheck.run(true)}
-              title={proofCheck.runError ?? 'Optional: check this version against everything the customer sent — the thread, attachments and QR contents — before they see it. Takes about half a minute.'}
-              className={`${actionBase} ml-auto !py-1 !text-xs`}
-            >
-              <ScanSearch size={13} aria-hidden="true" />
-              {proofCheck.runError ? 'Proof check — retry' : 'Run proof check'}
-            </button>
-          ))}
+          <button
+            type="button"
+            onClick={handleEdit}
+            className={`${actionBase} ml-auto !py-1 !text-xs`}
+          >
+            Go back and edit
+          </button>
         </div>
       </div>
 
@@ -452,7 +468,7 @@ export default function VersionPreviewGate({
         ref={iframeRef}
         src={previewSrc}
         title={`Preview of version v${versionNumber} as the customer will see it`}
-        className="flex-1 w-full border-0 bg-surface"
+        className="flex-1 w-full border-0 bg-canvas"
       />
 
       {/* The proof-check report — same capped, internally-scrolling panel as

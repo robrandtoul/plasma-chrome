@@ -40,34 +40,51 @@ test.describe('preview gate banner', () => {
   })
 
   test('exactly one primary action', async ({ page }) => {
-    // More than one filled button and the eye has nowhere to land.
-    const filled = await page.evaluate(() => {
-      const banner = document.querySelector('.bg-ink')
+    // More than one COLOURED button and the eye has nowhere to land.
+    //
+    // "Has a background" was the first definition here and it stopped meaning
+    // anything the moment the banner went light — every button sits on a tinted
+    // ground now. What actually marks the primary action is that it is the only
+    // one carrying a hue rather than a neutral.
+    const coloured = await page.evaluate(() => {
+      const banner = document.querySelector('[data-testid="preview-gate-banner"]')
       if (!banner) return -1
       return Array.from(banner.querySelectorAll('button')).filter((b) => {
-        const bg = getComputedStyle(b).backgroundColor
-        return bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent'
+        const m = getComputedStyle(b).backgroundColor.match(/\d+/g)
+        if (!m) return false
+        const [r, g, bl] = m.map(Number)
+        // Chroma: a neutral (white, cream, grey) has near-equal channels.
+        return Math.max(r, g, bl) - Math.min(r, g, bl) > 30
       }).length
     })
-    expect(filled).toBe(1)
+    expect(coloured).toBe(1)
   })
 
-  test('actions sit together, not scattered across rows', async ({ page }) => {
-    const edit = await page.getByRole('button', { name: /go back and edit/i }).first().boundingBox()
+  test('the pre-send actions share a row; the way back sits apart', async ({ page }) => {
+    // Grouped by what they are, not by being actions. Add a note, run the proof
+    // check and send are all things you might DO before sending, so they sit
+    // together. "Go back and edit" is the escape hatch and drops a row — Rob's
+    // call, and it stops the way out competing with the way on.
+    const check = await page
+      .getByRole('button', { name: /run proof check|proof check ·|checking/i })
+      .first()
+      .boundingBox()
     const confirm = await page
       .getByRole('button', { name: /looks good|continue to send|checked it/i })
       .first()
       .boundingBox()
-    expect(edit).not.toBeNull()
+    const edit = await page.getByRole('button', { name: /go back and edit/i }).first().boundingBox()
+    expect(check).not.toBeNull()
     expect(confirm).not.toBeNull()
-    // Same row: their vertical centres line up.
-    const editMid = edit!.y + edit!.height / 2
-    const confirmMid = confirm!.y + confirm!.height / 2
-    expect(Math.abs(editMid - confirmMid)).toBeLessThan(6)
+    expect(edit).not.toBeNull()
+
+    const mid = (b: { y: number; height: number }) => b.y + b.height / 2
+    expect(Math.abs(mid(check!) - mid(confirm!))).toBeLessThan(6)
+    expect(mid(edit!)).toBeGreaterThan(mid(confirm!) + 10)
   })
 
   test('guide shot', async ({ page }) => {
-    const banner = page.locator('.bg-ink').first()
+    const banner = page.getByTestId('preview-gate-banner')
     await expect(banner).toBeVisible()
     await banner.screenshot({ path: path.join(OUT, 'designer-preview-gate.png') })
   })
