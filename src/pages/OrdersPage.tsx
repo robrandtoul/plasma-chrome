@@ -16,6 +16,7 @@ import { downloadBlob } from '../lib/downloadFile'
 import { signThumbnails, type ThumbInfo } from '../lib/thumbnails'
 import type { Currency } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
+import { mergeInvestigation, requestInvestigation } from '../lib/useProofCheck'
 import OrderBuilderModal from '../components/OrderBuilderModal'
 import GroupOrdersModal, { type GroupCandidate } from '../components/GroupOrdersModal'
 import RecordOfflinePaymentModal from '../components/RecordOfflinePaymentModal'
@@ -768,9 +769,11 @@ export default function OrdersPage() {
   } | null>(null)
   const [investigatingKey, setInvestigatingKey] = useState<string | null>(null)
   const [investigationError, setInvestigationError] = useState<{ key: string; message: string } | null>(null)
+  const [staleNotice, setStaleNotice] = useState<string | null>(null)
 
   async function openArtworkReport(order: OrderRow) {
     setInvestigationError(null)
+    setStaleNotice(null)
     setArtworkReportModal({ orderId: order.id, label: customerLabel(order), loading: true, report: null })
     const { data } = await supabase.from('orders').select('artwork_check').eq('id', order.id).maybeSingle()
     setArtworkReportModal((m) => m && {
@@ -785,25 +788,22 @@ export default function OrdersPage() {
     const key = `${flag.card}::${flag.field}`
     setInvestigatingKey(key)
     setInvestigationError(null)
-    try {
-      const { data } = await supabase.functions.invoke<{
-        ok: boolean
-        investigation?: NonNullable<ArtworkCheckReport['investigations']>[string]
-        error?: string
-      }>('artwork-check', { body: { order_id: orderId, investigate: flag } })
-      if (data?.ok && data.investigation) {
-        const inv = data.investigation
-        setArtworkReportModal((m) => m && m.report
-          ? { ...m, report: { ...m.report, investigations: { ...(m.report.investigations ?? {}), [key]: inv } } }
-          : m)
-      } else {
-        setInvestigationError({ key, message: data?.error ?? 'The investigation couldn’t run — try again.' })
-      }
-    } catch {
-      setInvestigationError({ key, message: 'The investigation couldn’t run — try again.' })
-    } finally {
-      setInvestigatingKey(null)
+    setStaleNotice(null)
+    const out = await requestInvestigation({ order_id: orderId }, flag)
+    if (out.investigation) {
+      const inv = out.investigation
+      setArtworkReportModal((m) => m && m.report
+        ? { ...m, report: mergeInvestigation(m.report, [out.key, key], inv) }
+        : m)
+    } else if (out.staleReport) {
+      // Re-run underneath the open modal — swap in what's actually stored.
+      const fresh = out.staleReport
+      setArtworkReportModal((m) => m && { ...m, report: fresh })
+      setStaleNotice(out.message ?? 'This check has been re-run — the flags below are the current ones.')
+    } else {
+      setInvestigationError({ key, message: out.message ?? 'The investigation couldn’t run — try again.' })
     }
+    setInvestigatingKey(null)
   }
   // The awaiting-payment order being recorded as paid offline (bank transfer),
   // or null when the modal is closed.
@@ -2598,6 +2598,7 @@ export default function OrdersPage() {
               ) : artworkReportModal.report ? (
                 <ArtworkCheckReportView
                   report={artworkReportModal.report}
+                  notice={staleNotice}
                   onInvestigate={(flag) => void investigateFlag(artworkReportModal.orderId, flag)}
                   investigatingKey={investigatingKey}
                   investigationError={investigationError}

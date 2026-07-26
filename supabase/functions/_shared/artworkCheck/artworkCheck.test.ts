@@ -39,7 +39,10 @@ import {
   INVESTIGATION_IMAGES_MAX,
   investigationKey,
   matchCardToRecipient,
+  normaliseCardLabel,
   pickInvestigationImages,
+  resolveReportFlag,
+  type FlagCardLite,
   type VersionImageRowLite,
   type VersionRowLite,
 } from './investigate.ts'
@@ -516,6 +519,57 @@ eq('recipient matched from label', matchCardToRecipient('Christine Davis — fro
 eq('match is case-insensitive', matchCardToRecipient('CHRISTINE DAVIS — card', ['Christine Davis']), 'Christine Davis')
 eq('longest name wins', matchCardToRecipient('Dave Allen-Smith — front', ['Dave Allen', 'Dave Allen-Smith']), 'Dave Allen-Smith')
 eq('shared card matches nobody', matchCardToRecipient('Shared front card', ['Christine Davis']), null)
+
+// ── resolving a clicked flag onto the stored report ──────────────────────────
+// The live failure this guards (order 403922, 2026-07-26): the page was
+// showing one run's report while the database held another's, and the two
+// label the same card differently, so the exact-match lookup 404'd.
+
+eq('label normalises: file suffix dropped',
+  normaliseCardLabel('Andrew Forbes — back (03_AndrewForbes_Steel.ai)'), 'andrew forbes back')
+eq('label normalises: dashes and case', normaliseCardLabel('ANDREW FORBES – back'), 'andrew forbes back')
+
+{
+  const roster = ['Andrew Forbes', 'Carl Manning']
+  const stored: FlagCardLite[] = [
+    { label: 'Shared front card', findings: [{ field: 'other', status: 'flag', printed: 'grey field', supplied: 'black card', note: 'tone' }] },
+    { label: 'Andrew Forbes — back', findings: [
+      { field: 'website', status: 'flag', printed: '(none shown)', supplied: 'https://wmsrisk.co.uk', note: 'omitted' },
+      { field: 'tel', status: 'match', printed: '07309 680 269', supplied: '07309680269', note: '' },
+    ] },
+    { label: 'Carl Manning — back', findings: [{ field: 'name', status: 'match', printed: 'Carl Manning', supplied: 'Carl Manning', note: '' }] },
+  ]
+
+  const exact = resolveReportFlag(stored, { card: 'Andrew Forbes — back', field: 'website' }, roster)
+  eq('exact label resolves', exact?.printed, '(none shown)')
+
+  const relabelled = resolveReportFlag(stored, { card: 'Andrew Forbes — back (03_AndrewForbes_Steel.ai)', field: 'website' }, roster)
+  eq('re-run relabelling still resolves', relabelled?.card, 'Andrew Forbes — back')
+  eq('resolved flag carries the STORED values', relabelled?.supplied, 'https://wmsrisk.co.uk')
+
+  const reworded = resolveReportFlag(stored, { card: 'Andrew Forbes back of card', field: 'website' }, roster)
+  eq('same person + field resolves when unambiguous', reworded?.card, 'Andrew Forbes — back')
+
+  eq('a flag that is genuinely gone stays unresolved',
+    resolveReportFlag(stored, { card: 'Carl Manning — back', field: 'website' }, roster), null)
+  eq('a field nobody is flagged on stays unresolved',
+    resolveReportFlag(stored, { card: 'Andrew Forbes — back', field: 'email' }, roster), null)
+
+  // Two people flagged on one field: never guess between them.
+  const both: FlagCardLite[] = [
+    { label: 'Andrew Forbes — back', findings: [{ field: 'website', status: 'flag', printed: 'a', supplied: '', note: '' }] },
+    { label: 'Carl Manning — back', findings: [{ field: 'website', status: 'flag', printed: 'b', supplied: '', note: '' }] },
+  ]
+  eq('ambiguous relabelling is refused, not guessed',
+    resolveReportFlag(both, { card: 'Someone else — back', field: 'website' }, roster), null)
+  eq('but each own label still resolves',
+    resolveReportFlag(both, { card: 'Carl Manning — back (01_CarlManning_Steel.ai)', field: 'website' }, roster)?.printed, 'b')
+
+  // A shared card carries no recipient, so it only ever pairs with another
+  // that carries none.
+  eq('shared card resolves via the no-recipient route',
+    resolveReportFlag(stored, { card: 'Shared front (03_Front_Steel.ai)', field: 'other' }, roster)?.card, 'Shared front card')
+}
 
 {
   const versions: VersionRowLite[] = [

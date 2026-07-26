@@ -53,6 +53,7 @@ import {
   investigationKey,
   matchCardToRecipient,
   pickInvestigationImages,
+  resolveReportFlag,
   type Investigation,
   type InvestigationTimelineEntry,
   type VersionImageRowLite,
@@ -194,6 +195,7 @@ Deno.serve(async (req) => {
     person_quantities: unknown
     artwork_check: unknown
     artwork_checked_at: string | null
+    artwork_check_running_at: string | null
   }
   type VersionTargetRow = {
     id: string
@@ -216,7 +218,7 @@ Deno.serve(async (req) => {
     // errors here, which the page treats as "check unavailable").
     const { data, error: orderErr } = await admin
       .from('orders')
-      .select('id, proof_id, dropbox_folder_url, material_id, stock_order_number, project_name, person_quantities, artwork_check, artwork_checked_at')
+      .select('id, proof_id, dropbox_folder_url, material_id, stock_order_number, project_name, person_quantities, artwork_check, artwork_checked_at, artwork_check_running_at')
       .eq('id', orderId)
       .maybeSingle()
     if (orderErr) return json({ ok: false, error: `Order lookup failed: ${orderErr.message}` }, 500)
@@ -251,6 +253,79 @@ Deno.serve(async (req) => {
     return !updErr
   }
 
+  // ── One run at a time, per order (migration 000346) ────────────────────────
+  // Order prep fires this function twice in parallel by design: linking the
+  // Dropbox folder trips the 000337 trigger (force:true), and the reviewer
+  // opens the review page moments later, which auto-runs the check itself.
+  // Both used to run in full and write the report blind, so the last to
+  // finish won — and the reviewer was usually reading the other one (live
+  // case: order 403922, 2026-07-26). Now the first caller claims the run and
+  // the second WAITS for its report, so a) we pay for one pass over the print
+  // files, not two, and b) what the reviewer reads is what the order stores.
+  //
+  // The claim is a conditional UPDATE, which Postgres serialises on the row —
+  // exactly one caller can win it. A stamp older than the TTL means a run
+  // died mid-flight and is up for grabs again; nothing can wedge an order out
+  // of being checked.
+  const RUN_CLAIM_TTL_MS = 5 * 60_000
+  const RUN_WAIT_MAX_MS = 110_000 // stays inside the function's wall-clock ceiling
+  const RUN_WAIT_POLL_MS = 2_000
+
+  function claimIsLive(stamp: string | null): boolean {
+    return stamp !== null && Date.now() - Date.parse(stamp) < RUN_CLAIM_TTL_MS
+  }
+
+  async function claimRun(orderId: string): Promise<boolean> {
+    const staleBefore = new Date(Date.now() - RUN_CLAIM_TTL_MS).toISOString()
+    const { data, error: claimErr } = await admin
+      .from('orders')
+      .update({ artwork_check_running_at: new Date().toISOString() })
+      .eq('id', orderId)
+      .or(`artwork_check_running_at.is.null,artwork_check_running_at.lt.${staleBefore}`)
+      .select('id')
+    // A failed claim WRITE (not a lost race) must not block the check —
+    // degrade to the old behaviour and run.
+    if (claimErr) {
+      console.error('[artwork-check] claim failed:', claimErr.message)
+      return true
+    }
+    return Array.isArray(data) && data.length > 0
+  }
+
+  async function releaseClaim(orderId: string): Promise<void> {
+    const { error: relErr } = await admin.from('orders').update({ artwork_check_running_at: null }).eq('id', orderId)
+    if (relErr) console.error('[artwork-check] claim release failed:', relErr.message)
+  }
+
+  // Wait for the run already in flight and hand back ITS report. Returns null
+  // if the wait runs out or that run died without storing anything.
+  async function waitForRunningReport(orderId: string): Promise<ArtworkCheckReport | null> {
+    const deadline = Date.now() + RUN_WAIT_MAX_MS
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, RUN_WAIT_POLL_MS))
+      const { data } = await admin
+        .from('orders')
+        .select('artwork_check, artwork_check_running_at')
+        .eq('id', orderId)
+        .maybeSingle()
+      const row = data as { artwork_check: ArtworkCheckReport | null; artwork_check_running_at: string | null } | null
+      if (!row) return null
+      // Cleared = that run finished and stored its report, in one patch.
+      if (row.artwork_check_running_at === null) return row.artwork_check
+      if (!claimIsLive(row.artwork_check_running_at)) return null // it died
+    }
+    return null
+  }
+
+  // The answer for a caller that couldn't claim: the in-flight run's report,
+  // else whatever is stored, else an honest "come back in a moment".
+  async function respondToInFlightRun(orderId: string): Promise<Response> {
+    const waited = await waitForRunningReport(orderId)
+    if (waited) return json({ ok: true, ...respBase, report: waited, waited: true })
+    if (existingReport) return json({ ok: true, ...respBase, cached: true, report: existingReport })
+    return json({ ok: false, ...respBase, error: 'A check is already running for this order — give it a moment and try again.' }, 409)
+  }
+
   // ── Flag investigation (designer-triggered escalation) ────────────────────
   // Scoped to ONE flag: walks the flagged card's artwork across every proof
   // version against the thread's dated instructions and returns a timeline +
@@ -262,29 +337,45 @@ Deno.serve(async (req) => {
     if (!report) return json({ ok: false, error: 'Run the artwork check first — there is no report to investigate.' }, 400)
     const card = String(investigateReq.card ?? '')
     const field = String(investigateReq.field ?? '')
-    const finding = report.cards
-      .find((c) => c.label === card)?.findings
-      .find((f) => f.field === field && f.status === 'flag')
-    if (!finding) return json({ ok: false, error: 'That flag is not on the current report (it may have been re-run).' }, 404)
 
-    const key = investigationKey(card, field)
+    // Every round of this proof, oldest first — the walk reads forward, and
+    // the roster is needed up here to resolve the flag (below).
+    const { data: verRows } = await admin
+      .from('proof_versions')
+      .select('id, version_number, created_at, material_display, names')
+      .eq('proof_id', targetProofId)
+      .order('version_number', { ascending: true })
+    const versions = (verRows ?? []) as (VersionRowLite & { names: string[] | null })[]
+    if (versions.length === 0) return json({ ok: false, error: 'No proof versions found.' }, 404)
+
+    // The union of every round's roster (people join later rounds).
+    const allNames = [...new Set(versions.flatMap((v) => (Array.isArray(v.names) ? v.names : []).map((n) => String(n).trim()).filter(Boolean)))]
+
+    // Match the flag the designer clicked onto the report the DATABASE holds
+    // — tolerantly, because a re-run rewords the labels (see
+    // resolveReportFlag). A genuine miss means the page is showing a report
+    // that no longer exists: hand back the current one so the client can
+    // refresh in place instead of leaving a dead button.
+    const finding = resolveReportFlag(report.cards, { card, field }, allNames)
+    if (!finding) {
+      return json({
+        ok: false,
+        ...respBase,
+        code: 'stale_report',
+        error: 'This check has been re-run since the page loaded, and that flag isn’t on the new report. The flags below are the current ones.',
+        report,
+      }, 409)
+    }
+
+    // Keyed on the STORED label, so the cached walk is found again after a
+    // refresh renders that label.
+    const key = investigationKey(finding.card, field)
     const existing = (report as { investigations?: Record<string, Investigation> }).investigations?.[key]
     if (existing && !force) return json({ ok: true, ...respBase, cached: true, key, investigation: existing })
 
     try {
-      // Every round of this proof, oldest first — the walk reads forward.
-      const { data: verRows } = await admin
-        .from('proof_versions')
-        .select('id, version_number, created_at, material_display, names')
-        .eq('proof_id', targetProofId)
-        .order('version_number', { ascending: true })
-      const versions = (verRows ?? []) as (VersionRowLite & { names: string[] | null })[]
-      if (versions.length === 0) return json({ ok: false, error: 'No proof versions found.' }, 404)
-
-      // The recipient the flagged card belongs to, matched against the union
-      // of every round's roster (people join later rounds).
-      const allNames = [...new Set(versions.flatMap((v) => (Array.isArray(v.names) ? v.names : []).map((n) => String(n).trim()).filter(Boolean)))]
-      const recipient = matchCardToRecipient(card, allNames)
+      // The recipient the flagged card belongs to.
+      const recipient = matchCardToRecipient(finding.card, allNames)
 
       const { data: imgRows } = await admin
         .from('proof_version_images')
@@ -335,7 +426,7 @@ Deno.serve(async (req) => {
           })),
           conclusion: 'No stored artwork could be read for this card in any round, so the history cannot be walked — compare the flag against the thread dates in the main report.',
           fault: 'undetermined',
-          card,
+          card: finding.card,
           field,
           at: new Date().toISOString(),
           model: runModel,
@@ -345,7 +436,7 @@ Deno.serve(async (req) => {
         const blocks: ContentBlock[] = [{
           type: 'text',
           text: buildInvestigationContext(
-            { card, field, printed: finding.printed, supplied: finding.supplied, note: finding.note },
+            { card: finding.card, field, printed: finding.printed, supplied: finding.supplied, note: finding.note },
             versions,
             recipient,
             threadText,
@@ -376,7 +467,7 @@ Deno.serve(async (req) => {
         )
         investigation = {
           ...result,
-          card,
+          card: finding.card,
           field,
           at: new Date().toISOString(),
           model: runModel,
@@ -400,8 +491,22 @@ Deno.serve(async (req) => {
     }
   }
 
+  // A run already in flight wins, even over a cached report and even for a
+  // force request: the report about to land IS the fresh one, and showing the
+  // reviewer the copy it's about to replace is precisely the divergence this
+  // guard exists to stop.
+  if (order && claimIsLive(order.artwork_check_running_at)) {
+    return await respondToInFlightRun(order.id)
+  }
+
   if (existingReport && !force) {
     return json({ ok: true, ...respBase, cached: true, report: existingReport })
+  }
+
+  // Claim the run. Losing here means another caller claimed it in the moment
+  // between the read above and now — wait for theirs rather than duplicating.
+  if (order && !(await claimRun(order.id))) {
+    return await respondToInFlightRun(order.id)
   }
 
   // ── Gather the shared context (proof, names, QRs, account fields) ──────────
@@ -437,7 +542,11 @@ Deno.serve(async (req) => {
     const orderMaterialId = order.material_id ?? null
     const materialMatches = orderMaterialId ? allVersions.filter((v) => v.material_id === orderMaterialId) : []
     const picked = materialMatches.find((v) => v.is_current) ?? materialMatches[0] ?? allVersions.find((v) => v.is_current) ?? null
-    if (!picked) return json({ ok: false, error: 'No proof version found.' }, 404)
+    if (!picked) {
+      // The one exit between claiming and finish() that stores no report.
+      await releaseClaim(order.id)
+      return json({ ok: false, error: 'No proof version found.' }, 404)
+    }
     pv = picked
   } else {
     pv = versionTarget!
@@ -690,10 +799,13 @@ Deno.serve(async (req) => {
   // Persist + respond with a report (success or error alike) — an errored run
   // still stamps artwork_checked_at, deliberately (non-stranding gate).
   async function finish(report: ArtworkCheckReport): Promise<Response> {
+    // Storing the report and releasing the claim are the same write, so a
+    // waiting caller can never see one without the other.
     const persisted = await persistReportPatch({
       artwork_check: report,
       artwork_checked_at: report.checked_at,
       artwork_check_verdict: report.verdict,
+      artwork_check_running_at: null,
     })
     return json({ ok: true, ...respBase, report, persisted })
   }

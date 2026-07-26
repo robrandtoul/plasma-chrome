@@ -457,6 +457,7 @@ export default function VersionPreviewGate({
                   Re-check
                 </button>
               }
+              notice={proofCheck.staleNotice}
               onInvestigate={(flag) => void proofCheck.investigate(flag)}
               investigatingKey={proofCheck.investigatingKey}
               investigationError={proofCheck.investigationError}

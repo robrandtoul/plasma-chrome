@@ -636,6 +636,7 @@ export default function ProofDetailPage() {
     runError: proofCheckRunError,
     investigatingKey: pcInvestigatingKey,
     investigationError: pcInvestigationError,
+    staleNotice: pcStaleNotice,
   } = useProofCheck(
     pcCurrentVersion?.id ?? null,
     (pcCurrentVersion?.artwork_check ?? null) as ArtworkCheckReport | null,
@@ -3757,6 +3758,7 @@ export default function ProofDetailPage() {
                     Re-check
                   </button>
                 }
+                notice={pcStaleNotice}
                 onInvestigate={(flag) => void investigateProofFlag(flag)}
                 investigatingKey={pcInvestigatingKey}
                 investigationError={pcInvestigationError}

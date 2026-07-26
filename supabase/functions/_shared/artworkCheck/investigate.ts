@@ -61,6 +61,91 @@ export function matchCardToRecipient(cardLabel: string, recipients: string[]): s
   return best
 }
 
+// ── Resolving a rendered flag back onto the stored report ────────────────────
+// The Investigate button sends the (card, field) the DESIGNER is looking at,
+// and the function has to find that flag on the report the database holds. An
+// exact label match is too brittle to be the only route: card labels are
+// model-written free text, regenerated on every run, and the wording drifts
+// between runs of the same artwork — "Andrew Forbes — back" one run,
+// "Andrew Forbes — back (03_AndrewForbes_Steel.ai)" the next. Any re-run
+// (the 000337 folder-link auto-run, a designer's Re-run, a second tab) then
+// killed every Investigate button on the open page with a dead-end error.
+// Live case: order 403922, 2026-07-26.
+//
+// Comparison form: lower-cased, parentheticals dropped (that's where the file
+// name lands), everything non-alphanumeric collapsed to single spaces.
+export function normaliseCardLabel(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+export interface FlagFindingLite {
+  field: string
+  status: string
+  printed: string
+  supplied: string
+  note: string
+}
+
+export interface FlagCardLite {
+  label: string
+  findings: FlagFindingLite[]
+}
+
+export interface ResolvedFlag {
+  // The label as the STORED report writes it — what the investigation is
+  // cached under, so a refreshed page finds it.
+  card: string
+  field: string
+  printed: string
+  supplied: string
+  note: string
+}
+
+// Find the requested flag on the stored report, three routes, most exact
+// first. Deliberately conservative: it will return null rather than
+// investigate a flag the designer didn't click, and the caller turns that
+// into "this report was re-run, here's the current one".
+export function resolveReportFlag(
+  cards: FlagCardLite[],
+  want: { card: string; field: string },
+  roster: string[],
+): ResolvedFlag | null {
+  const flags = cards.flatMap((c) =>
+    c.findings.filter((f) => f.status === 'flag' && f.field === want.field).map((f) => ({ label: c.label, f })))
+  if (flags.length === 0) return null
+  const pick = (hit: { label: string; f: FlagFindingLite }): ResolvedFlag => ({
+    card: hit.label,
+    field: hit.f.field,
+    printed: hit.f.printed,
+    supplied: hit.f.supplied,
+    note: hit.f.note,
+  })
+
+  // 1. Same label, character for character.
+  const exact = flags.find((hit) => hit.label === want.card)
+  if (exact) return pick(exact)
+
+  // 2. Same label once the wording noise is stripped.
+  const wanted = normaliseCardLabel(want.card)
+  const normalised = flags.filter((hit) => normaliseCardLabel(hit.label) === wanted)
+  if (normalised.length === 1) return pick(normalised[0])
+
+  // 3. Same person and same field, when that's unambiguous — a relabelled
+  // card for the recipient the designer clicked. Requires exactly one
+  // candidate: two people flagged on one field must never be guessed between,
+  // and a card matching NO recipient (the shared artwork) only ever pairs
+  // with another that matches none.
+  const wantRecipient = matchCardToRecipient(want.card, roster)
+  const sameRecipient = flags.filter((hit) => matchCardToRecipient(hit.label, roster) === wantRecipient)
+  if (sameRecipient.length === 1) return pick(sameRecipient[0])
+
+  return null
+}
+
 export interface VersionRowLite {
   id: string
   version_number: number

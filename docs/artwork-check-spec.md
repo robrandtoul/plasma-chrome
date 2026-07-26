@@ -711,3 +711,35 @@ unchanged folder link (re-link and Re-run cover it meanwhile), admin-editable *r
 (the prompt allow-list — step 2 of the admin graduation, distinct from the model picker),
 verifying the PRINT file's QR byte-for-byte (needs a PDF rasteriser), and any soft-block
 (if ever wanted, "reds require an I've-reviewed tick" is its natural scope).
+
+**One run at a time, and Investigate surviving a re-run (2026-07-26, migration
+000346).** The reported symptom was small — "Investigate the history" answering
+*That flag is not on the current report* — but the cause was not. Order prep fires
+this check **twice, in parallel, by design**: linking the Dropbox folder trips the
+000337 auto-run (`force:true`), and the reviewer opens the review page seconds later,
+which auto-runs it too — and with no report cached yet, that second call ran the
+whole thing again. Both wrote `orders.artwork_check` blind, so the last to finish
+won. Live trace, order 403922: folder linked 11:00:12 → run A starts; page opens
+11:00:17 → run B starts; run B finishes 11:01:23 and is **what the reviewer read**;
+run A finishes 11:01:34 and is **what the order stored**; order placed 11:02:20. Two
+full Opus passes over the print files per order, and the stored record of the check
+is a different run from the one the human signed off.
+
+The fix has two halves. (1) **A run claim** (`orders.artwork_check_running_at`): the
+first caller claims via a conditional UPDATE — Postgres serialises the row, so
+exactly one wins — and the second **waits for that run's report** instead of starting
+its own, including when a report is already cached and even for a `force` request
+(the report about to land IS the fresh one; showing the reviewer the copy it's about
+to replace is the whole bug). Storing the report and clearing the claim are the same
+patch, so a waiter never sees one without the other; a claim older than 5 minutes
+counts as an abandoned run, so nothing can wedge an order out of being checked.
+Orders only — the pre-send proof check has no auto-run and no structural race.
+(2) **Tolerant flag resolution** (`resolveReportFlag`, tested): card labels are
+model-written free text, reworded on every run ("Andrew Forbes — back" vs "Andrew
+Forbes — back (03_AndrewForbes_Steel.ai)"), so an exact-match lookup meant *any*
+re-run killed every Investigate button on the open page. Three routes, most exact
+first: same label → same label once normalised (parentheticals dropped) → same person
+and same field when that is unambiguous. It refuses rather than guesses: two people
+flagged on one field never resolve. A genuine miss now returns the report the
+database actually holds, and the page **swaps it in with a plain-English notice**
+instead of leaving a dead button on a report that no longer exists.

@@ -6,7 +6,7 @@ import { ImageCard, type GridImage } from '../components/ImageGrid'
 import Modal from '../components/Modal'
 import { checkEditedMessage } from '../lib/handoffMessageCheck'
 import ArtworkCheckReportView, { InlineSpinner, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
-import { invokeArtworkCheck } from '../lib/useProofCheck'
+import { mergeInvestigation, requestInvestigation } from '../lib/useProofCheck'
 
 // OrderReviewPage (/orders/:id/place) — the review-and-confirm screen for placing
 // a PAID order into production. Shows the artwork, spec, quantities, destination
@@ -325,28 +325,30 @@ export default function OrderReviewPage() {
   // local report so the timeline appears without a refetch.
   const [investigatingKey, setInvestigatingKey] = useState<string | null>(null)
   const [investigationError, setInvestigationError] = useState<{ key: string; message: string } | null>(null)
+  const [staleNotice, setStaleNotice] = useState<string | null>(null)
 
   async function investigateFlag(flag: { card: string; field: string }) {
     if (!id) return
     const key = `${flag.card}::${flag.field}`
     setInvestigatingKey(key)
     setInvestigationError(null)
+    setStaleNotice(null)
     try {
-      // invokeArtworkCheck surfaces the server's real message (or an honest
-      // network-blip line) instead of collapsing every failure to a generic
-      // string — see useProofCheck.ts.
-      const { data, errMsg } = await invokeArtworkCheck<{
-        ok: boolean
-        investigation?: NonNullable<ArtworkCheckReport['investigations']>[string]
-        error?: string
-      }>({ order_id: id, investigate: flag })
-      if (data?.ok && data.investigation) {
-        const inv = data.investigation
+      // requestInvestigation surfaces the server's real message and, when the
+      // check has been re-run underneath this page, the report the database
+      // actually holds — see useProofCheck.ts.
+      const out = await requestInvestigation({ order_id: id }, flag)
+      if (out.investigation) {
+        const inv = out.investigation
         setArtworkCheck((prev) => prev.report
-          ? { ...prev, report: { ...prev.report, investigations: { ...(prev.report.investigations ?? {}), [key]: inv } } }
+          ? { ...prev, report: mergeInvestigation(prev.report, [out.key, key], inv) }
           : prev)
+      } else if (out.staleReport) {
+        const fresh = out.staleReport
+        setArtworkCheck((prev) => ({ ...prev, status: 'done', report: fresh }))
+        setStaleNotice(out.message ?? 'This check has been re-run — the flags below are the current ones.')
       } else {
-        setInvestigationError({ key, message: errMsg ?? data?.error ?? 'The investigation couldn’t run — try again.' })
+        setInvestigationError({ key, message: out.message ?? 'The investigation couldn’t run — try again.' })
       }
     } finally {
       setInvestigatingKey(null)
@@ -776,6 +778,7 @@ export default function OrderReviewPage() {
                         Re-run
                       </button>
                     }
+                    notice={staleNotice}
                     onInvestigate={(flag) => void investigateFlag(flag)}
                     investigatingKey={investigatingKey}
                     investigationError={investigationError}

@@ -121,6 +121,7 @@ export default function ArtworkCheckReportView({
   report,
   heading,
   action,
+  notice,
   onInvestigate,
   investigatingKey,
   investigationError,
@@ -129,6 +130,11 @@ export default function ArtworkCheckReportView({
   // Names the check in the headline — defaults to "Artwork check" (the
   // order-time surfaces); the pre-send proof surface passes "Proof check".
   heading?: string
+  // Report-level message, shown under the summary. Used when the report on
+  // screen had to be swapped for the stored one (the check was re-run
+  // underneath the page) — a per-flag message would disappear along with the
+  // flag it was keyed to.
+  notice?: string | null
   // Optional control shown at the top-right of the headline (the review page's
   // Re-run); the read-only archive modal passes none.
   action?: ReactNode
@@ -159,6 +165,12 @@ export default function ArtworkCheckReportView({
       </div>
 
       <p className="mt-2 text-ink-soft">{report.summary}</p>
+
+      {notice && (
+        <p className="mt-2 rounded-lg border border-line-soft bg-canvas/70 px-3 py-2 text-[13px] text-ink-soft">
+          {notice}
+        </p>
+      )}
 
       {/* The side-by-side comparison — second only to the verdict (Rob,
           2026-07-24), so it renders open and up top: every checked field per

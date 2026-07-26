@@ -24,23 +24,78 @@ import type { ArtworkCheckReport } from '../components/ArtworkCheckReportView'
 // fetch/relay failure yields an honest "network blip, try again".
 export async function invokeArtworkCheck<T>(
   body: Record<string, unknown>,
-): Promise<{ data: T | null; errMsg: string | null }> {
+): Promise<{ data: T | null; errMsg: string | null; errBody: ArtworkCheckErrorBody | null }> {
   try {
     const { data, error } = await supabase.functions.invoke<T>('artwork-check', { body })
-    if (!error) return { data, errMsg: null }
+    if (!error) return { data, errMsg: null, errBody: null }
     if (error instanceof FunctionsHttpError) {
       try {
-        const parsed = (await error.context.json()) as { error?: unknown }
+        const parsed = (await error.context.json()) as ArtworkCheckErrorBody
         if (typeof parsed?.error === 'string' && parsed.error) {
-          return { data: null, errMsg: parsed.error }
+          return { data: null, errMsg: parsed.error, errBody: parsed }
         }
       } catch { /* non-JSON error body */ }
-      return { data: null, errMsg: 'The check service returned an error — try again.' }
+      return { data: null, errMsg: 'The check service returned an error — try again.', errBody: null }
     }
-    return { data: null, errMsg: 'Couldn’t reach the check service — usually a momentary network blip. Try again.' }
+    return { data: null, errMsg: 'Couldn’t reach the check service — usually a momentary network blip. Try again.', errBody: null }
   } catch {
-    return { data: null, errMsg: 'Couldn’t reach the check service — usually a momentary network blip. Try again.' }
+    return { data: null, errMsg: 'Couldn’t reach the check service — usually a momentary network blip. Try again.', errBody: null }
   }
+}
+
+interface ArtworkCheckErrorBody {
+  error?: unknown
+  // 'stale_report' — the flag was clicked on a report the database no longer
+  // holds (the check was re-run underneath the page); `report` is the current
+  // one, so the caller can refresh in place.
+  code?: unknown
+  report?: ArtworkCheckReport
+}
+
+type Investigation = NonNullable<ArtworkCheckReport['investigations']>[string]
+
+// One interpretation of an investigate response for every surface that offers
+// the button (the review page, the Orders archive modal, the proof-check
+// panel). Three outcomes: the walk; a stale report to swap in; or a message.
+export interface InvestigateOutcome {
+  investigation?: Investigation
+  // The key the server cached it under — the STORED card label, which can
+  // differ from the label on screen after a re-run.
+  key?: string
+  staleReport?: ArtworkCheckReport
+  message?: string
+}
+
+export async function requestInvestigation(
+  target: Record<string, unknown>,
+  flag: { card: string; field: string },
+): Promise<InvestigateOutcome> {
+  const { data, errMsg, errBody } = await invokeArtworkCheck<{
+    ok: boolean
+    investigation?: Investigation
+    key?: string
+    error?: string
+  }>({ ...target, investigate: flag })
+  if (data?.ok && data.investigation) {
+    return { investigation: data.investigation, key: data.key }
+  }
+  if (errBody?.code === 'stale_report' && errBody.report) {
+    return { staleReport: errBody.report, message: errMsg ?? undefined }
+  }
+  return { message: errMsg ?? data?.error ?? 'The investigation couldn’t run — try again.' }
+}
+
+// Merge a returned walk into a report under both the server's key and the one
+// the open page rendered from, so the timeline appears immediately AND is
+// still found once the page reloads the stored report.
+export function mergeInvestigation(
+  report: ArtworkCheckReport,
+  keys: (string | undefined)[],
+  investigation: Investigation,
+): ArtworkCheckReport {
+  const investigations = { ...(report.investigations ?? {}) }
+  for (const k of keys) if (k) investigations[k] = investigation
+  return { ...report, investigations }
 }
 
 export interface ProofCheckState {
@@ -60,6 +115,9 @@ export function useProofCheck(
   const [runError, setRunError] = useState<string | null>(null)
   const [investigatingKey, setInvestigatingKey] = useState<string | null>(null)
   const [investigationError, setInvestigationError] = useState<{ key: string; message: string } | null>(null)
+  // Shown above the report when it had to be swapped for the stored one — a
+  // per-flag error would vanish with the flag it was keyed to.
+  const [staleNotice, setStaleNotice] = useState<string | null>(null)
 
   // Is the feature on? One cheap read; off (or a failed read, or a
   // pre-000343 DB) simply hides the surfaces.
@@ -118,24 +176,25 @@ export function useProofCheck(
     const key = `${flag.card}::${flag.field}`
     setInvestigatingKey(key)
     setInvestigationError(null)
+    setStaleNotice(null)
     try {
-      const { data, errMsg } = await invokeArtworkCheck<{
-        ok: boolean
-        investigation?: NonNullable<ArtworkCheckReport['investigations']>[string]
-        error?: string
-      }>({ proof_version_id: versionId, investigate: flag })
-      if (data?.ok && data.investigation) {
-        const inv = data.investigation
-        setCheck((prev) => prev.report
-          ? { ...prev, report: { ...prev.report, investigations: { ...(prev.report.investigations ?? {}), [key]: inv } } }
-          : prev)
+      const out = await requestInvestigation({ proof_version_id: versionId }, flag)
+      if (out.investigation) {
+        const inv = out.investigation
+        setCheck((prev) => prev.report ? { ...prev, report: mergeInvestigation(prev.report, [out.key, key], inv) } : prev)
+      } else if (out.staleReport) {
+        // The check was re-run underneath us — show what's actually stored
+        // rather than leaving a dead button on a report that's gone.
+        const fresh = out.staleReport
+        setCheck({ status: 'done', report: fresh })
+        setStaleNotice(out.message ?? 'This check has been re-run — the flags below are the current ones.')
       } else {
-        setInvestigationError({ key, message: errMsg ?? data?.error ?? 'The investigation couldn’t run — try again.' })
+        setInvestigationError({ key, message: out.message ?? 'The investigation couldn’t run — try again.' })
       }
     } finally {
       setInvestigatingKey(null)
     }
   }
 
-  return { enabled, check, run, investigate, runError, investigatingKey, investigationError }
+  return { enabled, check, run, investigate, runError, investigatingKey, investigationError, staleNotice }
 }
