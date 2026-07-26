@@ -38,6 +38,7 @@ import { SpreadQuoteResults } from '../src/components/quote/SpreadQuoteResults'
 import { RecapArtwork, buildRecapTiles } from '../src/components/ArtworkFade'
 import ArtworkCheckReportView, { type ArtworkCheckReport } from '../src/components/ArtworkCheckReportView'
 import VersionPreviewGate from '../src/components/VersionPreviewGate'
+import { ProofAnnotationEditor } from '../src/components/ProofAnnotationEditor'
 import Modal from '../src/components/Modal'
 import { ButtonGhost } from '../src/design'
 import type { GridImage } from '../src/components/ImageGrid'
@@ -322,6 +323,28 @@ function DetailMarkersRig() {
   )
 }
 
+// ?path=/customer-pins mounts the DESIGNER half of the pin feature (migration
+// 000347) — the surface a designer opens to see where the customer pointed.
+// It needs its own rig because you cannot sign in headlessly, so this is the
+// only way to click-test the four things that make the feature work at all:
+// blue numbered dots sitting on the placed coordinates, dot numbers matching
+// the checklist rows, "Show me where" switching to the pin's own side, and a
+// tick turning that pin green.
+//
+// The fixture pins share one created_at on purpose (proof-action writes both in
+// a single insert), so the ordering tie-break is exercised rather than assumed.
+function CustomerPinsRig() {
+  return (
+    <ProofAnnotationEditor
+      open
+      onClose={() => {}}
+      versionId="demo-version"
+      versionNumber={11}
+      userId="user-rob"
+    />
+  )
+}
+
 function PreviewGateRig() {
   return (
     <VersionPreviewGate
@@ -354,6 +377,8 @@ const requestedPath =
 // its layout and the fixture-backed proof search can be checked headlessly.
 const tree = requestedPath === '/detail-markers' ? (
   <DetailMarkersRig />
+) : requestedPath === '/customer-pins' ? (
+  <CustomerPinsRig />
 ) : requestedPath === '/quote-spread' ? (
   <QuoteSpreadRig />
 ) : requestedPath === '/recap-zoom' ? (

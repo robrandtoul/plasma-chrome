@@ -532,6 +532,27 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
       { id: 'img-front', image_path: 'proofs/approved-front.pdf', original_filename: 'Approved_Front.pdf', associated_name: null, side: 'front', layout_id: null },
       { id: 'img-back', image_path: 'proofs/approved-back.pdf', original_filename: 'Approved_Back.pdf', associated_name: null, side: 'back', layout_id: null },
     ]
+  } else if (table === 'proof_annotations') {
+    // Customer pins as proof-action writes them (migration 000347): one per
+    // side, and — the detail that matters — a SHARED created_at, because both
+    // rows land in a single insert. The designer editor sorts on that column,
+    // so this fixture is what makes the tie-break testable at all.
+    rows = [
+      {
+        id: 'pin-front', proof_version_id: 'demo-version', proof_version_image_id: 'img-front',
+        side: 'front', associated_name: 'Nolan Bushnell', x: 0.30, y: 0.40,
+        body: 'Logo sits too low here', author_kind: 'customer', created_by: null,
+        author_name: 'Nolan Bushnell', proof_event_id: 'evt-1', resolved_at: null,
+        resolved_by: null, created_at: '2026-07-26T16:32:41.989Z',
+      },
+      {
+        id: 'pin-back', proof_version_id: 'demo-version', proof_version_image_id: 'img-back',
+        side: 'back', associated_name: 'Nolan Bushnell', x: 0.70, y: 0.25,
+        body: 'Tagline should be bolder', author_kind: 'customer', created_by: null,
+        author_name: 'Nolan Bushnell', proof_event_id: 'evt-1', resolved_at: null,
+        resolved_by: null, created_at: '2026-07-26T16:32:41.989Z',
+      },
+    ]
   } else if (table === 'settings') {
     rows = [{ ordering_enabled: true, order_reminders_max: 3, order_reminder_interval_days: 3, auto_order_reminders_enabled: true, artwork_check_mode: 'live', artwork_check_required: false, artwork_check_model: null, proof_check_enabled: true, proof_callouts_enabled: true, proof_pins_enabled: true }]
   } else if (table === 'site_settings') {

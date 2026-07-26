@@ -23,6 +23,7 @@
     "test:eu-vat": "tsx supabase/functions/_shared/euVatArea.test.ts",
     "test:order-snapshot": "tsx supabase/functions/_shared/orderSpecSnapshot.test.ts",
     "test:nudges": "tsx supabase/functions/_shared/nudgeDecision.test.ts",
+    "test:thread-text": "tsx supabase/functions/_shared/customerThreadText.test.ts",
     "test:message-html": "tsx supabase/functions/_shared/messageHtml.test.ts",
     "test:material-match": "tsx src/lib/matchMaterial.test.ts",
     "test:wizard": "tsx src/components/ProofShapeWizard.test.ts",

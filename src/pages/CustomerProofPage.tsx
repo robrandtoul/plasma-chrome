@@ -4234,15 +4234,22 @@ export default function CustomerProofPage() {
             actionPanel.type === 'request_changes' &&
             !actionPanel.roundVariant &&
             activeVersion
-              ? (versionImages[actionPanel.versionId] ?? []).filter((img) => {
-                  // Only the slot's own artwork: a pin on someone else's card
-                  // would arrive attributed to the wrong recipient.
-                  if (actionPanel.name === SHARED_APPROVAL_KEY) return true
-                  return (
-                    img.associated_name == null ||
-                    img.associated_name === actionPanel.name
-                  )
-                })
+              ? (versionImages[actionPanel.versionId] ?? [])
+                  .filter((img) => {
+                    // Only the slot's own artwork: a pin on someone else's card
+                    // would arrive attributed to the wrong recipient.
+                    if (actionPanel.name === SHARED_APPROVAL_KEY) return true
+                    return (
+                      img.associated_name == null ||
+                      img.associated_name === actionPanel.name
+                    )
+                  })
+                  // Front first. versionImages is in the edge function's
+                  // response order (no ORDER BY), so without this the placer
+                  // opens on whichever face happened to come back first — the
+                  // back, on the steel fixture.
+                  .slice()
+                  .sort((a, b) => imageSideWeight(a.side) - imageSideWeight(b.side))
               : []
           }
           draftPins={draftPins}
@@ -5173,6 +5180,18 @@ interface ImageGroup {
 // chromatic motif cycling through all four brand colours
 // across every rendered card rather than pinning each shared
 // image to a single colour.
+// Front before back, anything unsided last.
+//
+// Module-level rather than a closure because TWO surfaces need the same answer
+// and only one of them used to get it: the image grid sorted, while the "point
+// at it" pin placer was handed `versionImages[...]` raw. That array is whatever
+// order the customer-proof-images function returned — no ORDER BY, so on the
+// steel fixture it arrives back-first and the placer opened on the BACK of the
+// card. Anyone tapping straight in was pinning the wrong face.
+export function imageSideWeight(s: GridImage['side']): number {
+  return s === 'front' ? 0 : s === 'back' ? 1 : 2
+}
+
 function augmentNamedGroupsWithSharedPairs(
   sharedGroup: ImageGroup | null,
   namedGroups: ImageGroup[],
@@ -5183,8 +5202,7 @@ function augmentNamedGroupsWithSharedPairs(
       unconsumedSharedImages: sharedGroup?.images ?? [],
     }
   }
-  const sideWeight = (s: GridImage['side']): number =>
-    s === 'front' ? 0 : s === 'back' ? 1 : 2
+  const sideWeight = imageSideWeight
   const consumed = new Set<string>()
   const augmented = namedGroups.map((group) => {
     const hasFront = group.images.some((i) => i.side === 'front')

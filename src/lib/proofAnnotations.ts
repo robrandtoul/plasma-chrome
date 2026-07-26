@@ -29,13 +29,31 @@ export * from './proofAnnotationGeometry'
 
 // ── Reads ────────────────────────────────────────────────────────────────────
 
-/** Designer-side read: every annotation on a version, both authors. */
+/**
+ * Designer-side read: every annotation on a version, both authors.
+ *
+ * Ordered by created_at AND THEN id, because created_at alone is not a total
+ * order here: every pin on one change request is written by a single insert, so
+ * they all share the statement's now() to the microsecond. With a bare
+ * `order('created_at')` those rows tie, and a tie in SQL is not a stable
+ * order — it is whatever the scan produced. Ticking a pin off rewrites its row
+ * and can move it, so the numbering the designer is reading could renumber
+ * underneath them mid-task (reproduced against the live fixture: the same query
+ * returned front→back, then back→front after the row churned).
+ *
+ * That matters beyond tidiness: the dots, the checklist and the Help Scout note
+ * all number the same pins, and "2 · back" has to mean the same pin in all
+ * three. The id tie-break makes the order deterministic; proof-action stamps
+ * per-pin created_at values so that deterministic order is also the order the
+ * customer placed them in.
+ */
 export async function fetchAnnotations(versionId: string): Promise<ProofAnnotation[]> {
   const { data, error } = await supabase
     .from('proof_annotations')
     .select('*')
     .eq('proof_version_id', versionId)
     .order('created_at', { ascending: true })
+    .order('id', { ascending: true })
 
   if (error) throw error
   return (data ?? []) as ProofAnnotation[]
