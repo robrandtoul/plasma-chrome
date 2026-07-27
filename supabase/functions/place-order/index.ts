@@ -1064,6 +1064,10 @@ Deno.serve(async (req) => {
     return json({ ok: false, code: 'already_sent', error: `This order is already placed and ${chosen.name} was already emailed — nothing further was sent.` }, 409)
   }
 
+  // The Stock Control job this order resolved to, kept in scope so the
+  // conversation id can be stamped onto it after the email is created.
+  let scOrderId: string | null = null
+
   // LIVE: write the Stock Control job FIRST (see the in-house route). Nothing
   // has been emailed yet, so a failure here is clean and freely retryable.
   if (handoffMode === 'live') {
@@ -1096,6 +1100,7 @@ Deno.serve(async (req) => {
         error: `This order is already in Stock Control${wrote.wroteNothing ? '' : ' (it matched an existing job)'} — it has not been emailed again. Check the Orders page before placing it once more.`,
       }, 409)
     }
+    scOrderId = wrote.scOrderId ?? null
     await auditPlaced(admin, orderId, callerId, { route, subject, sc_order_id: wrote.scOrderId, supplier_id: chosen.id, supplier_name: chosen.name, supplier_overs: supplierOvers, ...(isReplace ? { old_job_cancelled: oldJobCancelled } : {}) })
   }
 
@@ -1143,6 +1148,24 @@ Deno.serve(async (req) => {
         supplier_email_sent_at: new Date().toISOString(),
         ...(newConvId ? { supplier_helpscout_conversation_id: newConvId } : {}),
       })
+      // Also stamp the conversation onto the Stock Control job itself. Today
+      // migration 000331's ref-based adoption fills this ~2s later when the
+      // webhook fires (verified: all live direct rows have it), but that route
+      // depends on the email still PARSING — which stops being true the moment
+      // the wording is freed, and on the webhook winning a race we don't
+      // control. Writing it here makes the link wording-independent, and it is
+      // what stops the outsourced parser treating the thread as a brand-new
+      // order (its first dedupe check is exactly this column).
+      if (newConvId && scOrderId) {
+        await pub
+          .from('outsourced_orders')
+          .update({ helpscout_conversation_id: Number(newConvId) })
+          .eq('id', scOrderId)
+          .is('helpscout_conversation_id', null)
+          .then(({ error }) => {
+            if (error) console.error('supplier conversation stamp failed:', error.message)
+          })
+      }
     }
     // Best-effort: file a copy of exactly what was sent to the supplier as an
     // internal note on the customer's proof thread. Help Scout notes are never
