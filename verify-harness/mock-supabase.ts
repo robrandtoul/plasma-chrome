@@ -638,6 +638,20 @@ export const supabase: any = {
   // "unrelated chrome never breaks the page under test" philosophy.
   rpc: async (name: string) => {
     if (name === 'dashboard_list') return { data: DASHBOARD_PROJECTS, error: null }
+    // Stock Control dispatch state (migration 000356) — Admin → Shipping uses
+    // this to drop already-sent parcels off the readiness worklist. o9 is
+    // delivered, o10 shipped-but-not-yet-delivered; both are `fulfilled` with
+    // no ship_to_* captured, so without this they'd sit in the worklist for
+    // ever. The other post-payment fixtures stay absent = not shipped.
+    if (name === 'admin_order_shipping_state') {
+      return {
+        data: [
+          { order_id: 'o9', shipped_at: daysAgo(4), delivered_at: daysAgo(2) },
+          { order_id: 'o10', shipped_at: daysAgo(3), delivered_at: null },
+        ],
+        error: null,
+      }
+    }
     // The staff roster, as the real SECURITY DEFINER RPC returns it. Lets the
     // Edit-profile colour picker be checked with colours actually taken.
     if (name === 'team_roster') return { data: PROFILES, error: null }

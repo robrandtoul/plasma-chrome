@@ -34,6 +34,12 @@ import type { Currency } from '../../lib/types'
 // US tariff were fixed at checkout — so a destination change here redirects the
 // PARCEL only; the modal spells that out, and warns when a job has already been
 // placed into production (Stock Control may have pulled the old address).
+//
+// Already-shipped orders drop out of the worklist (migration 000356). The tab
+// had no idea whether a parcel had gone, so it kept flagging orders long after
+// delivery — 49 of the 60 it listed had already shipped, every one of them for
+// "No phone number", which by then can't matter. They stay visible under All
+// paid orders with a Shipped / Delivered pill; only the chasing stops.
 
 // Post-payment statuses this tab covers ("paid, not yet shipped"). fulfilled =
 // already placed into production; included so a parcel can still be redirected
@@ -107,6 +113,27 @@ const SELECT = `
   material_options(display_name),
   proofs(contacts(full_name, companies(name)))
 `
+
+// ── Stock Control dispatch state ─────────────────────────────────────────────
+
+// One entry per order Stock Control says has gone to the customer, from the
+// proofs.admin_order_shipping_state() RPC (migration 000356). It reconciles the
+// in-house and outsourced production routes and only reports an order once
+// EVERY non-cancelled leg has shipped, so a part-shipped job still shows.
+//
+// ⚠ Presence in the map IS the shipped signal. `shippedAt` can legitimately be
+// null (an in-house job finished by status alone, on rows predating Stock
+// Control's shipping module), so never test the timestamp instead.
+interface ShippingState {
+  shippedAt: string | null
+  deliveredAt: string | null
+}
+
+interface ShippingStateRow {
+  order_id: string
+  shipped_at: string | null
+  delivered_at: string | null
+}
 
 // ── Readiness rules ────────────────────────────────────────────────────────
 
@@ -239,6 +266,10 @@ function FlagChip({ flag }: { flag: Flag }) {
 
 export default function AdminShippingPage() {
   const [orders, setOrders] = useState<OrderRow[]>([])
+  const [shipped, setShipped] = useState<Map<string, ShippingState>>(new Map())
+  // Set when the Stock Control read failed, so the longer list is explained
+  // rather than looking like a regression.
+  const [shippedError, setShippedError] = useState<string | null>(null)
   const [boxTareGrams, setBoxTareGrams] = useState<number>(250)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -253,7 +284,7 @@ export default function AdminShippingPage() {
     void (async () => {
       setLoading(true)
       setLoadError(null)
-      const [{ data, error }, { data: settings }] = await Promise.all([
+      const [{ data, error }, { data: settings }, shipRes] = await Promise.all([
         supabase
           .from('orders')
           .select(SELECT)
@@ -261,6 +292,7 @@ export default function AdminShippingPage() {
           .order('paid_at', { ascending: false })
           .limit(300),
         supabase.from('settings').select('fedex_box_weight_grams').eq('id', 1).maybeSingle(),
+        supabase.rpc('admin_order_shipping_state'),
       ])
       if (cancelled) return
       if (error) {
@@ -270,6 +302,18 @@ export default function AdminShippingPage() {
         return
       }
       setOrders((data ?? []) as unknown as OrderRow[])
+      // A Stock Control read failure must not blank the worklist. Fall back to
+      // "nothing known to have shipped" — the pre-000356 behaviour, which
+      // over-lists rather than hiding something that still needs a human — and
+      // say so above the list.
+      if (shipRes.error) {
+        setShipped(new Map())
+        setShippedError(shipRes.error.message)
+      } else {
+        const shipRows = (shipRes.data ?? []) as ShippingStateRow[]
+        setShipped(new Map(shipRows.map((r) => [r.order_id, { shippedAt: r.shipped_at, deliveredAt: r.delivered_at }])))
+        setShippedError(null)
+      }
       const tare = Number((settings as { fedex_box_weight_grams?: number } | null)?.fedex_box_weight_grams)
       setBoxTareGrams(Number.isFinite(tare) && tare >= 0 ? tare : 250)
       setLoading(false)
@@ -281,9 +325,12 @@ export default function AdminShippingPage() {
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase()
     return orders
-      .map((o) => ({ o, flags: flagsFor(o) }))
-      .filter(({ o, flags }) => {
-        if (onlyIncomplete && flags.length === 0) return false
+      .map((o) => ({ o, flags: flagsFor(o), ship: shipped.get(o.id) ?? null }))
+      .filter(({ o, flags, ship }) => {
+        // Nothing to fill in, or the parcel has already gone — either way it
+        // isn't a worklist item. A shipped order's blanks can't be acted on:
+        // the courier has it, so an address typed here redirects nothing.
+        if (onlyIncomplete && (flags.length === 0 || ship)) return false
         if (!q) return true
         const hay = [customerLabel(o), o.payment_reference, specLabel(o), o.ship_to_name, o.ship_to_address?.postal_code]
           .filter(Boolean)
@@ -292,9 +339,20 @@ export default function AdminShippingPage() {
         return hay.includes(q)
       })
       .sort((a, b) => urgency(b.flags) - urgency(a.flags))
-  }, [orders, search, onlyIncomplete])
+  }, [orders, search, onlyIncomplete, shipped])
 
-  const incompleteCount = useMemo(() => orders.filter((o) => flagsFor(o).length > 0).length, [orders])
+  // Split the flagged orders into the ones still worth chasing and the ones
+  // suppressed because they shipped, so the tab can show its own workings.
+  const { incompleteCount, hiddenShippedCount } = useMemo(() => {
+    let incomplete = 0
+    let hidden = 0
+    for (const o of orders) {
+      if (flagsFor(o).length === 0) continue
+      if (shipped.has(o.id)) hidden += 1
+      else incomplete += 1
+    }
+    return { incompleteCount: incomplete, hiddenShippedCount: hidden }
+  }, [orders, shipped])
 
   return (
     <div>
@@ -303,7 +361,7 @@ export default function AdminShippingPage() {
         <p className="mt-1 text-sm text-ink-soft">
           Paid orders and the delivery details they need before shipping. Fill in or correct a recipient’s address,
           phone and destination — and set a card weight where one’s missing. Changes save straight to the order that
-          Stock Control ships from.
+          Stock Control ships from. Orders Stock Control has already sent out drop off the list.
         </p>
       </div>
 
@@ -343,6 +401,21 @@ export default function AdminShippingPage() {
         </div>
       </div>
 
+      {/* Show the tab's workings: how many flagged orders were set aside for
+          having shipped, or why none were. */}
+      {!loading && shippedError ? (
+        <div className="mb-4 rounded-lg border border-low bg-low-soft px-3 py-2.5 text-[13px] text-ink">
+          Couldn’t reach Stock Control to check what’s already shipped, so nothing is being hidden — some orders below
+          may have gone out already. ({shippedError})
+        </div>
+      ) : !loading && onlyIncomplete && hiddenShippedCount > 0 ? (
+        <p className="mb-4 text-[13px] text-ink-mute">
+          {hiddenShippedCount} {hiddenShippedCount === 1 ? 'order has' : 'orders have'} already shipped and{' '}
+          {hiddenShippedCount === 1 ? 'is' : 'are'} not listed — find {hiddenShippedCount === 1 ? 'it' : 'them'} under
+          All paid orders.
+        </p>
+      ) : null}
+
       {loading ? (
         <PanelShell className="text-center"><p className="text-sm text-ink-mute">Loading orders…</p></PanelShell>
       ) : loadError ? (
@@ -353,14 +426,21 @@ export default function AdminShippingPage() {
             {search.trim()
               ? 'No orders match your search.'
               : onlyIncomplete
-                ? 'Every paid order has its shipping details. Nothing to chase. 🎉'
+                ? 'Nothing to chase — every paid order either has its shipping details or has already gone out. 🎉'
                 : 'No paid orders yet.'}
           </p>
         </PanelShell>
       ) : (
         <div className="space-y-3">
-          {rows.map(({ o, flags }) => (
-            <ShippingCard key={o.id} order={o} flags={flags} boxTareGrams={boxTareGrams} onEdit={() => setEditing(o)} />
+          {rows.map(({ o, flags, ship }) => (
+            <ShippingCard
+              key={o.id}
+              order={o}
+              flags={flags}
+              ship={ship}
+              boxTareGrams={boxTareGrams}
+              onEdit={() => setEditing(o)}
+            />
           ))}
         </div>
       )}
@@ -368,6 +448,7 @@ export default function AdminShippingPage() {
       {editing && (
         <ShippingEditModal
           order={editing}
+          ship={shipped.get(editing.id) ?? null}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); setReloadKey((k) => k + 1) }}
         />
@@ -378,21 +459,39 @@ export default function AdminShippingPage() {
 
 // ── One order row ────────────────────────────────────────────────────────────
 
+// The single fulfilment pill, following the Order log's convention: one pill
+// for how far the job has got, blue while it's in flight, green once it's over.
+// Delivered implies shipped implies placed, so only the furthest one shows.
+function fulfilmentPill(
+  order: OrderRow,
+  ship: ShippingState | null,
+): { colour: 'in-stock' | 'allocated'; label: string } | null {
+  if (ship?.deliveredAt) return { colour: 'in-stock', label: 'Delivered' }
+  if (ship) return { colour: 'allocated', label: 'Shipped' }
+  if (order.fulfilled_at) return { colour: 'allocated', label: 'Placed into production' }
+  return null
+}
+
 function ShippingCard({
   order,
   flags,
+  ship,
   boxTareGrams,
   onEdit,
 }: {
   order: OrderRow
   flags: Flag[]
+  ship: ShippingState | null
   boxTareGrams: number
   onEdit: () => void
 }) {
-  const placed = !!order.fulfilled_at
   const qty = order.quantity
   const parcel = deriveParcelWeightGrams(variantWeight(order), qty, boxTareGrams)
   const isGrouped = !!order.order_group_id
+  const fulfilment = fulfilmentPill(order, ship)
+  // Once the courier has it, the missing details can't be acted on, so the
+  // chips would only cry wolf. The facts are still on the card ("Phone: —").
+  const showFlags = flags.length > 0 && !ship
 
   return (
     <PanelShell>
@@ -403,7 +502,7 @@ function ShippingCard({
               {customerLabel(order)}
             </Link>
             {order.status === 'revision' ? <Pill colour="out">Revision</Pill> : <Pill colour="in-stock">Paid</Pill>}
-            {placed && <Pill colour="allocated">Placed into production</Pill>}
+            {fulfilment && <Pill colour={fulfilment.colour}>{fulfilment.label}</Pill>}
             {isGrouped && <Pill colour="low">Combined payment</Pill>}
             {order.payment_method === 'offline' && <Pill colour="mute">Offline</Pill>}
           </div>
@@ -416,6 +515,13 @@ function ShippingCard({
           <p className="mt-0.5 text-[13px] text-ink-mute">
             Ref {order.payment_reference}
             {order.paid_at ? ` · paid ${formatDate(order.paid_at)}` : ''}
+            {/* A job finished by status alone carries no dispatch date, so the
+                pill says Shipped while this stays quiet rather than guessing. */}
+            {ship?.deliveredAt
+              ? ` · delivered ${formatDate(ship.deliveredAt)}`
+              : ship?.shippedAt
+                ? ` · shipped ${formatDate(ship.shippedAt)}`
+                : ''}
           </p>
 
           <p className="mt-2 text-[13px] text-ink-soft">
@@ -444,7 +550,7 @@ function ShippingCard({
             )
           })()}
 
-          {flags.length > 0 && (
+          {showFlags && (
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
               {flags.map((f) => <FlagChip key={f.kind} flag={f} />)}
             </div>
@@ -463,10 +569,12 @@ function ShippingCard({
 
 function ShippingEditModal({
   order,
+  ship,
   onClose,
   onSaved,
 }: {
   order: OrderRow
+  ship: ShippingState | null
   onClose: () => void
   onSaved: () => void
 }) {
@@ -638,12 +746,23 @@ function ShippingEditModal({
               card shipping together in that payment.
             </div>
           )}
-          {placed && (
+          {/* Shipped is the stronger statement and implies placed, so show one
+              warning, not two. */}
+          {ship ? (
+            <div className="rounded-lg border border-out bg-out-soft px-3 py-2.5 text-[13px] text-out">
+              This parcel has already{' '}
+              {ship.deliveredAt
+                ? <>been <strong>delivered</strong>{ship.deliveredAt ? ` on ${formatDate(ship.deliveredAt)}` : ''}</>
+                : <>been <strong>shipped</strong>{ship.shippedAt ? ` on ${formatDate(ship.shippedAt)}` : ''}</>}
+              . Editing here corrects the record but <strong>cannot redirect it</strong> — the courier has it. To move a
+              parcel in transit, contact the courier.
+            </div>
+          ) : placed ? (
             <div className="rounded-lg border border-out bg-out-soft px-3 py-2.5 text-[13px] text-out">
               This order has already been <strong>placed into production</strong>{order.fulfilled_at ? ` on ${formatDate(order.fulfilled_at)}` : ''}.
               Update it here, then let Stock Control know — they may already have the old address.
             </div>
-          )}
+          ) : null}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Recipient name" htmlFor="ship-name">
