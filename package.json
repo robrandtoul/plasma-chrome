@@ -40,6 +40,7 @@
     "test:artwork-check": "tsx supabase/functions/_shared/artworkCheck/artworkCheck.test.ts",
     "test:currency": "tsx src/lib/currencyResolver.test.ts",
     "test:duplicate": "tsx src/lib/duplicateProof.test.ts",
+    "test:helpscout-url": "tsx src/lib/helpscout.test.ts",
     "test:admin-search": "tsx src/lib/adminSearch.test.ts",
     "test:annotations": "tsx src/lib/proofAnnotationGeometry.test.ts",
     "test:audit-filters": "tsx src/pages/admin/auditFilters.test.ts",
