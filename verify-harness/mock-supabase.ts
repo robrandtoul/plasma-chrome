@@ -766,6 +766,22 @@ export const supabase: any = {
     // 2026-07-27 so the Analytics → Artwork checks panel can be eyeballed:
     // both gates present, a mix of verdicts, one error, and deliberate runs
     // spread across four people so the "by whom" table has something to say.
+    // Check-response comparison (000359). Shaped to show the panel doing its
+    // job: flagged sends people back far more often than clear, against a
+    // no-check baseline near the observed ~11%.
+    if (name === 'analytics_check_response') {
+      return {
+        data: {
+          days: 30,
+          flagged: { decisions: 9, edited: 5 },
+          clear: { decisions: 14, edited: 1 },
+          no_check: { decisions: 46, edited: 5 },
+          order_exits: { total: 4, after_findings: 3 },
+          stamped_decisions: 69,
+        },
+        error: null,
+      }
+    }
     if (name === 'analytics_artwork_check') {
       return {
         data: {

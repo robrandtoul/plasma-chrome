@@ -159,6 +159,21 @@ interface CheckWeekRow extends CheckVerdictCounts {
   runs: number
   manual_runs: number
 }
+// Did a flagged check change what the designer did next? (migration 000359)
+// Bands come back null when no stamped decision falls in them.
+interface CheckBand {
+  decisions: number
+  edited: number
+}
+interface CheckResponseStats {
+  days: number
+  flagged: CheckBand | null
+  clear: CheckBand | null
+  no_check: CheckBand | null
+  order_exits: { total: number; after_findings: number }
+  stamped_decisions: number
+}
+
 interface ArtworkCheckStats {
   days: number
   since: string
@@ -286,20 +301,29 @@ export default function AdminAnalyticsPage() {
   const [checkError, setCheckError] = useState<string | null>(null)
   const [checkLoading, setCheckLoading] = useState(true)
 
+  const [checkResponse, setCheckResponse] = useState<CheckResponseStats | null>(null)
+
   useEffect(() => {
     let cancelled = false
     setCheckLoading(true)
-    void supabase.rpc('analytics_artwork_check', { p_days: checkDays }).then(({ data, error: rpcErr }) => {
+    void (async () => {
+      const [usage, response] = await Promise.all([
+        supabase.rpc('analytics_artwork_check', { p_days: checkDays }),
+        supabase.rpc('analytics_check_response', { p_days: checkDays }),
+      ])
       if (cancelled) return
-      if (rpcErr) {
-        setCheckError(rpcErr.message)
+      if (usage.error) {
+        setCheckError(usage.error.message)
         setCheckStats(null)
       } else {
         setCheckError(null)
-        setCheckStats(data as ArtworkCheckStats)
+        setCheckStats(usage.data as ArtworkCheckStats)
       }
+      // The response panel is additive — a missing 000359 hides that one panel
+      // rather than failing the whole tab.
+      setCheckResponse(response.error ? null : (response.data as CheckResponseStats))
       setCheckLoading(false)
-    })
+    })()
     return () => {
       cancelled = true
     }
@@ -415,6 +439,7 @@ export default function AdminAnalyticsPage() {
           {tab === 'checks' && (
             <ArtworkChecksSection
               stats={checkStats}
+              response={checkResponse}
               loading={checkLoading}
               error={checkError}
               days={checkDays}
@@ -886,12 +911,14 @@ const CHECK_KIND_LABELS: Record<CheckKindRow['kind'], { title: string; sub: stri
 
 function ArtworkChecksSection({
   stats,
+  response,
   loading,
   error,
   days,
   onDaysChange,
 }: {
   stats: ArtworkCheckStats | null
+  response: CheckResponseStats | null
   loading: boolean
   error: string | null
   days: number
@@ -1050,6 +1077,8 @@ function ArtworkChecksSection({
         })}
       </div>
 
+      {response && <CheckResponsePanel response={response} />}
+
       <PanelShell title="Who runs the checks" eyebrow="Deliberate runs only" icon={Users} accent="var(--c-allocated)">
         <CheckPeopleTable rows={byPerson} />
         <p className="mt-3 text-xs text-ink-mute">
@@ -1096,6 +1125,83 @@ function ArtworkChecksSection({
         earlier reports survive, but who ran them was never stored.
       </p>
     </div>
+  )
+}
+
+// Does a flag actually change what happens next? The raw count of edits after
+// a flag means little on its own — what matters is that rate against the same
+// gate when the check was clear, and when no check was consulted at all.
+function CheckResponsePanel({ response }: { response: CheckResponseStats }) {
+  const rows: { key: string; label: string; band: CheckBand | null; colour: string }[] = [
+    { key: 'flagged', label: 'Check flagged something', band: response.flagged, colour: 'var(--c-low)' },
+    { key: 'clear', label: 'Check came back clear', band: response.clear, colour: 'var(--c-in-stock)' },
+    { key: 'no_check', label: 'No check run', band: response.no_check, colour: 'var(--c-ink-mute)' },
+  ]
+  const exits = response.order_exits ?? { total: 0, after_findings: 0 }
+
+  return (
+    <PanelShell
+      title="Did a flag change what happened next?"
+      eyebrow="Share of preview-gate decisions that went back to edit"
+      icon={ShieldCheck}
+      accent="var(--c-low)"
+    >
+      {response.stamped_decisions === 0 ? (
+        <p className="text-sm text-ink-mute">
+          Nothing recorded yet. Decisions started carrying the check’s verdict from the moment this shipped, so this
+          fills as designers use the preview gate — it deliberately doesn’t count the earlier clicks, whose verdict was
+          never stored.
+        </p>
+      ) : (
+        <>
+          <div className="space-y-2">
+            {rows.map((r) => {
+              const decisions = r.band?.decisions ?? 0
+              const edited = r.band?.edited ?? 0
+              const rate = pct(edited, decisions)
+              return (
+                <div key={r.key} className="flex items-center gap-3 text-sm">
+                  <div className="w-48 shrink-0 text-ink-soft">{r.label}</div>
+                  {decisions === 0 ? (
+                    <div className="flex-1 text-xs text-ink-dim">none yet</div>
+                  ) : (
+                    <div className="relative h-6 flex-1 overflow-hidden rounded bg-canvas ring-1 ring-line-soft">
+                      <div
+                        className="h-full rounded"
+                        style={{ width: `${Math.max(2, rate)}%`, backgroundColor: `color-mix(in srgb, ${r.colour} 40%, transparent)` }}
+                      />
+                      <div className="absolute inset-0 flex items-center justify-between px-2">
+                        <span className="text-xs text-ink-mute">
+                          {edited}/{decisions} went back
+                        </span>
+                        <span className="text-xs font-semibold text-ink">{fmtPct(rate)}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          <p className="mt-3 text-xs text-ink-mute">
+            “No check run” is the baseline — the same gate and the same designers, with nothing consulted. If the
+            flagged rate isn’t clearly higher, the reports are being read and waved through.
+          </p>
+        </>
+      )}
+
+      <div className="mt-3 border-t border-line-soft pt-3 text-xs text-ink-mute">
+        {exits.total === 0 ? (
+          <>Order side: nobody has left an order review without placing in this window.</>
+        ) : (
+          <>
+            Order side: <span className="font-medium text-ink">{exits.after_findings}</span> of {exits.total} reviewers
+            who left without placing did so with a flagged check on screen.
+          </>
+        )}{' '}
+        Counts, not a rate — placements are recorded by the ordering system without the check’s verdict, and someone
+        who leaves via the browser’s back button isn’t counted at all.
+      </div>
+    </PanelShell>
   )
 }
 

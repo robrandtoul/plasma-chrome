@@ -86,6 +86,27 @@ export function artworkFlagCount(report: ArtworkCheckReport): number {
   return findingFlags + report.corrections.filter((c) => !c.resolved).length
 }
 
+// The check as the designer saw it AT THE MOMENT THEY ACTED, for the audit
+// metadata on the preview gate's two buttons and the order review page's exit.
+//
+// Recorded on the click rather than reconstructed afterwards from timestamps,
+// because a re-run replaces the stored report: a designer who runs the check,
+// sees a flag, goes back and fixes it, then re-runs and gets a clear result
+// leaves nothing behind saying the check was flagged when they chose to go
+// back — which is precisely the question ("did a flag change what they did?").
+// The run ledger (000357) makes the sequence reconstructable, but only this
+// says what was on screen under their cursor.
+export function artworkCheckAuditFields(report: ArtworkCheckReport | null): Record<string, unknown> {
+  if (!report) return { check_ran: false, check_verdict: null, check_flags: 0, check_defects: 0 }
+  return {
+    check_ran: true,
+    check_verdict: report.verdict,
+    // Both are 0 on an errored report (it carries no cards or corrections).
+    check_flags: artworkFlagCount(report),
+    check_defects: artworkDefectCount(report),
+  }
+}
+
 export function artworkCheckedAtLabel(report: ArtworkCheckReport): string {
   return new Date(report.checked_at).toLocaleString('en-GB', {
     day: '2-digit',

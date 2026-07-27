@@ -63,7 +63,7 @@ import { logAudit } from '../lib/audit'
 import { customerProofPath } from '../lib/customerProofUrl'
 import { asPreviewPageMessage, postShowTab } from '../lib/previewBridge'
 import Modal from './Modal'
-import ArtworkCheckReportView, { InlineSpinner, artworkVerdict } from './ArtworkCheckReportView'
+import ArtworkCheckReportView, { InlineSpinner, artworkCheckAuditFields, artworkVerdict } from './ArtworkCheckReportView'
 import { useProofCheck } from '../lib/useProofCheck'
 import { useCalloutsEnabled } from '../lib/useCalloutsEnabled'
 import { ProofAnnotationEditor } from './ProofAnnotationEditor'
@@ -243,7 +243,14 @@ export default function VersionPreviewGate({
   const scrollDone = scrollSatisfied(progress)
   const pendingTabs = outstandingTabs(progress)
 
-  const auditMetadata = () => previewAuditMetadata(progress, openedAtRef.current, Date.now())
+  // Both gate buttons carry the proof check's state as it stood on screen, so
+  // "did a flag send them back to the form?" is a recorded fact rather than a
+  // join between two timestamps — and survives the designer re-running the
+  // check after fixing what it found.
+  const auditMetadata = () => ({
+    ...previewAuditMetadata(progress, openedAtRef.current, Date.now()),
+    ...artworkCheckAuditFields(proofCheck.check.report),
+  })
 
   const handleConfirm = () => {
     void logAudit({

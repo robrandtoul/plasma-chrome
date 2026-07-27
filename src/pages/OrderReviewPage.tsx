@@ -5,7 +5,8 @@ import { DesignerChrome, PanelShell, ButtonCoral, ButtonGhost } from '../design'
 import { ImageCard, type GridImage } from '../components/ImageGrid'
 import Modal from '../components/Modal'
 import { checkEditedMessage } from '../lib/handoffMessageCheck'
-import ArtworkCheckReportView, { InlineSpinner, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
+import { logAudit } from '../lib/audit'
+import ArtworkCheckReportView, { InlineSpinner, artworkCheckAuditFields, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
 import { mergeInvestigation, requestInvestigation } from '../lib/useProofCheck'
 
 // OrderReviewPage (/orders/:id/place) — the review-and-confirm screen for placing
@@ -323,6 +324,30 @@ export default function OrderReviewPage() {
       })
     void runArtworkCheck(false, 'auto')
   }, [runArtworkCheck])
+
+  // Leaving the review without placing the order — the order-side counterpart
+  // of the preview gate's "Go back and edit", and the only honest signal this
+  // page has that a reviewer looked and decided not to proceed. Stamped with
+  // the check's state so "flagged → walked away" can be measured against
+  // "clear → walked away"; placements themselves are already audited server
+  // side as `order.placed`, and their verdict is joinable from the run ledger.
+  //
+  // A lower bound by construction: a reviewer who leaves via the browser back
+  // button or the nav bar isn't counted. Deliberately not chased with a
+  // beforeunload handler, which fires on refreshes and tab closes too and
+  // would make the figure dirtier, not better.
+  const exitReview = useCallback(async () => {
+    await logAudit({
+      action: 'order.review_exited',
+      targetType: 'order',
+      targetId: id,
+      // Same label shape place-order uses for `order.placed`, so the two sides
+      // of the decision read alike in Admin → Activity.
+      targetLabel: id ? `Order ${id}` : undefined,
+      metadata: artworkCheckAuditFields(artworkCheck.report ?? null),
+    })
+    navigate('/orders')
+  }, [id, artworkCheck.report, navigate])
 
   // Per-flag history walk (designer-triggered — see ArtworkCheckReportView).
   // On success the investigation is cached server-side AND merged into the
@@ -847,7 +872,7 @@ export default function OrderReviewPage() {
                     </>
                   ) : (
                     <>
-                      <Link to="/orders"><ButtonGhost disabled={confirming}>Cancel</ButtonGhost></Link>
+                      <ButtonGhost onClick={() => void exitReview()} disabled={confirming}>Cancel</ButtonGhost>
                       <ButtonCoral
                         onClick={() => { if (isSupplier) { setArmed(true) } else { void confirm() } }}
                         disabled={confirming || supplierLoading || !canConfirm}
