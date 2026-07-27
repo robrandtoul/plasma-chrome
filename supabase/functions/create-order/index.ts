@@ -316,6 +316,54 @@ Deno.serve(async (req) => {
     hasPersonalisation = original.has_personalisation === true
     shipDestCountry = (original.ship_dest_country as string | null) ?? shipDestCountry
 
+    // …unless the DESIGN has moved on since that order. The Flagged board's
+    // "the design needs correcting" path reopens the proof, the designer fixes
+    // it — sometimes onto a different material — the customer re-approves, and
+    // only then is the reprint raised. Inheriting the old order's spec there
+    // remakes the superseded design: Elite Credentials' reprint came out as
+    // Tinted Translucent 3 Inks after v20 had moved to Satin Plastic 4 Inks.
+    // A reprint can only be raised on an approved proof, so the current version
+    // IS what the customer signed off — when its material differs from the
+    // original order's, that version wins. displayed_variant_ids is the field
+    // the order builder itself reads, so the variant is resolved rather than
+    // guessed; if it can't be resolved we refuse instead of sending the wrong
+    // material to production.
+    const { data: currentVersion } = await admin
+      .from('proof_versions')
+      .select('material_id, displayed_variant_ids, has_personalisation')
+      .eq('proof_id', proofId)
+      .eq('is_current', true)
+      .maybeSingle()
+    let originalMaterialId: string | null = null
+    if (original.material_variant_id) {
+      const { data: originalVariant } = await admin
+        .from('material_variants')
+        .select('material_id')
+        .eq('id', original.material_variant_id)
+        .maybeSingle()
+      originalMaterialId = (originalVariant?.material_id as string | null) ?? null
+    }
+    const currentMaterialId = (currentVersion?.material_id as string | null) ?? null
+    const currentDisplayedVariants = currentVersion?.displayed_variant_ids
+    if (currentMaterialId && originalMaterialId && currentMaterialId !== originalMaterialId) {
+      const displayed = (Array.isArray(currentDisplayedVariants) ? currentDisplayedVariants : []).filter(
+        (id): id is string => typeof id === 'string' && id.length > 0,
+      )
+      if (displayed.length !== 1) {
+        return json(
+          {
+            error:
+              'The approved design has changed material since that order, but this version doesn’t price a single variant — raise this as a normal order so the spec can be chosen.',
+          },
+          422,
+        )
+      }
+      materialVariantId = displayed[0]
+      // A finish option belongs to its material, so the old one can't carry over.
+      materialOptionId = null
+      hasPersonalisation = currentVersion?.has_personalisation === true
+    }
+
     // quantity: an explicit body override is a PARTIAL reprint (only some were
     // faulty); otherwise reprint the original's full quantity.
     const originalQty = Number.isInteger(original.quantity) && (original.quantity as number) > 0 ? (original.quantity as number) : null

@@ -37,6 +37,7 @@ type OrderRow = {
   fulfilled_at: string | null
   dropbox_folder_url: string | null
   project_name: string | null
+  material_id: string | null
 }
 
 function projectLabel(item: WatchItem): string {
@@ -59,6 +60,12 @@ export default function ReprintModal({
   const [loading, setLoading] = useState(true)
   const [proofStatus, setProofStatus] = useState<string | null>(null)
   const [orders, setOrders] = useState<OrderRow[]>([])
+  // The current approved version's material — after a "design needs correcting"
+  // reopen it can differ from the order being remade (see materialChanged).
+  const [currentMaterial, setCurrentMaterial] = useState<{ id: string | null; display: string | null }>({
+    id: null,
+    display: null,
+  })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [created, setCreated] = useState<{ orderId: string; reference: string | null } | null>(null)
@@ -78,16 +85,26 @@ export default function ReprintModal({
     let cancelled = false
     void (async () => {
       setLoading(true)
-      const [proofRes, ordersRes] = await Promise.all([
+      const [proofRes, ordersRes, versionRes] = await Promise.all([
         supabase.from('proofs').select('status').eq('id', item.proof_id).maybeSingle(),
         supabase
           .from('orders')
-          .select('id, stock_order_number, order_kind, status, reprint_of_order_id, currency, quantity, created_at, fulfilled_at, dropbox_folder_url, project_name')
+          .select('id, stock_order_number, order_kind, status, reprint_of_order_id, currency, quantity, created_at, fulfilled_at, dropbox_folder_url, project_name, material_id')
           .eq('proof_id', item.proof_id)
           .order('created_at', { ascending: false }),
+        supabase
+          .from('proof_versions')
+          .select('material_id, material_display')
+          .eq('proof_id', item.proof_id)
+          .eq('is_current', true)
+          .maybeSingle(),
       ])
       if (cancelled) return
       setProofStatus((proofRes.data?.status as string | null) ?? null)
+      setCurrentMaterial({
+        id: (versionRes.data?.material_id as string | null) ?? null,
+        display: (versionRes.data?.material_display as string | null) ?? null,
+      })
       const ords = (ordersRes.data ?? []) as OrderRow[]
       setOrders(ords)
       // Default the reprint quantity to the original order's (full reprint).
@@ -105,6 +122,14 @@ export default function ReprintModal({
   const original = orders.find((o) => o.order_kind !== 'reprint' && (o.status === 'fulfilled' || o.status === 'paid')) ?? null
   const existingReprints = orders.filter((o) => o.order_kind === 'reprint')
   const isApproved = proofStatus === 'approved'
+
+  // The approved design has moved to a different material since the order being
+  // remade — i.e. this reprint followed a "design needs correcting" reopen. The
+  // reprint is raised against the CURRENT version (create-order resolves that
+  // server-side), so the original order's Dropbox folder holds the superseded
+  // artwork and must not be cloned.
+  const materialChanged =
+    !!original?.material_id && !!currentMaterial.id && original.material_id !== currentMaterial.id
 
   async function createReprint() {
     if (!original) {
@@ -292,6 +317,16 @@ export default function ReprintModal({
                   {cloneLinked.fileCount != null ? ` (${cloneLinked.fileCount} file${cloneLinked.fileCount === 1 ? '' : 's'})` : ''} and
                   linked. Go to Orders to place it.
                 </p>
+              ) : materialChanged ? (
+                <div className="mt-3 rounded-[10px] border border-line bg-canvas p-3 text-left">
+                  <p className="text-[13px] font-medium text-ink">Set up a fresh Dropbox folder</p>
+                  <p className="mt-0.5 text-[12px] text-ink-mute">
+                    The design changed to{' '}
+                    <span className="font-medium text-ink">{currentMaterial.display ?? 'a different material'}</span>{' '}
+                    after that order, so its folder holds the old artwork — copying it would send the superseded
+                    design to production. Create the new folder in Orders with the corrected files.
+                  </p>
+                </div>
               ) : original?.dropbox_folder_url ? (
                 <div className="mt-3 rounded-[10px] border border-line bg-canvas p-3 text-left">
                   <p className="text-[13px] font-medium text-ink">Copy the artwork into a new folder</p>
@@ -358,6 +393,14 @@ export default function ReprintModal({
                 )}
                 . The reprint is <span className="font-medium text-ink">free</span> and the original stays untouched.
               </p>
+
+              {materialChanged && (
+                <p className="mt-2.5 rounded-[8px] bg-canvas px-3 py-2 text-[12px] text-ink-soft">
+                  The approved design has changed to{' '}
+                  <span className="font-medium text-ink">{currentMaterial.display}</span> since that order. The
+                  reprint will be made to the current approved version, not the one that shipped.
+                </p>
+              )}
 
               {existingReprints.length > 0 && (
                 <div className="mt-3 flex flex-wrap items-center gap-1.5 rounded-[8px] bg-canvas px-3 py-2 text-[12px] text-ink-soft">
