@@ -38,6 +38,7 @@
     "test:ai-drafts-miner": "tsx supabase/functions/_shared/aiDrafts/miner.test.ts",
     "test:ai-drafts-briefing": "tsx supabase/functions/_shared/aiDrafts/briefing.test.ts",
     "test:artwork-check": "tsx supabase/functions/_shared/artworkCheck/artworkCheck.test.ts",
+    "test:ai-pricing": "tsx src/lib/aiModelPricing.test.ts",
     "test:cut-through": "tsx supabase/functions/_shared/artworkCheck/cutThrough.test.ts",
     "check:cut-through": "tsx scripts/check-cut-through.ts",
     "test:currency": "tsx src/lib/currencyResolver.test.ts",

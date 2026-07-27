@@ -8,9 +8,18 @@ import {
   ExternalLink,
   MessageSquare,
   ShieldCheck,
+  Coins,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { designerColourCss } from '../../lib/designerColours'
+import {
+  PRICING_CHECKED_ON,
+  estimateRunCost,
+  fmtGbp,
+  fmtUsd,
+  totalSpend,
+} from '../../lib/aiModelPricing'
+import { currencyToGbp, getExchangeRates, type ExchangeRates } from '../../lib/exchangeRates'
 import { PanelShell, Pill, type PillColour } from '../../design'
 
 // Admin → Analytics. Conversion insight for the enquiry→sale funnel, built on
@@ -174,9 +183,22 @@ interface CheckResponseStats {
   stamped_decisions: number
 }
 
+// One priceable bucket per (gate, model) — split by model because rates
+// differ per model, and by gate so the two checks can be costed separately.
+interface SpendBucket {
+  kind: 'order' | 'proof'
+  model: string
+  runs: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+}
+
 interface ArtworkCheckStats {
   days: number
   since: string
+  spend?: SpendBucket[]
   totals: CheckTotals
   by_kind: CheckKindRow[]
   by_source: CheckSourceRow[]
@@ -302,6 +324,16 @@ export default function AdminAnalyticsPage() {
   const [checkLoading, setCheckLoading] = useState(true)
 
   const [checkResponse, setCheckResponse] = useState<CheckResponseStats | null>(null)
+  // Anthropic bills in USD; this converts for a familiar second figure only.
+  // Null simply hides the pound line — the dollar figure is the real one.
+  const [fxRates, setFxRates] = useState<ExchangeRates | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void getExchangeRates()
+      .then((r) => { if (!cancelled) setFxRates(r) })
+      .catch(() => { /* pounds line stays hidden */ })
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -440,6 +472,7 @@ export default function AdminAnalyticsPage() {
             <ArtworkChecksSection
               stats={checkStats}
               response={checkResponse}
+              fxRates={fxRates}
               loading={checkLoading}
               error={checkError}
               days={checkDays}
@@ -912,6 +945,7 @@ const CHECK_KIND_LABELS: Record<CheckKindRow['kind'], { title: string; sub: stri
 function ArtworkChecksSection({
   stats,
   response,
+  fxRates,
   loading,
   error,
   days,
@@ -919,6 +953,7 @@ function ArtworkChecksSection({
 }: {
   stats: ArtworkCheckStats | null
   response: CheckResponseStats | null
+  fxRates: ExchangeRates | null
   loading: boolean
   error: string | null
   days: number
@@ -985,9 +1020,8 @@ function ArtworkChecksSection({
   const bySource = stats.by_source ?? []
   const byPerson = stats.by_person ?? []
   const weeklyRuns = stats.weekly ?? []
-  const cost = stats.cost ?? { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, models: [] }
-  const costModels = cost.models ?? []
   const adoption = stats.proof_adoption ?? { from: null, versions_created: 0, versions_checked: 0 }
+  const spend = stats.spend ?? []
 
   const completed = t.runs - t.error
   const foundRate = pct(t.runs_with_findings, completed)
@@ -1116,15 +1150,139 @@ function ArtworkChecksSection({
         </div>
       </div>
 
+      <CheckSpendPanel spend={spend} fxRates={fxRates} />
+
       <p className="text-xs text-ink-mute">
         {t.orders_checked} order{t.orders_checked === 1 ? '' : 's'} and {t.versions_checked} proof version
-        {t.versions_checked === 1 ? '' : 's'} were checked in this window, using{' '}
-        {(cost.input_tokens + cost.output_tokens).toLocaleString('en-GB')} tokens
-        {costModels.length > 0 && ` (${costModels.map((m) => `${m.model} × ${m.runs}`).join(', ')})`}.
+        {t.versions_checked === 1 ? '' : 's'} were checked in this window.
         Runs recorded before usage tracking shipped appear as “Before usage tracking” with no person attached — the
         earlier reports survive, but who ran them was never stored.
       </p>
     </div>
+  )
+}
+
+// What the check costs to run.
+//
+// Priced client-side from src/lib/aiModelPricing.ts rather than in SQL: the
+// rates are Anthropic's published price list, they change when Anthropic
+// changes them, and a figure that needs a database migration to correct is a
+// figure that will sit wrong. Each (gate, model) bucket is priced at its own
+// model's rate — a blended token total can't be costed, because output bills
+// at 5x input and a cache read at a tenth of it.
+const KIND_SPEND_LABELS: Record<SpendBucket['kind'], string> = {
+  order: 'Before print',
+  proof: 'Before sending',
+}
+
+function CheckSpendPanel({
+  spend,
+  fxRates,
+}: {
+  spend: SpendBucket[]
+  fxRates: ExchangeRates | null
+}) {
+  // Price against today: promotional rates (Sonnet 5 has one) are date-bound,
+  // so a window spanning a rate change is priced at the current rate. Close
+  // enough for a spend panel, and stated below rather than left implied.
+  const today = new Date().toISOString().slice(0, 10)
+  const total = totalSpend(spend, today)
+  // Average over the runs that are actually IN the total. Dividing by every
+  // run would fold the unpriced ones into the denominator but not the
+  // numerator, quietly reporting a cheaper average than the real one.
+  const pricedRuns = spend.reduce((sum, b) => sum + (estimateRunCost(b.model, b, today) == null ? 0 : b.runs), 0)
+  const perRun = pricedRuns > 0 ? total.usd / pricedRuns : 0
+  const gbp = fxRates ? currencyToGbp(total.usd, 'USD', fxRates) : null
+
+  // Roll the (gate, model) buckets up both ways for the two breakdowns.
+  const byModel = new Map<string, { runs: number; usd: number | null }>()
+  const byKind = new Map<string, { runs: number; usd: number }>()
+  for (const b of spend) {
+    const cost = estimateRunCost(b.model, b, today)
+    const m = byModel.get(b.model) ?? { runs: 0, usd: 0 }
+    byModel.set(b.model, {
+      runs: m.runs + b.runs,
+      usd: cost == null || m.usd == null ? null : m.usd + cost,
+    })
+    const k = byKind.get(b.kind) ?? { runs: 0, usd: 0 }
+    byKind.set(b.kind, { runs: k.runs + b.runs, usd: k.usd + (cost ?? 0) })
+  }
+
+  if (spend.length === 0) {
+    return (
+      <PanelShell title="What it costs" eyebrow="Estimated spend" icon={Coins} accent="var(--c-brand)">
+        <p className="text-sm text-ink-mute">No runs to cost in this window.</p>
+      </PanelShell>
+    )
+  }
+
+  return (
+    <PanelShell title="What it costs" eyebrow="Estimated spend" icon={Coins} accent="var(--c-brand)">
+      <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
+        <div>
+          <span className="text-3xl font-bold text-ink">{fmtUsd(total.usd)}</span>
+          {gbp != null && <span className="ml-2 text-sm text-ink-mute">≈ {fmtGbp(gbp)}</span>}
+        </div>
+        <div className="text-sm text-ink-mute">
+          <span className="font-medium text-ink">{fmtUsd(perRun)}</span> per check on average
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <div>
+          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-dim">By gate</div>
+          {(['order', 'proof'] as const).map((kind) => {
+            const row = byKind.get(kind)
+            if (!row) return null
+            return (
+              <div key={kind} className="flex items-baseline justify-between gap-3 py-1 text-sm">
+                <span className="text-ink-soft">{KIND_SPEND_LABELS[kind]}</span>
+                <span className="text-ink">
+                  {fmtUsd(row.usd)}{' '}
+                  <span className="text-xs text-ink-dim">
+                    ({row.runs} run{row.runs === 1 ? '' : 's'})
+                  </span>
+                </span>
+              </div>
+            )
+          })}
+        </div>
+        <div>
+          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-dim">By model</div>
+          {[...byModel.entries()]
+            .sort((a, b) => b[1].runs - a[1].runs)
+            .map(([model, row]) => (
+              <div key={model} className="flex items-baseline justify-between gap-3 py-1 text-sm">
+                <span className="truncate text-ink-soft" title={model}>{model}</span>
+                <span className="text-ink">
+                  {row.usd == null ? <span className="text-ink-dim">not priced</span> : fmtUsd(row.usd)}{' '}
+                  <span className="text-xs text-ink-dim">
+                    ({row.runs} run{row.runs === 1 ? '' : 's'})
+                  </span>
+                </span>
+              </div>
+            ))}
+        </div>
+      </div>
+
+      {total.unpricedModels.length > 0 && (
+        <p className="mt-3 rounded-lg bg-canvas px-3 py-2 text-xs text-ink-mute ring-1 ring-line-soft">
+          <span className="font-medium text-ink">
+            {total.unpricedRuns} run{total.unpricedRuns === 1 ? '' : 's'} could not be costed
+          </span>{' '}
+          ({total.unpricedModels.join(', ')}) and are excluded from the total rather than counted as free — either the
+          model predates the price list here, or the run was recorded before the model was stored.
+        </p>
+      )}
+
+      <p className="mt-3 text-xs text-ink-mute">
+        An estimate, not an invoice. Priced from Anthropic’s published rates as at {fmtDate(PRICING_CHECKED_ON)}, at
+        today’s rate for each model — cached input bills at a fraction of fresh input, which is why the cost per check
+        is well below what the raw token count suggests. Billing is in US dollars; the pound figure is a live
+        conversion. If it disagrees with the invoice, the invoice is right and the rates in{' '}
+        <code>aiModelPricing.ts</code> need updating.
+      </p>
+    </PanelShell>
   )
 }
 

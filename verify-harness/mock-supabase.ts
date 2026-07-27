@@ -816,6 +816,16 @@ export const supabase: any = {
             { week_start: daysAgo(0), runs: 5, clear: 2, flagged: 1, defect: 1, error: 1, manual_runs: 3 },
           ],
           proof_adoption: { from: daysAgo(4), versions_created: 49, versions_checked: 14 },
+          // Per-(gate, model) spend buckets, copied from the live figures on
+          // 2026-07-27 so the cost panel shows realistic money. Includes an
+          // unpriced '(unrecorded)' bucket to exercise the excluded-runs note.
+          spend: [
+            { kind: 'order', model: 'claude-opus-4-8', runs: 33, input_tokens: 350313, output_tokens: 74781, cache_read_tokens: 94737, cache_write_tokens: 75672 },
+            { kind: 'proof', model: 'claude-opus-4-8', runs: 14, input_tokens: 87932, output_tokens: 31776, cache_read_tokens: 12223, cache_write_tokens: 73836 },
+            { kind: 'proof', model: 'claude-opus-5', runs: 11, input_tokens: 77506, output_tokens: 38000, cache_read_tokens: 0, cache_write_tokens: 69256 },
+            { kind: 'order', model: 'claude-opus-5', runs: 11, input_tokens: 135159, output_tokens: 25520, cache_read_tokens: 42601, cache_write_tokens: 34541 },
+            { kind: 'order', model: '(unrecorded)', runs: 4, input_tokens: 12000, output_tokens: 3000, cache_read_tokens: 0, cache_write_tokens: 0 },
+          ],
           cost: {
             input_tokens: 394789, output_tokens: 85464, cache_read_tokens: 0, cache_write_tokens: 0,
             models: [{ model: 'claude-opus-4-8', runs: 52 }, { model: 'claude-opus-5', runs: 5 }],
