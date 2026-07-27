@@ -1214,12 +1214,10 @@ function ProjectRow({
           <div className="min-w-0 flex-1">
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-[15px] font-medium text-ink">{projectName}</span>
-                  {bundle && !bundleNested && <BundleChip bundle={bundle} shownHere={1} />}
-                </div>
+                <div className="truncate text-[15px] font-medium text-ink">{projectName}</div>
                 {subline && <div className="truncate text-xs text-ink-mute mt-0.5">{subline}</div>}
                 {specLine && <div className="truncate text-xs text-ink-mute mt-0.5">{specLine}</div>}
+                {bundle && !bundleNested && <BundleLine bundle={bundle} shownHere={1} />}
               </div>
               <OverflowMenu
                 proof={project}
@@ -1383,13 +1381,12 @@ function ProjectRow({
         {/* Customer: name on row 1, company sub-line on row 2.
             The version label moves to its own column on md+. */}
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-[15px] font-medium text-ink">{projectName}</span>
-            {/* Treatment B. Suppressed inside a block, where containment already
-                says it — see BundleChip. */}
-            {bundle && !bundleNested && <BundleChip bundle={bundle} shownHere={1} />}
-          </div>
+          <div className="truncate text-[15px] font-medium text-ink">{projectName}</div>
           {subline && <div className="truncate text-xs text-ink-mute mt-0.5">{subline}</div>}
+          {/* Treatment B — identity, so it sits directly under the customer
+              rather than down with the timing lines. Suppressed inside a block,
+              where containment already says it. See BundleLine. */}
+          {bundle && !bundleNested && <BundleLine bundle={bundle} shownHere={1} />}
           {/* Reason chip — third row line, shown on every Needs-attention
               row so the triggering rule is always visible (not just when
               the tile filter is active). Clicking it opens the resolve
@@ -1603,20 +1600,30 @@ function BundleBlock({
 }
 
 /**
- * Treatment B — the chip, for a card whose siblings aren't in this section
- * (a different day bucket, or filtered out by a tile). The row keeps its place
- * in the sort; rows are never moved between sections to force adjacency.
+ * Treatment B — for a card whose siblings aren't in this section (a different
+ * day bucket, or filtered out by a tile). The row keeps its place in the sort;
+ * rows are never moved between sections to force adjacency.
+ *
+ * Deliberately a quiet LINE in the row's secondary stack, not a chip beside the
+ * company name. Two things went wrong when it sat on the name line: a tinted
+ * pill next to the one piece of 15px type on the row read as an alert rather
+ * than a note, and — worse — it competed with the name for the column, so a
+ * company that had always fitted started truncating ("Plumus" → "Plu…"). On its
+ * own line it can't take width from anything, and it matches the "Last contact"
+ * / "Reminder N of M" lines it sits with.
  */
-function BundleChip({ bundle, shownHere }: { bundle: BundleInfo; shownHere: number }) {
+function BundleLine({ bundle, shownHere }: { bundle: BundleInfo; shownHere: number }) {
   return (
     <Link
       to={`/bundles/${bundle.setId}`}
       onClick={(e) => e.stopPropagation()}
-      title={`One of ${bundle.size} cards in a bundle — ${bundleDetail(bundle, shownHere)}`}
-      className="inline-flex shrink-0 items-center gap-1 rounded-[var(--radius)] border border-[var(--c-brand)]/40 bg-[var(--c-brand)]/[0.07] px-1.5 py-0.5 text-[11px] font-medium text-ink-soft transition-colors hover:bg-[var(--c-brand)]/[0.14] hover:text-ink"
+      title={`Bundle of ${bundle.size} — ${bundleDetail(bundle, shownHere)}`}
+      className="mt-1 flex w-fit max-w-full items-center gap-1.5 text-[11px] text-ink-dim transition-colors hover:text-ink-soft"
     >
       <Layers size={11} className="shrink-0" aria-hidden="true" />
-      Bundle of {bundle.size}
+      {/* Short enough to survive a narrow name column, and no "1 of 3" — the
+          cards in a bundle have no order, so a position would be invented. */}
+      <span className="truncate">Part of a bundle of {bundle.size}</span>
     </Link>
   )
 }
