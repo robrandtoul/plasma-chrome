@@ -16,6 +16,7 @@ import { deflateSync } from 'node:zlib'
 import {
   analyseFace,
   analyseOrderArtwork,
+  dedupeMirroredFaces,
   applyCutThroughFindings,
   buildCutThroughContext,
   boxOf,
@@ -634,7 +635,8 @@ const faceResult = (over: Partial<import('./cutThrough.ts').FaceResult>) => ({
   eq('it is a flag', f.status, 'flag')
   eq('at the red tier', f.severity, 'defect')
   check('naming the size', /2\.19 mm²/.test(f.printed), f.printed)
-  check('and explaining it in plain words', /fall out/i.test(f.note), f.note)
+  check('and explaining it in plain words', /drop out|fall out/i.test(f.note), f.note)
+  check('and saying it is measured, not eyeballed', /measured from the print file/i.test(f.note))
 }
 
 {
@@ -709,6 +711,67 @@ const faceResult = (over: Partial<import('./cutThrough.ts').FaceResult>) => ({
   const rep3 = emptyReport()
   applyCutThroughFindings(rep3, [{ label: 'x.ai', result: faceResult({ status: 'clean' }) }])
   eq('a clean cut-through leaves the verdict alone', deriveVerdict(rep3 as never), 'clear')
+}
+
+// ── the same hole is on both faces ────────────────────────────────────────
+
+{
+  // A cut-through hole necessarily appears on BOTH files. Reporting it twice
+  // makes one fault read as two in the "N items look wrong" headline.
+  const W = 252
+  const front = faceResult({ status: 'dropout', cardWidthPt: W,
+    islands: [{ areaPt2: 17.6, areaMm2: 2.19, x: 26.9, y: 30, widthPt: 4.5, heightPt: 3.9 }] })
+  // mirrored: right edge (26.9+4.5=31.4) maps to 252-31.4 = 220.6
+  const back = faceResult({ status: 'dropout', cardWidthPt: W,
+    islands: [{ areaPt2: 17.6, areaMm2: 2.19, x: 220.6, y: 30, widthPt: 4.5, heightPt: 3.9 }] })
+  const deduped = dedupeMirroredFaces([
+    { label: '02_Front_BM.ai', result: front },
+    { label: '02_GianpaoloFrigo_BM.ai', result: back },
+  ])
+  eq('both faces are kept', deduped.length, 2)
+  eq('the first still reports it', deduped[0].result.status, 'dropout')
+  eq('the mirrored twin does not', deduped[1].result.status, 'clean')
+
+  const rep = emptyReport()
+  applyCutThroughFindings(rep, deduped)
+  eq('one fault, one finding', rep.cards.length, 1)
+}
+
+{
+  // A genuinely different fault on the other face must NOT be collapsed.
+  const W = 252
+  const front = faceResult({ status: 'dropout', cardWidthPt: W,
+    islands: [{ areaPt2: 17.6, areaMm2: 2.19, x: 26.9, y: 30, widthPt: 4.5, heightPt: 3.9 }] })
+  const other = faceResult({ status: 'dropout', cardWidthPt: W,
+    islands: [{ areaPt2: 40, areaMm2: 5.0, x: 120, y: 90, widthPt: 8, heightPt: 8 }] })
+  const deduped = dedupeMirroredFaces([
+    { label: 'a.ai', result: front },
+    { label: 'b.ai', result: other },
+  ])
+  eq('a different fault survives', deduped[1].result.status, 'dropout')
+  const rep = emptyReport()
+  applyCutThroughFindings(rep, deduped)
+  eq('two faults, two findings', rep.cards.length, 2)
+}
+
+{
+  // Same position but a materially different size is not the same hole.
+  const W = 252
+  const a = faceResult({ status: 'dropout', cardWidthPt: W,
+    islands: [{ areaPt2: 17.6, areaMm2: 2.19, x: 26.9, y: 30, widthPt: 4.5, heightPt: 3.9 }] })
+  const b = faceResult({ status: 'dropout', cardWidthPt: W,
+    islands: [{ areaPt2: 60, areaMm2: 7.4, x: 220.6, y: 30, widthPt: 4.5, heightPt: 3.9 }] })
+  const deduped = dedupeMirroredFaces([{ label: 'a.ai', result: a }, { label: 'b.ai', result: b }])
+  eq('a differently-sized piece is kept', deduped[1].result.status, 'dropout')
+}
+
+{
+  const untouched = dedupeMirroredFaces([
+    { label: 'a.ai', result: faceResult({ status: 'clean' }) },
+    { label: 'b.ai', result: faceResult({ status: 'possible_dropout', islands: [{ areaPt2: 9, areaMm2: 1.1, x: 1, y: 1, widthPt: 3, heightPt: 3 }] }) },
+  ])
+  eq('clean faces pass through', untouched[0].result.status, 'clean')
+  eq('conditionals are never collapsed', untouched[1].result.status, 'possible_dropout')
 }
 
 console.log(`\ncutThrough: ${passed} passed, ${failed} failed`)

@@ -1151,6 +1151,50 @@ export function buildCutThroughContext(faces: CutThroughFace[]): string {
  * repeat it. Anything already reported by the model for the same file is left
  * alone so the reviewer does not see it twice.
  */
+/**
+ * A cut-through hole exists on BOTH faces by definition, so the same physical
+ * piece is found twice — once per file. Reporting it twice inflates the "N
+ * items look wrong" headline for what is one fault.
+ *
+ * Only collapses when the two faces are provably the same hole: same number of
+ * pieces, each one mirroring a partner across the card within a point, with
+ * matching areas. Anything less exact is left alone, so a genuine second fault
+ * on one face can never be hidden.
+ */
+export function dedupeMirroredFaces(faces: CutThroughFace[]): CutThroughFace[] {
+  const out: CutThroughFace[] = []
+  const claimed: { width: number; islands: Island[] }[] = []
+  for (const face of faces) {
+    const r = face.result
+    if (r.status !== 'dropout' || r.islands.length === 0) {
+      out.push(face)
+      continue
+    }
+    const w = r.cardWidthPt
+    const isMirrorOfClaimed = claimed.some((prev) =>
+      prev.islands.length === r.islands.length &&
+      Math.abs(prev.width - w) < 1 &&
+      r.islands.every((i) =>
+        prev.islands.some((p) =>
+          // mirrored x: the piece's right edge maps to the other side's left
+          Math.abs((w - (p.x + p.widthPt)) - i.x) < 1 &&
+          Math.abs(p.y - i.y) < 1 &&
+          Math.abs(p.areaPt2 - i.areaPt2) <= Math.max(0.5, p.areaPt2 * 0.05),
+        ),
+      ),
+    )
+    if (isMirrorOfClaimed) {
+      // Same hole, other side. Keep the face so diagnostics stay complete, but
+      // stop it producing a second finding.
+      out.push({ ...face, result: { ...r, status: 'clean', islands: [] } })
+      continue
+    }
+    claimed.push({ width: w, islands: r.islands })
+    out.push(face)
+  }
+  return out
+}
+
 export function applyCutThroughFindings<
   T extends { cards: { label: string; findings: F[] }[]; notes: string[]; reference_gaps: string[] },
   F extends { field: string; supplied: string; printed: string; status: string; severity?: string; note: string },
@@ -1171,10 +1215,10 @@ export function applyCutThroughFindings<
       .join('; ')
     const definite = r.status === 'dropout'
     const printed = definite
-      ? `${r.islands.length} loose piece${r.islands.length === 1 ? '' : 's'}: ${pieces}`
-      : `${r.islands.length} piece${r.islands.length === 1 ? '' : 's'} that would come loose IF this white is cut through: ${pieces}`
+      ? `${r.islands.length} cut-out middle${r.islands.length === 1 ? ' is' : 's are'} not attached — ${pieces}`
+      : `${r.islands.length} cut-out middle${r.islands.length === 1 ? '' : 's'} would come away IF this white is cut through — ${pieces}`
     const note = definite
-      ? 'Cut through the card with no supporting strut, so this piece would fall out. Measured from the print file.'
+      ? 'Cut clean through the card with no strut holding it on, so it would drop out at the supplier. The same hole is on both faces. Measured from the print file, not read off the artwork.'
       : 'Only one side of this card was supplied, so we cannot tell whether the white is cut through or printed. If it is cut, these pieces would fall out.'
 
     // Prefer the model's own card entry for this file so the reviewer sees it
@@ -1189,7 +1233,7 @@ export function applyCutThroughFindings<
     if (already) continue
     card.findings.push({
       field: 'other',
-      supplied: 'every cut-out shape needs a strut holding its middle on',
+      supplied: 'a strut holding every cut-out middle on',
       printed,
       status: 'flag',
       // A confirmed dropout is exactly the "would we bet a reprint on it" bar:

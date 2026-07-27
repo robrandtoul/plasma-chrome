@@ -136,6 +136,88 @@ function RecapZoomRig() {
   )
 }
 
+
+// ?path=/artwork-report-cutthrough mounts the report as it looks when the
+// cut-through check finds a piece of metal that would fall out. The two
+// cut-through rows are the EXACT strings applyCutThroughFindings emits for the
+// real Skyfall 403813 files (the 'P' of "P4:13"), so this rig shows what a
+// live report actually renders, not an approximation. The surrounding
+// contact-field rows are representative model output.
+const ARTWORK_REPORT_CUTTHROUGH: ArtworkCheckReport = {
+  verdict: 'defect',
+  summary:
+    'The middle of the “P” in “P4:13” is cut clean through with nothing holding it on, so it would drop out at the supplier. Every printed detail matches what the customer supplied.',
+  cards: [
+    {
+      label: 'Gianpaolo Frigo — 02_GianpaoloFrigo_BM.ai',
+      findings: [
+        { field: 'other', supplied: 'a strut holding every cut-out middle on', printed: '1 cut-out middle is not attached — 2.19 mm² at (220.5, 30) pt', status: 'flag', severity: 'defect', note: 'Cut clean through the card with no strut holding it on, so it would drop out at the supplier. The same hole is on both faces. Measured from the print file, not read off the artwork.' },
+        { field: 'name', supplied: 'Gianpaolo Frigo (request form)', printed: 'Gianpaolo Frigo', status: 'match', note: '' },
+        { field: 'company', supplied: 'Skyfall Intelligence Agency (request form)', printed: 'Skyfall Intelligence Agency', status: 'match', note: '' },
+        { field: 'email', supplied: 'paolo@skyfallintelligenceagency.com (request form)', printed: 'paolo@skyfallintelligenceagency.com', status: 'match', note: '' },
+        { field: 'tel', supplied: '+353 1 254 8000 (customer reply, 24 Jun)', printed: '+353 1 254 8000', status: 'match', note: '' },
+      ],
+    },
+  ],
+  corrections: [],
+  notes: [
+    'The back reads reversed because the design cuts right through the card.',
+    'The print files match the proof the customer approved.',
+  ],
+  reference_gaps: [],
+  checked_at: '2026-07-27T11:04:00.000Z',
+}
+
+// The amber sibling: only one side of the card was supplied, so we cannot tell
+// a cut-through from printed white. Strings are exactly what the code emits
+// for BMW of Dublin 403920.
+const ARTWORK_REPORT_CUTTHROUGH_MAYBE: ArtworkCheckReport = {
+  verdict: 'flagged',
+  summary:
+    'Only one side of this card was supplied, so we could not confirm whether the roundel is cut through or printed. Everything printed matches what the customer supplied.',
+  cards: [
+    {
+      label: 'Owais Deura — 02.ai',
+      findings: [
+        { field: 'other', supplied: 'a strut holding every cut-out middle on', printed: '4 cut-out middles would come away IF this white is cut through — 48.28 mm² at (21, 100.8) pt; 2.382 mm² at (29, 123.6) pt; 2.341 mm² at (40.1, 117.8) pt; 2.3 mm² at (17.5, 117.8) pt', status: 'flag', severity: 'review', note: 'Only one side of this card was supplied, so we cannot tell whether the white is cut through or printed. If it is cut, these pieces would fall out.' },
+        { field: 'name', supplied: 'Owais Deura (request form)', printed: 'Owais Deura', status: 'match', note: '' },
+        { field: 'company', supplied: 'BMW of Dublin (request form)', printed: 'BMW of Dublin', status: 'match', note: '' },
+      ],
+    },
+  ],
+  corrections: [],
+  notes: [],
+  reference_gaps: [],
+  checked_at: '2026-07-27T11:04:00.000Z',
+}
+
+function ArtworkReportCutThroughRig() {
+  return (
+    <div className="min-h-screen bg-canvas">
+      <div className="mx-auto grid max-w-5xl gap-6 px-4 py-10 lg:grid-cols-2">
+        <div>
+          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-mute">Red — a piece would fall out</p>
+          <div className="rounded-lg bg-surface px-3.5 py-3 ring-1 ring-[var(--c-out)]/50">
+            <ArtworkCheckReportView
+              report={ARTWORK_REPORT_CUTTHROUGH}
+              action={<button type="button" className="text-[13px] font-medium text-brand hover:underline">Re-run</button>}
+            />
+          </div>
+        </div>
+        <div>
+          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-mute">Amber — one side only, so unconfirmed</p>
+          <div className="rounded-lg bg-surface px-3.5 py-3 ring-1 ring-[var(--c-out)]/50">
+            <ArtworkCheckReportView
+              report={ARTWORK_REPORT_CUTTHROUGH_MAYBE}
+              action={<button type="button" className="text-[13px] font-medium text-brand hover:underline">Re-run</button>}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ?path=/artwork-report mounts the shared artwork-check report card on its own
 // with a representative report (a defect flag, a review flag, an unpicked
 // correction, notes, reference gaps, and a comparison table) so the
@@ -385,6 +467,8 @@ const tree = requestedPath === '/detail-markers' ? (
   <RecapZoomRig />
 ) : requestedPath === '/artwork-report' ? (
   <ArtworkReportRig />
+) : requestedPath === '/artwork-report-cutthrough' ? (
+  <ArtworkReportCutThroughRig />
 ) : requestedPath === '/artwork-report-modal' ? (
   <ArtworkReportModalRig />
 ) : requestedPath === '/preview-gate' ? (

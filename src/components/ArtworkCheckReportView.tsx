@@ -346,7 +346,10 @@ export default function ArtworkCheckReportView({
 
       <p className="mt-4 border-t border-line-soft pt-2.5 text-[12px] text-ink-mute">
         {report.verdict !== 'error' && fieldsChecked > 0 && `${fieldsChecked} field${fieldsChecked === 1 ? '' : 's'} compared. `}
-        {report.verdict === 'defect' && 'The ❌ items look wrong outright — resolve them before placing. Everything here stays advisory. '}
+        {report.verdict === 'defect' &&
+          (artworkDefectCount(report) === 1
+            ? 'The ❌ item looks wrong outright — resolve it before placing. Everything here stays advisory. '
+            : 'The ❌ items look wrong outright — resolve them before placing. Everything here stays advisory. ')}
         {report.verdict === 'flagged' && 'Flags are advisory — review them, then place the order when you’re satisfied. '}
         Checked {artworkCheckedAtLabel(report)}.
       </p>

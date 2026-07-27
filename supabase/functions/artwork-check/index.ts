@@ -33,6 +33,7 @@ import {
   analyseOrderArtwork,
   applyCutThroughFindings,
   buildCutThroughContext,
+  dedupeMirroredFaces,
   type CutThroughFace,
 } from '../_shared/artworkCheck/cutThrough.ts'
 import {
@@ -894,7 +895,9 @@ Deno.serve(async (req) => {
     let cutThroughFaces: CutThroughFace[] = []
     if (cutThroughInput.length > 0) {
       try {
-        cutThroughFaces = await analyseOrderArtwork(cutThroughInput)
+        // A cut-through hole is on both faces; collapse the duplicate so one
+        // fault reads as one finding.
+        cutThroughFaces = dedupeMirroredFaces(await analyseOrderArtwork(cutThroughInput))
       } catch (err) {
         console.error('[artwork-check] cut-through check failed:', (err as Error)?.message)
       }
