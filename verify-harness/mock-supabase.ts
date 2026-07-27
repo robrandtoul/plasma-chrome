@@ -320,6 +320,108 @@ const DASHBOARD_PROJECTS = [
     helpscout_last_reply_at: daysAgo(1),
     helpscout_last_customer_reply_at: daysAgo(0.05),
   },
+  // ——— Bundle fixtures (proof_sets, 000311) ———
+  // Reproduces the case that prompted the feature: two cards of one bundle
+  // separated by an unrelated row, so the dashboard gave no sign they were
+  // connected. p-b1 + p-b2 land in Today and gather into a block; p-b3 is old
+  // enough to fall into another section, where it carries the chip instead —
+  // so one screenshot exercises both treatments AND the "1 card not shown
+  // here" reconciliation in the block header.
+  {
+    proof_id: 'p-b1',
+    status: 'in_progress',
+    current_version_id: 'ver-b1',
+    current_version_number: 1,
+    version_created_at: daysAgo(0.05),
+    company_name: 'Atlus Consulting Engineers',
+    contact_name: 'Saba',
+    contact_email: 'saba@atlus.example',
+    approved_at: null,
+    material_display: 'Carbon Fibre',
+    designer_name: 'Jack Johnson',
+    designer_initials: 'JJ',
+    designer_colour: 'purple',
+    designer_avatar_url: null,
+    helpscout_conversation_url: 'https://secure.helpscout.net/conversation/3',
+    helpscout_conversation_id: 'hs-7',
+    helpscout_last_reply_at: daysAgo(0.05),
+    helpscout_last_customer_reply_at: null,
+  },
+  {
+    proof_id: 'p-x1',
+    status: 'in_progress',
+    current_version_id: 'ver-x1',
+    current_version_number: 2,
+    version_created_at: daysAgo(0.04),
+    company_name: 'Leccy.Tech',
+    contact_name: 'Laurence Phillips',
+    contact_email: 'laurence@leccy.example',
+    approved_at: null,
+    material_display: 'Gun Metal',
+    designer_name: 'Donna Lambe',
+    designer_initials: 'DL',
+    designer_colour: 'coral',
+    designer_avatar_url: null,
+    helpscout_conversation_url: 'https://secure.helpscout.net/conversation/4',
+    helpscout_conversation_id: 'hs-8',
+    helpscout_last_reply_at: daysAgo(0.04),
+    helpscout_last_customer_reply_at: daysAgo(0.03),
+  },
+  {
+    proof_id: 'p-b2',
+    status: 'in_progress',
+    current_version_id: 'ver-b2',
+    current_version_number: 1,
+    version_created_at: daysAgo(0.03),
+    company_name: 'Atlus Consulting Engineers',
+    contact_name: 'Saba',
+    contact_email: 'saba@atlus.example',
+    approved_at: null,
+    material_display: 'Gun Metal',
+    designer_name: 'Jack Johnson',
+    designer_initials: 'JJ',
+    designer_colour: 'purple',
+    designer_avatar_url: null,
+    helpscout_conversation_url: 'https://secure.helpscout.net/conversation/3',
+    helpscout_conversation_id: 'hs-7',
+    helpscout_last_reply_at: daysAgo(0.03),
+    helpscout_last_customer_reply_at: null,
+  },
+  {
+    proof_id: 'p-b3',
+    status: 'in_progress',
+    current_version_id: 'ver-b3',
+    current_version_number: 1,
+    version_created_at: daysAgo(4),
+    company_name: 'Atlus Consulting Engineers',
+    contact_name: 'Saba',
+    contact_email: 'saba@atlus.example',
+    approved_at: null,
+    material_display: 'Stainless Steel',
+    designer_name: 'Jack Johnson',
+    designer_initials: 'JJ',
+    designer_colour: 'purple',
+    designer_avatar_url: null,
+    helpscout_conversation_url: 'https://secure.helpscout.net/conversation/3',
+    helpscout_conversation_id: 'hs-7',
+    helpscout_last_reply_at: daysAgo(4),
+    helpscout_last_customer_reply_at: null,
+  },
+]
+
+// Bundle membership, as DashboardPage reads it: every member proof plus the
+// set rows. One three-card bundle, sent but not yet opened — the live Atlus
+// shape. The abandoned fourth card proves the exclusion: it must NOT push the
+// headline count to four.
+const BUNDLE_MEMBERS = [
+  { id: 'p-b1', proof_set_id: 'set-1', set_discarded_at: null, status: 'in_progress' },
+  { id: 'p-b2', proof_set_id: 'set-1', set_discarded_at: null, status: 'in_progress' },
+  { id: 'p-b3', proof_set_id: 'set-1', set_discarded_at: null, status: 'in_progress' },
+  { id: 'p-b4', proof_set_id: 'set-1', set_discarded_at: null, status: 'abandoned' },
+]
+
+const BUNDLE_SETS = [
+  { id: 'set-1', token: 'set-token', sent_at: daysAgo(0.02), last_opened_at: null },
 ]
 
 // ——— Flagged board fixtures (watch_items / watch_updates) ———
@@ -499,7 +601,10 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
       rows = pid ? [{ id: `ver-${pid}`, material_id: ORDERS.find((o) => o.proof_id === pid)?.material_id ?? 'm-steel', is_current: true, version_number: 3, shape: null }] : []
     }
   } else if (table === 'proofs') {
-    if (select.includes('contacts(')) {
+    if (select.includes('proof_set_id') && !select.includes('contacts(')) {
+      // DashboardPage's bundle-membership read (see lib/dashboardBundles.ts).
+      rows = BUNDLE_MEMBERS
+    } else if (select.includes('contacts(')) {
       // ProofDetailPage's header select — a full approved fixture project so
       // the detail page (overflow menu, dialogs, facts rail) can be verified.
       // An id containing 'open' renders the in_progress (unlocked) branch.
@@ -553,6 +658,8 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
         resolved_by: null, created_at: '2026-07-26T16:32:41.989Z',
       },
     ]
+  } else if (table === 'proof_sets') {
+    rows = BUNDLE_SETS
   } else if (table === 'settings') {
     rows = [{ ordering_enabled: true, order_reminders_max: 3, order_reminder_interval_days: 3, auto_order_reminders_enabled: true, artwork_check_mode: 'live', artwork_check_required: false, artwork_check_model: null, proof_check_enabled: true, proof_callouts_enabled: true, proof_pins_enabled: true }]
   } else if (table === 'site_settings') {

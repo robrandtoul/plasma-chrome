@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { DesignerChrome, useDesignerProfile, useIsMobile, Sheet, ButtonCoral, ButtonGhost, ButtonInk, ProofStatusPill, HelpTip } from '../design'
-import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Link as LinkIcon, ThumbsDown, PictureInPicture2 } from 'lucide-react'
+import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Layers, Link as LinkIcon, ThumbsDown, PictureInPicture2 } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -64,6 +64,20 @@ import {
   type NeedsAttentionRule,
   type ProjectSection,
 } from '../lib/dashboardGrouping'
+// Bundle stitching (proof_sets, 000311) — see dashboardBundles.ts for why a
+// bundle needs showing on the list at all, and which of the two treatments
+// (block / chip) applies where.
+import {
+  buildBundleIndex,
+  buildRowItems,
+  bundleSentState,
+  bundleShownHere,
+  EMPTY_BUNDLE_INDEX,
+  type BundleIndex,
+  type BundleInfo,
+  type BundleMemberRow,
+  type BundleSetRow,
+} from '../lib/dashboardBundles'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 // DashboardProject, NeedsAttentionRule, and ProjectSection are
@@ -1043,6 +1057,13 @@ interface ProjectRowProps {
   // Refresh the dashboard after the resolve popover auto-snoozes a proof
   // (so the now-snoozed row drops off the Needs-attention list).
   onAfterResolve: () => void
+  /** The bundle this card belongs to (proof_sets, 000311), when it's in one of
+   *  2+ live cards. Null for the standalone majority. */
+  bundle?: BundleInfo | null
+  /** True when the row is rendered INSIDE a BundleBlock. The container already
+   *  says the cards are one bundle, so the row drops its chip — belt and braces
+   *  on a row that's already visibly contained reads as clutter. */
+  bundleNested?: boolean
 }
 
 function ProjectRow({
@@ -1055,6 +1076,8 @@ function ProjectRow({
   onSnooze,
   onUnsnooze,
   onAfterResolve,
+  bundle = null,
+  bundleNested = false,
 }: ProjectRowProps) {
   // Hover popover + click lightbox state. Both gate on a real
   // thumb — when no image is available (placeholder rendering)
@@ -1191,7 +1214,10 @@ function ProjectRow({
           <div className="min-w-0 flex-1">
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
-                <div className="truncate text-[15px] font-medium text-ink">{projectName}</div>
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-[15px] font-medium text-ink">{projectName}</span>
+                  {bundle && !bundleNested && <BundleChip bundle={bundle} shownHere={1} />}
+                </div>
                 {subline && <div className="truncate text-xs text-ink-mute mt-0.5">{subline}</div>}
                 {specLine && <div className="truncate text-xs text-ink-mute mt-0.5">{specLine}</div>}
               </div>
@@ -1357,7 +1383,12 @@ function ProjectRow({
         {/* Customer: name on row 1, company sub-line on row 2.
             The version label moves to its own column on md+. */}
         <div className="min-w-0">
-          <div className="truncate text-[15px] font-medium text-ink">{projectName}</div>
+          <div className="flex items-center gap-2">
+            <span className="truncate text-[15px] font-medium text-ink">{projectName}</span>
+            {/* Treatment B. Suppressed inside a block, where containment already
+                says it — see BundleChip. */}
+            {bundle && !bundleNested && <BundleChip bundle={bundle} shownHere={1} />}
+          </div>
           {subline && <div className="truncate text-xs text-ink-mute mt-0.5">{subline}</div>}
           {/* Reason chip — third row line, shown on every Needs-attention
               row so the triggering rule is always visible (not just when
@@ -1496,6 +1527,97 @@ function ProjectRow({
         />
       </div>
     </div>
+  )
+}
+
+// ── Bundle presentation (proof_sets, 000311) ─────────────────────────────────
+//
+// The two treatments described in lib/dashboardBundles.ts. Both lead with the
+// same fact — N cards, ONE review link — because that's what makes the rows
+// related in the customer's eyes and what makes a single reminder correct.
+
+/** The status line shared by the block header and the chip's tooltip. */
+function bundleDetail(bundle: BundleInfo, shownHere: number): string {
+  const parts: string[] = []
+  switch (bundleSentState(bundle)) {
+    case 'unsent':
+      // Deliberately "the bundle link" and not "nothing has been sent" — cards
+      // can each have gone out standalone before being gathered into a bundle.
+      parts.push('bundle link not sent yet')
+      break
+    case 'sent_unopened':
+      parts.push(`sent ${relativeTime(bundle.sentAt!)} · not opened yet`)
+      break
+    case 'opened':
+      parts.push(`sent ${relativeTime(bundle.sentAt!)} · opened ${relativeTime(bundle.lastOpenedAt!)}`)
+      break
+  }
+  if (bundle.approvedCount > 0) parts.push(`${bundle.approvedCount} of ${bundle.size} approved`)
+  const elsewhere = bundle.size - shownHere
+  // "not shown here" rather than "shown elsewhere": the missing card might be
+  // in another section, or filtered out of the list entirely, and this phrasing
+  // is true either way. It's what reconciles the headline count with what you
+  // can actually see.
+  if (shownHere > 0 && elsewhere > 0) {
+    parts.push(`${elsewhere} card${elsewhere === 1 ? '' : 's'} not shown here`)
+  }
+  return parts.join(' · ')
+}
+
+/**
+ * Treatment A — the container. Members are nested INSIDE it, so the grouping
+ * reads as containment rather than a banner sitting next to rows that could be
+ * anywhere in the list. Same call the Orders page made for combined payments.
+ */
+function BundleBlock({
+  bundle,
+  shownHere,
+  children,
+}: {
+  bundle: BundleInfo
+  shownHere: number
+  children: ReactNode
+}) {
+  return (
+    <div className="rounded-[12px] border border-[var(--c-brand)]/50 bg-[var(--c-brand)]/[0.05] p-2.5 max-md:p-2">
+      <div className="flex flex-col gap-2 px-1 pb-2.5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="flex items-center gap-1.5 text-[13px] font-medium text-ink">
+            <Layers size={14} className="shrink-0 text-ink-soft" aria-hidden="true" />
+            Bundle · {bundle.size} cards, one review link
+          </p>
+          <p className="mt-0.5 text-xs text-ink-mute first-letter:uppercase">
+            {bundleDetail(bundle, shownHere)}
+          </p>
+        </div>
+        <Link
+          to={`/bundles/${bundle.setId}`}
+          className="shrink-0 self-start rounded-[var(--radius)] border border-line px-2.5 py-1 text-xs font-medium text-ink-soft transition-colors hover:bg-surface hover:text-ink max-md:h-9 max-md:leading-7"
+        >
+          Open bundle
+        </Link>
+      </div>
+      <div className="space-y-2">{children}</div>
+    </div>
+  )
+}
+
+/**
+ * Treatment B — the chip, for a card whose siblings aren't in this section
+ * (a different day bucket, or filtered out by a tile). The row keeps its place
+ * in the sort; rows are never moved between sections to force adjacency.
+ */
+function BundleChip({ bundle, shownHere }: { bundle: BundleInfo; shownHere: number }) {
+  return (
+    <Link
+      to={`/bundles/${bundle.setId}`}
+      onClick={(e) => e.stopPropagation()}
+      title={`One of ${bundle.size} cards in a bundle — ${bundleDetail(bundle, shownHere)}`}
+      className="inline-flex shrink-0 items-center gap-1 rounded-[var(--radius)] border border-[var(--c-brand)]/40 bg-[var(--c-brand)]/[0.07] px-1.5 py-0.5 text-[11px] font-medium text-ink-soft transition-colors hover:bg-[var(--c-brand)]/[0.14] hover:text-ink"
+    >
+      <Layers size={11} className="shrink-0" aria-hidden="true" />
+      Bundle of {bundle.size}
+    </Link>
   )
 }
 
@@ -2322,6 +2444,7 @@ interface DashboardSnapshot {
   minePinAt: Map<string, string>
   teamPinAt: Map<string, string>
   thumbnailUrls: Map<string, ThumbInfo>
+  bundleIndex: BundleIndex
 }
 
 // Five minutes. Long enough to cover a designer working through a batch of
@@ -2391,6 +2514,11 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   // sections can sort by recency.
   const [minePinAt, setMinePinAt]         = useState<Map<string, string>>(new Map())
   const [teamPinAt, setTeamPinAt]         = useState<Map<string, string>>(new Map())
+  // Bundle membership (proof_sets, 000311). Fetched standalone and merged
+  // client-side rather than joined into public_dashboard_projects — same
+  // posture as the pin maps above, and for the same reason (no migration, and
+  // bundle churn doesn't force a dashboard refetch).
+  const [bundleIndex, setBundleIndex]     = useState<BundleIndex>(EMPTY_BUNDLE_INDEX)
   // Count of un-resolved cards on the Flagged board — drives the Flagged tile.
   const [flaggedOpenCount, setFlaggedOpenCount] = useState(0)
   const [loading, setLoading]             = useState(true)
@@ -2528,6 +2656,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
       setMinePinAt(snap.minePinAt)
       setTeamPinAt(snap.teamPinAt)
       setThumbnailUrls(snap.thumbnailUrls)
+      setBundleIndex(snap.bundleIndex)
       setLoading(false)
     }
     loadDashboard()
@@ -2677,6 +2806,19 @@ export default function DashboardPage({ activityView = false }: { activityView?:
       .from('proof_pins')
       .select('proof_id, scope, user_id, pinned_at')
 
+    // Bundle membership (proof_sets, 000311) — two narrow, unfiltered reads so
+    // the "of N" counts describe the WHOLE bundle even when a sibling is
+    // filtered out of the list. Tiny today (16 sets over 35 member proofs);
+    // if bundles ever became a mass-market feature these would need paging
+    // past PostgREST's 1000-row default rather than silently truncating.
+    const bundleMembersPromise = supabase
+      .from('proofs')
+      .select('id, proof_set_id, set_discarded_at, status')
+      .not('proof_set_id', 'is', null)
+    const bundleSetsPromise = supabase
+      .from('proof_sets')
+      .select('id, token, sent_at, last_opened_at')
+
     // Open flagged-board count for the Flagged tile. Standalone (watch_items
     // isn't in the projects view); head+count so no rows transfer.
     const flaggedCountPromise = supabase
@@ -2717,7 +2859,9 @@ export default function DashboardPage({ activityView = false }: { activityView?:
       { data: orderReminderRows },
       { data: feedbackRows },
       { count: flaggedCount },
-    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise, countsPromise, payLinkOpensPromise, payLinkSentsPromise, orderRemindersPromise, feedbackPromise, flaggedCountPromise])
+      { data: bundleMemberRows, error: bundleMembersError },
+      { data: bundleSetRows, error: bundleSetsError },
+    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise, countsPromise, payLinkOpensPromise, payLinkSentsPromise, orderRemindersPromise, feedbackPromise, flaggedCountPromise, bundleMembersPromise, bundleSetsPromise])
 
     // dashboard_list IS the page. If it failed, say so — the old code
     // destructured `data` only, so an expired JWT, an RLS change or a 500 all
@@ -2790,6 +2934,18 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     setMinePinAt(mine)
     setTeamPinAt(team)
 
+    // Bundle membership. A failed read keeps whatever index is already on
+    // screen: supabase-js returns data: null on error, so the idiomatic
+    // `?? []` would quietly dissolve every bundle block into loose rows and
+    // read as "these cards aren't related" — the exact wrong answer.
+    const nextBundleIndex = bundleMembersError || bundleSetsError
+      ? (console.error('[DashboardPage] bundle membership failed', bundleMembersError ?? bundleSetsError), bundleIndex)
+      : buildBundleIndex(
+          (bundleMemberRows ?? []) as BundleMemberRow[],
+          (bundleSetRows ?? []) as BundleSetRow[],
+        )
+    setBundleIndex(nextBundleIndex)
+
     // Snapshot this successful load so remounting the page (returning from a
     // proof) can paint instantly instead of spinning through a cold fetch.
     // Thumbnails are folded in above once their signing resolves.
@@ -2804,6 +2960,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
       minePinAt: mine,
       teamPinAt: team,
       thumbnailUrls: dashboardSnapshot?.thumbnailUrls ?? new Map(),
+      bundleIndex: nextBundleIndex,
     }
 
     setLoading(false)
@@ -3135,6 +3292,44 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   }, [sortedProjects, group, minePinAt, teamPinAt, snoozedSections, showSnoozed, snoozedOnly])
 
   const noResults = !loading && sections.every((s) => s.projects.length === 0)
+
+  // ── Row rendering ────────────────────────────────────────────────────────
+  //
+  // One row, whether it's loose in a section or nested inside a bundle block.
+  // Extracted so the plain and virtualised paths can't drift.
+  function renderProjectRow(p: DashboardProject, nested: boolean) {
+    return (
+      <ProjectRow
+        key={p.proof_id}
+        project={p}
+        minePinned={minePinAt.has(p.proof_id)}
+        teamPinned={teamPinAt.has(p.proof_id)}
+        thumb={p.current_version_id ? thumbnailUrls.get(p.current_version_id) : undefined}
+        onToggleMinePin={toggleMinePin}
+        onToggleTeamPin={toggleTeamPin}
+        onSnooze={handleSnooze}
+        onUnsnooze={handleUnsnooze}
+        onAfterResolve={() => loadDashboard()}
+        bundle={bundleIndex.byProof.get(p.proof_id) ?? null}
+        bundleNested={nested}
+      />
+    )
+  }
+
+  // A section entry: a lone project, or a bundle block wrapping the siblings
+  // that landed in this same section (see lib/dashboardBundles.ts).
+  function renderRowItem(item: ReturnType<typeof buildRowItems>[number]) {
+    if (item.kind === 'project') return renderProjectRow(item.project, false)
+    return (
+      <BundleBlock
+        key={item.key}
+        bundle={item.bundle}
+        shownHere={bundleShownHere(item.projects, item.bundle)}
+      >
+        {item.projects.map((p) => renderProjectRow(p, true))}
+      </BundleBlock>
+    )
+  }
 
   // ── /activity page mode: same data, page-shaped rendering. Placed after
   // every hook so both modes run the identical hook sequence.
@@ -3627,6 +3822,12 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                         // ProjectRow component so chips, menus, and
                         // keyboard interaction behave identically.
                         const virtualise = section.kind === 'time' && section.key === 'older' && section.projects.length > 30
+                        // Bundle siblings that landed in this section are
+                        // gathered into one block; everything else keeps its
+                        // place. The section's COUNT still counts projects, so
+                        // gathering rows never changes the number in the header
+                        // (or any tile count — those are server-side).
+                        const rowItems = buildRowItems(section.projects, bundleIndex)
                         return (
                           <div key={section.key} className="mt-6 first:mt-0">
                             {/* Loose section header — eyebrow on the
@@ -3650,40 +3851,15 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                               {virtualise ? (
                                 <Virtuoso
                                   useWindowScroll
-                                  data={section.projects}
+                                  data={rowItems}
                                   overscan={400}
-                                  computeItemKey={(_, p) => p.proof_id}
-                                  itemContent={(_, p) => (
-                                    <div className="mb-2 last:mb-0">
-                                      <ProjectRow
-                                        project={p}
-                                        minePinned={minePinAt.has(p.proof_id)}
-                                        teamPinned={teamPinAt.has(p.proof_id)}
-                                        thumb={p.current_version_id ? thumbnailUrls.get(p.current_version_id) : undefined}
-                                        onToggleMinePin={toggleMinePin}
-                                        onToggleTeamPin={toggleTeamPin}
-                                        onSnooze={handleSnooze}
-                                        onUnsnooze={handleUnsnooze}
-                                        onAfterResolve={() => loadDashboard()}
-                                      />
-                                    </div>
+                                  computeItemKey={(_, item) => item.key}
+                                  itemContent={(_, item) => (
+                                    <div className="mb-2 last:mb-0">{renderRowItem(item)}</div>
                                   )}
                                 />
                               ) : (
-                                section.projects.map((p) => (
-                                  <ProjectRow
-                                    key={p.proof_id}
-                                    project={p}
-                                    minePinned={minePinAt.has(p.proof_id)}
-                                    teamPinned={teamPinAt.has(p.proof_id)}
-                                    thumb={p.current_version_id ? thumbnailUrls.get(p.current_version_id) : undefined}
-                                    onToggleMinePin={toggleMinePin}
-                                    onToggleTeamPin={toggleTeamPin}
-                                    onSnooze={handleSnooze}
-                                    onUnsnooze={handleUnsnooze}
-                                    onAfterResolve={() => loadDashboard()}
-                                  />
-                                ))
+                                rowItems.map((item) => renderRowItem(item))
                               )}
                             </div>
                           </div>
