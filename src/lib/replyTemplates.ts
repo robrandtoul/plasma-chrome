@@ -114,7 +114,7 @@ export function substituteVariables(text: string, ctx: TemplateContext): string 
 // Designer-picked templates (first_proof, revision) use unprefixed
 // IDs and render in the "Pre-send messages" sub-section.
 
-export type TemplateVariableScope = 'designer_picked' | 'proof_viewer' | 'order' | 'order_reminder' | 'order_confirmation' | 'order_lifecycle' | 'supplier_order'
+export type TemplateVariableScope = 'designer_picked' | 'proof_viewer' | 'order' | 'order_reminder' | 'order_confirmation' | 'order_lifecycle' | 'supplier_order' | 'inhouse_note'
 
 export interface TemplateVariableMeta {
   // Variable name as it appears between braces in templates. Plain
@@ -163,9 +163,40 @@ export const TEMPLATE_VARIABLES: TemplateVariableMeta[] = [
   { name: 'first_name',          scope: 'order_lifecycle', description: "Customer's first name",                                                           conditional: false },
   { name: 'company',             scope: 'order_lifecycle', description: 'Company name (when set)',                                                         conditional: true  },
   // Supplier order email (supplier_order_email) — emailed to the supplier when
-  // an outsourced order is placed. The spec block is machine-generated.
+  // an outsourced order is placed. {order_details} is the whole spec in one
+  // block (the quick option); the individual fields below let an admin lay the
+  // email out by hand instead. Nothing here is read by a machine any more —
+  // the order goes into Stock Control directly when it's placed — so the
+  // wording is free (docs/order-handoff-spec.md §6, Phase 3).
   { name: 'customer',            scope: 'supplier_order',  description: "Customer name the cards are for",                                                conditional: false },
-  { name: 'order_details',       scope: 'supplier_order',  description: 'Machine-generated spec block (Qty / per-person split / Material / Type / Thickness / Finish / Must ship by / Artwork). Keep this exactly — Stock Control reads it.', conditional: false },
+  { name: 'order_details',       scope: 'supplier_order',  description: 'The whole spec in one block (quantity, per-person split, material, type, thickness, finish, must-ship-by, artwork link, and the designer’s note). Use this, or lay the fields out yourself with the variables below.', conditional: false },
+  { name: 'order_number',        scope: 'supplier_order',  description: 'The six-digit order number',                                                     conditional: false },
+  { name: 'note',                scope: 'supplier_order',  description: 'The designer’s “Note to supplier” for this order, when they typed one. Included in {order_details} — add it yourself if you lay the fields out by hand, or the note is silently dropped.', conditional: true  },
+  { name: 'qty',                 scope: 'supplier_order',  description: 'How many cards the supplier makes (the customer’s quantity plus any spoilage overs)', conditional: false },
+  { name: 'material',            scope: 'supplier_order',  description: 'The product type the supplier makes (e.g. “Carbon fibre”)',                       conditional: true  },
+  { name: 'specific_type',       scope: 'supplier_order',  description: 'The exact card (e.g. “Carbon Fibre CNC”). Always set, so it can repeat the material — the {order_details} block leaves it out when it would.', conditional: false },
+  { name: 'thickness',           scope: 'supplier_order',  description: 'Card thickness, on materials that have a choice',                                 conditional: true  },
+  { name: 'finish',              scope: 'supplier_order',  description: 'Finish, on materials that have one',                                              conditional: true  },
+  { name: 'must_ship_by',        scope: 'supplier_order',  description: 'Date the supplier must ship by (the customer’s date, less delivery time)',        conditional: true  },
+  { name: 'per_person',          scope: 'supplier_order',  description: 'One line per person on a split order (“Joe Bloggs — 50”). Empty when the order isn’t split.', conditional: true  },
+  { name: 'artwork_link',        scope: 'supplier_order',  description: 'Link to the Dropbox order folder (when there is one)',                            conditional: true  },
+  { name: 'prototype_warning',   scope: 'supplier_order',  description: 'The prototype warning line. Empty on a normal production order.',                 conditional: true  },
+  // In-house production note (inhouse_production_note) — the staff note posted
+  // on the customer's Help Scout thread telling our own workshop what to make.
+  // A human message: Stock Control gets the job directly, so nothing here has
+  // to keep a fixed shape (docs/order-handoff-spec.md §6, Phase 3).
+  { name: 'qty',                 scope: 'inhouse_note',    description: 'How many cards to make',                                                          conditional: false },
+  { name: 'card',                scope: 'inhouse_note',    description: 'The card being made — material, and the paper colours on letterpress',            conditional: false },
+  { name: 'date_required',       scope: 'inhouse_note',    description: 'Date the cards are needed by (when one is set)',                                  conditional: true  },
+  { name: 'ink_front',           scope: 'inhouse_note',    description: 'Ink on the front, on materials where it’s specified',                             conditional: true  },
+  { name: 'ink_back',            scope: 'inhouse_note',    description: 'Ink on the back, on materials where it’s specified',                              conditional: true  },
+  { name: 'packaging',           scope: 'inhouse_note',    description: 'Domestic or International, from where the order is going',                        conditional: true  },
+  { name: 'per_person',          scope: 'inhouse_note',    description: 'One line per person on a split order (“Joe Bloggs — 50”). Empty when the order isn’t split.', conditional: true  },
+  { name: 'artwork_link',        scope: 'inhouse_note',    description: 'Link to the Dropbox order folder (when there is one)',                            conditional: true  },
+  { name: 'prototype_warning',   scope: 'inhouse_note',    description: 'The prototype warning line. Empty on a normal production order.',                 conditional: true  },
+  { name: 'note',                scope: 'inhouse_note',    description: 'Anything the designer typed in the note box when placing the order',              conditional: true  },
+  { name: 'customer',            scope: 'inhouse_note',    description: 'Customer name the cards are for',                                                 conditional: false },
+  { name: 'order_number',        scope: 'inhouse_note',    description: 'The six-digit order number',                                                      conditional: false },
 ]
 
 // ── Default bodies ───────────────────────────────────────────────────────────
@@ -276,4 +307,15 @@ export const DEFAULT_BODIES: Record<string, string> = {
   // it is meant to be edited. Seeded in 000258.
   supplier_order_email:
     `Hi,\n\nPlease produce the following order for {customer}:\n\n{order_details}\n\nMany thanks.`,
+  // In-house production note — the staff note posted on the customer's Help
+  // Scout thread when an in-house order is placed, telling our own workshop
+  // what to make. This default reproduces the layout the note has always had,
+  // line for line; every optional line is wrapped so it disappears when there's
+  // nothing to say (exactly as the old built-in version behaved).
+  //
+  // Nothing reads this note any more — the job goes into Stock Control directly
+  // the moment the order is placed — so the wording is free to change
+  // (docs/order-handoff-spec.md §6, Phase 3).
+  inhouse_production_note:
+    `{? prototype_warning}{prototype_warning}\n{/?}Qty: {qty}\nCard: {card}{? date_required}\nDate required: {date_required}{/?}{? ink_front}\nInk on front: {ink_front}{/?}{? ink_back}\nInk on back: {ink_back}{/?}{? packaging}\nPackaging: {packaging}{/?}{? per_person}\n{per_person}{/?}{? artwork_link}\nArtwork: {artwork_link}{/?}{? note}\n\n{note}{/?}`,
 }

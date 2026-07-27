@@ -18,6 +18,7 @@ import { FieldRow, RadioGroup, Toggle, inputClass } from './settingsControls'
 
 type PricingDisplayValue = 'standard' | 'custom_quote'
 type CurrencyValue = 'GBP' | 'EUR' | 'USD'
+type HandoffMode = 'off' | 'shadow' | 'live'
 
 interface Settings {
   /** null means "no default — force the designer to choose". */
@@ -48,6 +49,12 @@ interface Settings {
   /** Stripe payment mode (migration 000241): 'test' (sandbox) or 'live'. The
    *  checkout functions read this to pick which Stripe key set to use. */
   payment_mode: 'test' | 'live'
+  /** Workshop hand-off mode (migration 000332, docs/order-handoff-spec.md §3.6).
+   *  'off' = the old behaviour, where Stock Control picked the order out of the
+   *  Help Scout message. 'shadow' = old behaviour plus a dry-run of the direct
+   *  write, for checking. 'live' = the order is written into Stock Control
+   *  directly when it's placed, which is what frees the message wording. */
+  direct_handoff_mode: HandoffMode
   /** Xero account code of the Stripe clearing account (migration 000242). When
    *  set, paid orders are marked paid in Xero instantly. Null = create-only. */
   xero_stripe_account_code: string | null
@@ -149,6 +156,7 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   decline_recovery_discount_enabled: 'setting.decline_recovery_discount_enabled_updated',
   decline_recovery_discount_percent: 'setting.decline_recovery_discount_percent_updated',
   payment_mode:                      'setting.payment_mode_updated',
+  direct_handoff_mode:               'setting.direct_handoff_mode_updated',
   xero_stripe_account_code:          'setting.xero_stripe_account_code_updated',
   xero_eu_tax_type:                  'setting.xero_eu_tax_type_updated',
   xero_row_tax_type:                 'setting.xero_row_tax_type_updated',
@@ -170,13 +178,14 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
-// The nine on-page sections, in render order — drives the sticky jump nav
+// The on-page sections, in render order — drives the sticky jump nav
 // under the page heading and its scrollspy highlight. Each id is stamped on
 // the matching <section> below via SECTION_CLASS, whose scroll-mt makes a
 // jump land clear of the sticky app bar + jump nav (~50px + ~44px).
 const SECTIONS = [
   { id: 'customer-approvals', label: 'Customer approvals' },
   { id: 'ordering-checkout', label: 'Ordering & checkout' },
+  { id: 'workshop-handoff', label: 'Workshop hand-off' },
   { id: 'order-tracking', label: 'Order tracking' },
   { id: 'designer-defaults', label: 'Designer defaults' },
   { id: 'dashboard', label: 'Dashboard' },
@@ -326,12 +335,29 @@ export default function AdminSettingsPage() {
     await saveField('ordering_enabled', v)
   }
 
+  // Workshop hand-off mode. Turning it back OFF or to SHADOW is the move that
+  // needs a warning: those modes rely on Stock Control picking the order out of
+  // the wording of the production note / supplier email, which only works while
+  // that wording is still the standard one. Phase 3 lets anyone rewrite it — so
+  // a rollback after an edit means the old way can't read the message and the
+  // order lands in neither place. See docs/order-handoff-spec.md §3.6 / §6.
+  async function changeHandoffMode(next: HandoffMode) {
+    if (!settings || next === settings.direct_handoff_mode) return
+    if (settings.direct_handoff_mode === 'live' && next !== 'live') {
+      const ok = window.confirm(
+        `Stop sending orders straight to Stock Control?\n\nOrders would go back to being picked out of the wording of the production note or the supplier email, the way they used to be.\n\nThat only works while that wording is still the standard one. If anyone has edited the production note (Admin → Content → Messages) or a supplier email (Admin → Outsourcing), the old way can no longer read it — and an order could end up in neither system.\n\nReset any edited hand-off wording back to the default first.`,
+      )
+      if (!ok) return
+    }
+    await saveField('direct_handoff_mode', next)
+  }
+
   useEffect(() => { load(); void loadPaymentsStatus() }, [])
 
   async function load() {
     const { data, error } = await supabase
       .from('settings')
-      .select('default_pricing_display, default_currency, approvals_enabled, proof_callouts_enabled, proof_pins_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, xero_stripe_account_code, xero_eu_tax_type, xero_row_tax_type, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent, hot_leads_panel_enabled, push_enabled')
+      .select('default_pricing_display, default_currency, approvals_enabled, proof_callouts_enabled, proof_pins_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, direct_handoff_mode, xero_stripe_account_code, xero_eu_tax_type, xero_row_tax_type, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent, hot_leads_panel_enabled, push_enabled')
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
@@ -1050,6 +1076,48 @@ export default function AdminSettingsPage() {
         </div>
       </section>
 
+      {/* ── Workshop hand-off (migration 000332) ──────────────────────
+          How a placed order reaches Stock Control: written straight into
+          it (Live), or picked out of the wording of the Help Scout
+          production note / supplier email the way it used to be. Live is
+          what makes that wording freely editable, so stepping back down
+          is the move that carries a risk — hence the warning on the way
+          out. See docs/order-handoff-spec.md §3.6. */}
+      <section id="workshop-handoff" className={SECTION_CLASS}>
+        <h3 className="mb-4 text-sm font-semibold text-ink">Workshop hand-off</h3>
+        <div className="space-y-5">
+          <FieldRow
+            label="How orders reach Stock Control"
+            help="Straight there — placing an order writes the job into Stock Control itself, and the production note and supplier email are ordinary messages you can word however you like. Old way — Stock Control picks the order out of the wording of that message instead, which only works while the wording is the standard one. Both — the old way, plus a silent dry run of the new one for checking."
+            saved={recentlySaved('direct_handoff_mode')}
+            working={working.direct_handoff_mode}
+            error={errors.direct_handoff_mode}
+          >
+            <RadioGroup<HandoffMode>
+              value={settings.direct_handoff_mode}
+              onChange={(v) => void changeHandoffMode(v)}
+              options={[
+                { value: 'live', label: 'Straight there' },
+                { value: 'shadow', label: 'Both' },
+                { value: 'off', label: 'Old way' },
+              ]}
+            />
+          </FieldRow>
+
+          {settings.direct_handoff_mode === 'live' && (
+            <div className="rounded-lg bg-low-soft px-3 py-2 text-[12px] text-low ring-1 ring-low">
+              <p className="font-medium">Before ever switching this back</p>
+              <p className="mt-1">
+                Going back to the old way only works while the hand-off wording is still the standard
+                one. Once the production note (Admin &rarr; Content &rarr; Messages) or a supplier email
+                (Admin &rarr; Outsourcing) has been edited, the old way can no longer read it &mdash; and an
+                order could end up in neither system. Reset any edited wording to the default first.
+              </p>
+            </div>
+          )}
+        </div>
+      </section>
+
       {/* ── Customer order tracking (Phase 3) ─────────────────────── */}
       {(() => {
         const cfg: CustomerTrackingConfig = {
@@ -1603,6 +1671,7 @@ function humanFieldLabel(field: keyof Settings): string {
     decline_recovery_discount_enabled: 'Decline-recovery discount enabled',
     decline_recovery_discount_percent: 'Decline-recovery discount (%)',
     payment_mode: 'Stripe payment mode',
+    direct_handoff_mode: 'How orders reach Stock Control',
     xero_stripe_account_code: 'Xero Stripe clearing account',
     xero_eu_tax_type: 'Xero tax rate for EU deliveries',
     xero_row_tax_type: 'Xero tax rate for rest-of-world deliveries',

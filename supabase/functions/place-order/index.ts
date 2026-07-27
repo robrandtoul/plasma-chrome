@@ -24,6 +24,7 @@ import { encodeBase64 } from 'jsr:@std/encoding/base64'
 import { getDropboxAccessToken, listSharedLinkEntries, downloadSharedLinkFile } from '../_shared/dropbox.ts'
 import { buildOrderSpecSnapshot, type OrderSpecSnapshot } from '../_shared/orderSpecSnapshot.ts'
 import { buildHandoffPayload } from '../_shared/orderHandoff.ts'
+import { renderTemplate } from '../_shared/replyTemplates.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -146,33 +147,11 @@ function htmlifyMessage(text: string): string {
   return text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replaceAll('\n', '<br>')
 }
 
-// Lines a Stock Control ingester reads off the hand-off. Used to vet a freely-
-// edited message before it's sent. The ingester is first-wins per key and
-// ignores unknown lines, so two failure modes must be caught: a genuine spec
-// line was DROPPED, or an extra line was ADDED that the parser could mistake for
-// one (a conflicting duplicate key it would read FIRST, or a stray "name — 50"
-// split line that breaks the per-person sum). Substring matching is unsound
-// here (deleting "Qty: 50" passes if "Qty: 500" appears anywhere), so this works
-// on whole, trimmed lines. KEEP IN LOCKSTEP with the same helper + regexes in
-// src/pages/OrderReviewPage.tsx (client mirror for instant feedback).
-const SPEC_KEY_RE = /^(Qty|Card|Material|Type|Thickness|Finish|Date required|Must ship by|Packaging|Per person|Ink on front|Ink on back|Artwork)\s*:/i
-const SPLIT_SHAPE_RE = /^.+?\s*[—–:-]\s*\d{1,6}$/
-function checkEditedMessage(customMessage: string, criticalLines: string[]): string[] {
-  const problems: string[] = []
-  const msgLines = customMessage.split('\n').map((l) => l.trim())
-  const present = new Set(msgLines)
-  const critical = new Set(criticalLines.map((l) => l.trim()))
-  // 1. Every machine-read spec line must still be present, whole and verbatim.
-  for (const l of criticalLines) {
-    if (!present.has(l.trim())) problems.push(`Missing required line: "${l.trim()}"`)
-  }
-  // 2. No ADDED line may look like a spec line the parser would act on.
-  for (const l of msgLines) {
-    if (!l || critical.has(l)) continue
-    if (SPEC_KEY_RE.test(l) || SPLIT_SHAPE_RE.test(l)) problems.push(`Stock Control may misread this line: "${l}"`)
-  }
-  return problems
-}
+// NOTE (Phase 3): the strict-format machinery that used to live here —
+// SPEC_KEY_RE, SPLIT_SHAPE_RE and checkEditedMessage — is gone. Stock Control's
+// importers no longer read these messages: the job is written directly by
+// create_order_handoff, and both importers recognise a directly-written job and
+// return quietly. The wording is therefore the sender's to choose.
 
 // In-house Card line for Stock Control's forgiving material match.
 function buildCardLine(code: string, materialDisplay: string | null, options: unknown, front: string | null, core: string | null, back: string | null, stockColour: string | null): string {
@@ -225,17 +204,6 @@ function fmtDate(iso: string | null): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-}
-
-// Neutralise any note line shaped like a per-person split entry ("name — 50")
-// so Stock Control's detectSplit (which scans the whole note and validates the
-// counts sum to the quantity) can't fold a note line into — or break — the real
-// split. Append a full stop so the line no longer ends in digits. Same shape as
-// the deployed detectSplit regex.
-function sanitiseInhouseNote(note: string): string {
-  return note.split('\n').map((line) =>
-    /^\s*.+?\s*[—–:-]\s*\d{1,6}\s*$/.test(line) ? `${line.replace(/\s+$/, '')}.` : line,
-  ).join('\n')
 }
 
 // ── Artwork attachments (in-house) ──────────────────────────────────────────
@@ -380,7 +348,7 @@ interface SupplierRow {
 // {order_details} is the machine-generated, parser-critical spec block, so the
 // admin only edits the prose around it.
 const SUPPLIER_EMAIL_DEFAULT = 'Hi,\n\nPlease produce the following order for {customer}:\n\n{order_details}\n\nMany thanks.'
-async function renderSupplierEmail(admin: SupabaseClient, supplierId: string | null, vars: { customer: string; order_details: string }): Promise<string> {
+async function renderSupplierEmail(admin: SupabaseClient, supplierId: string | null, vars: Record<string, string>): Promise<string> {
   // Most-specific first: the chosen supplier's own template, then the shared one.
   const ids = supplierId ? [`supplier_order_email:${supplierId}`, 'supplier_order_email'] : ['supplier_order_email']
   let body = SUPPLIER_EMAIL_DEFAULT
@@ -389,13 +357,76 @@ async function renderSupplierEmail(admin: SupabaseClient, supplierId: string | n
     const byId = new Map((data ?? []).map((r: { id: string; body: string }) => [r.id, r.body]))
     for (const id of ids) {
       const b = byId.get(id)
-      // Require {order_details}: a template saved without it (somehow bypassing
-      // the admin UI guard) would drop the parser-critical spec block and the
-      // order would silently never import. Skip such a body and fall back.
-      if (typeof b === 'string' && b.trim() && b.includes('{order_details}')) { body = b; break }
+      // Phase 3: the old "must contain {order_details}" requirement is gone —
+      // Stock Control no longer reads this email, so an admin may lay the
+      // fields out individually (or leave some out). Only a blank body is
+      // rejected, since that would email a supplier nothing at all.
+      if (typeof b === 'string' && b.trim()) { body = b; break }
     }
   } catch { /* fall back to the default */ }
-  return body.replaceAll('{customer}', vars.customer).replaceAll('{order_details}', vars.order_details)
+  // Guard the RENDERED output, not the stored body: a template of nothing but
+  // conditional blocks can pass a trim() check and still render empty.
+  const rendered = renderOnce(body, vars)
+  return rendered.trim() ? rendered : renderOnce(SUPPLIER_EMAIL_DEFAULT, vars)
+}
+
+// The workshop note, rendered from the admin-editable `inhouse_production_note`
+// template. Same shape as the supplier email: the shipped default reproduces
+// the previously-generated note exactly, a missing or blank template falls back
+// to that default, and the rendered output is what's guarded — so an admin
+// can't accidentally post an empty note.
+// Neutralise a note line shaped like a per-person split entry ("Bob — 50") by
+// appending a full stop, so Stock Control's detectSplit can't fold it into — or
+// break — the real split.
+//
+// Still needed, but ONLY when the note is still the hand-off: in 'live' mode
+// Stock Control writes the job from the RPC and its importer stays quiet, so
+// the wording is free. In 'off'/'shadow' the old parser reads this note for
+// real, so the hazard is exactly as it always was — and a rollback to those
+// modes must not quietly reintroduce it.
+function sanitiseInhouseNote(note: string): string {
+  return note.split('\n').map((line) =>
+    /^\s*.+?\s*[—–:-]\s*\d{1,6}\s*$/.test(line) ? `${line.replace(/\s+$/, '')}.` : line,
+  ).join('\n')
+}
+
+// renderTemplate substitutes inside {? …}{/?} blocks and then re-scans the
+// WHOLE result, so a value sitting inside a conditional gets read a second
+// time: a designer note saying "match the {logo} file, qty is {qty} not 50"
+// would come out with "{logo}" deleted and "{qty}" replaced. Substitution must
+// be one-shot, so brace characters in the VALUES are parked as sentinels for
+// the duration of the render and restored afterwards. Applies to every value,
+// since none of them should ever be interpreted as template syntax.
+const BRACE_OPEN = ''
+const BRACE_CLOSE = ''
+function renderOnce(body: string, vars: Record<string, string>): string {
+  const parked: Record<string, string> = {}
+  for (const [k, v] of Object.entries(vars)) {
+    parked[k] = String(v ?? '').replaceAll('{', BRACE_OPEN).replaceAll('}', BRACE_CLOSE)
+  }
+  return renderTemplate(body, parked)
+    .replaceAll(BRACE_OPEN, '{')
+    .replaceAll(BRACE_CLOSE, '}')
+}
+
+const INHOUSE_NOTE_DEFAULT =
+  '{? prototype_warning}{prototype_warning}\n{/?}Qty: {qty}\nCard: {card}' +
+  '{? date_required}\nDate required: {date_required}{/?}' +
+  '{? ink_front}\nInk on front: {ink_front}{/?}' +
+  '{? ink_back}\nInk on back: {ink_back}{/?}' +
+  '{? packaging}\nPackaging: {packaging}{/?}' +
+  '{? per_person}\n{per_person}{/?}' +
+  '{? artwork_link}\nArtwork: {artwork_link}{/?}' +
+  '{? note}\n\n{note}{/?}'
+async function renderInhouseNote(admin: SupabaseClient, vars: Record<string, string>): Promise<string> {
+  let body = INHOUSE_NOTE_DEFAULT
+  try {
+    const { data } = await admin.from('reply_templates').select('body').eq('id', 'inhouse_production_note').maybeSingle()
+    const b = (data as { body?: string } | null)?.body
+    if (typeof b === 'string' && b.trim()) body = b
+  } catch { /* fall back to the default */ }
+  const rendered = renderOnce(body, vars)
+  return rendered.trim() ? rendered : renderOnce(INHOUSE_NOTE_DEFAULT, vars)
 }
 
 Deno.serve(async (req) => {
@@ -444,7 +475,7 @@ Deno.serve(async (req) => {
   // Present-but-blank edited message = the reviewer cleared it; that's an error,
   // not a request to send the composed text they can no longer see.
   if (mode === 'confirm' && customMessageRaw != null && !customMessage) {
-    return json({ ok: false, code: 'spec_check_failed', error: 'The hand-off message is empty — type the message or reset it.' }, 400)
+    return json({ ok: false, code: 'message_empty', error: 'The hand-off message is empty — type the message or reset it.' }, 400)
   }
 
   // ── Load order + proof + current version ──────────────────────────────────
@@ -689,28 +720,30 @@ Deno.serve(async (req) => {
   // ── IN-HOUSE ──────────────────────────────────────────────────────────────
   if (route === 'in_house') {
     const card = buildCardLine(mat.code, pv.material_display, pv.material_options, front, core, back, (order.stock_colour as string | null) ?? null)
-    const lines: string[] = []
-    if (isPrototype) lines.push(prototypeMarker)
-    lines.push(`Qty: ${qty}`, `Card: ${card}`)
-    if (dateRequiredStr) lines.push(`Date required: ${dateRequiredStr}`)
-    if (inks.front) lines.push(`Ink on front: ${inks.front}`)
-    if (inks.back) lines.push(`Ink on back: ${inks.back}`)
-    if (packaging) lines.push(`Packaging: ${packaging}`)
-    for (const sl of splitLines) lines.push(sl)
-    // Belt-and-braces: the link is in the note too, so anything not attached
-    // (too big / not artwork) is still reachable from the job card.
-    if (order.dropbox_folder_url) lines.push(`Artwork: ${order.dropbox_folder_url}`)
-    // The machine-read spec block, captured before the free-text note is appended
-    // — this is what a fully-edited message must still contain (see customMessage).
-    const criticalLines = lines.filter((l) => l.trim().length > 0)
-    // Optional per-order note for the production team, AFTER the spec (so the
-    // parser's first-wins fields aren't affected) and split-sanitised so a
-    // "name — 50"-shaped note line can't fold into / break the real split. Skipped
-    // when a custom message is supplied (the note is then typed inline instead).
-    if (note && !customMessage) {
-      lines.push('')
-      for (const nl of sanitiseInhouseNote(note).split('\n')) lines.push(nl)
+    // The workshop note is now an ordinary human message rendered from an
+    // admin-editable template (Phase 3). Stock Control no longer reads it — the
+    // job was written directly by the RPC above, and its importer recognises
+    // that and stays quiet — so the wording is free. The shipped default body
+    // reproduces the old generated note exactly, so day one is a no-op.
+    const noteVars: Record<string, string> = {
+      prototype_warning: isPrototype ? prototypeMarker : '',
+      qty: String(qty),
+      card,
+      date_required: dateRequiredStr,
+      ink_front: inks.front ?? '',
+      ink_back: inks.back ?? '',
+      packaging: packaging ?? '',
+      per_person: splitLines.join('\n'),
+      artwork_link: (order.dropbox_folder_url as string | null) ?? '',
+      // Skipped when the reviewer has taken the message over (they type the
+      // note inline instead). Sanitised only in the modes where the old parser
+      // still reads this note — see sanitiseInhouseNote.
+      note: (note && !customMessage) ? (handoffMode === 'live' ? note : sanitiseInhouseNote(note)) : '',
+      customer: customerName,
+      order_number: String(order.stock_order_number).trim(),
     }
+    const composedNote = await renderInhouseNote(admin, noteVars)
+    const lines: string[] = composedNote.split('\n')
     const subject = `Order ${String(order.stock_order_number).trim()} - ${String(order.project_name ?? customerName).trim()}`.replace(/\s-\s*$/, '').trim()
 
     // The direct hand-off contract payload (docs/order-handoff-spec.md §3.2) —
@@ -764,17 +797,13 @@ Deno.serve(async (req) => {
     if (mode === 'preview') {
       // Key present only when the feature is on — 'off' responses stay byte-identical.
       const handoffValidation = await runHandoffValidation(pub, handoffMode, handoffPayload)
-      return json({ ok: true, route, subject, note_lines: lines, critical_lines: criticalLines, summary, helpscout_linked: !!conversationId, artwork_plan: artworkPlan, ...(handoffValidation ? { handoff_validation: handoffValidation } : {}) })
+      return json({ ok: true, route, subject, note_lines: lines, summary, helpscout_linked: !!conversationId, artwork_plan: artworkPlan, ...(handoffValidation ? { handoff_validation: handoffValidation } : {}) })
     }
 
     // confirm
     // A fully-edited message must still carry every machine-read spec line and
     // add none the parser could misread, or Stock Control's ingester can't read
     // the job. Reject before posting anything.
-    if (customMessage) {
-      const problems = checkEditedMessage(customMessage, criticalLines)
-      if (problems.length) return json({ ok: false, code: 'spec_check_failed', error: `${problems.join(' | ')} — fix the flagged ${problems.length === 1 ? 'line' : 'lines'} or reset the message.` }, 400)
-    }
     if (!conversationId) return json({ ok: false, error: 'This proof has no linked Help Scout conversation, so the production note can’t be posted.' }, 400)
     const appId = Deno.env.get('HELPSCOUT_APP_ID')?.trim()
     const appSecret = Deno.env.get('HELPSCOUT_APP_SECRET')?.trim()
@@ -948,14 +977,30 @@ Deno.serve(async (req) => {
   if (shipByStr) detailLines.push(`Must ship by: ${shipByStr}`)
   if (order.dropbox_folder_url) detailLines.push('', `Artwork: ${order.dropbox_folder_url}`)
 
-  // The machine-read spec block, captured before the free-text note — this is
-  // what a fully-edited message must still contain (see customMessage).
-  const criticalLines = detailLines.filter((l) => l.trim().length > 0)
   // Append the optional per-order note after the spec block (before the
   // template's sign-off, since it's part of {order_details}). Skipped when a
   // custom message is supplied (the note is then typed inline instead).
   const orderDetails = detailLines.join('\n') + (note && !customMessage ? `\n\n${note}` : '')
-  const emailLines = (await renderSupplierEmail(admin, chosen?.id ?? null, { customer: customerName, order_details: orderDetails })).split('\n')
+  // {order_details} stays as the convenience composite the default body uses;
+  // the individual fields are additive, so an admin can lay the email out by
+  // hand instead. ⚠ {qty} is the SUPPLIER quantity (customer quantity plus any
+  // spoilage overs) — that is the number the supplier must make, and it is what
+  // the job in Stock Control carries.
+  const emailLines = (await renderSupplierEmail(admin, chosen?.id ?? null, {
+    customer: customerName,
+    order_details: orderDetails,
+    order_number: String(order.stock_order_number).trim(),
+    qty: String(supplierQty),
+    material: productType ?? '',
+    specific_type: specificType ?? '',
+    thickness: thickness ?? '',
+    finish: finish ?? '',
+    must_ship_by: shipByStr,
+    per_person: splitLines.join('\n'),
+    prototype_warning: isPrototype ? prototypeMarker : '',
+    artwork_link: (order.dropbox_folder_url as string | null) ?? '',
+    note: (note && !customMessage) ? note : '',
+  })).split('\n')
   const subject = `Order ${String(order.stock_order_number).trim()} - ${customerName}`
 
   // The direct hand-off contract payload (docs/order-handoff-spec.md §3.2) —
@@ -1024,7 +1069,6 @@ Deno.serve(async (req) => {
       route,
       subject,
       email_lines: emailLines,
-      critical_lines: criticalLines,
       supplier: chosen,
       suppliers,
       ship_by: shipByStr,
@@ -1038,10 +1082,6 @@ Deno.serve(async (req) => {
   // A fully-edited message must still carry every machine-read spec line and add
   // none the parser could misread, or Stock Control's ingester can't read the
   // job. Reject before emailing anyone.
-  if (customMessage) {
-    const problems = checkEditedMessage(customMessage, criticalLines)
-    if (problems.length) return json({ ok: false, code: 'spec_check_failed', error: `${problems.join(' | ')} — fix the flagged ${problems.length === 1 ? 'line' : 'lines'} or reset the message.` }, 400)
-  }
   if (!chosen) return json({ ok: false, error: 'Choose a supplier to order from.' }, 400)
   if (!chosen.email) return json({ ok: false, error: `${chosen.name} has no email address configured in Stock Control.` }, 400)
   const appId = Deno.env.get('HELPSCOUT_APP_ID')?.trim()

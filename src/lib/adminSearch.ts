@@ -286,6 +286,15 @@ export const ADMIN_DESTINATIONS: AdminDestination[] = [
     description: 'Settings › Stripe, Xero, order reminders and discounts.',
   },
   {
+    id: 'settings-workshop-handoff',
+    label: 'Workshop hand-off',
+    path: '/admin/settings#workshop-handoff',
+    group: 'System',
+    icon: 'settings',
+    keywords: ['stock control', 'handoff', 'hand-off', 'direct handoff', 'production note', 'supplier email', 'workshop', 'place order', 'order import', 'shadow live'],
+    description: 'Settings › how a placed order reaches Stock Control.',
+  },
+  {
     id: 'settings-order-tracking',
     label: 'Order tracking',
     path: '/admin/settings#order-tracking',

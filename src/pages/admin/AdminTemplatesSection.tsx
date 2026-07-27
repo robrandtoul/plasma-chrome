@@ -16,6 +16,12 @@
 //     dashboard's Needs-attention chips, and the bodies the
 //     automated reminder system (the Outbox) sends in Phase 2.
 //     Each maps to one chase rule.
+//   * Workshop hand-off — inhouse_production_note, the internal note
+//     posted on the customer's thread when an in-house order is
+//     placed. The only template here the customer never sees; the
+//     order reaches Stock Control directly, so its wording is free
+//     (docs/order-handoff-spec.md §6). Supplier order emails have
+//     their own editor on Admin → Outsourcing.
 //
 // Per template: insert toolbar (variable chips filtered by scope +
 // if-block button), blur-saving textarea, live preview pane with
@@ -86,6 +92,22 @@ function buildSampleContext(company: CompanyMode, version: VersionMode): Templat
     order_url: 'https://proofs.plasmadesign.co.uk/order/example',
     order_expiry: '30 Jun 2026',
     payment_reference: 'ORD-1A2B3C4D5E',
+    // Sample values for the workshop hand-off note. A representative split
+    // order with both inks and a Dropbox folder, so every optional line shows
+    // in the preview; prototype_warning stays empty because a prototype is the
+    // rare case and an admin can see the line appear by typing into it.
+    order_number: '403792',
+    customer: 'Acme Ltd',
+    qty: 100,
+    card: 'Stainless Steel',
+    date_required: '30 Jun 2026',
+    ink_front: 'White',
+    ink_back: 'Black',
+    packaging: 'Domestic',
+    per_person: 'Joe Bloggs — 50\nJane Doe — 50',
+    artwork_link: 'https://www.dropbox.com/scl/fo/example',
+    note: 'Please double-check the spelling on Jane’s card.',
+    prototype_warning: '',
   }
 }
 
@@ -94,9 +116,13 @@ function buildSampleContext(company: CompanyMode, version: VersionMode): Templat
 // `nudge_*` templates are the needs-attention reminders (000207), and
 // everything else is a designer-composed pre-send message. See the
 // convention comment in src/lib/replyTemplates.ts for the rule.
-type TemplateGroupKey = 'pre_send' | 'post_action' | 'nudge' | 'order'
+// `inhouse_production_note` is the one template here that never reaches a
+// customer — it's the note our own workshop reads — so it gets its own group
+// rather than sitting among the customer messages.
+type TemplateGroupKey = 'pre_send' | 'post_action' | 'nudge' | 'order' | 'workshop'
 
 function templateGroup(id: string): TemplateGroupKey {
+  if (id === 'inhouse_production_note') return 'workshop'
   if (id.startsWith('proof_')) return 'post_action'
   if (id.startsWith('nudge_')) return 'nudge'
   if (id.startsWith('order_')) return 'order'
@@ -110,6 +136,7 @@ function templateGroup(id: string): TemplateGroupKey {
 // have their own scope (just order_url) — proof/version variables don't
 // apply to an order pay-link.
 function templateScope(id: string): TemplateVariableScope {
+  if (id === 'inhouse_production_note') return 'inhouse_note'
   if (id.startsWith('proof_')) return 'proof_viewer'
   if (id.startsWith('order_reminder')) return 'order_reminder'
   if (id === 'order_paid_confirmation') return 'order_confirmation'
@@ -305,6 +332,12 @@ export default function AdminTemplatesSection() {
             heading="Order messages"
             blurb="Customer messages across the order lifecycle: the pay-link sent from the order builder, the automated reminders, the paid confirmation, and the cancel / revision notices. Each card's own description says when it's used."
             templates={templates.filter((t) => templateGroup(t.id) === 'order')}
+            onSaved={handleSaved}
+          />
+          <TemplateGroup
+            heading="Workshop hand-off"
+            blurb="The note posted on the customer's thread when an in-house order is placed, telling our own workshop what to make. The customer never sees it. The order itself goes into Stock Control on its own, so this wording is free to change. (Supplier order emails are edited on Admin → Outsourcing.)"
+            templates={templates.filter((t) => templateGroup(t.id) === 'workshop')}
             onSaved={handleSaved}
           />
           <VariableHelpPanel />
@@ -546,9 +579,9 @@ function TemplateCard({
           <div className="mb-1 flex flex-wrap items-center gap-3">
             <label className="text-xs font-medium text-ink-mute">Preview</label>
             {/* The sample-variation toggles only matter for templates that use
-                {company} / {version_number}; an order message uses neither, so
-                hide them on the order card. */}
-            {cardScope !== 'order' && (
+                {company} / {version_number}; an order message and the workshop
+                note use neither, so hide them on those cards. */}
+            {cardScope !== 'order' && cardScope !== 'inhouse_note' && (
               <>
                 <PreviewToggle<CompanyMode>
                   value={companyMode}
@@ -599,6 +632,7 @@ function VariableHelpPanel() {
   const orderReminder = TEMPLATE_VARIABLES.filter((v) => v.scope === 'order_reminder')
   const orderConfirmation = TEMPLATE_VARIABLES.filter((v) => v.scope === 'order_confirmation')
   const orderLifecycle = TEMPLATE_VARIABLES.filter((v) => v.scope === 'order_lifecycle')
+  const inhouseNote = TEMPLATE_VARIABLES.filter((v) => v.scope === 'inhouse_note')
 
   return (
     <div className="mt-6 rounded-xl border border-line bg-canvas p-4">
@@ -667,6 +701,18 @@ function VariableHelpPanel() {
       </h4>
       <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
         {orderLifecycle.map((v) => (
+          <div key={v.name} className="contents">
+            <dt className="font-mono text-ink-soft">{`{${v.name}}`}</dt>
+            <dd className="text-ink-mute">{v.description}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <h4 className="mt-4 text-xs font-semibold uppercase tracking-wider text-ink-dim">
+        Workshop hand-off variables
+      </h4>
+      <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
+        {inhouseNote.map((v) => (
           <div key={v.name} className="contents">
             <dt className="font-mono text-ink-soft">{`{${v.name}}`}</dt>
             <dd className="text-ink-mute">{v.description}</dd>

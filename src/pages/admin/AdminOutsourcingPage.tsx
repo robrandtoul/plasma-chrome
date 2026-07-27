@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
-import { DEFAULT_BODIES } from '../../lib/replyTemplates'
+import { DEFAULT_BODIES, TEMPLATE_VARIABLES } from '../../lib/replyTemplates'
 
 // Admin: outsourcing (supplier) configuration.
 //
@@ -37,6 +37,10 @@ interface TplEditor { id: string; label: string; displayName: string; body: stri
 
 const TEMPLATE_ID = 'supplier_order_email'
 const DEFAULT_BODY = DEFAULT_BODIES[TEMPLATE_ID] ?? ''
+// The variables this email can use, shown under the heading so an admin can
+// hand-lay the fields instead of using the {order_details} block. Read from the
+// shared list so the two can't drift.
+const SUPPLIER_VARIABLES = TEMPLATE_VARIABLES.filter((v) => v.scope === 'supplier_order' && v.name !== 'order_details')
 
 export default function AdminOutsourcingPage() {
   const [rows, setRows] = useState<MaterialRow[]>([])
@@ -169,7 +173,11 @@ export default function AdminOutsourcingPage() {
 
   async function saveTpl(id: string) {
     const ed = editorsTpl.find((e) => e.id === id)
-    if (!ed || tplSavingId || ed.body === ed.loaded || !ed.body.includes('{order_details}')) return
+    // No {order_details} requirement any more: the order reaches Stock Control
+    // directly when it's placed, so this email is an ordinary human message and
+    // an admin is free to lay the fields out by hand with the individual
+    // variables instead (docs/order-handoff-spec.md §6, Phase 3).
+    if (!ed || tplSavingId || ed.body === ed.loaded) return
     setTplSavingId(id); setError(null)
     // Upsert: the shared default row exists (seeded); per-supplier rows are
     // created on first save.
@@ -272,8 +280,19 @@ export default function AdminOutsourcingPage() {
             <div>
               <h3 className="text-base font-semibold text-ink">Supplier order emails</h3>
               <p className="mt-1 text-sm text-ink-mute">
-                The email sent when an outsourced order is placed. Each supplier can have its own; one with none uses the default. <code className="rounded bg-canvas px-1">{'{customer}'}</code> is the customer name and <code className="rounded bg-canvas px-1">{'{order_details}'}</code> is the order spec (quantity, material, type, thickness, finish, must-ship-by, per-person split, artwork link) — keep that exactly as-is, it’s how Stock Control reads the order. Only edit the wording around it.
+                The email sent when an outsourced order is placed. Each supplier can have its own; one with none uses the default. The order goes into Stock Control on its own the moment it’s placed, so nothing here has to keep a set shape — this is an ordinary message to a person, and the wording is yours.
               </p>
+              <p className="mt-2 text-sm text-ink-mute">
+                <code className="rounded bg-canvas px-1">{'{order_details}'}</code> drops in the whole spec in one block, which is the quick option. To lay it out yourself, use the individual fields instead — anything with no value simply disappears:
+              </p>
+              <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
+                {SUPPLIER_VARIABLES.map((v) => (
+                  <div key={v.name} className="contents">
+                    <dt className="font-mono text-ink-soft">{`{${v.name}}`}</dt>
+                    <dd className="text-ink-mute">{v.description}</dd>
+                  </div>
+                ))}
+              </dl>
             </div>
             {editorsTpl.map((ed) => {
               const isDefault = ed.id === TEMPLATE_ID
@@ -295,9 +314,6 @@ export default function AdminOutsourcingPage() {
                     rows={7}
                     className="mt-2 w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-[13px] text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
                   />
-                  {!ed.body.includes('{order_details}') && (
-                    <p className="mt-1 text-xs text-out">Add back <code>{'{order_details}'}</code> — without it Stock Control can’t import the order.</p>
-                  )}
                   <div className="mt-2 flex items-center justify-end gap-3">
                     {saved && !saving && <span className="text-xs text-in-stock">Saved</span>}
                     {saving && <span className="text-xs text-ink-mute">Saving…</span>}
@@ -305,7 +321,7 @@ export default function AdminOutsourcingPage() {
                       className="rounded border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40">
                       {isDefault ? 'Reset to built-in' : 'Reset to default'}
                     </button>
-                    <button type="button" onClick={() => void saveTpl(ed.id)} disabled={saving || ed.body === ed.loaded || !ed.body.includes('{order_details}')}
+                    <button type="button" onClick={() => void saveTpl(ed.id)} disabled={saving || ed.body === ed.loaded}
                       className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40">
                       Save
                     </button>

@@ -36,10 +36,12 @@ both becomes freely editable (admin templates), and the strict-format guard rail
 - The only durable link between the two systems is the 6-digit order number as text
   (`proofs.orders.stock_order_number` ↔ `public.orders.order_ref` /
   `public.outsourced_orders.customer_order_ref`). No cross-schema FKs exist.
-- The strict format is defended in this repo by `checkEditedMessage` + `SPEC_KEY_RE` in
-  `place-order`, mirrored in `src/lib/handoffMessageCheck.ts` (deliberate dual maintenance), the
-  OrderReviewPage warning box, `sanitiseInhouseNote`, and the letterpress bracket rules in
-  `buildCardLine`. All of that is what Phase 3 deletes.
+- The strict format WAS defended in this repo by `checkEditedMessage` + `SPEC_KEY_RE` in
+  `place-order`, mirrored in `src/lib/handoffMessageCheck.ts`, the OrderReviewPage warning box and
+  `sanitiseInhouseNote`. **Phase 3 deleted all of that** (see §6). `sanitiseInhouseNote` is the one
+  survivor, applied only in `off`/`shadow` where the parser genuinely still reads the note; the
+  letterpress bracket rules in `buildCardLine` stay, because `card_line` is the direct path's
+  material-resolution key, not mere phrasing.
 
 Known gaps this replacement also fixes:
 
@@ -373,27 +375,47 @@ already tolerates duplicate prefixes (000217, 000228–000230, 000279, 000307), 
 applied via MCP under its own name, so the collision is cosmetic — but it is exactly the footgun
 CLAUDE.md warns about. `000345` was chosen correctly by listing.
 
-**Phase 3 — free the wording.** Exit criteria are coverage-based, not calendar-based (Rob,
-2026-07-20): a clean Phase-2 window that has included at least one each of — letterpress order,
-satin/tinted/acrylic colour order, per-person split, outsourced order, prototype — with zero
-backstop catches. At current volume that's likely a few days. Then:
+**Phase 3 — free the wording. BUILT 2026-07-27.** Shipped in two parts:
 
-- Delete `checkEditedMessage`, `SPEC_KEY_RE`, `SPLIT_SHAPE_RE`, `sanitiseInhouseNote`,
-  `src/lib/handoffMessageCheck.ts` + its test + the `test:handoff-check` script, and the
-  OrderReviewPage warning box. Retire the letterpress bracket-wording contortions in
-  `buildCardLine` (the content stays; only the parser-driven phrasing rules go).
-- The in-house note becomes an admin-editable `reply_templates` template (`inhouse_production_note`)
-  with a default body reproducing today's layout; variables `{qty}`, `{card}`, `{date_required}`,
-  `{inks_front}`, `{inks_back}`, `{packaging}`, `{per_person}`, `{prototype_warning}`,
-  `{artwork_link}`, `{note}`.
-- The supplier template keeps per-supplier `supplier_order_email:<id>` / shared
-  `supplier_order_email`, but gains the individual variables (`{qty}`, `{material}`, `{thickness}`,
-  `{finish}`, `{must_ship_by}`, `{per_person}`, `{customer}`, `{order_number}`, `{artwork_link}`);
-  `{order_details}` stays as a convenience composite; the refuse-without-`{order_details}` guard is
-  deleted.
-- The Dropbox folder still mints the order number (it is the order's identity — unchanged), and
-  `Order <number> - <name>` stays the *default* subject for searchability — just no longer
-  load-bearing.
+*Stock Control side* (its own repo, PR #238; deployed helpscout-inhouse-order v45,
+helpscout-outsourced-order v47). Both importers now recognise a directly-written job
+(`import_source='direct'`) and return quietly instead of importing or posting correction notes. The
+gate is **self-limiting in the right direction** — it only suppresses when a job ALREADY exists, so
+a failed direct write leaves nothing to find and the old import path runs exactly as before. The
+in-house change doubles as the **artwork fix**: files reached a job card only via the parser
+mirroring the note's attachments, and both that mirror and the admin sync-attachments sweep gave up
+before reading the subject (live: 126 in-house jobs/90d, 85 carrying artwork). It now resolves the
+job from the subject and falls back to the newest staff thread carrying files.
+
+*proof-viewer side.* Deleted `checkEditedMessage`, `SPEC_KEY_RE`, `SPLIT_SHAPE_RE`,
+`src/lib/handoffMessageCheck.ts` + test + the `test:handoff-check` script, the `critical_lines`
+plumbing and the OrderReviewPage warning box (now a non-blocking "this message is empty" advisory);
+dropped the refuse-without-`{order_details}` guard server-side and in Admin → Outsourcing. Both
+messages render from admin-editable templates via the existing `renderTemplate`
+(`{var}` + `{? var}…{/?}`): the new `inhouse_production_note` (migration 000361) and the existing
+`supplier_order_email`, which gained individual variables alongside the `{order_details}` composite.
+
+Hard-won details:
+
+- **The shipped defaults reproduce the old messages byte-for-byte**, so day one is a visual no-op.
+  Pinned by `pnpm test:inhouse-note`, which reimplements the old line-by-line builder and diffs it
+  against the rendered default across every order shape. The default body exists in FOUR places
+  (place-order's constant, `DEFAULT_BODIES`, migration 000361, the test) — change one, change all.
+- **Substitution must be one-shot.** `renderTemplate` re-scans its own output, so a value inside a
+  conditional block is read twice: a designer note saying "match the {logo} file, qty is {qty} not
+  50" came out with `{logo}` deleted and `{qty}` replaced. `place-order` parks brace characters in
+  the VALUES for the duration of the render. Covered by the test.
+- **`sanitiseInhouseNote` survives, gated on mode.** In `off`/`shadow` the parser really does read
+  the note, so a `Bob — 50`-shaped note line must still be neutralised or it folds into the real
+  per-person split. Removing it unconditionally would have regressed a rollback.
+- **The supplier `{note}` variable must be listed**, or an admin who lays the email out by hand
+  silently drops the designer's note to the supplier.
+- Migration 000361 must be **schema-qualified** (`proofs.reply_templates`) — the admin group renders
+  nothing without the row, so a failed seed hides the whole feature.
+
+⚠ **After Phase 3 the mode switch is NO LONGER a clean rollback.** Flipping back to `shadow` with
+edited wording means the parser can't read the message and the order lands nowhere. Admin → Settings
+→ Workshop hand-off warns on the way out of `live`. Reset any edited wording to default first.
 
 Rollback at any phase: flip the mode setting back. Deploy discipline throughout: migrations via
 MCP/dashboard first, `place-order` from main after merge (mode-gated, so ordering is safe),

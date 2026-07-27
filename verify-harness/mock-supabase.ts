@@ -661,7 +661,7 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
   } else if (table === 'proof_sets') {
     rows = BUNDLE_SETS
   } else if (table === 'settings') {
-    rows = [{ ordering_enabled: true, order_reminders_max: 3, order_reminder_interval_days: 3, auto_order_reminders_enabled: true, artwork_check_mode: 'live', artwork_check_required: false, artwork_check_model: null, proof_check_enabled: true, proof_callouts_enabled: true, proof_pins_enabled: true }]
+    rows = [{ ordering_enabled: true, order_reminders_max: 3, order_reminder_interval_days: 3, auto_order_reminders_enabled: true, artwork_check_mode: 'live', artwork_check_required: false, artwork_check_model: null, proof_check_enabled: true, proof_callouts_enabled: true, proof_pins_enabled: true, direct_handoff_mode: 'live' }]
   } else if (table === 'site_settings') {
     rows = [{ needs_attention_rules: { helpscout_reply_grace_days: 3 } }]
   } else if (table === 'order_nudges') {
@@ -880,7 +880,6 @@ export const supabase: any = {
               '',
               'Artwork: https://www.dropbox.com/example',
             ],
-            critical_lines: ['Qty: 500', 'Card: Stainless Steel 500um', 'Date required: 30/07/2026'],
             summary: {
               customer: 'Acme Ltd',
               material: 'Stainless Steel',

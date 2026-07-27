@@ -4,7 +4,6 @@ import { supabase } from '../lib/supabase'
 import { DesignerChrome, PanelShell, ButtonCoral, ButtonGhost } from '../design'
 import { ImageCard, type GridImage } from '../components/ImageGrid'
 import Modal from '../components/Modal'
-import { checkEditedMessage } from '../lib/handoffMessageCheck'
 import { logAudit } from '../lib/audit'
 import ArtworkCheckReportView, { InlineSpinner, artworkCheckAuditFields, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
 import { mergeInvestigation, requestInvestigation } from '../lib/useProofCheck'
@@ -49,9 +48,6 @@ interface PreviewResponse {
   subject?: string
   note_lines?: string[]
   email_lines?: string[]
-  // The machine-read spec lines (Qty/Material/…) that a fully-edited message
-  // must still contain — used to warn before sending and re-checked server-side.
-  critical_lines?: string[]
   supplier?: SupplierOpt
   suppliers?: SupplierOpt[]
   ship_by?: string
@@ -434,13 +430,13 @@ export default function OrderReviewPage() {
   const generatedMessage = (isSupplier ? preview?.email_lines : preview?.note_lines)?.join('\n') ?? ''
   const messageValue = editedMessage ?? generatedMessage
   const messageDirty = editedMessage !== null
-  // Problems an edit introduced (dropped a machine-read line, or added one the
-  // parser could misread) — block the send and show them, so a broken hand-off
-  // never reaches production. Authoritatively re-checked server-side too.
-  const messageProblems = messageDirty ? checkEditedMessage(messageValue, preview?.critical_lines ?? []) : []
+  // The order itself goes into Stock Control the moment you confirm — this
+  // message is read by people, not machines, so the wording is yours. The only
+  // thing worth saying is when it's been emptied altogether.
+  const messageEmpty = messageValue.trim() === ''
   const machineHint = isSupplier
-    ? 'Stock Control reads the Qty / Material / Type / Thickness / Finish / Must-ship-by lines — keep them.'
-    : 'Stock Control reads the Qty / Card / Date-required lines — keep them.'
+    ? 'The supplier reads this — the order details are already in Stock Control, so the wording is yours.'
+    : 'The workshop reads this — the job is already in Stock Control, so the wording is yours.'
   // Hand-off preconditions the page already knows about — disable Confirm when
   // it provably can't succeed, rather than letting the doomed round-trip run.
   const noSuppliers = isSupplier && (preview?.suppliers ?? []).length === 0
@@ -457,14 +453,7 @@ export default function OrderReviewPage() {
   // `required` is only ever true from a live-mode response, so this is inert
   // while the feature is off/shadow. place-order re-checks it server-side.
   const artworkRunNeeded = artworkCheck.required && artworkCheck.report == null
-  // An edit that would break the Stock Control import takes precedence over the
-  // other reasons — it's the thing the reviewer can fix right here, right now.
-  const messageBroken = messageProblems.length > 0
-    ? 'Your edit may break the Stock Control import — fix the flagged lines, or reset the message.'
-    : null
-  const blockReason = messageBroken
-    ? messageBroken
-    : revisionNeedsApproval
+  const blockReason = revisionNeedsApproval
     ? 'Re-approve the new proof before placing this revision.'
     : (revisionReplace && !oldJobCancelled)
     ? 'Confirm you’ve cancelled the old Stock Control job to place this revision.'
@@ -511,13 +500,9 @@ export default function OrderReviewPage() {
           <button type="button" onClick={() => setEditedMessage(null)} className="shrink-0 text-[12px] font-medium text-brand hover:underline">Reset</button>
         )}
       </div>
-      {messageProblems.length > 0 && (
-        <div className="mt-2 rounded-lg bg-out-soft px-3 py-2 text-[12px] text-out ring-1 ring-out">
-          <p className="font-medium">This edit may break the Stock Control import:</p>
-          <ul className="mt-1 list-disc space-y-0.5 pl-4">
-            {messageProblems.map((p, i) => <li key={i} className="break-words">{p}</li>)}
-          </ul>
-          <p className="mt-1">Fix the line{messageProblems.length === 1 ? '' : 's'} above, or use Reset.</p>
+      {messageEmpty && (
+        <div className="mt-2 rounded-lg bg-low-soft px-3 py-2 text-[12px] text-low ring-1 ring-low">
+          This message is empty — type something or reset it.
         </div>
       )}
     </>
@@ -678,7 +663,7 @@ export default function OrderReviewPage() {
                         )}
                       </div>
                     )}
-                    <p className="mt-2 text-[12px] text-ink-mute">Sent to the supplier on a new Help Scout conversation, which hands the order to Stock Control. The artwork files are attached, with the Dropbox link in the email as a backup.</p>
+                    <p className="mt-2 text-[12px] text-ink-mute">Sent to the supplier on a new Help Scout conversation. The order goes into Stock Control on its own when you confirm — this email is the supplier’s copy, so the wording is yours. The artwork files are attached, with the Dropbox link in the email as a backup.</p>
                   </>
                 ) : (
                   <>
@@ -711,13 +696,13 @@ export default function OrderReviewPage() {
                         )}
                       </div>
                     )}
-                    <p className="mt-2 text-[12px] text-ink-mute">Stock Control reads this note and schedules the job.</p>
+                    <p className="mt-2 text-[12px] text-ink-mute">The job goes into Stock Control on its own when you confirm — this note is what the workshop reads, and the record on the customer’s thread.</p>
                   </>
                 )}
 
                 {/* Per-order note — project-specific instructions for whoever
-                    makes this order. Appended after the order details (which the
-                    parser reads), so it's safe for both routes. */}
+                    makes this order. Appended at the end of the message on both
+                    routes, so it reads as a postscript to the spec. */}
                 <label className="mt-4 block border-t border-line-soft pt-3">
                   <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">
                     {isSupplier ? 'Note to supplier (optional)' : 'Note to production (optional)'}
@@ -734,7 +719,7 @@ export default function OrderReviewPage() {
                   <span className="mt-1 block text-[12px] text-ink-mute">
                     {messageDirty
                       ? 'You’re editing the message directly — type any notes straight into it, or Reset to use this field.'
-                      : 'Added after the order details (which Stock Control reads). Click out to see it in the message above.'}
+                      : 'Added at the end, after the order details. Click out to see it in the message above.'}
                   </span>
                 </label>
               </PanelShell>
@@ -844,18 +829,9 @@ export default function OrderReviewPage() {
                   </div>
                 )}
 
-                {/* An edit broke the spec lines after the button was armed/enabled
-                    — say so beside the button, not just in the disabled tooltip. */}
-                {messageBroken && (
-                  <p className="mt-4 rounded-lg bg-out-soft px-3 py-2 text-[13px] text-out ring-1 ring-out">
-                    <span className="font-medium">Can’t send this edit.</span> {messageBroken}
-                  </p>
-                )}
-
                 {/* Supplier sends a real, immediate email — arm it with an explicit
-                    second click so a misclick can't fire an external order.
-                    Suppressed when the edit is broken (the button is disabled). */}
-                {isSupplier && armed && !messageBroken && (
+                    second click so a misclick can't fire an external order. */}
+                {isSupplier && armed && (
                   <p className="mt-4 rounded-lg bg-low-soft px-3 py-2 text-[13px] text-ink ring-1 ring-low">
                     This emails <span className="font-medium">{preview.supplier?.name}</span>
                     {preview.supplier?.email ? ` (${preview.supplier.email})` : ''} right now — they’ll receive the order immediately. Send it?
