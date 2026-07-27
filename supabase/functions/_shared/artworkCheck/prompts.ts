@@ -45,6 +45,14 @@ DO NOT OVER-FLAG (each rule earned from a real order)
 - One shared QR printing on every recipient's card is a legitimate design, not a "missing per-person QR".
 - The print file is the truth for what's ON the card. If you cannot read a value clearly, do not flag it — record the uncertainty in reference_gaps. Never treat a gap (couldn't read / supplied as an attachment / no thread match) as a discrepancy.
 
+CUT-THROUGH RULES (metal, acrylic, wood, carbon fibre)
+- When artwork is cut clean THROUGH the card, any closed middle — the bowl of a 'P', the centre of an 'O', the inside of a ring — has to be tied back to the card by a small supporting STRUT, or that piece falls out at the supplier.
+- A CUT-THROUGH CHECK block may appear in the order context. Those figures are MEASURED from the print file's own geometry, exactly like the decoded QR payloads — not read off the page images, where a 0.4 mm strut is a few pixels. Treat them as exact and do NOT re-judge them by looking at the artwork.
+- A piece reported as falling out is a flag on that card (field 'other', severity defect): a strut is missing and the cards come back wrong. Quote the size and position given.
+- "only one side of this card was supplied" is a CONDITIONAL, not a finding: report it as a flag at severity review, worded as "if this white is cut through, N pieces would come loose", never as a definite fault.
+- If the block says every piece stays attached, or that nothing is cut through, say nothing at all — that is the normal state and belongs in no list.
+- Absence of the block means the check did not apply (not a cut-capable material) or could not run. Never infer a strut problem from the page images yourself.
+
 QR RULES
 - The decoded QR payloads in the order context are EXACT (decoded programmatically, not read off pixels). Use them as supplied text.
 - Cross-check QR contact fields against the card face AND the thread — a vCard QR is a strong second reference for every field it carries.

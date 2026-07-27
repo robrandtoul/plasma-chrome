@@ -30,6 +30,12 @@ import { fetchAllConversationThreads, fetchAttachmentData, getAccessToken, HsErr
 import { downloadSharedLinkFile, getDropboxAccessToken, listSharedLinkEntries } from '../_shared/dropbox.ts'
 import { isCutThroughMaterial, looksLikePdf, pickPrintFiles } from '../_shared/artworkCheck/printFiles.ts'
 import {
+  analyseOrderArtwork,
+  applyCutThroughFindings,
+  buildCutThroughContext,
+  type CutThroughFace,
+} from '../_shared/artworkCheck/cutThrough.ts'
+import {
   attachmentDateLabel,
   pickAttachments,
   routeAttachment,
@@ -856,6 +862,10 @@ Deno.serve(async (req) => {
     baseCtx.skippedFiles = [...picked.skipped]
     const documents: ContentBlock[] = []
     let printsRawTotal = 0
+    // Kept so the cut-through geometry check can read the same bytes we send
+    // to the model. Only for cut-capable materials, so a plastic job pays
+    // nothing for it.
+    const cutThroughInput: { name: string; bytes: Uint8Array }[] = []
     for (const f of picked.files) {
       const bytes = await downloadSharedLinkFile(dbxToken, order.dropbox_folder_url, f.path)
       if (!bytes) {
@@ -868,11 +878,26 @@ Deno.serve(async (req) => {
       }
       baseCtx.printFileNames.push(f.name)
       printsRawTotal += bytes.length
+      if (baseCtx.cutThrough) cutThroughInput.push({ name: f.name, bytes })
       documents.push({
         type: 'document',
         source: { type: 'base64', media_type: 'application/pdf', data: bytesToBase64(bytes) },
         title: f.name,
       })
+    }
+
+    // ── Will any cut-out piece fall out? ────────────────────────────────────
+    // Measured from the vector geometry rather than judged from the page
+    // images: a supporting strut is 0.4-1.2 mm, a few pixels at page scale.
+    // Best-effort — any failure yields no faces and the check carries on
+    // exactly as before.
+    let cutThroughFaces: CutThroughFace[] = []
+    if (cutThroughInput.length > 0) {
+      try {
+        cutThroughFaces = await analyseOrderArtwork(cutThroughInput)
+      } catch (err) {
+        console.error('[artwork-check] cut-through check failed:', (err as Error)?.message)
+      }
     }
     if (documents.length === 0) {
       return await finish(buildErrorReport(runModel,'no readable print files (.pdf/.ai) in the Dropbox folder', buildInputs(baseCtx, threadMessages, threadFound)))
@@ -963,8 +988,10 @@ Deno.serve(async (req) => {
     }
 
     // ── One multimodal call ─────────────────────────────────────────────────
+    const cutThroughBlock = buildCutThroughContext(cutThroughFaces)
     const content: ContentBlock[] = [
       { type: 'text', text: buildContextText(baseCtx) },
+      ...(cutThroughBlock ? [{ type: 'text', text: cutThroughBlock } as ContentBlock] : []),
       ...documents,
       ...(approvedBlocks.length > 0
         ? [{ type: 'text', text: 'APPROVED PROOF IMAGES (what the customer signed off — compare the print files against these for post-approval drift):' } as ContentBlock, ...approvedBlocks]
@@ -975,7 +1002,11 @@ Deno.serve(async (req) => {
       { type: 'text', text: FINAL_INSTRUCTION },
     ]
     const { result, usage } = await callArtworkCheck(SYSTEM_PROMPT, content, runModel)
-    return await finish(buildReport(runModel, result, buildInputs(baseCtx, threadMessages, threadFound), usage))
+    // The measured cut-through result is merged into the report AFTER the
+    // model, so a loose piece reaches the verdict whether or not the model
+    // chose to repeat it. deriveVerdict runs on the merged report.
+    const merged = applyCutThroughFindings(result, cutThroughFaces)
+    return await finish(buildReport(runModel, merged, buildInputs(baseCtx, threadMessages, threadFound), usage))
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[artwork-check] run failed:', msg)

@@ -12,8 +12,12 @@
 // (same hand-rolled harness convention as artworkCheck.test.ts — no test
 // framework in this repo; exits 1 on any failure.)
 
+import { deflateSync } from 'node:zlib'
 import {
   analyseFace,
+  analyseOrderArtwork,
+  applyCutThroughFindings,
+  buildCutThroughContext,
   boxOf,
   components,
   CUT_FILL,
@@ -525,6 +529,186 @@ function mirroredFace(cutPaths: SubPath[]): ParsedFace {
   const told = analyseFace(face(cut), null, { oppositeMissingReason: 'the other side (X.ai) could not be read' })
   check('caller can say the file was unreadable instead',
     /could not be read/i.test(told.reason ?? ''), told.reason)
+}
+
+// ── end to end over real PDF bytes ────────────────────────────────────────
+// Builds a genuine (tiny) PDF so extractStreams, the content-stream parser and
+// readArtBox are all exercised on real bytes rather than hand-fed shapes.
+
+function buildPdf(content: string): Uint8Array {
+  const body = deflateSync(Buffer.from(content, 'latin1'))
+  const head = Buffer.from(
+    '%PDF-1.6\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n' +
+      `2 0 obj<</Type/Page/ArtBox[0 0 ${CARD_W} ${CARD_H}]/MediaBox[0 0 ${CARD_W} ${CARD_H}]>>endobj\n` +
+      `3 0 obj<</Filter/FlateDecode/Length ${body.length}>>stream\n`,
+    'latin1',
+  )
+  const tail = Buffer.from('\nendstream endobj\n%%EOF\n', 'latin1')
+  return new Uint8Array(Buffer.concat([head, body, tail]))
+}
+
+/** Draw a background plus a ring, in PDF operators. `tie` leaves a gap. */
+function pdfArtwork(cx: number, tie: boolean): string {
+  const out: string[] = [`0 0 0 1 k 0 0 ${CARD_W} ${CARD_H} re f`, '0 0 0 0 k']
+  const rings = ring(cx, 72, 16, 10, tie ? 24 : 0)
+  for (const sp of rings) {
+    out.push(`${sp[0].x.toFixed(3)} ${sp[0].y.toFixed(3)} m`)
+    for (const p of sp.slice(1)) out.push(`${p.x.toFixed(3)} ${p.y.toFixed(3)} l`)
+    out.push('h')
+  }
+  out.push('f')
+  return out.join('\n')
+}
+
+{
+  const cx = 126
+  // Front and back carry the same ring; mirrored, that is x -> CARD_W - x,
+  // and a ring centred on the card mirrors onto itself.
+  const unstrutted = buildPdf(pdfArtwork(cx, false))
+  const faces = await analyseOrderArtwork([
+    { name: '01_Front.ai', bytes: unstrutted },
+    { name: '01_Back.ai', bytes: unstrutted },
+  ])
+  eq('both faces checked from real PDF bytes', faces.length, 2)
+  eq('the unstrutted ring is caught end to end', faces[0].result.status, 'dropout')
+  check('context block states it as measured',
+    /measured from the print files/i.test(buildCutThroughContext(faces)))
+  check('context tells the model not to re-measure',
+    /do NOT re-measure/i.test(buildCutThroughContext(faces)))
+}
+
+{
+  const strutted = buildPdf(pdfArtwork(126, true))
+  const faces = await analyseOrderArtwork([
+    { name: '01_Front.ai', bytes: strutted },
+    { name: '01_Back.ai', bytes: strutted },
+  ])
+  eq('a strutted ring is clean end to end', faces[0].result.status, 'clean')
+  const ctx = buildCutThroughContext(faces)
+  check('and the block says nothing alarming', !/fall out/i.test(ctx), ctx)
+}
+
+{
+  // Unreadable bytes must degrade to an honest "could not check", never throw
+  // and never take the whole artwork check down with them.
+  const faces = await analyseOrderArtwork([
+    { name: 'a.ai', bytes: new Uint8Array([1, 2, 3, 4]) },
+    { name: 'b.ai', bytes: new Uint8Array([5, 6, 7, 8]) },
+  ])
+  eq('rubbish bytes do not throw', faces.length, 2)
+  eq('they report as uncheckable', faces[0].result.status, 'cannot_check')
+  eq('no findings invented', faces[0].result.islands.length, 0)
+}
+
+{
+  eq('no files -> no context block', buildCutThroughContext([]), '')
+}
+
+// ── merging into the report ───────────────────────────────────────────────
+
+type TestReport = {
+  summary: string
+  cards: { label: string; findings: { field: string; supplied: string; printed: string; status: string; severity?: string; note: string }[] }[]
+  corrections: { quote: string; resolved: boolean; severity?: string; note: string }[]
+  notes: string[]
+  reference_gaps: string[]
+}
+const emptyReport = (): TestReport =>
+  ({ summary: '', cards: [], corrections: [], notes: [], reference_gaps: [] })
+
+const faceResult = (over: Partial<import('./cutThrough.ts').FaceResult>) => ({
+  status: 'clean' as const, islands: [], cutRegions: 1, printedWhiteRegions: 0,
+  mirroredAreaShare: 1, cardWidthPt: CARD_W, cardHeightPt: CARD_H, ...over,
+})
+
+{
+  // A measured dropout must reach the report even if the model said nothing,
+  // because the verdict is derived from findings in code.
+  const rep = emptyReport()
+  applyCutThroughFindings(rep, [{
+    label: '01_Front.ai',
+    result: faceResult({ status: 'dropout', islands: [{ areaPt2: 17.6, areaMm2: 2.19, x: 26.9, y: 30, widthPt: 4.5, heightPt: 3.9 }] }),
+  }])
+  eq('a card is added for it', rep.cards.length, 1)
+  const f = rep.cards[0].findings[0]
+  eq('it is a flag', f.status, 'flag')
+  eq('at the red tier', f.severity, 'defect')
+  check('naming the size', /2\.19 mm²/.test(f.printed), f.printed)
+  check('and explaining it in plain words', /fall out/i.test(f.note), f.note)
+}
+
+{
+  // The one-sided conditional stays amber and is worded as a conditional.
+  const rep = emptyReport()
+  applyCutThroughFindings(rep, [{
+    label: '02.ai',
+    result: faceResult({ status: 'possible_dropout', cutRegions: 0, printedWhiteRegions: 4, islands: [{ areaPt2: 390, areaMm2: 48.28, x: 21, y: 100.8, widthPt: 60, heightPt: 60 }] }),
+  }])
+  const f = rep.cards[0].findings[0]
+  eq('conditional stays amber', f.severity, 'review')
+  check('worded as an IF', /IF this white is cut through/i.test(f.printed), f.printed)
+}
+
+{
+  const rep = emptyReport()
+  applyCutThroughFindings(rep, [
+    { label: 'a.ai', result: faceResult({ status: 'clean' }) },
+    { label: 'b.ai', result: faceResult({ status: 'no_cut_artwork' }) },
+  ])
+  eq('a clean result adds nothing', rep.cards.length, 0)
+  eq('and no gaps', rep.reference_gaps.length, 0)
+}
+
+{
+  const rep = emptyReport()
+  applyCutThroughFindings(rep, [{
+    label: 'c.ai',
+    result: faceResult({ status: 'cannot_check', reason: 'the artwork file is damaged and only partly readable' }),
+  }])
+  eq('uncheckable is a reference gap, not a flag', rep.cards.length, 0)
+  eq('recorded once', rep.reference_gaps.length, 1)
+  check('naming the file and the reason', /c\.ai.*damaged/i.test(rep.reference_gaps[0]), rep.reference_gaps[0])
+}
+
+{
+  // Attach to the model's own card entry when it has one, and never duplicate
+  // a finding the model already made about the same thing.
+  const rep = emptyReport()
+  rep.cards.push({
+    label: 'Derrick Smith — 01_Front (front/back)',
+    findings: [{ field: 'other', supplied: '', printed: 'the O has no strut', status: 'flag', severity: 'review', note: 'a piece would fall out' }],
+  })
+  applyCutThroughFindings(rep, [{
+    label: '01_Front.ai',
+    result: faceResult({ status: 'dropout', islands: [{ areaPt2: 17.6, areaMm2: 2.19, x: 1, y: 1, widthPt: 4, heightPt: 4 }] }),
+  }])
+  eq('no second card invented', rep.cards.length, 1)
+  eq('and no duplicate finding', rep.cards[0].findings.length, 1)
+}
+
+{
+  // The point of merging into the report rather than only telling the model:
+  // the verdict is derived from findings in CODE, so a measured dropout must
+  // move the order's verdict on its own.
+  const { deriveVerdict } = await import('./report.ts')
+  const rep = emptyReport()
+  eq('an empty report is clear', deriveVerdict(rep as never), 'clear')
+  applyCutThroughFindings(rep, [{
+    label: '01_Front.ai',
+    result: faceResult({ status: 'dropout', islands: [{ areaPt2: 17.6, areaMm2: 2.19, x: 1, y: 1, widthPt: 4, heightPt: 4 }] }),
+  }])
+  eq('a loose piece makes the order a defect', deriveVerdict(rep as never), 'defect')
+
+  const rep2 = emptyReport()
+  applyCutThroughFindings(rep2, [{
+    label: '02.ai',
+    result: faceResult({ status: 'possible_dropout', islands: [{ areaPt2: 390, areaMm2: 48.3, x: 1, y: 1, widthPt: 60, heightPt: 60 }] }),
+  }])
+  eq('the one-sided conditional only flags', deriveVerdict(rep2 as never), 'flagged')
+
+  const rep3 = emptyReport()
+  applyCutThroughFindings(rep3, [{ label: 'x.ai', result: faceResult({ status: 'clean' }) }])
+  eq('a clean cut-through leaves the verdict alone', deriveVerdict(rep3 as never), 'clear')
 }
 
 console.log(`\ncutThrough: ${passed} passed, ${failed} failed`)

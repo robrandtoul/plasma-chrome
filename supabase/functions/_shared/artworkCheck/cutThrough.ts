@@ -1050,6 +1050,158 @@ export function pairPrintFiles(paths: string[]): FacePair[] {
   return out
 }
 
+// ── Running it over an order's print files ─────────────────────────────────
+
+export interface CutThroughFace {
+  /** The print file's own name, so a reviewer knows which card to open. */
+  label: string
+  result: FaceResult
+}
+
+/**
+ * Check every print file in an order folder, each against its opposite side.
+ *
+ * Strictly best-effort: a file that will not parse becomes a 'cannot_check'
+ * face, never an exception, so this can never fail the artwork check it runs
+ * inside. Same fail-safe stance as qrDecode.ts.
+ */
+export async function analyseOrderArtwork(
+  files: { name: string; bytes: Uint8Array }[],
+): Promise<CutThroughFace[]> {
+  const parsed = new Map<string, ParsedFace | null>()
+  for (const f of files) {
+    try {
+      parsed.set(f.name, await parseFace(f.bytes))
+    } catch {
+      parsed.set(f.name, null)
+    }
+  }
+  const out: CutThroughFace[] = []
+  for (const pair of pairPrintFiles(files.map((f) => f.name))) {
+    const front = parsed.get(pair.face) ?? null
+    if (!front) {
+      out.push({
+        label: pair.face,
+        result: {
+          status: 'cannot_check',
+          islands: [],
+          reason: 'the artwork in this file could not be read',
+          cutRegions: 0,
+          printedWhiteRegions: 0,
+          mirroredAreaShare: 0,
+          cardWidthPt: 0,
+          cardHeightPt: 0,
+        },
+      })
+      continue
+    }
+    const back = pair.opposite ? (parsed.get(pair.opposite) ?? null) : null
+    const oppositeMissingReason = pair.opposite && !back
+      ? `the artwork for the other side (${pair.opposite}) could not be read, so we cannot tell whether this white is cut through or printed`
+      : undefined
+    try {
+      out.push({ label: pair.face, result: analyseFace(front, back, { oppositeMissingReason }) })
+    } catch {
+      out.push({
+        label: pair.face,
+        result: {
+          status: 'cannot_check',
+          islands: [],
+          reason: 'the cut-through check could not complete for this file',
+          cutRegions: 0,
+          printedWhiteRegions: 0,
+          mirroredAreaShare: 0,
+          cardWidthPt: 0,
+          cardHeightPt: 0,
+        },
+      })
+    }
+  }
+  return out
+}
+
+/**
+ * The block handed to the model as evidence — computed, not eyeballed, exactly
+ * like the decoded QR payloads. The model is told these are measurements so it
+ * reports them rather than re-deciding them from the page images, where a
+ * 0.4 mm strut is a few pixels.
+ */
+export function buildCutThroughContext(faces: CutThroughFace[]): string {
+  if (faces.length === 0) return ''
+  const lines: string[] = []
+  lines.push(
+    'CUT-THROUGH CHECK (measured from the print files by the studio\'s own geometry check, not read off the page images — treat as exact):',
+  )
+  for (const f of faces) lines.push(`- ${describeFace(f.label, f.result)}`)
+  const loose = faces.filter((f) => f.result.status === 'dropout')
+  if (loose.length > 0) {
+    lines.push(
+      'A piece listed as falling out means a supporting strut is missing: report it as a flag on that card. Do NOT re-measure it from the page images and do NOT explain it away.',
+    )
+  }
+  return lines.join('\n')
+}
+
+/**
+ * Merge the measured result into the model's report.
+ *
+ * This is belt-and-braces on purpose. The context block above already tells
+ * the model, but the verdict in report.ts is derived from findings in CODE,
+ * and a deterministic safety result must not depend on the model choosing to
+ * repeat it. Anything already reported by the model for the same file is left
+ * alone so the reviewer does not see it twice.
+ */
+export function applyCutThroughFindings<
+  T extends { cards: { label: string; findings: F[] }[]; notes: string[]; reference_gaps: string[] },
+  F extends { field: string; supplied: string; printed: string; status: string; severity?: string; note: string },
+>(report: T, faces: CutThroughFace[]): T {
+  for (const face of faces) {
+    const r = face.result
+    if (r.status === 'clean' || r.status === 'no_cut_artwork') continue
+
+    if (r.status === 'cannot_check') {
+      const gap = `${face.label}: could not check for loose pieces of metal — ${r.reason ?? 'unknown reason'}.`
+      if (!report.reference_gaps.includes(gap)) report.reference_gaps.push(gap)
+      continue
+    }
+
+    const pieces = r.islands
+      .slice(0, 6)
+      .map((i) => `${i.areaMm2} mm² at (${i.x}, ${i.y}) pt`)
+      .join('; ')
+    const definite = r.status === 'dropout'
+    const printed = definite
+      ? `${r.islands.length} loose piece${r.islands.length === 1 ? '' : 's'}: ${pieces}`
+      : `${r.islands.length} piece${r.islands.length === 1 ? '' : 's'} that would come loose IF this white is cut through: ${pieces}`
+    const note = definite
+      ? 'Cut through the card with no supporting strut, so this piece would fall out. Measured from the print file.'
+      : 'Only one side of this card was supplied, so we cannot tell whether the white is cut through or printed. If it is cut, these pieces would fall out.'
+
+    // Prefer the model's own card entry for this file so the reviewer sees it
+    // in context; otherwise add a card of our own.
+    const key = face.label.replace(/\.(ai|pdf)$/i, '').toLowerCase()
+    let card = report.cards.find((c) => c.label.toLowerCase().includes(key))
+    if (!card) {
+      card = { label: face.label, findings: [] }
+      report.cards.push(card)
+    }
+    const already = card.findings.some((f) => /strut|fall out|falls out|loose piece/i.test(f.note ?? ''))
+    if (already) continue
+    card.findings.push({
+      field: 'other',
+      supplied: 'every cut-out shape needs a strut holding its middle on',
+      printed,
+      status: 'flag',
+      // A confirmed dropout is exactly the "would we bet a reprint on it" bar:
+      // it is measured, not judged, and the card comes back wrong if it ships.
+      // The one-sided case stays amber — it is a conditional, not a finding.
+      severity: definite ? 'defect' : 'review',
+      note,
+    } as unknown as F)
+  }
+  return report
+}
+
 // ── Reporting ──────────────────────────────────────────────────────────────
 
 export interface CardCheck {
