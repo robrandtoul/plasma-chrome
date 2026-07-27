@@ -7,8 +7,10 @@ import {
   Boxes,
   ExternalLink,
   MessageSquare,
+  ShieldCheck,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
+import { designerColourCss } from '../../lib/designerColours'
 import { PanelShell, Pill, type PillColour } from '../../design'
 
 // Admin → Analytics. Conversion insight for the enquiry→sale funnel, built on
@@ -106,6 +108,78 @@ interface LossReason {
   latest_at: string | null
 }
 
+// ── Artwork checks (migrations 000357/000358) ────────────────────────────────
+// Usage reporting for the pre-print / pre-send artwork sanity check. One RPC,
+// one json object; every count comes from the run ledger, so a re-run is a run
+// and an errored run still counts as usage.
+type CheckSource = 'designer' | 'auto_page' | 'auto_folder_link' | 'service' | 'unknown'
+
+interface CheckVerdictCounts {
+  clear: number
+  flagged: number
+  defect: number
+  error: number
+}
+interface CheckTotals extends CheckVerdictCounts {
+  runs: number
+  reruns: number
+  manual_runs: number
+  auto_runs: number
+  people: number
+  orders_checked: number
+  versions_checked: number
+  flags_found: number
+  defects_found: number
+  runs_with_findings: number
+}
+interface CheckKindRow extends CheckVerdictCounts {
+  kind: 'order' | 'proof'
+  runs: number
+  manual_runs: number
+  flags_found: number
+  defects_found: number
+}
+interface CheckSourceRow extends CheckVerdictCounts {
+  source: CheckSource
+  runs: number
+}
+interface CheckPersonRow extends CheckVerdictCounts {
+  ran_by: string | null
+  name: string | null
+  initials: string | null
+  colour: string | null
+  manual_runs: number
+  auto_page_runs: number
+  order_runs: number
+  proof_runs: number
+  last_run_at: string | null
+}
+interface CheckWeekRow extends CheckVerdictCounts {
+  week_start: string
+  runs: number
+  manual_runs: number
+}
+interface ArtworkCheckStats {
+  days: number
+  since: string
+  totals: CheckTotals
+  by_kind: CheckKindRow[]
+  by_source: CheckSourceRow[]
+  by_person: CheckPersonRow[]
+  weekly: CheckWeekRow[]
+  // `from` is the effective start: the later of the window edge and the first
+  // pre-send check ever run, so versions that predate the feature don't sit in
+  // the denominator making uptake look worse than it is.
+  proof_adoption: { from: string | null; versions_created: number; versions_checked: number }
+  cost: {
+    input_tokens: number
+    output_tokens: number
+    cache_read_tokens: number
+    cache_write_tokens: number
+    models: { model: string; runs: number }[]
+  }
+}
+
 const LOSS_LABELS: Record<string, string> = {
   price_too_high: 'Price too high',
   different_direction: 'Wanted a different direction',
@@ -114,7 +188,7 @@ const LOSS_LABELS: Record<string, string> = {
   still_thinking: 'Still thinking',
 }
 
-type Tab = 'funnel' | 'hot' | 'team' | 'products'
+type Tab = 'funnel' | 'hot' | 'team' | 'products' | 'checks'
 
 const num = (v: number | string | null | undefined): number => {
   if (v == null) return 0
@@ -203,6 +277,34 @@ export default function AdminAnalyticsPage() {
   // median time-to-pay isn't in that RPC and adding it would need a migration.
   const [payLinks, setPayLinks] = useState<PayLinkStat | null>(null)
 
+  // Artwork-check usage. Its own fetch, not part of the Promise.all below, for
+  // two reasons: the window is user-adjustable (so it refetches on its own),
+  // and a missing 000358 must degrade to one explanatory panel rather than
+  // taking the whole Analytics page down with it.
+  const [checkDays, setCheckDays] = useState(30)
+  const [checkStats, setCheckStats] = useState<ArtworkCheckStats | null>(null)
+  const [checkError, setCheckError] = useState<string | null>(null)
+  const [checkLoading, setCheckLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setCheckLoading(true)
+    void supabase.rpc('analytics_artwork_check', { p_days: checkDays }).then(({ data, error: rpcErr }) => {
+      if (cancelled) return
+      if (rpcErr) {
+        setCheckError(rpcErr.message)
+        setCheckStats(null)
+      } else {
+        setCheckError(null)
+        setCheckStats(data as ArtworkCheckStats)
+      }
+      setCheckLoading(false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [checkDays])
+
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -260,6 +362,7 @@ export default function AdminAnalyticsPage() {
     { id: 'hot', label: 'Hot leads', icon: Flame },
     { id: 'team', label: 'Team', icon: Users },
     { id: 'products', label: 'Products', icon: Boxes },
+    { id: 'checks', label: 'Artwork checks', icon: ShieldCheck },
   ]
 
   return (
@@ -309,6 +412,15 @@ export default function AdminAnalyticsPage() {
           {tab === 'hot' && <HotLeadsSection leads={hotLeads} />}
           {tab === 'team' && <TeamSection rows={designers} />}
           {tab === 'products' && <ProductsSection segments={segments} />}
+          {tab === 'checks' && (
+            <ArtworkChecksSection
+              stats={checkStats}
+              loading={checkLoading}
+              error={checkError}
+              days={checkDays}
+              onDaysChange={setCheckDays}
+            />
+          )}
         </>
       )}
     </div>
@@ -740,6 +852,462 @@ function ProductsSection({ segments }: { segments: Record<string, SegmentRow[]> 
         structured fields (material, currency, proof type, recipients) plus the durable <code>repeat customer</code>
         tag; lifecycle tags (priority, ready-to-order) are deliberately excluded — they track funnel stage, not value.
       </p>
+    </div>
+  )
+}
+
+// ── 5. Artwork checks ────────────────────────────────────────────────────────
+// How much the artwork sanity check is used, by whom, and how often it finds
+// something. Two framing decisions carried through from the SQL:
+//   * "Used by" counts only runs a human asked for. The order review page
+//     auto-runs on open and the Dropbox-link trigger fires on its own; folding
+//     those into a person's total would report footfall, not use.
+//   * A flagged run is the tool WORKING. The copy says so, because a "success
+//     rate" on a checking tool otherwise reads backwards.
+const CHECK_VERDICTS: { key: keyof CheckVerdictCounts; label: string; colour: string }[] = [
+  { key: 'clear', label: 'All clear', colour: 'var(--c-in-stock)' },
+  { key: 'flagged', label: 'Worth a look', colour: 'var(--c-low)' },
+  { key: 'defect', label: 'Likely defect', colour: 'var(--c-out)' },
+  { key: 'error', label: "Couldn't run", colour: 'var(--c-ink-dim)' },
+]
+
+const CHECK_SOURCE_LABELS: Record<CheckSource, string> = {
+  designer: 'Someone clicked Run',
+  auto_page: 'Order review page opened',
+  auto_folder_link: 'Dropbox folder linked',
+  service: 'Scripts / service role',
+  unknown: 'Before usage tracking',
+}
+
+const CHECK_KIND_LABELS: Record<CheckKindRow['kind'], { title: string; sub: string }> = {
+  order: { title: 'Before print', sub: 'Print files vs the customer’s details, at order prep' },
+  proof: { title: 'Before sending', sub: 'Proof images vs the thread, before the customer sees it' },
+}
+
+function ArtworkChecksSection({
+  stats,
+  loading,
+  error,
+  days,
+  onDaysChange,
+}: {
+  stats: ArtworkCheckStats | null
+  loading: boolean
+  error: string | null
+  days: number
+  onDaysChange: (d: number) => void
+}) {
+  const ranges = [7, 30, 90]
+
+  const rangeStrip = (
+    <div className="mb-4 flex items-center gap-2">
+      <span className="text-xs font-semibold uppercase tracking-wider text-ink-dim">Last</span>
+      {ranges.map((r) => (
+        <button
+          key={r}
+          onClick={() => onDaysChange(r)}
+          className={[
+            'rounded-full px-3 py-1 text-xs transition-colors',
+            days === r
+              ? 'bg-ink text-surface font-semibold'
+              : 'bg-surface text-ink-mute ring-1 ring-line hover:text-ink',
+          ].join(' ')}
+        >
+          {r} days
+        </button>
+      ))}
+    </div>
+  )
+
+  if (error) {
+    return (
+      <div className="rounded-2xl bg-out-soft p-6 text-sm text-out ring-1 ring-out">
+        Couldn’t load artwork-check usage: {error}
+        <p className="mt-2 text-ink-mute">
+          If this says the function does not exist, migrations <code>000357</code>/<code>000358</code> haven’t been
+          applied yet.
+        </p>
+      </div>
+    )
+  }
+  // `!stats.totals` is the belt-and-braces arm: a shape the page doesn't
+  // recognise (an older function signature, a stubbed client) must degrade to
+  // the spinner-then-empty path rather than throwing on stats.totals.runs and
+  // white-screening the whole Analytics page.
+  if (loading || !stats || !stats.totals) {
+    return (
+      <>
+        {rangeStrip}
+        {loading ? (
+          <div className="flex justify-center py-16">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-gray-900" />
+          </div>
+        ) : (
+          <PanelShell title="Artwork checks" eyebrow="Usage" icon={ShieldCheck} accent="var(--c-brand)">
+            <p className="text-sm text-ink-mute">No artwork-check usage data available yet.</p>
+          </PanelShell>
+        )}
+      </>
+    )
+  }
+
+  const t = stats.totals
+  // Every collection defaulted: the panel must survive a partial payload the
+  // same way it survives a missing one.
+  const byKind = stats.by_kind ?? []
+  const bySource = stats.by_source ?? []
+  const byPerson = stats.by_person ?? []
+  const weeklyRuns = stats.weekly ?? []
+  const cost = stats.cost ?? { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, models: [] }
+  const costModels = cost.models ?? []
+  const adoption = stats.proof_adoption ?? { from: null, versions_created: 0, versions_checked: 0 }
+
+  const completed = t.runs - t.error
+  const foundRate = pct(t.runs_with_findings, completed)
+  const clearRate = pct(t.clear, completed)
+  const adoptionRate = pct(adoption.versions_checked, adoption.versions_created)
+
+  if (t.runs === 0) {
+    return (
+      <>
+        {rangeStrip}
+        <PanelShell title="Artwork checks" eyebrow="Usage" icon={ShieldCheck} accent="var(--c-brand)">
+          <p className="text-sm text-ink-mute">
+            No checks have run in the last {stats.days} days. Try a longer window, or confirm the check is switched on
+            under <Link className="underline" to="/admin/artwork-check">Admin → Artwork check</Link>.
+          </p>
+        </PanelShell>
+      </>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {rangeStrip}
+
+      <div className="grid gap-3 grid-cols-2 lg:grid-cols-5">
+        <StatTile label="Checks run" value={String(t.runs)} sub={`${t.reruns} were re-runs`} />
+        <StatTile
+          label="Found something"
+          value={fmtPct(foundRate)}
+          sub={`${t.runs_with_findings} of ${completed} completed`}
+          accent="var(--c-low)"
+        />
+        <StatTile label="All clear" value={fmtPct(clearRate)} sub={`${t.clear} runs`} accent="var(--c-in-stock)" />
+        <StatTile
+          label="People using it"
+          value={String(t.people)}
+          sub={`${t.manual_runs} run by hand`}
+          accent="var(--c-brand)"
+        />
+        <StatTile
+          label="Couldn’t run"
+          value={String(t.error)}
+          sub={t.error > 0 ? 'errors — see below' : 'no failures'}
+          accent={t.error > 0 ? 'var(--c-out)' : undefined}
+        />
+      </div>
+
+      {/* The framing note. Without it "found something" reads as a failure
+          rate rather than as the tool earning its keep. */}
+      <div className="rounded-xl bg-canvas px-4 py-3 text-sm ring-1 ring-line-soft">
+        <span className="font-semibold text-ink">
+          {t.flags_found} thing{t.flags_found === 1 ? '' : 's'} raised for a human to check
+          {t.defects_found > 0 ? `, ${t.defects_found} of them graded likely defects` : ''}.
+        </span>{' '}
+        <span className="text-ink-soft">
+          A flagged check is the tool doing its job — it’s a catch before print, not a failure. Every verdict stays
+          advisory; a person still decides.
+        </span>
+      </div>
+
+      {/* The two gates, never averaged together — different inputs, different
+          base rates, and one is effectively mandatory while the other is a
+          button someone chooses to press. */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        {(['order', 'proof'] as const).map((kind) => {
+          const row = byKind.find((k) => k.kind === kind)
+          const meta = CHECK_KIND_LABELS[kind]
+          return (
+            <PanelShell key={kind} title={meta.title} eyebrow={meta.sub} icon={ShieldCheck} accent="var(--c-brand)">
+              {row ? (
+                <>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-bold text-ink">{row.runs}</span>
+                    <span className="text-sm text-ink-mute">
+                      check{row.runs === 1 ? '' : 's'} · {row.manual_runs} run by hand
+                    </span>
+                  </div>
+                  <div className="mt-3">
+                    <VerdictBar counts={row} />
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-ink-mute">None in this window.</p>
+              )}
+            </PanelShell>
+          )
+        })}
+      </div>
+
+      <PanelShell title="Who runs the checks" eyebrow="Deliberate runs only" icon={Users} accent="var(--c-allocated)">
+        <CheckPeopleTable rows={byPerson} />
+        <p className="mt-3 text-xs text-ink-mute">
+          Counts only checks somebody asked for. The order review page runs one automatically when it’s opened, and the
+          Dropbox-link trigger runs one with no one present — those are in “How checks get started” below, never
+          credited to a person.
+        </p>
+      </PanelShell>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <PanelShell title="Checks per week" eyebrow="Every run, however triggered" icon={TrendingUp} accent="var(--c-brand)">
+          <CheckWeeklyChart rows={weeklyRuns} />
+        </PanelShell>
+
+        <div className="space-y-3">
+          <PanelShell title="How checks get started" eyebrow="Trigger" icon={ShieldCheck} accent="var(--c-ink-mute)">
+            <CheckSourceTable rows={bySource} total={t.runs} />
+          </PanelShell>
+
+          <PanelShell title="Pre-send check uptake" eyebrow="The optional gate" icon={TrendingUp} accent="var(--c-brand)">
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-bold text-ink">{fmtPct(adoptionRate)}</span>
+              <span className="text-sm text-ink-mute">
+                {adoption.versions_checked} of {adoption.versions_created} new versions
+              </span>
+            </div>
+            <p className="mt-2 text-xs text-ink-mute">
+              The before-print check is effectively compulsory (it auto-runs, and an order can’t be placed without one),
+              so its coverage says little. This one is a button a designer chooses to press — which makes it the honest
+              measure of whether the team reaches for the feature. Counted from{' '}
+              {adoption.from ? fmtDate(adoption.from) : 'the start of the window'}, when the pre-send check was first
+              used: versions created before it existed could never have been checked.
+            </p>
+          </PanelShell>
+        </div>
+      </div>
+
+      <p className="text-xs text-ink-mute">
+        {t.orders_checked} order{t.orders_checked === 1 ? '' : 's'} and {t.versions_checked} proof version
+        {t.versions_checked === 1 ? '' : 's'} were checked in this window, using{' '}
+        {(cost.input_tokens + cost.output_tokens).toLocaleString('en-GB')} tokens
+        {costModels.length > 0 && ` (${costModels.map((m) => `${m.model} × ${m.runs}`).join(', ')})`}.
+        Runs recorded before usage tracking shipped appear as “Before usage tracking” with no person attached — the
+        earlier reports survive, but who ran them was never stored.
+      </p>
+    </div>
+  )
+}
+
+// Verdict mix as one stacked bar — four segments that always sum to the run
+// count, so the eye compares shape rather than reading four numbers.
+function VerdictBar({ counts }: { counts: CheckVerdictCounts }) {
+  const total = CHECK_VERDICTS.reduce((sum, v) => sum + counts[v.key], 0)
+  if (total === 0) return <p className="text-sm text-ink-mute">No runs.</p>
+  return (
+    <div>
+      <div className="flex h-6 overflow-hidden rounded ring-1 ring-line-soft">
+        {CHECK_VERDICTS.map((v) => {
+          const n = counts[v.key]
+          if (n === 0) return null
+          return (
+            <div
+              key={v.key}
+              title={`${v.label}: ${n}`}
+              style={{ width: `${(100 * n) / total}%`, backgroundColor: `color-mix(in srgb, ${v.colour} 45%, transparent)` }}
+              className="flex items-center justify-center"
+            >
+              <span className="px-1 text-[11px] font-semibold text-ink">{n}</span>
+            </div>
+          )
+        })}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+        {CHECK_VERDICTS.map((v) => (
+          <span key={v.key} className="inline-flex items-center gap-1.5 text-[11px] text-ink-mute">
+            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: v.colour }} />
+            {v.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function CheckPeopleTable({ rows }: { rows: CheckPersonRow[] }) {
+  const withManual = rows.filter((r) => r.manual_runs > 0)
+  if (withManual.length === 0) {
+    return (
+      <p className="text-sm text-ink-mute">
+        Nobody has run a check by hand in this window — every run so far was automatic.
+      </p>
+    )
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-line text-left text-[11px] uppercase tracking-wider text-ink-dim">
+            <th className="pb-2 pr-3 font-semibold">Designer</th>
+            <th className="pb-2 pr-3 font-semibold">Runs</th>
+            <th className="pb-2 pr-3 font-semibold">Before print</th>
+            <th className="pb-2 pr-3 font-semibold">Before sending</th>
+            <th className="pb-2 pr-3 font-semibold">What they found</th>
+            <th className="pb-2 font-semibold">Last run</th>
+          </tr>
+        </thead>
+        <tbody>
+          {withManual.map((r) => {
+            const found = r.flagged + r.defect
+            return (
+              <tr key={r.ran_by ?? r.name ?? 'unknown'} className="border-b border-line-soft last:border-0">
+                <td className="py-2 pr-3">
+                  <span className="inline-flex items-center gap-2">
+                    <span
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-white"
+                      style={{ backgroundColor: designerColourCss(r.colour) }}
+                    >
+                      {r.initials ?? '??'}
+                    </span>
+                    <span className="text-ink">{r.name ?? 'Unknown'}</span>
+                  </span>
+                </td>
+                <td className="py-2 pr-3 font-semibold text-ink">{r.manual_runs}</td>
+                <td className="py-2 pr-3 text-ink-soft">{r.order_runs}</td>
+                <td className="py-2 pr-3 text-ink-soft">{r.proof_runs}</td>
+                <td className="py-2 pr-3 text-ink-soft">
+                  {found > 0 ? (
+                    // "N found (M likely defects)" — the parenthetical makes it
+                    // read as a subset. An earlier "N flagged · M likely
+                    // defect" scanned as N+M separate things.
+                    <span>
+                      {found} found
+                      {r.defect > 0 && (
+                        <span className="text-out">
+                          {' '}
+                          ({r.defect} likely defect{r.defect === 1 ? '' : 's'})
+                        </span>
+                      )}
+                    </span>
+                  ) : (
+                    <span className="text-ink-dim">all clear</span>
+                  )}
+                </td>
+                <td className="py-2 text-ink-mute">{fmtDate(r.last_run_at)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function CheckSourceTable({ rows, total }: { rows: CheckSourceRow[]; total: number }) {
+  if (rows.length === 0) return <p className="text-sm text-ink-mute">No runs.</p>
+  return (
+    <div className="space-y-1.5">
+      {rows.map((r) => {
+        const share = pct(r.runs, total)
+        return (
+          <div key={r.source} className="flex items-center gap-3 text-sm">
+            <div className="w-44 shrink-0 truncate text-ink-soft" title={CHECK_SOURCE_LABELS[r.source] ?? r.source}>
+              {CHECK_SOURCE_LABELS[r.source] ?? r.source}
+            </div>
+            <div className="relative h-5 flex-1 overflow-hidden rounded bg-canvas ring-1 ring-line-soft">
+              <div
+                className="h-full rounded"
+                style={{
+                  width: `${Math.max(2, share)}%`,
+                  backgroundColor:
+                    r.source === 'designer'
+                      ? 'color-mix(in srgb, var(--c-brand) 35%, transparent)'
+                      : 'color-mix(in srgb, var(--c-ink-mute) 22%, transparent)',
+                }}
+              />
+              <div className="absolute inset-0 flex items-center justify-between px-2">
+                <span className="text-xs text-ink-mute">{r.runs}</span>
+                <span className="text-xs font-semibold text-ink">{fmtPct(share)}</span>
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// Weekly run volume, split clear vs found-something. Same visual grammar as
+// WeeklyChart above (bars + week labels), but stacked rather than bar+line —
+// there's no rate here worth a second axis.
+function CheckWeeklyChart({ rows }: { rows: CheckWeekRow[] }) {
+  if (rows.length === 0) return <p className="text-sm text-ink-mute">No runs yet.</p>
+  const W = Math.max(rows.length * 70, 320)
+  const H = 190
+  const padL = 8
+  const padR = 8
+  const padTop = 14
+  const padBot = 26
+  const chartH = H - padTop - padBot
+  const colW = (W - padL - padR) / rows.length
+  const maxRuns = Math.max(...rows.map((r) => r.runs), 1)
+  const barW = Math.min(colW * 0.55, 40)
+
+  return (
+    <div className="overflow-x-auto">
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img" aria-label="Artwork checks per week" style={{ maxWidth: W }}>
+        {[0, 0.5, 1].map((g) => {
+          const y = padTop + chartH * (1 - g)
+          return (
+            <g key={g}>
+              <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="var(--c-line-soft)" strokeWidth={1} />
+              <text x={W - padR} y={y - 2} fontSize={9} textAnchor="end" fill="var(--c-ink-dim)">
+                {Math.round(maxRuns * g)}
+              </text>
+            </g>
+          )
+        })}
+        {rows.map((r, i) => {
+          const x = padL + colW * i + (colW - barW) / 2
+          const found = r.flagged + r.defect
+          const hAll = (r.runs / maxRuns) * chartH
+          const hFound = (found / maxRuns) * chartH
+          const yAll = padTop + chartH - hAll
+          return (
+            <g key={r.week_start}>
+              {/* full run count, with the found-something portion sitting on top */}
+              <rect x={x} y={yAll} width={barW} height={hAll} rx={3} fill="color-mix(in srgb, var(--c-in-stock) 30%, transparent)" />
+              <rect
+                x={x}
+                y={padTop + chartH - hFound}
+                width={barW}
+                height={hFound}
+                rx={3}
+                fill="color-mix(in srgb, var(--c-low) 65%, transparent)"
+              />
+              <text x={x + barW / 2} y={yAll - 4} fontSize={9} textAnchor="middle" fill="var(--c-ink-soft)" fontWeight={600}>
+                {r.runs}
+              </text>
+              <text x={x + barW / 2} y={padTop + chartH + 12} fontSize={9} textAnchor="middle" fill="var(--c-ink-mute)">
+                {fmtDate(r.week_start)}
+              </text>
+              <text x={x + barW / 2} y={padTop + chartH + 22} fontSize={8} textAnchor="middle" fill="var(--c-ink-dim)">
+                {r.manual_runs} by hand
+              </text>
+            </g>
+          )
+        })}
+      </svg>
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-ink-mute">
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--c-in-stock)' }} />
+          Checks run
+        </span>
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-ink-mute">
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--c-low)' }} />
+          Found something
+        </span>
+      </div>
     </div>
   )
 }

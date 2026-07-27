@@ -55,8 +55,8 @@ export const ADMIN_DESTINATIONS: AdminDestination[] = [
     group: 'Performance',
     icon: 'analytics',
     sidebar: true,
-    keywords: ['reports', 'conversion', 'funnel', 'stats', 'insights', 'metrics', 'performance', 'hot leads', 'designer performance', 'team performance', 'weekly', 'trends', 'won', 'approval rate', 'loss reasons', 'why we lose', 'segments'],
-    description: 'Conversion funnel, weekly trends, hot leads and team performance.',
+    keywords: ['reports', 'conversion', 'funnel', 'stats', 'insights', 'metrics', 'performance', 'hot leads', 'designer performance', 'team performance', 'weekly', 'trends', 'won', 'approval rate', 'loss reasons', 'why we lose', 'segments', 'artwork check usage', 'proof check usage', 'who ran checks', 'check verdicts', 'flagged rate'],
+    description: 'Conversion funnel, weekly trends, hot leads, team performance and artwork-check usage.',
   },
 
   // ── Customers & orders ──

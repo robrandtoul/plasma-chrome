@@ -31,6 +31,7 @@ import AdminCatalogueDataPage from '../src/pages/admin/AdminCatalogueDataPage'
 import AdminContentPage from '../src/pages/admin/AdminContentPage'
 import AdminNeedsAttentionPage from '../src/pages/admin/AdminNeedsAttentionPage'
 import AdminShippingPage from '../src/pages/admin/AdminShippingPage'
+import AdminAnalyticsPage from '../src/pages/admin/AdminAnalyticsPage'
 import AdminSettingsPage from '../src/pages/admin/AdminSettingsPage'
 import AdminArtworkCheckPage from '../src/pages/admin/AdminArtworkCheckPage'
 import AdminDemoDataPage from '../src/pages/admin/AdminDemoDataPage'
@@ -512,6 +513,7 @@ const tree = requestedPath === '/detail-markers' ? (
         <Route path="artwork-check" element={<AdminArtworkCheckPage />} />
         <Route path="needs-attention" element={<AdminNeedsAttentionPage />} />
         <Route path="shipping" element={<AdminShippingPage />} />
+        <Route path="analytics" element={<AdminAnalyticsPage />} />
         <Route path="settings" element={<AdminSettingsPage />} />
         <Route path="demo-data" element={<AdminDemoDataPage />} />
         <Route path="*" element={<Stub />} />

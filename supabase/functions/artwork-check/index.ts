@@ -82,7 +82,13 @@ import {
   type QrContext,
 } from '../_shared/artworkCheck/prompts.ts'
 import { bytesToBase64, callArtworkCheck, modelId, type ContentBlock } from '../_shared/artworkCheck/anthropic.ts'
-import { buildErrorReport, buildReport } from '../_shared/artworkCheck/report.ts'
+import {
+  buildErrorReport,
+  buildReport,
+  countCheckedFields,
+  countDefects,
+  countFlags,
+} from '../_shared/artworkCheck/report.ts'
 import type { ArtworkCheckReport } from '../_shared/artworkCheck/types.ts'
 
 const CORS = {
@@ -114,7 +120,10 @@ function bearerRole(token: string): string | null {
 }
 
 // Designer/admin session (the review page) or service role (shadow scripts).
-async function requireCaller(req: Request): Promise<{ admin: SupabaseClient } | Response> {
+// The caller's identity is RETURNED, not discarded: the 000357 run ledger
+// records who asked for each check, which is the whole basis of the Admin →
+// Analytics "by whom" reporting. userId is null for service-role callers.
+async function requireCaller(req: Request): Promise<{ admin: SupabaseClient; userId: string | null } | Response> {
   const authHeader = req.headers.get('Authorization') ?? ''
   if (!authHeader.toLowerCase().startsWith('bearer ')) return json({ ok: false, error: 'Unauthorized' }, 401)
   const jwt = authHeader.replace(/^[Bb]earer\s+/, '').trim()
@@ -122,14 +131,26 @@ async function requireCaller(req: Request): Promise<{ admin: SupabaseClient } | 
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   if (!url || !serviceKey) return json({ ok: false, error: 'missing supabase env' }, 500)
   const admin = createClient(url, serviceKey, { db: { schema: 'proofs' }, auth: { persistSession: false, autoRefreshToken: false } })
-  if (timingSafeEqual(jwt, serviceKey) || bearerRole(jwt) === 'service_role') return { admin }
+  if (timingSafeEqual(jwt, serviceKey) || bearerRole(jwt) === 'service_role') return { admin, userId: null }
   const anon = createClient(url, Deno.env.get('SUPABASE_ANON_KEY') ?? '')
   const { data: userData, error: userErr } = await anon.auth.getUser(jwt)
   if (userErr || !userData?.user) return json({ ok: false, error: 'Unauthorized' }, 401)
   const { data: profile } = await admin.from('profiles').select('role, deactivated_at').eq('id', userData.user.id).single()
   if (!profile || profile.deactivated_at) return json({ ok: false, error: 'Forbidden' }, 403)
   if (profile.role !== 'admin' && profile.role !== 'designer') return json({ ok: false, error: 'Forbidden' }, 403)
-  return { admin }
+  return { admin, userId: userData.user.id }
+}
+
+// How this run was triggered, for the 000357 ledger's `source`. The
+// distinction that matters: only 'designer' means a human chose to run the
+// check. The order review page auto-runs on open under the designer's own
+// JWT, so without the client's explicit marker every page visit would read as
+// deliberate use and inflate the per-person figures.
+type RunSource = 'designer' | 'auto_page' | 'auto_folder_link' | 'service'
+function resolveRunSource(userId: string | null, bodyTrigger: unknown): RunSource {
+  const trigger = typeof bodyTrigger === 'string' ? bodyTrigger : ''
+  if (!userId) return trigger === 'auto_folder_link' ? 'auto_folder_link' : 'service'
+  return trigger === 'auto' ? 'auto_page' : 'designer'
 }
 
 // settings.artwork_check_mode / _required, tolerant of the columns not
@@ -165,9 +186,10 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   if (req.method !== 'POST') return json({ ok: false, error: 'Method not allowed' }, 405)
 
+  const runStartedAt = Date.now()
   const check = await requireCaller(req)
   if (check instanceof Response) return check
-  const { admin } = check
+  const { admin, userId } = check
 
   let body: Record<string, unknown>
   try {
@@ -175,6 +197,7 @@ Deno.serve(async (req) => {
   } catch {
     return json({ ok: false, error: 'Invalid JSON body' }, 400)
   }
+  const runSource = resolveRunSource(userId, body.trigger)
   const orderId = String(body.order_id ?? '').trim()
   const proofVersionId = String(body.proof_version_id ?? '').trim()
   const force = body.force === true
@@ -258,6 +281,44 @@ Deno.serve(async (req) => {
     const { error: updErr } = await q
     if (updErr) console.error('[artwork-check] persist failed:', updErr.message)
     return !updErr
+  }
+
+  // Ledger the run (migration 000357) — one append-only row per completed run,
+  // errors included, so Admin → Analytics can report frequency, who ran it and
+  // the verdict mix without parsing report jsonb or being blind to re-runs
+  // (which overwrite the stored report and would otherwise vanish).
+  //
+  // Best-effort and deliberately last: reporting must never cost a reviewer
+  // their report. A failed insert is logged and swallowed — the run itself has
+  // already been persisted by the time this is called.
+  async function ledgerRun(report: ArtworkCheckReport): Promise<void> {
+    try {
+      const errored = report.verdict === 'error'
+      const { error: insErr } = await admin.from('artwork_check_runs').insert({
+        check_kind: order ? 'order' : 'proof',
+        order_id: order ? order.id : null,
+        proof_version_id: order ? null : versionTarget!.id,
+        proof_id: targetProofId,
+        verdict: report.verdict,
+        source: runSource,
+        ran_by: userId,
+        is_rerun: existingReport != null,
+        flag_count: errored ? 0 : countFlags(report),
+        defect_count: errored ? 0 : countDefects(report),
+        checked_fields: errored ? 0 : countCheckedFields(report),
+        model: report.model ?? null,
+        input_tokens: report.usage?.input_tokens ?? null,
+        output_tokens: report.usage?.output_tokens ?? null,
+        cache_read_tokens: report.usage?.cache_read_tokens ?? null,
+        cache_write_tokens: report.usage?.cache_write_tokens ?? null,
+        duration_ms: Date.now() - runStartedAt,
+        error: report.error ?? null,
+        ran_at: report.checked_at,
+      })
+      if (insErr) console.error('[artwork-check] ledger insert failed:', insErr.message)
+    } catch (e) {
+      console.error('[artwork-check] ledger insert threw:', e instanceof Error ? e.message : String(e))
+    }
   }
 
   // ── One run at a time, per order (migration 000346) ────────────────────────
@@ -643,6 +704,7 @@ Deno.serve(async (req) => {
         artwork_checked_at: report.checked_at,
         artwork_check_verdict: report.verdict,
       })
+      await ledgerRun(report)
       return json({ ok: true, ...respBase, report, persisted })
     }
 
@@ -814,6 +876,7 @@ Deno.serve(async (req) => {
       artwork_check_verdict: report.verdict,
       artwork_check_running_at: null,
     })
+    await ledgerRun(report)
     return json({ ok: true, ...respBase, report, persisted })
   }
 

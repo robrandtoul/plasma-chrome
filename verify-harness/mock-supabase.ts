@@ -762,6 +762,52 @@ export const supabase: any = {
     // The staff roster, as the real SECURITY DEFINER RPC returns it. Lets the
     // Edit-profile colour picker be checked with colours actually taken.
     if (name === 'team_roster') return { data: PROFILES, error: null }
+    // Artwork-check usage (migration 000358). Shaped from the live figures on
+    // 2026-07-27 so the Analytics → Artwork checks panel can be eyeballed:
+    // both gates present, a mix of verdicts, one error, and deliberate runs
+    // spread across four people so the "by whom" table has something to say.
+    if (name === 'analytics_artwork_check') {
+      return {
+        data: {
+          days: 30,
+          since: daysAgo(30),
+          totals: {
+            runs: 57, clear: 36, flagged: 12, defect: 8, error: 1,
+            reruns: 9, manual_runs: 19, auto_runs: 37, people: 4,
+            orders_checked: 37, versions_checked: 19,
+            flags_found: 31, defects_found: 13, runs_with_findings: 20,
+          },
+          by_kind: [
+            { kind: 'order', runs: 38, clear: 25, flagged: 8, defect: 4, error: 1, manual_runs: 7, flags_found: 16, defects_found: 6 },
+            { kind: 'proof', runs: 19, clear: 11, flagged: 4, defect: 4, error: 0, manual_runs: 12, flags_found: 15, defects_found: 7 },
+          ],
+          by_source: [
+            { source: 'auto_folder_link', runs: 24, clear: 16, flagged: 5, defect: 2, error: 1 },
+            { source: 'designer', runs: 19, clear: 10, flagged: 5, defect: 4, error: 0 },
+            { source: 'auto_page', runs: 13, clear: 9, flagged: 2, defect: 2, error: 0 },
+            { source: 'unknown', runs: 1, clear: 1, flagged: 0, defect: 0, error: 0 },
+          ],
+          by_person: [
+            { ran_by: 'u2', name: 'Jack Johnson', initials: 'JJ', colour: 'purple', manual_runs: 12, auto_page_runs: 6, order_runs: 4, proof_runs: 8, clear: 7, flagged: 3, defect: 2, error: 0, last_run_at: daysAgo(1) },
+            { ran_by: 'u1', name: 'Rob Randtoul', initials: 'RR', colour: 'blue', manual_runs: 5, auto_page_runs: 2, order_runs: 2, proof_runs: 3, clear: 2, flagged: 2, defect: 1, error: 0, last_run_at: daysAgo(0) },
+            { ran_by: 'u3', name: 'Chris Jackson', initials: 'CJ', colour: 'teal', manual_runs: 1, auto_page_runs: 3, order_runs: 1, proof_runs: 0, clear: 1, flagged: 0, defect: 0, error: 0, last_run_at: daysAgo(6) },
+            { ran_by: 'u4', name: 'Donna Lambe', initials: 'DL', colour: 'coral', manual_runs: 1, auto_page_runs: 2, order_runs: 0, proof_runs: 1, clear: 0, flagged: 0, defect: 1, error: 0, last_run_at: daysAgo(4) },
+          ],
+          weekly: [
+            { week_start: daysAgo(21), runs: 0, clear: 0, flagged: 0, defect: 0, error: 0, manual_runs: 0 },
+            { week_start: daysAgo(14), runs: 1, clear: 1, flagged: 0, defect: 0, error: 0, manual_runs: 0 },
+            { week_start: daysAgo(7), runs: 51, clear: 33, flagged: 11, defect: 7, error: 0, manual_runs: 16 },
+            { week_start: daysAgo(0), runs: 5, clear: 2, flagged: 1, defect: 1, error: 1, manual_runs: 3 },
+          ],
+          proof_adoption: { from: daysAgo(4), versions_created: 49, versions_checked: 14 },
+          cost: {
+            input_tokens: 394789, output_tokens: 85464, cache_read_tokens: 0, cache_write_tokens: 0,
+            models: [{ model: 'claude-opus-4-8', runs: 52 }, { model: 'claude-opus-5', runs: 5 }],
+          },
+        },
+        error: null,
+      }
+    }
     if (name === 'dashboard_tile_counts') {
       return {
         data: {

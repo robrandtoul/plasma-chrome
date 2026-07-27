@@ -277,12 +277,16 @@ export default function OrderReviewPage() {
   // itself still happens server-side in shadow (that's the rollout's data
   // collection). Any invoke failure degrades to hidden/previous state — this
   // card must never break the review page.
-  const runArtworkCheck = useCallback(async (force: boolean) => {
+  // `trigger: 'auto'` marks the on-open run so the 000357 ledger can tell a
+  // page visit apart from a designer deliberately clicking Re-check. Without
+  // it both arrive on the same designer JWT and Admin → Analytics would credit
+  // every review-page open to whoever happened to open it.
+  const runArtworkCheck = useCallback(async (force: boolean, trigger: 'auto' | 'designer' = 'designer') => {
     if (!id) return
     setArtworkCheck((prev) => ({ ...prev, status: 'running' }))
     try {
       const { data } = await supabase.functions.invoke<ArtworkCheckResponse>('artwork-check', {
-        body: { order_id: id, ...(force ? { force: true } : {}) },
+        body: { order_id: id, trigger, ...(force ? { force: true } : {}) },
       })
       if (!data?.ok || data.mode !== 'live') {
         // Correct a wrong optimistic pre-read (below): if the mode isn't live,
@@ -317,7 +321,7 @@ export default function OrderReviewPage() {
           setArtworkCheck((prev) => (prev.status === 'done' ? prev : { ...prev, live: true }))
         }
       })
-    void runArtworkCheck(false)
+    void runArtworkCheck(false, 'auto')
   }, [runArtworkCheck])
 
   // Per-flag history walk (designer-triggered — see ArtworkCheckReportView).
