@@ -743,3 +743,98 @@ and same field when that is unambiguous. It refuses rather than guesses: two peo
 flagged on one field never resolve. A genuine miss now returns the report the
 database actually holds, and the page **swaps it in with a plain-English notice**
 instead of leaving a dead button on a report that no longer exists.
+
+---
+
+## 2026-07-27 — cut-through dropout detection, LIVE (#565 offline, #566 live, fn v18)
+
+**The failure.** On metal, words and shapes are often cut clean THROUGH the card.
+Any closed middle — the bowl of a `P`, the centre of an `O`, the inside of a ring —
+has to be tied back to the card by a small supporting **strut**, or that piece falls
+out at the supplier. Skyfall **403813** shipped with the bowl of the `P` in "P4:13"
+untied, on a card where every other counter was strutted correctly: every swirl in
+the border, every bar in the logo, the crossbar of the `4`. One was missed. (That
+order predates the check going live, so nothing missed it — it did not yet exist.)
+
+**The framing that made it decidable.** Not "does this letter have a strut" — a
+judgement call, and an unbounded one. After cutting, the card is a 2D region: flood
+the metal inwards from the trim edge, and anything the flood never reaches is, by
+definition, a piece that falls out. No letter list, no threshold, and correctly
+strutted artwork produces nothing at all. Same principle as `qrDecode.ts`: compute
+the answer and hand it to the model as evidence rather than asking it to eyeball a
+0.4–1.2 mm detail (a few pixels at page scale — and asked to judge it directly, the
+model got the Snap-on 403902 case wrong, calling a back cut 17% larger than its front
+"expected construction").
+
+**Telling a cut from printed white** is the other half — both are CMYK 0,0,0,0. Rob
+confirmed the studio invariant: a cut-through **always** reads mirrored on the other
+side. So each white region is matched against the mirrored opposite face. Three
+successive tightenings, each earned from a real order:
+
+1. *Colour alone* fires on white QR codes and white phone numbers — 3 of the first
+   20 files (Black Owl 403918, Subrosa 403909, Webster 403913).
+2. *One-directional coverage* lets a small shape inside a bigger mirrored one score a
+   perfect 1.0 — the `o` of "develop" on carbon-fibre **403880**. Fixed by requiring
+   the match to be **reciprocal**.
+3. *Reciprocal is still not enough* — in mirrored monospaced text an `o` lands exactly
+   on another `o`, so the match is honest (NATO-alphabet card **403874**, 3
+   coincidences among 335 letters). Fixed by also requiring the **neighbourhood** to
+   agree. Deliberately local rather than a global "most of the white must mirror"
+   rule, which would throw away a genuine small cut logo on a mostly-printed-white
+   card; there is a test for that case.
+
+**One-sided cards.** No opposite face means no mirror test — but that only matters if
+it changes the answer. Take the pessimistic reading first (assume all the white is
+cut) and see whether anything comes loose. **Five of six** real one-sided cards settle
+outright. The sixth (BMW of Dublin 403920, whose roundel would shed its whole centre)
+reports as a conditional at severity review, worded "if this white is cut through, N
+pieces would come loose".
+
+**Three things previously reported as unreadable were not.** A page content stream
+that ends early still yields 36 KB of good paths (403828) — keep what inflates, mark
+it partial, and never report a quiet result on partial artwork as clean, since the
+missing tail could hold the loose piece *or* the strut. A die/cutter outline drawn in
+strokes only (403845 BERTHA.ai) has no printed artwork — "nothing cut", not a failure.
+And "the other side could not be read" was being reported as "only one print file
+supplied", sending the reviewer after the wrong thing. Also: the trim box is now read
+from the whole file, not the first 400 KB (on an 851 KB `.ai` the page dictionary sits
+at 432 KB, and missing it silently downgraded us to guessing the card from its biggest
+shape).
+
+**Validation — 148 card faces from 59 real orders.** Flags Skyfall 403813 on both
+faces and **nothing else**, while recognising cut-through artwork on 19 other orders
+and staying silent on all of them. Final split: 2 dropout, 1 possible (one-sided), 57
+clean, 86 nothing cut, 2 not checkable (both genuinely damaged files). Uncheckable
+fell 9 → 2 across the tightenings. ~40 ms per face against the ~45 s the check already
+takes.
+
+**Wiring.** `_shared/artworkCheck/cutThrough.ts` (pure, no new dependency, uses only
+`DecompressionStream` + typed arrays so it runs unchanged in the edge runtime).
+Gated on `isCutThroughMaterial`, so a plastic job pays nothing. The result goes to the
+model as a CUT-THROUGH CHECK context block (prompt rules tell it to report the
+measurement and NOT re-judge it from the page images) **and** is merged into the
+report afterwards by `applyCutThroughFindings` — `deriveVerdict` runs on findings in
+code, so a deterministic safety result must not depend on the model repeating it. A
+finding the model already made about the same file is left alone.
+
+**Grading.** A confirmed loose piece is **defect** (red): measured rather than judged,
+and the cards come back wrong if it ships — the "would we bet a reprint on it" bar.
+The one-sided conditional is **review** (amber). Verdict stays advisory either way; a
+red ✗ does not block Confirm. Severity is one line in `applyCutThroughFindings` if it
+proves noisy.
+
+**Fail-safe.** Any failure yields no faces and the check carries on exactly as before;
+unreadable files report "could not check", never clean. Deploying this can only match
+or improve prior output.
+
+**Tests.** 121 in `cutThrough.test.ts` (`pnpm test:cut-through`), including an
+end-to-end pass over genuine PDF bytes built in the test, both false-alarm shapes as
+regression fixtures, and direct verdict-integration checks. Offline batch runner
+`pnpm check:cut-through <folder>`; debug renderer `scripts/render-cut-through.ts`
+(white = cut, blue = printed white, red = would fall out) — how both false alarms were
+caught, and how any future flag can be audited.
+
+**Open.** One real defect in the corpus: Skyfall proves it fires, but live
+effectiveness is what we are now watching. Topological, so a strut that is present but
+hairline reads as clean. `deno check` was not run (Deno absent locally); byte-verified
+against main after deploy instead.
