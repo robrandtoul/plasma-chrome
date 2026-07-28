@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import {
   TrendingUp,
@@ -308,6 +308,15 @@ function fmtDate(iso: string | null): string {
   return Number.isNaN(d.getTime())
     ? '—'
     : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+}
+// Weekday included: on a chart of days, "Sat" is half the explanation for why
+// a bar is empty, and the axis only has room for "26 Jul".
+function fmtLongDate(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime())
+    ? '—'
+    : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
 }
 function daysAgoLabel(days: number): string {
   if (days < 1) return 'today'
@@ -1235,12 +1244,17 @@ function ArtworkChecksSection({
         </p>
       </PanelShell>
 
-      <div className="grid gap-3 lg:grid-cols-2">
-        {/* Run frequency. Defaults to days — weeks answer "is this used at
-            all", days answer "what does a normal day look like", which is the
-            question when judging whether a spike was one busy afternoon or a
-            fortnight of steady work. Falls back to weeks (toggle hidden) when
-            the daily series is absent, i.e. 000363 isn't applied yet. */}
+      {/* Run frequency gets the full width. It used to share a row, which was
+          fine for four weekly bars and hopeless for 30-90 daily ones: the
+          chart outgrew the half-width panel and started scrolling, pushing the
+          most recent days — the ones you actually came to look at — off the
+          right-hand edge by default.
+
+          Defaults to days: weeks answer "is this used at all", days answer
+          "what does a normal day look like", which is the question when
+          judging whether a spike was one busy afternoon or a fortnight of
+          steady work. Falls back to weeks (toggle hidden) when the daily
+          series is absent, i.e. 000363 isn't applied yet. */}
         <PanelShell
           title={hasDaily && grain === 'day' ? 'Checks per day' : 'Checks per week'}
           eyebrow="Every run, however triggered"
@@ -1274,7 +1288,7 @@ function ArtworkChecksSection({
           )}
         </PanelShell>
 
-        <div className="space-y-3">
+        <div className="grid gap-3 lg:grid-cols-2">
           <PanelShell title="How checks get started" eyebrow="Trigger" icon={ShieldCheck} accent="var(--c-ink-mute)">
             <CheckSourceTable rows={bySource} total={t.runs} />
           </PanelShell>
@@ -1295,7 +1309,6 @@ function ArtworkChecksSection({
             </p>
           </PanelShell>
         </div>
-      </div>
 
       <CheckSpendPanel spend={spend} fxRates={fxRates} />
 
@@ -1648,84 +1661,188 @@ function CheckSourceTable({ rows, total }: { rows: CheckSourceRow[]; total: numb
   )
 }
 
-// Weekly run volume, split clear vs found-something. Same visual grammar as
-// WeeklyChart above (bars + week labels), but stacked rather than bar+line —
-// there's no rate here worth a second axis.
-// Runs per day. Same visual language as the weekly chart (total bar, with the
-// found-something portion sitting on top) at a finer grain.
+// Run volume over time, split clear vs found-something. One component serves
+// both grains — the Day/Week toggle swaps the data, not the chart — because
+// they were near-identical copies and the axis-collision bug below existed in
+// both. Callers map their row shape onto CheckBar.
 //
-// Two things differ because 30-90 bars behave nothing like 4:
-//   * Only every Nth date is labelled. At one label per bar they overlap into
-//     an unreadable smear, and a chart you can't read is worse than one axis
-//     tick you have to count from.
-//   * Per-bar run counts are drawn only when the bars are wide enough to hold
-//     them, and never on zero days — a column of "0"s across a quiet fortnight
-//     is noise that buries the days that did something.
+// Geometry notes, all of them things 30-90 bars need and 4 bars don't:
+//   * The y-axis labels sit in a LEFT gutter. They used to be right-aligned
+//     into the plot area, where they collided with the last bar's own count —
+//     on the 30-day view "22" printed straight over the axis "22".
+//   * Only every Nth date is labelled on the daily view; at one label per bar
+//     they overlap into an unreadable smear.
+//   * Per-bar counts are drawn only when bars are wide enough to hold them,
+//     and never on zero days — a row of "0"s across a quiet fortnight buries
+//     the days that did something.
+//   * The chart keeps its natural width and the panel scrolls, rather than
+//     squeezing 90 bars into the panel width until they're slivers.
 //
-// The series is zero-filled by the server, so quiet days really are gaps here.
-function CheckDailyChart({ rows }: { rows: CheckDayRow[] }) {
+// The daily series is zero-filled by the server, so quiet days are real gaps.
+interface CheckBar extends CheckVerdictCounts {
+  key: string
+  label: string
+  sublabel?: string
+  tooltipTitle: string
+  runs: number
+  manual_runs: number
+}
+
+function CheckRunsChart({ rows, grain }: { rows: CheckBar[]; grain: 'day' | 'week' }) {
+  // Before the early return — hooks can't sit after a conditional.
+  const [hover, setHover] = useState<number | null>(null)
   if (rows.length === 0) return <p className="text-sm text-ink-mute">No runs yet.</p>
+
+  const week = grain === 'week'
   const H = 190
-  const padL = 8
-  const padR = 8
   const padTop = 14
-  const padBot = 26
+  const padBot = week ? 34 : 26
+  const padL = 30
+  const padR = 10
   const chartH = H - padTop - padBot
-  // Wide enough that a 90-day window stays legible; the panel scrolls.
-  const colW = rows.length > 45 ? 14 : rows.length > 20 ? 22 : 46
-  const W = Math.max(rows.length * colW + padL + padR, 320)
+  // Weekly columns spread to fill the (now full-width) panel rather than
+  // sitting at a fixed 70px, which left four bars huddled on the left of a
+  // ~950px card. Bounded both ways: never tighter than 70, never so wide that
+  // a 4-bar chart becomes four lonely posts.
+  const colW = week
+    ? Math.max(70, Math.min(160, 900 / rows.length))
+    : rows.length > 45
+      ? 14
+      : rows.length > 20
+        ? 30
+        : 46
+  const W = Math.max(padL + rows.length * colW + padR, 320)
   const maxRuns = Math.max(...rows.map((r) => r.runs), 1)
-  const barW = Math.min(colW * 0.62, 26)
-  // Aim for ~10 labels regardless of window length.
-  const labelEvery = Math.max(1, Math.ceil(rows.length / 10))
-  const showCounts = colW >= 22
+  const barW = Math.min(colW * (week ? 0.55 : 0.62), week ? 56 : 26)
+  const labelEvery = week ? 1 : Math.max(1, Math.ceil(rows.length / 10))
+  const showCounts = week || colW >= 22
+  const radius = week ? 3 : 2
+
+  const hovered = hover != null ? rows[hover] : null
+  const hoverCentre = hover != null ? padL + colW * hover + colW / 2 : 0
+  // Percentage of the viewBox, so it tracks the column at any rendered scale.
+  const hoverPct = (hoverCentre / W) * 100
+  // Anchor flips near the edges. Centre-anchoring the whole way along reads
+  // fine until the last few columns, where the tooltip runs past the panel and
+  // is clipped by the scroll container — losing the end of the line, which on
+  // the right-hand edge is the most recent day, the one most worth reading.
+  const tipStyle: CSSProperties =
+    hoverPct > 82
+      ? { left: '100%', transform: 'translateX(-100%)', top: 2 }
+      : hoverPct < 18
+        ? { left: 0, top: 2 }
+        : { left: `${hoverPct}%`, transform: 'translateX(-50%)', top: 2 }
 
   return (
     <div className="overflow-x-auto">
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img" aria-label="Artwork checks per day" style={{ maxWidth: W }}>
-        {[0, 0.5, 1].map((g) => {
-          const y = padTop + chartH * (1 - g)
-          return (
-            <g key={g}>
-              <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="var(--c-line-soft)" strokeWidth={1} />
-              <text x={W - padR} y={y - 2} fontSize={9} textAnchor="end" fill="var(--c-ink-dim)">
-                {Math.round(maxRuns * g)}
-              </text>
-            </g>
-          )
-        })}
-        {rows.map((r, i) => {
-          const x = padL + colW * i + (colW - barW) / 2
-          const found = r.flagged + r.defect
-          const hAll = (r.runs / maxRuns) * chartH
-          const hFound = (found / maxRuns) * chartH
-          const yAll = padTop + chartH - hAll
-          return (
-            <g key={r.day}>
-              <title>{`${fmtDate(r.day)} — ${r.runs} run${r.runs === 1 ? '' : 's'}${found > 0 ? `, ${found} found something` : ''}`}</title>
-              <rect x={x} y={yAll} width={barW} height={hAll} rx={2} fill="color-mix(in srgb, var(--c-in-stock) 30%, transparent)" />
-              <rect
-                x={x}
-                y={padTop + chartH - hFound}
-                width={barW}
-                height={hFound}
-                rx={2}
-                fill="color-mix(in srgb, var(--c-low) 65%, transparent)"
-              />
-              {showCounts && r.runs > 0 && (
-                <text x={x + barW / 2} y={yAll - 4} fontSize={9} textAnchor="middle" fill="var(--c-ink-soft)" fontWeight={600}>
-                  {r.runs}
+      <div className="relative" style={{ minWidth: W }}>
+        {/* maxWidth pairs with the wrapper's minWidth deliberately: together
+            they pin the rendered width to exactly W, so the viewBox maps 1:1.
+            With only one of them an SVG that has a viewBox, a percentage width
+            and a fixed height letterboxes — preserveAspectRatio scales the
+            content to fit and CENTRES it, leaving dead space at both edges
+            where the bars aren't where their coordinates say they are, so
+            edge columns stop being hoverable. */}
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          width="100%"
+          height={H}
+          role="img"
+          aria-label={`Artwork checks per ${grain}`}
+          style={{ maxWidth: W }}
+          onMouseLeave={() => setHover(null)}
+        >
+          {[0, 0.5, 1].map((g) => {
+            const y = padTop + chartH * (1 - g)
+            return (
+              <g key={g}>
+                <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="var(--c-line-soft)" strokeWidth={1} />
+                <text x={padL - 6} y={y + 3} fontSize={9} textAnchor="end" fill="var(--c-ink-dim)">
+                  {Math.round(maxRuns * g)}
                 </text>
-              )}
-              {i % labelEvery === 0 && (
-                <text x={x + barW / 2} y={padTop + chartH + 12} fontSize={9} textAnchor="middle" fill="var(--c-ink-mute)">
-                  {fmtDate(r.day)}
-                </text>
-              )}
-            </g>
-          )
-        })}
-      </svg>
+              </g>
+            )
+          })}
+          {rows.map((r, i) => {
+            const colX = padL + colW * i
+            const x = colX + (colW - barW) / 2
+            const found = r.flagged + r.defect
+            const hAll = (r.runs / maxRuns) * chartH
+            const hFound = (found / maxRuns) * chartH
+            const yAll = padTop + chartH - hAll
+            return (
+              <g key={r.key}>
+                {hover === i && (
+                  <rect x={colX} y={padTop} width={colW} height={chartH} fill="var(--c-line-soft)" opacity={0.5} />
+                )}
+                {/* full run count, with the found-something portion sitting on top */}
+                <rect x={x} y={yAll} width={barW} height={hAll} rx={radius} fill="color-mix(in srgb, var(--c-in-stock) 30%, transparent)" />
+                <rect
+                  x={x}
+                  y={padTop + chartH - hFound}
+                  width={barW}
+                  height={hFound}
+                  rx={radius}
+                  fill="color-mix(in srgb, var(--c-low) 65%, transparent)"
+                />
+                {showCounts && (r.runs > 0 || week) && (
+                  <text x={x + barW / 2} y={yAll - 4} fontSize={9} textAnchor="middle" fill="var(--c-ink-soft)" fontWeight={600}>
+                    {r.runs}
+                  </text>
+                )}
+                {i % labelEvery === 0 && (
+                  <text x={x + barW / 2} y={padTop + chartH + 12} fontSize={9} textAnchor="middle" fill="var(--c-ink-mute)">
+                    {r.label}
+                  </text>
+                )}
+                {r.sublabel && (
+                  <text x={x + barW / 2} y={padTop + chartH + 22} fontSize={8} textAnchor="middle" fill="var(--c-ink-dim)">
+                    {r.sublabel}
+                  </text>
+                )}
+                {/* Hit area last so it sits above the bars, and full-column
+                    height so a zero day is still hoverable — the quiet days
+                    are exactly the ones worth being able to interrogate. */}
+                <rect
+                  x={colX}
+                  y={padTop}
+                  width={colW}
+                  height={chartH}
+                  fill="transparent"
+                  onMouseEnter={() => setHover(i)}
+                />
+              </g>
+            )
+          })}
+        </svg>
+
+        {hovered && (
+          <div
+            className="pointer-events-none absolute z-10 w-max rounded-lg bg-ink px-2.5 py-1.5 text-[11px] leading-snug text-surface shadow-lg"
+            style={tipStyle}
+          >
+            <div className="font-semibold">{hovered.tooltipTitle}</div>
+            <div className="mt-0.5 opacity-90">
+              {hovered.runs === 0 ? 'No checks run' : `${hovered.runs} check${hovered.runs === 1 ? '' : 's'}`}
+            </div>
+            {hovered.runs > 0 && (
+              <div className="mt-1 space-y-0.5 opacity-90">
+                {hovered.clear > 0 && <div>{hovered.clear} all clear</div>}
+                {hovered.flagged > 0 && <div>{hovered.flagged} flagged</div>}
+                {hovered.defect > 0 && <div>{hovered.defect} likely {hovered.defect === 1 ? 'defect' : 'defects'}</div>}
+                {hovered.error > 0 && <div>{hovered.error} couldn’t run</div>}
+                <div className="border-t border-white/20 pt-0.5">
+                  {hovered.manual_runs} run by hand
+                  {hovered.runs - hovered.manual_runs > 0
+                    ? `, ${hovered.runs - hovered.manual_runs} automatic`
+                    : ''}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
         <span className="inline-flex items-center gap-1.5 text-[11px] text-ink-mute">
           <span className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--c-in-stock)' }} />
@@ -1735,83 +1852,45 @@ function CheckDailyChart({ rows }: { rows: CheckDayRow[] }) {
           <span className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--c-low)' }} />
           Found something
         </span>
-        <span className="text-[11px] text-ink-dim">Days with no checks are shown as gaps.</span>
+        <span className="text-[11px] text-ink-dim">
+          {grain === 'day'
+            ? 'Days with no checks are shown as gaps. Hover a day for the breakdown.'
+            : 'Hover a week for the breakdown.'}
+        </span>
       </div>
     </div>
+  )
+}
+
+function CheckDailyChart({ rows }: { rows: CheckDayRow[] }) {
+  return (
+    <CheckRunsChart
+      grain="day"
+      rows={rows.map((r) => ({
+        ...r,
+        key: r.day,
+        label: fmtDate(r.day),
+        tooltipTitle: fmtLongDate(r.day),
+      }))}
+    />
   )
 }
 
 function CheckWeeklyChart({ rows }: { rows: CheckWeekRow[] }) {
-  if (rows.length === 0) return <p className="text-sm text-ink-mute">No runs yet.</p>
-  const W = Math.max(rows.length * 70, 320)
-  const H = 190
-  const padL = 8
-  const padR = 8
-  const padTop = 14
-  const padBot = 26
-  const chartH = H - padTop - padBot
-  const colW = (W - padL - padR) / rows.length
-  const maxRuns = Math.max(...rows.map((r) => r.runs), 1)
-  const barW = Math.min(colW * 0.55, 40)
-
   return (
-    <div className="overflow-x-auto">
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img" aria-label="Artwork checks per week" style={{ maxWidth: W }}>
-        {[0, 0.5, 1].map((g) => {
-          const y = padTop + chartH * (1 - g)
-          return (
-            <g key={g}>
-              <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="var(--c-line-soft)" strokeWidth={1} />
-              <text x={W - padR} y={y - 2} fontSize={9} textAnchor="end" fill="var(--c-ink-dim)">
-                {Math.round(maxRuns * g)}
-              </text>
-            </g>
-          )
-        })}
-        {rows.map((r, i) => {
-          const x = padL + colW * i + (colW - barW) / 2
-          const found = r.flagged + r.defect
-          const hAll = (r.runs / maxRuns) * chartH
-          const hFound = (found / maxRuns) * chartH
-          const yAll = padTop + chartH - hAll
-          return (
-            <g key={r.week_start}>
-              {/* full run count, with the found-something portion sitting on top */}
-              <rect x={x} y={yAll} width={barW} height={hAll} rx={3} fill="color-mix(in srgb, var(--c-in-stock) 30%, transparent)" />
-              <rect
-                x={x}
-                y={padTop + chartH - hFound}
-                width={barW}
-                height={hFound}
-                rx={3}
-                fill="color-mix(in srgb, var(--c-low) 65%, transparent)"
-              />
-              <text x={x + barW / 2} y={yAll - 4} fontSize={9} textAnchor="middle" fill="var(--c-ink-soft)" fontWeight={600}>
-                {r.runs}
-              </text>
-              <text x={x + barW / 2} y={padTop + chartH + 12} fontSize={9} textAnchor="middle" fill="var(--c-ink-mute)">
-                {fmtDate(r.week_start)}
-              </text>
-              <text x={x + barW / 2} y={padTop + chartH + 22} fontSize={8} textAnchor="middle" fill="var(--c-ink-dim)">
-                {r.manual_runs} by hand
-              </text>
-            </g>
-          )
-        })}
-      </svg>
-      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-ink-mute">
-          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--c-in-stock)' }} />
-          Checks run
-        </span>
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-ink-mute">
-          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--c-low)' }} />
-          Found something
-        </span>
-      </div>
-    </div>
+    <CheckRunsChart
+      grain="week"
+      rows={rows.map((r) => ({
+        ...r,
+        key: r.week_start,
+        label: fmtDate(r.week_start),
+        sublabel: `${r.manual_runs} by hand`,
+        tooltipTitle: `Week of ${fmtLongDate(r.week_start)}`,
+      }))}
+    />
   )
 }
+
 
 // ── 6. Annotations ───────────────────────────────────────────────────────────
 // Is anyone using the coordinate-anchored notes? Two independent halves, never
@@ -2123,10 +2202,13 @@ function AnnotationPeopleTable({ rows }: { rows: AnnotationPersonRow[] }) {
 
 function AnnotationWeeklyChart({ rows }: { rows: AnnotationWeekRow[] }) {
   if (rows.length === 0) return <p className="text-sm text-ink-mute">No notes yet.</p>
+  // padL is a gutter for the y-axis labels. They used to be right-aligned into
+  // the plot area, where the last bar's own count printed straight over them —
+  // the same collision fixed on the artwork-check chart.
   const W = Math.max(rows.length * 70, 320)
   const H = 190
-  const padL = 8
-  const padR = 8
+  const padL = 30
+  const padR = 10
   const padTop = 14
   const padBot = 26
   const chartH = H - padTop - padBot
@@ -2151,7 +2233,7 @@ function AnnotationWeeklyChart({ rows }: { rows: AnnotationWeekRow[] }) {
           return (
             <g key={g}>
               <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="var(--c-line-soft)" strokeWidth={1} />
-              <text x={W - padR} y={y - 2} fontSize={9} textAnchor="end" fill="var(--c-ink-dim)">
+              <text x={padL - 6} y={y + 3} fontSize={9} textAnchor="end" fill="var(--c-ink-dim)">
                 {Math.round(maxN * g)}
               </text>
             </g>
