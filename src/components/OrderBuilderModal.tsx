@@ -46,6 +46,15 @@ const CARD_DISCOUNT_OPTIONS: { value: CardDiscountType; label: string }[] = [
   { value: 'fixed', label: 'Fixed amount off' },
 ]
 
+// "March 2026" from a paid_at timestamp — the human "when" the pay page shows
+// in the "Your last order · March 2026" badge. Month-level on purpose: a
+// years-old order's exact day is noise, and the designer can edit it anyway.
+function formatMonthYear(iso: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+}
+
 interface VariantOption {
   id: string
   display_name: string
@@ -260,6 +269,35 @@ export default function OrderBuilderModal({
   // proof's company (or contact) name, so a new contact is the customer — not
   // whoever happens to pay. Editable.
   const [newCustomerName, setNewCustomerName] = useState(customerLabel ?? '')
+
+  // "Their last order" (000364): what this customer ordered on their previous
+  // paid order, confirmed here so the pay-page choosers can badge the matching
+  // option "Your last order" and nudge gently if they pick differently.
+  // Auto-suggested from their order history (same company-else-contact
+  // matching as the Xero pre-fill below) with a one-click apply; manual entry
+  // covers the customers whose history lives only in old Help Scout threads
+  // or Xero invoices — the designer does that detective work once and it's
+  // recorded for good. Display guidance only: it never feeds pricing.
+  const [prevSuggestion, setPrevSuggestion] = useState<{
+    variantId: string | null
+    variantLabel: string | null
+    optionId: string | null
+    optionLabel: string | null
+    quantity: number | null
+    paidAt: string | null
+  } | null>(null)
+  const [prevDismissed, setPrevDismissed] = useState(false)
+  // Engaged = the fields are showing and a spec will be sent (if meaningful).
+  const [prevEngaged, setPrevEngaged] = useState(false)
+  const [prevSource, setPrevSource] = useState<'auto' | 'manual'>('manual')
+  const [prevVariantId, setPrevVariantId] = useState('')
+  // Frozen display labels ride alongside the ids so the pay page can still
+  // name the old spec if the variant/finish is later retired or renamed.
+  const [prevVariantLabel, setPrevVariantLabel] = useState('')
+  const [prevOptionId, setPrevOptionId] = useState('')
+  const [prevOptionLabel, setPrevOptionLabel] = useState('')
+  const [prevQuantity, setPrevQuantity] = useState('')
+  const [prevWhen, setPrevWhen] = useState('')
 
   // Indicative shipping estimate (full_cost / goodwill). Quantity it's based on
   // defaults to the locked quantity, else a representative 250.
@@ -485,6 +523,41 @@ export default function OrderBuilderModal({
     return () => { cancelled = true }
   }, [proofId])
 
+  // "Their last order" auto-suggest (000364): this customer's most recent PAID
+  // order of the same material, resolved server-side by
+  // last_paid_order_for_proof (company-else-contact matching, prototypes
+  // excluded, labels frozen from the catalogue). Best-effort: a miss just
+  // means the designer sees the manual "Add their last order" affordance.
+  useEffect(() => {
+    if (!proofId || !materialId) return
+    let cancelled = false
+    void supabase
+      .rpc('last_paid_order_for_proof', { p_proof_id: proofId, p_material_id: materialId })
+      .then(({ data }) => {
+        if (cancelled || !Array.isArray(data) || data.length === 0) return
+        const row = data[0] as {
+          variant_id: string | null
+          variant_label: string | null
+          option_id: string | null
+          option_label: string | null
+          quantity: number | null
+          paid_at: string | null
+        }
+        // Belt-and-braces beside the RPC's own guard: a row with nothing
+        // displayable would render "Last time they ordered — paid June 2026".
+        if (!row.variant_label && !row.option_label && row.quantity == null) return
+        setPrevSuggestion({
+          variantId: row.variant_id,
+          variantLabel: row.variant_label,
+          optionId: row.option_id,
+          optionLabel: row.option_label,
+          quantity: row.quantity,
+          paidAt: row.paid_at,
+        })
+      })
+    return () => { cancelled = true }
+  }, [proofId, materialId])
+
   // Shipping settings (box tare, intl adjustment %, domestic flat rates) +
   // live GBP→EUR/USD rates, for the indicative estimate. Both have their own
   // module caches + fail-safe defaults, so this never blocks the builder.
@@ -513,6 +586,17 @@ export default function OrderBuilderModal({
     (materialOptionCodes.length >= 2 || finishIsPreferenceOnly(materialCode))
   const thicknessCustomer = thicknessEligible && thicknessMode === 'customer' && !isCustomQuote && orderType !== 'prototype'
   const finishCustomer = finishEligible && finishMode === 'customer' && !isCustomQuote && orderType !== 'prototype'
+  // "Their last order" (000364) render helpers. The section only shows when
+  // some pay-page chooser could actually carry the guidance (an all-locked
+  // order would store a spec the customer never sees, with the designer
+  // believing otherwise), and the preview line states what will genuinely
+  // render given the current open/locked choices rather than always
+  // promising the badge.
+  const prevSectionAvailable = thicknessEligible || finishEligible || quantityMode === 'open'
+  const prevQtyParsed = parseInt(prevQuantity, 10)
+  const prevQtyValid = Number.isInteger(prevQtyParsed) && prevQtyParsed > 0
+  const prevBadgeShows = (thicknessCustomer && prevVariantId !== '') || (finishCustomer && prevOptionId !== '')
+  const prevHintShows = quantityMode === 'open' && prevQtyValid
   // Estimate weight: the chosen variant's; when the customer will choose the
   // thickness at checkout, estimate at the HEAVIEST offered variant so the
   // indicative figure is the ceiling, not a lowball (the real charge is rated
@@ -848,6 +932,26 @@ export default function OrderBuilderModal({
       }
     }
 
+    // "Their last order" (000364): assembled only when the section is engaged
+    // (and still visible — a hidden section must never send its stale state)
+    // and names at least one of thickness / finish / quantity — a bare "when"
+    // guides nobody. Online production only; the server enforces the same.
+    const previousSpecPayload = (() => {
+      if (!prevEngaged || isPrototype || isCustomQuote || paymentMethod !== 'online') return null
+      if (!prevSectionAvailable) return null
+      const q = parseInt(prevQuantity, 10)
+      const spec = {
+        variant_id: prevVariantId || null,
+        variant_label: prevVariantLabel.trim() || null,
+        option_id: prevOptionId || null,
+        option_label: prevOptionLabel.trim() || null,
+        quantity: Number.isInteger(q) && q > 0 ? q : null,
+        label: prevWhen.trim() || null,
+        source: prevSource,
+      }
+      return spec.variant_id || spec.option_id || spec.quantity != null ? spec : null
+    })()
+
     setSubmitting(true)
     try {
       const { data, error: fnError } = await supabase.functions.invoke<
@@ -896,6 +1000,11 @@ export default function OrderBuilderModal({
           material_id: materialId ?? undefined,
           thickness_open: thicknessCustomer,
           finish_open: finishCustomer,
+          // "Their last order" (000364): display guidance for the pay-page
+          // choosers. Only sent when the designer engaged the section and it
+          // says something (a bare date guides nobody); the server sanitises
+          // and drops it for offline/prototype/custom-quote orders anyway.
+          previous_spec: previousSpecPayload,
           // Online only — an offline order is invoiced manually in Xero.
           // Existing → bind to the chosen contact (id + name). New → no id (the
           // webhook lets Xero create one) but we pass the name so the new contact
@@ -1306,6 +1415,235 @@ export default function OrderBuilderModal({
                       </button>
                     ))}
                   </div>
+                )}
+              </Field>
+            )}
+
+            {/* "Their last order" (000364) — returning-customer guidance.
+                Confirm what they ordered before and the pay-page choosers
+                badge the matching option "Your last order" (with a gentle
+                note if they pick differently). Auto-suggested from their
+                order history when we have it; manual entry covers history
+                that only lives in old Help Scout threads or Xero invoices.
+                Placed BELOW the order's own Option/Finish fields so the two
+                sets of pickers can't be mistaken for each other, and only
+                rendered when some chooser could actually carry the guidance
+                (prevSectionAvailable) — an all-locked order would store a
+                spec the customer never sees. */}
+            {!isPrototype && !isCustomQuote && paymentMethod === 'online' && prevSectionAvailable && (
+              <Field
+                label="Their last order"
+                asLabel={false}
+                className="md:col-span-2"
+                hint="For returning customers: confirm what they had last time and the pay page marks it “Your last order” — same again is one obvious click, something different is a conscious choice."
+              >
+                {prevEngaged ? (
+                  <div className="rounded-lg border border-line bg-canvas p-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      {thicknessEligible && (
+                        <div>
+                          <p className="mb-1 text-[13px] text-ink-soft">Thickness</p>
+                          <select
+                            value={prevVariantId}
+                            onChange={(e) => {
+                              const id = e.target.value
+                              setPrevVariantId(id)
+                              setPrevVariantLabel(
+                                variants.find((v) => v.id === id)?.display_name ??
+                                  (prevSuggestion?.variantId === id ? prevSuggestion.variantLabel ?? '' : ''),
+                              )
+                            }}
+                            className={selectClass}
+                          >
+                            <option value="">Not recorded</option>
+                            {/* A previous variant that's no longer in the priced
+                                list (retired, or another currency) stays
+                                selectable — keyed off the suggestion as well as
+                                the current value, so picking a live option and
+                                changing your mind can still get back to it. */}
+                            {[
+                              ...(prevVariantId && !variants.some((v) => v.id === prevVariantId)
+                                ? [{ id: prevVariantId, label: prevVariantLabel || 'Previous option' }]
+                                : []),
+                              ...(prevSuggestion?.variantId &&
+                              prevSuggestion.variantId !== prevVariantId &&
+                              !variants.some((v) => v.id === prevSuggestion.variantId)
+                                ? [{ id: prevSuggestion.variantId, label: prevSuggestion.variantLabel || 'Previous option' }]
+                                : []),
+                            ].map((o) => (
+                              <option key={`prev-${o.id}`} value={o.id}>{o.label}</option>
+                            ))}
+                            {variants.map((v) => (
+                              <option key={v.id} value={v.id}>{v.display_name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      {finishEligible && (
+                        <div>
+                          <p className="mb-1 text-[13px] text-ink-soft">{optionLabel}</p>
+                          <select
+                            value={prevOptionId}
+                            onChange={(e) => {
+                              const id = e.target.value
+                              setPrevOptionId(id)
+                              setPrevOptionLabel(
+                                materialOptions.find((o) => o.id === id)?.display_name ??
+                                  (prevSuggestion?.optionId === id ? prevSuggestion.optionLabel ?? '' : ''),
+                              )
+                            }}
+                            className={selectClass}
+                          >
+                            <option value="">Not recorded</option>
+                            {[
+                              ...(prevOptionId && !materialOptions.some((o) => o.id === prevOptionId)
+                                ? [{ id: prevOptionId, label: prevOptionLabel || 'Previous option' }]
+                                : []),
+                              ...(prevSuggestion?.optionId &&
+                              prevSuggestion.optionId !== prevOptionId &&
+                              !materialOptions.some((o) => o.id === prevSuggestion.optionId)
+                                ? [{ id: prevSuggestion.optionId, label: prevSuggestion.optionLabel || 'Previous option' }]
+                                : []),
+                            ].map((o) => (
+                              <option key={`prev-${o.id}`} value={o.id}>{o.label}</option>
+                            ))}
+                            {materialOptions.map((o) => (
+                              <option key={o.id} value={o.id}>{o.display_name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      <div>
+                        <p className="mb-1 text-[13px] text-ink-soft">Quantity</p>
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          inputMode="numeric"
+                          value={prevQuantity}
+                          onChange={(e) => setPrevQuantity(e.target.value)}
+                          placeholder="e.g. 500"
+                          className={selectClass}
+                        />
+                      </div>
+                      <div>
+                        <p className="mb-1 text-[13px] text-ink-soft">When (shown to the customer)</p>
+                        <input
+                          type="text"
+                          value={prevWhen}
+                          onChange={(e) => setPrevWhen(e.target.value)}
+                          placeholder="e.g. March 2022"
+                          className={selectClass}
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                      {/* An honest preview: state what will actually render
+                          given the current open/locked choices, and never
+                          promise the badge when only the quantity hint (or
+                          nothing at all) would show. */}
+                      <p className="text-[12px] text-ink-mute">
+                        {prevBadgeShows ? (
+                          <>
+                            Shown on the pay page as &ldquo;Your last order{prevWhen.trim() ? ` · ${prevWhen.trim()}` : ''}&rdquo;
+                            {prevHintShows ? ', plus the previous quantity under the quantity box' : ''}.
+                          </>
+                        ) : prevHintShows ? (
+                          <>Shown under the pay page&rsquo;s quantity box as &ldquo;Last time you ordered {prevQtyParsed.toLocaleString()}&rdquo;.</>
+                        ) : (
+                          <>Add the thickness, finish or quantity they had — whichever the customer will choose at checkout — and it&rsquo;ll show on the pay page.</>
+                        )}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPrevEngaged(false)
+                          setPrevSource('manual')
+                          setPrevVariantId('')
+                          setPrevVariantLabel('')
+                          setPrevOptionId('')
+                          setPrevOptionLabel('')
+                          setPrevQuantity('')
+                          setPrevWhen('')
+                          setDirty(true)
+                        }}
+                        className="text-[13px] font-medium text-ink-soft underline hover:text-ink"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ) : prevSuggestion && !prevDismissed ? (
+                  <div className="rounded-lg border border-line bg-canvas p-3">
+                    <p className="text-sm text-ink">
+                      Last time they ordered{' '}
+                      <span className="font-medium">
+                        {[
+                          prevSuggestion.variantLabel,
+                          prevSuggestion.optionLabel,
+                          prevSuggestion.quantity != null ? `${prevSuggestion.quantity.toLocaleString()} cards` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </span>
+                      {prevSuggestion.paidAt && (
+                        <span className="text-ink-mute"> — paid {formatMonthYear(prevSuggestion.paidAt)}</span>
+                      )}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // Only apply fields whose editors are on screen —
+                          // an invisible, unclearable "thickness" on an
+                          // ink-count material is state the designer can't
+                          // see, in a section that exists to be a visible
+                          // confirmation step.
+                          setPrevEngaged(true)
+                          setPrevSource('auto')
+                          setPrevVariantId(thicknessEligible ? prevSuggestion.variantId ?? '' : '')
+                          setPrevVariantLabel(thicknessEligible ? prevSuggestion.variantLabel ?? '' : '')
+                          setPrevOptionId(finishEligible ? prevSuggestion.optionId ?? '' : '')
+                          setPrevOptionLabel(finishEligible ? prevSuggestion.optionLabel ?? '' : '')
+                          setPrevQuantity(prevSuggestion.quantity != null ? String(prevSuggestion.quantity) : '')
+                          setPrevWhen(formatMonthYear(prevSuggestion.paidAt))
+                          setDirty(true)
+                        }}
+                        className="rounded-full bg-ink px-4 py-1.5 text-sm font-medium text-on-ink transition-colors hover:opacity-90"
+                      >
+                        Highlight on the pay page
+                      </button>
+                      {/* No setDirty here — hiding a pre-fill changes nothing
+                          that will be sent, so it mustn't arm the discard
+                          nag (same reasoning as the auto-loaded pre-fills). */}
+                      <button
+                        type="button"
+                        onClick={() => setPrevDismissed(true)}
+                        className="rounded-full bg-surface px-4 py-1.5 text-sm font-medium text-ink-soft ring-1 ring-line transition-colors hover:bg-canvas"
+                      >
+                        Not now
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // "Not now" must be reversible: with a suggestion on
+                      // hand this restores its card rather than opening
+                      // blank fields the designer would have to re-type.
+                      if (prevSuggestion) {
+                        setPrevDismissed(false)
+                      } else {
+                        setPrevEngaged(true)
+                        setPrevSource('manual')
+                        setDirty(true)
+                      }
+                    }}
+                    className="rounded-full bg-surface px-4 py-1.5 text-sm font-medium text-ink-soft ring-1 ring-line transition-colors hover:bg-canvas"
+                  >
+                    Add their last order
+                  </button>
                 )}
               </Field>
             )}

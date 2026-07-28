@@ -38,11 +38,17 @@ interface FinishChoiceCardProps {
    * matte, where no photo can show the difference. Omitted when null.
    */
   description?: string | null
+  /**
+   * Optional pill after the name — "Your last order · March 2022" for a
+   * returning customer (000364). Brand-toned to read as personal history,
+   * distinct from the green catalogue "Most popular" on thickness cards.
+   */
+  badge?: string | null
   selected: boolean
   onChoose: () => void
 }
 
-export function FinishChoiceCard({ name, priceLabel, imageSrc, imageAlt, description, selected, onChoose }: FinishChoiceCardProps) {
+export function FinishChoiceCard({ name, priceLabel, imageSrc, imageAlt, description, badge, selected, onChoose }: FinishChoiceCardProps) {
   // Hover loupe state — only wired up on hover-capable fine pointers, so
   // touch devices never mount the handlers at all.
   const [canHover] = useState(
@@ -99,7 +105,12 @@ export function FinishChoiceCard({ name, priceLabel, imageSrc, imageAlt, descrip
           </span>
         )}
         <span className="flex items-baseline justify-between gap-2">
-          <span className="text-sm font-medium text-ink">{name}</span>
+          <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="text-sm font-medium text-ink">{name}</span>
+            {badge && (
+              <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand">{badge}</span>
+            )}
+          </span>
           <span className="shrink-0 text-[12px] text-ink-soft">{priceLabel}</span>
         </span>
         {description && (

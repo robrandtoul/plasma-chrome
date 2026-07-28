@@ -23,6 +23,7 @@ import { logAudit } from '../_shared/audit.ts'
 import { cardTotalForQuantity, computeOrderTotal, resolveCardDiscount, pricesFlatAboveTopTier, type Tier } from '../_shared/orderPricing.ts'
 import { exVat, isGbpOrderVatFree, type VatTreatment } from '../_shared/ukVatArea.ts'
 import { buildOrderSpecSnapshot } from '../_shared/orderSpecSnapshot.ts'
+import { sanitisePreviousSpec } from '../_shared/previousSpec.ts'
 
 type ShippingTreatment = 'full_cost' | 'goodwill' | 'free' | 'manual'
 type Currency = 'GBP' | 'EUR' | 'USD'
@@ -473,6 +474,22 @@ Deno.serve(async (req) => {
   const quantityOpen =
     quantity == null && customQuoteTotal == null && paymentMethod === 'online' && orderKind === 'production'
 
+  // "Same as last time" guidance (000364): what this customer ordered on their
+  // previous paid order, confirmed by the designer in the order builder. The
+  // pay page badges the matching chooser option "Your last order" and nudges
+  // when they pick differently. Display guidance only — it never feeds
+  // pricing, production, or the invoice, and the pay page ignores anything it
+  // can't match against the live chooser. Sanitised to an allow-listed shape
+  // (malformed input degrades to null, never a 400 — guidance must not block
+  // order creation, same stance as the spec snapshot) and only stored where a
+  // chooser exists to show it: online production grid orders — a custom quote
+  // has an agreed price and never renders a chooser, mirroring the open-spec
+  // resolution above.
+  const previousSpec =
+    orderKind === 'production' && paymentMethod === 'online' && customQuoteTotal == null
+      ? sanitisePreviousSpec(body.previous_spec)
+      : null
+
   // Offline orders are invoiced manually in Xero, so a Xero-contact binding is
   // meaningless there. Null it regardless of what the client sent, so an offline
   // row never carries an irrelevant (never-used) binding even if a direct API
@@ -743,6 +760,7 @@ Deno.serve(async (req) => {
       thickness_open: thicknessOpen,
       finish_open: finishOpen,
       quantity_open: quantityOpen,
+      previous_spec: previousSpec,
       xero_contact_id: effectiveXeroContactId,
       xero_contact_name: effectiveXeroContactName,
       quantity,
@@ -819,6 +837,7 @@ Deno.serve(async (req) => {
       thickness_open: thicknessOpen,
       finish_open: finishOpen,
       quantity_open: quantityOpen,
+      previous_spec: previousSpec,
       xero_contact_id: effectiveXeroContactId,
       xero_contact_name: effectiveXeroContactName,
       ...(isOffline ? { amount_cards: amountCards, amount_shipping: amountShipping, amount_card_discount: amountCardDiscount } : {}),

@@ -19,6 +19,7 @@
     "test:quote": "tsx src/lib/quote/interpolation.test.ts && tsx src/lib/quote/calculate.test.ts",
     "test:order-pricing": "tsx supabase/functions/_shared/orderPricing.test.ts",
     "test:open-spec": "tsx src/lib/openSpecTiers.test.ts",
+    "test:previous-spec": "tsx src/lib/previousSpec.test.ts",
     "test:vat-area": "tsx supabase/functions/_shared/ukVatArea.test.ts",
     "test:eu-vat": "tsx supabase/functions/_shared/euVatArea.test.ts",
     "test:order-snapshot": "tsx supabase/functions/_shared/orderSpecSnapshot.test.ts",

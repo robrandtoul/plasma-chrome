@@ -13,6 +13,7 @@ import { isEuVatCountry } from '../lib/euVatArea'
 import { totalFromTiers, surchargeFromTiers, thicknessNoteFor, type SpecVariantChoice, type SpecFinishChoice } from '../lib/openSpecTiers'
 import { pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/interpolation'
 import { hasThicknessGuide, thicknessSetForMaterial, type ThicknessOption } from '../lib/metalThicknessNotes'
+import { parsePreviousSpec, chooserGuidance, quantityHint } from '../lib/previousSpec'
 import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { SHIP_COUNTRIES } from '../lib/shipCountries'
 import { loadStripeJs, type StripeLike, type StripeElementsLike } from '../lib/stripeJs'
@@ -86,6 +87,9 @@ interface GroupMemberPayload {
   thickness_open: boolean
   finish_open: boolean
   quantity_open: boolean
+  // "Same as last time" guidance (000364) — per member, parsed defensively
+  // via parsePreviousSpec. Display guidance only; null on most orders.
+  previous_spec: unknown
   card_discount_type: string | null
   card_discount_value: number | null
   amount_cards: number | null
@@ -1108,6 +1112,13 @@ export default function OrderGroupPayPage() {
     const qtyOpen = memberQuantityOpen(m)
     const isSplit = qtyOpen && data.personNames.length > 1
     const qty = live?.qty ?? null
+    // "Same as last time" guidance (000364), per member — badge the option
+    // they had before, stand "Most popular" down while it shows, nudge
+    // gently on a different pick. Same lib (and so the same copy) as the
+    // single pay page.
+    const previousSpec = parsePreviousSpec(m.previous_spec)
+    const prevThickness = chooserGuidance('thickness', previousSpec, data.specVariants.map((v) => v.id), pick.variantId)
+    const prevFinish = chooserGuidance('finish', previousSpec, data.specFinishes.map((f) => f.id), pick.optionId)
     // Thickness cards in the education copy's order when a set exists,
     // catalogue order otherwise (same rule as the single page).
     const orderedVariants =
@@ -1175,6 +1186,9 @@ export default function OrderGroupPayPage() {
               <span className="text-ink-soft">Total</span>
               <span className="font-semibold text-ink">{qty != null && qty > 0 ? `${qty.toLocaleString()} cards` : '—'}</span>
             </div>
+            {quantityHint(previousSpec, { split: true }) && (
+              <p className="mt-1.5 text-[13px] text-ink-soft">{quantityHint(previousSpec, { split: true })}</p>
+            )}
           </div>
         ) : qtyOpen ? (
           <div className="rounded-lg border border-line bg-surface p-3">
@@ -1193,6 +1207,9 @@ export default function OrderGroupPayPage() {
                 className="h-11 w-28 shrink-0 rounded-lg border border-line bg-canvas px-3 text-right text-sm font-semibold text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
               />
             </div>
+            {quantityHint(previousSpec) && (
+              <p className="mt-1.5 text-[13px] text-ink-soft">{quantityHint(previousSpec)}</p>
+            )}
           </div>
         ) : null}
         {live?.hint && <p className="text-[13px] text-low">{live.hint}</p>}
@@ -1241,7 +1258,12 @@ export default function OrderGroupPayPage() {
                     <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                       <span className="num text-[15px] font-medium text-brand">{note?.label ?? v.display_name}</span>
                       {note?.name && <span className="text-sm font-medium text-ink">{note.name}</span>}
-                      {note?.badge && (
+                      {prevThickness.badgeId === v.id && prevThickness.badgeText && (
+                        <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand">
+                          {prevThickness.badgeText}
+                        </span>
+                      )}
+                      {note?.badge && !prevThickness.suppressCatalogueBadges && (
                         <span className="rounded-full bg-in-stock-soft px-2 py-0.5 text-[11px] font-medium text-[var(--c-in-stock)]">
                           {note.badge}
                         </span>
@@ -1255,6 +1277,12 @@ export default function OrderGroupPayPage() {
                 </button>
               )
             })}
+            {/* Always mounted so the different-pick nudge is announced (a
+                live region inserted with its content generally isn't);
+                sr-only hides the empty state. */}
+            <p aria-live="polite" className={prevThickness.note ? 'text-[13px] text-ink-soft' : 'sr-only'}>
+              {prevThickness.note ?? ''}
+            </p>
           </div>
         )}
 
@@ -1278,12 +1306,16 @@ export default function OrderGroupPayPage() {
                     imageSrc={f.photoUrl ?? f.swatchUrl}
                     imageAlt={f.photoUrl ? `${f.display_name} finish` : `Your design in ${f.display_name}`}
                     description={f.description}
+                    badge={prevFinish.badgeId === f.id ? prevFinish.badgeText : null}
                     selected={pick.optionId === f.id}
                     onChoose={() => setPick(m.id, { optionId: f.id })}
                   />
                 )
               })}
             </div>
+            <p aria-live="polite" className={prevFinish.note ? 'text-[13px] text-ink-soft' : 'sr-only'}>
+              {prevFinish.note ?? ''}
+            </p>
           </div>
         )}
       </div>

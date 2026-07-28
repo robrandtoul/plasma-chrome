@@ -14,6 +14,7 @@ import { totalFromTiers, surchargeFromTiers, thicknessNoteFor, type SpecVariantC
 import { exVat, isGbpOrderVatFree, normaliseShipDestination } from '../lib/ukVatArea'
 import { isEuVatCountry } from '../lib/euVatArea'
 import { hasThicknessGuide, thicknessSetForMaterial, type ThicknessOption } from '../lib/metalThicknessNotes'
+import { parsePreviousSpec, chooserGuidance, quantityHint } from '../lib/previousSpec'
 import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { SHIP_COUNTRIES } from '../lib/shipCountries'
 import { loadStripeJs, type StripeLike, type StripeElementsLike } from '../lib/stripeJs'
@@ -53,6 +54,11 @@ interface OrderPayload {
   // revisit. person_quantities carries a persisted per-person split back so
   // the inputs can pre-fill.
   quantity_open: boolean
+  // "Same as last time" guidance (000364): what this customer ordered on
+  // their previous paid order, confirmed by the designer at order time.
+  // Parsed defensively via parsePreviousSpec — display guidance only, and
+  // null (no guidance) for the overwhelming majority of orders.
+  previous_spec: unknown
   person_quantities: { name: string; quantity: number }[] | null
   quantity: number | null
   names_count: number
@@ -1261,6 +1267,15 @@ export default function OrderPayPage() {
     ? specFinishes.find((f) => f.id === chosenOptionId)?.display_name ?? null
     : null
 
+  // "Same as last time" guidance (000364): badge the option they had before,
+  // stand the catalogue "Most popular" down while it shows, and nudge gently
+  // if they pick differently. All rendering is inside the open-chooser
+  // blocks, so locked orders and the (vast) majority with no previous spec
+  // are untouched.
+  const previousSpec = parsePreviousSpec(order.previous_spec)
+  const prevThickness = chooserGuidance('thickness', previousSpec, specVariants.map((v) => v.id), chosenVariantId)
+  const prevFinish = chooserGuidance('finish', previousSpec, specFinishes.map((f) => f.id), chosenOptionId)
+
   // Thickness cards in the education copy's order when a set exists (the
   // notes array is the admin-editable display authority — metal reads
   // thinnest-first, Full Colour Plastic thickest-first), falling back to
@@ -1521,6 +1536,9 @@ export default function OrderPayPage() {
         <span className="text-base font-semibold text-ink">{splitSum > 0 ? `${splitSum.toLocaleString()} cards` : '—'}</span>
       </div>
       {splitRangeHint && <p className="mt-1.5 text-[13px] text-low">{splitRangeHint}</p>}
+      {quantityHint(previousSpec, { split: true }) && (
+        <p className="mt-1.5 text-[13px] text-ink-soft">{quantityHint(previousSpec, { split: true })}</p>
+      )}
     </div>
   ) : isSingleOpen ? (
     <div className="rounded-xl border border-line bg-canvas p-4">
@@ -1538,6 +1556,9 @@ export default function OrderPayPage() {
           className="h-12 w-32 shrink-0 rounded-lg border border-line bg-surface px-3 text-right text-base font-semibold text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
       </div>
       {singleRangeHint && <p className="mt-1.5 text-[13px] text-low">{singleRangeHint}</p>}
+      {quantityHint(previousSpec) && (
+        <p className="mt-1.5 text-[13px] text-ink-soft">{quantityHint(previousSpec)}</p>
+      )}
     </div>
   ) : null
 
@@ -1699,7 +1720,12 @@ export default function OrderPayPage() {
                                   <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                                     <span className="num text-[15px] font-medium text-brand">{note?.label ?? v.display_name}</span>
                                     {note?.name && <span className="text-sm font-medium text-ink">{note.name}</span>}
-                                    {note?.badge && (
+                                    {prevThickness.badgeId === v.id && prevThickness.badgeText && (
+                                      <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand">
+                                        {prevThickness.badgeText}
+                                      </span>
+                                    )}
+                                    {note?.badge && !prevThickness.suppressCatalogueBadges && (
                                       <span className="rounded-full bg-in-stock-soft px-2 py-0.5 text-[11px] font-medium text-[var(--c-in-stock)]">
                                         {note.badge}
                                       </span>
@@ -1713,6 +1739,15 @@ export default function OrderPayPage() {
                               </button>
                             )
                           })}
+                          {/* Always mounted: screen readers announce mutations
+                              WITHIN an existing live region, not regions that
+                              appear together with their text — and the
+                              picked-something-different nudge is exactly the
+                              note a blind customer must hear. sr-only keeps
+                              the empty state invisible. */}
+                          <p aria-live="polite" className={prevThickness.note ? 'text-[13px] text-ink-soft' : 'sr-only'}>
+                            {prevThickness.note ?? ''}
+                          </p>
                         </div>
                       )}
 
@@ -1737,12 +1772,16 @@ export default function OrderPayPage() {
                                   imageSrc={f.photoUrl ?? f.swatchUrl}
                                   imageAlt={f.photoUrl ? `${f.display_name} finish` : `Your design in ${f.display_name}`}
                                   description={f.description}
+                                  badge={prevFinish.badgeId === f.id ? prevFinish.badgeText : null}
                                   selected={chosenOptionId === f.id}
                                   onChoose={() => chooseFinish(f.id)}
                                 />
                               )
                             })}
                           </div>
+                          <p aria-live="polite" className={prevFinish.note ? 'text-[13px] text-ink-soft' : 'sr-only'}>
+                            {prevFinish.note ?? ''}
+                          </p>
                         </div>
                       )}
 
