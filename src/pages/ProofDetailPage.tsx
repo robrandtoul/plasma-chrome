@@ -2258,12 +2258,38 @@ export default function ProofDetailPage() {
       byVersion.set(v.id, entry)
     }
     if (byVersion.size === 0) return null
+    // Recipients on the CURRENT version that none of the stranded
+    // versions carry. When there are any, "Set as current" on an older
+    // version would silently drop those people from the proof — which
+    // is exactly the shape of "we added a colleague to a signed-off
+    // card", since the version they approved predates the colleague.
+    // The suggestion is suppressed in that case rather than quietly
+    // steering the designer into losing someone.
+    // Computed PER stranded version and then unioned, not by pooling their
+    // rosters first. The banner can list several versions and the advice
+    // applies to any one of them, so pooling would clear the suggestion
+    // whenever *some* listed version happened to carry everybody — while
+    // switching to one of the others still silently dropped a recipient.
+    // Union the LOSSES instead: if switching back to any listed version
+    // would cost someone, say so.
+    const strandedVersionIds = new Set(stranded.map((a) => a.proof_version_id))
+    const recipientsLostBySwitchingBack = [
+      ...new Set(
+        versions
+          .filter((v) => strandedVersionIds.has(v.id))
+          .flatMap((v) => {
+            const rosterThere = new Set(v.names ?? [])
+            return (currentVersion.names ?? []).filter((name) => !rosterThere.has(name))
+          }),
+      ),
+    ]
     return {
       versions: [...byVersion.values()].sort((x, y) => y.versionNumber - x.versionNumber),
       current: {
         versionNumber: currentVersion.version_number,
         material: currentVersion.material_display || null,
       },
+      recipientsLostBySwitchingBack,
     }
   })()
 
@@ -3389,9 +3415,20 @@ export default function ProofDetailPage() {
                   is the current version and hasn’t been approved.
                 </p>
                 <p className="mt-1.5 text-ink-mute">
-                  The proof won’t show as approved until the current version is approved. The
-                  customer may be choosing that design — check with them, or open that
-                  version and “Set as current” if it’s the one they want.
+                  The proof won’t show as approved until the current version is approved.{' '}
+                  {staleApprovalSummary.recipientsLostBySwitchingBack.length > 0 ? (
+                    <>
+                      Ask them to approve the current version — or mark it approved yourself if
+                      you already have their sign-off. Going back to the older version would drop{' '}
+                      {joinNames(staleApprovalSummary.recipientsLostBySwitchingBack)} from the
+                      proof, so it isn’t the way out here.
+                    </>
+                  ) : (
+                    <>
+                      The customer may be choosing that design — check with them, or open that
+                      version and “Set as current” if it’s the one they want.
+                    </>
+                  )}
                 </p>
               </div>
             </div>

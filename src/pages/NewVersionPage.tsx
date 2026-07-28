@@ -13,6 +13,7 @@ import { matchImageToName } from '../lib/matchImageToName'
 import { useUnsavedChangesGuard } from '../lib/useUnsavedChangesGuard'
 import { matchMaterialByLabel } from '../lib/matchMaterial'
 import { finishIsPreferenceOnly } from '../lib/materialTraits'
+import { approvalCarriesForSlot, slotsNeedingReapproval } from '../lib/approvalCarry'
 import { useImageFileDrop } from '../lib/useImageFileDrop'
 import { PageDropOverlay } from '../components/PageDropOverlay'
 import MessageSendPanel from '../components/MessageSendPanel'
@@ -2832,7 +2833,16 @@ export default function NewVersionPage() {
     const vanishingV1 = v1Carry
       ? v1Carry.images.filter((i) => {
           if ((i.side ?? 'front') !== 'front') return false
-          return next ? i.associated_name != null : i.associated_name == null
+          if (!next) return i.associated_name == null
+          // Turning shared ON. A per-name front normally has nowhere to
+          // go and is discarded — EXCEPT when the source version had a
+          // single recipient, where effectiveAssocForCarry re-maps it
+          // into the shared slot instead. It keeps its stored file, so
+          // it survives and so does that person's approval; warning
+          // that it's about to be discarded would be a lie that talks
+          // the designer out of the right shape.
+          if (v1Carry.names.length === 1) return false
+          return i.associated_name != null
         })
       : []
     const vanishingFresh: { optionCode: string; entry: ImageEntry }[] = []
@@ -3700,17 +3710,17 @@ export default function NewVersionPage() {
       return assocName != null && v2Names.has(assocName)
     }
 
-    // Variant-round carries arrive with associated_name=null (the
-    // shared-design convention) and the form re-maps them onto the
-    // first v(N) name when the active shape has no SHARED slot for
-    // the side. Render, save-stamp, and validation-count all read
-    // through effectiveAssocForVariantRoundCarry — the save filter
-    // has to use the same effective identity or it would drop
-    // legitimately re-mapped carries that the rest of the form
-    // counted as present. Standard-proof carries pass through with
-    // their original assoc (the helper short-circuits).
+    // Carries whose stored identity doesn't match any slot in the new
+    // shape are re-mapped by effectiveAssocForCarry — unassigned
+    // variant-round images onto the first name, and a lone recipient's
+    // images into the SHARED slot once a colleague joins. Render,
+    // save-stamp and validation-count all read through that helper, so
+    // the save filter has to use the same effective identity or it
+    // would drop legitimately re-mapped carries the rest of the form
+    // counted as present. Carries already in a valid slot pass through
+    // unchanged (the helper short-circuits).
     const carrySlotStillValid = (img: V1Image): boolean => {
-      const liveAssoc = effectiveAssocForVariantRoundCarry(
+      const liveAssoc = effectiveAssocForCarry(
         (img.side ?? 'front') as 'front' | 'back',
         img.associated_name,
       )
@@ -3945,7 +3955,7 @@ export default function NewVersionPage() {
       // persisted row lands in the same slot the designer saw.
       // Standard-proof carries pass through unchanged.
       const stampedSide = (img.side ?? 'front') as 'front' | 'back'
-      const stampedAssoc = effectiveAssocForVariantRoundCarry(stampedSide, img.associated_name)
+      const stampedAssoc = effectiveAssocForCarry(stampedSide, img.associated_name)
       return {
         proof_version_id: versionData.id,
         image_path: img.file_path,
@@ -3974,7 +3984,7 @@ export default function NewVersionPage() {
       // assoc on a variant-round carry maps to the first v2 name
       // when the active shape has no SHARED slot for the side.
       const stampedSide = (r.v1Img.side ?? 'front') as 'front' | 'back'
-      const stampedAssoc = effectiveAssocForVariantRoundCarry(stampedSide, r.v1Img.associated_name)
+      const stampedAssoc = effectiveAssocForCarry(stampedSide, r.v1Img.associated_name)
       return {
         proof_version_id: versionData.id,
         image_path: replacementPaths[i],
@@ -4228,38 +4238,32 @@ export default function NewVersionPage() {
           const v1Approval = v1Carry.approvalsByName[nameKey]
           if (!v1Approval || v1Approval.state !== 'approved') continue
 
-          const assocFilter = nameKey === SHARED_APPROVAL_KEY ? null : nameKey
-
-          // v1's images for this slot (across all option
-          // coordinates).
-          const v1ImagesForSlot = v1Carry.images.filter(
-            (img) => img.associated_name === assocFilter,
-          )
-
-          // Identity check — every v1 image must be carried
-          // (keep=true, no replacement) AND land in a v2 slot
-          // that still exists. A shape flip (e.g. two-sided →
-          // one-sided) can orphan v1 images without the
-          // designer unticking Keep, so slotStillValid is the
-          // authoritative gate. If any v1 image for this slot
-          // was dropped, replaced, or orphaned by shape flip,
-          // the approval doesn't carry.
-          const allCarried = v1ImagesForSlot.every(
-            (img) =>
-              (keepByV1RowId[img.v1RowId] ?? true) &&
-              !replacementByV1RowId[img.v1RowId] &&
-              carrySlotStillValid(img) &&
-              carryOptionStillValid(img),
-          )
-          if (!allCarried) continue
-
-          // No new images for this slot. Fresh allEntries with
-          // associated_name matching this slot would break
-          // identity.
-          const anyFreshForSlot = allEntries.some(
-            ({ entry }) => entry.associated_name === assocFilter,
-          )
-          if (anyFreshForSlot) continue
+          // Identity check — every v1 image in this slot must be
+          // carried (keep=true, no replacement) AND land in a v2 slot
+          // that still exists, and no fresh upload may target the
+          // slot. A shape flip (e.g. two-sided → one-sided) can orphan
+          // v1 images without the designer unticking Keep, so the
+          // slot/option guards are the authoritative gate.
+          //
+          // The rule itself lives in lib/approvalCarry so the pre-save
+          // warning in the form predicts exactly what this will do —
+          // it used to live only here, which is why a lost approval was
+          // only discoverable after saving.
+          if (
+            !approvalCarriesForSlot(
+              nameKey,
+              v1Carry.images.map((img) => ({
+                rowId: img.v1RowId,
+                assoc: img.associated_name,
+                kept: keepByV1RowId[img.v1RowId] ?? true,
+                replaced: !!replacementByV1RowId[img.v1RowId],
+                landsInValidSlot: carrySlotStillValid(img) && carryOptionStillValid(img),
+              })),
+              allEntries.map(({ entry }) => entry.associated_name),
+            )
+          ) {
+            continue
+          }
 
           // Note on QR auto-unkeep interaction: the allCarried +
           // anyFreshForSlot gates above are the same predicates that
@@ -4424,29 +4428,122 @@ export default function NewVersionPage() {
   // is meaningfully distinct from per-name slots.
   const effectiveShared = shared && names.length !== 1
 
-  // Variant-round v1 images carry forward with associated_name=null
-  // (the variant-round convention — each direction is one shared
-  // design). When v(N) is a standard proof with names but no SHARED
-  // slot in the active shape, the null pattern doesn't match any
-  // per-name slot and the carry would orphan. This helper re-maps
-  // the carry's effective associated_name to the first v(N) name
-  // when a SHARED slot isn't available for the requested side, so
-  // the image lands in a real slot rather than being filtered out
-  // of the cell builder. Used by both the carry render filter and
-  // the save-path stamp so render and persisted state agree.
-  function effectiveAssocForVariantRoundCarry(
+  // Where a carried v(N-1) image actually LANDS in v(N)'s slot universe.
+  // Both directions of the same idea: a carry whose stored identity no
+  // longer matches any slot in the new shape gets re-mapped to the slot
+  // that shape says it belongs in, rather than being filtered out of the
+  // cell builder and silently lost. Used by the carry render filter, the
+  // validation count and the save-path stamp, so all three agree.
+  function effectiveAssocForCarry(
     side: 'front' | 'back',
     originalAssoc: string | null,
   ): string | null {
-    if (originalAssoc != null) return originalAssoc
-    if (!v1Carry?.sourceIsVariantRound) return originalAssoc
     const isMembershipSingleSlot = cardType === 'membership' && names.length === 0
     const hasSharedSlotForSide =
       isMembershipSingleSlot ||
       (sidedness === 'two-sided' && effectiveShared && side === 'front')
-    if (hasSharedSlotForSide) return null
-    return names.length > 0 ? names[0] : null
+
+    // Unassigned → per-name. Variant-round images carry with
+    // associated_name=null (each direction is one shared design); when
+    // v(N) has names but no SHARED slot for the side, the null pattern
+    // matches nothing, so re-map onto the first name.
+    if (originalAssoc == null) {
+      if (!v1Carry?.sourceIsVariantRound) return originalAssoc
+      if (hasSharedSlotForSide) return null
+      return names.length > 0 ? names[0] : null
+    }
+
+    // Per-name → shared. The mirror case, and the one that broke the
+    // "add a colleague to a signed-off card" flow: with exactly one
+    // recipient there is no SHARED slot at all (effectiveShared collapses
+    // above), so the common front hangs off that person's name. Adding a
+    // second recipient brings the shared slot back and the front belongs
+    // in it. Without this the front matched no slot, vanished from the
+    // form, and had to be re-uploaded — which changed its stored file and
+    // therefore cost the first recipient the approval they'd already
+    // given (real case: Renewafuel v5 → v6).
+    //
+    // Gated on the SOURCE having had exactly one name. With two or more
+    // there are several candidate fronts and no honest way to choose
+    // which becomes the shared one, so those still drop as before.
+    if (hasSharedSlotForSide && v1Carry?.names.length === 1) return null
+
+    return originalAssoc
   }
+
+  // ── "Who will have to approve again?" ──────────────────────────────
+  // Answered while the designer is still building the version, rather
+  // than after saving via a flag on the dashboard. Runs the real carry
+  // rule (lib/approvalCarry, same function the save path calls) over
+  // the current form state.
+  //
+  // Deliberately one-directional: it names people who WILL need to
+  // approve again and says nothing when the list is empty. It only
+  // models the artwork rule, so it can under-report — an option-tab
+  // change, or a QR set that shifted (migration 000169, which nulls
+  // qr_confirmed_at and makes the customer re-tick), can still cost an
+  // approval this doesn't predict. Silence therefore means "nothing
+  // about the ARTWORK costs an approval", never "nothing to do".
+  const approvalsNeedingReapproval = useMemo(() => {
+    if (!v1Carry) return []
+    // Same slot universe the save path uses — recipients PLUS the shared
+    // sentinel. Leaving the sentinel out made the warning categorically
+    // dead on the no-names shapes (membership / set_single), where
+    // '__shared__' is the only approval slot there is, so it could never
+    // fire at all rather than merely under-reporting.
+    const approvedSlots = [SHARED_APPROVAL_KEY, ...names.filter((n) => n.trim().length > 0)]
+      .filter((slot) => v1Carry.approvalsByName[slot]?.state === 'approved')
+    if (approvedSlots.length === 0) return []
+
+    const previousImages = v1Carry.images.map((img) => {
+      const side = (img.side ?? 'front') as 'front' | 'back'
+      const assoc = effectiveAssocForCarry(side, img.associated_name)
+      // Mirror of the save path's slotStillValid. Option-universe
+      // validity is not modelled here — see the under-report note above.
+      const isMembershipSingleSlot = cardType === 'membership' && names.length === 0
+      const isSharedSlotForSide =
+        sidedness === 'two-sided' && effectiveShared && side === 'front'
+      const landsInValidSlot =
+        side === 'back' && sidedness === 'one-sided'
+          ? false
+          : isMembershipSingleSlot || isSharedSlotForSide
+            ? assoc == null
+            : assoc != null && names.includes(assoc)
+      return {
+        rowId: img.v1RowId,
+        assoc: img.associated_name,
+        kept: keepByV1RowId[img.v1RowId] ?? true,
+        replaced: !!replacementByV1RowId[img.v1RowId],
+        landsInValidSlot,
+      }
+    })
+
+    // Scoped to the SELECTED option tabs, exactly as the save path scopes
+    // allEntries (optionKeys = optionMode ? selectedOptions : ['']). Reading
+    // every key of imagesByOption instead would count uploads sitting in a
+    // de-selected tab that save never looks at — reachable, since undoRemove
+    // re-creates a key outside selectedOptions — and name someone whose
+    // approval is in fact going to carry. Under-reporting is an accepted
+    // limitation of this warning; crying wolf is not.
+    const freshAssocs = imagesFinishKeys.flatMap((key) =>
+      (imagesByOption[key] ?? []).map((entry) => entry.associated_name),
+    )
+
+    return slotsNeedingReapproval(approvedSlots, previousImages, freshAssocs)
+    // effectiveAssocForCarry is a plain function over the same state
+    // this list already depends on, so it needs no separate entry.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    v1Carry,
+    names,
+    cardType,
+    sidedness,
+    effectiveShared,
+    keepByV1RowId,
+    replacementByV1RowId,
+    imagesByOption,
+    imagesFinishKeys,
+  ])
 
   // Slot universe for validation — one tuple per (identity, side)
   // across the project, shared across every option tab. Mirrors the
@@ -4522,7 +4619,7 @@ export default function NewVersionPage() {
       // button stays disabled with "Add an image for Rob front" even
       // though the carry is visibly populated in Rob's slot.
       const imgSide = (img.side ?? 'front') as 'front' | 'back'
-      const effectiveImgAssoc = effectiveAssocForVariantRoundCarry(imgSide, img.associated_name)
+      const effectiveImgAssoc = effectiveAssocForCarry(imgSide, img.associated_name)
       if (effectiveImgAssoc !== identity) return false
       if (imgSide !== side) return false
       const hasRep = !!replacementByV1RowId[img.v1RowId]
@@ -6541,7 +6638,7 @@ export default function NewVersionPage() {
                   // helper re-maps the carry to the first name's slot so
                   // it renders rather than orphaning. Standard-proof
                   // carries are passed through untouched.
-                  const effectiveAssoc = effectiveAssocForVariantRoundCarry(side, img.associated_name)
+                  const effectiveAssoc = effectiveAssocForCarry(side, img.associated_name)
                   const identity = effectiveAssoc ?? SHARED_APPROVAL_KEY
                   const key = slotKey(identity, side)
                   if (!validSlots.has(key)) continue
@@ -6844,6 +6941,24 @@ export default function NewVersionPage() {
             {!canSave && !submitting && (
               <p className="mb-2.5 text-xs font-medium text-out">
                 To save: {saveBlockerSentence}
+              </p>
+            )}
+            {/* Approvals this version will cost. Not a blocker — losing an
+                approval is often the correct outcome (their artwork really
+                did change) — but the designer should know before saving,
+                not find out from a flag on the dashboard afterwards. */}
+            {!submitting && approvalsNeedingReapproval.length > 0 && (
+              <p className="mb-2.5 text-xs text-ink-soft">
+                {/* Listed rather than written as a sentence, because the
+                    shared sentinel is a slot and not a person — "Shared
+                    artwork will need to approve again" reads as nonsense. */}
+                <span className="font-medium text-ink">
+                  Will need approving again:{' '}
+                  {approvalsNeedingReapproval
+                    .map((slot) => (slot === SHARED_APPROVAL_KEY ? 'Shared artwork' : slot))
+                    .join(', ')}
+                </span>{' '}
+                — that artwork has changed since it was approved.
               </p>
             )}
             <div className="flex items-center justify-between gap-3">
