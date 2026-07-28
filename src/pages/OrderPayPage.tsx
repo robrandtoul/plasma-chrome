@@ -1436,6 +1436,17 @@ export default function OrderPayPage() {
         : destPostcodeMissing
           ? 'Add the delivery postcode so we can calculate shipping.'
           : null
+  // Once the quantity (and any open spec) is settled, the delivery fields are
+  // the only thing left — so mark the empty one instead of leaving the greyed
+  // button as the only clue. On a phone that button sits below the fold, and
+  // the numeric keypad covers this whole panel while the quantity is being
+  // typed, which is how a customer came to report "I put in the amount of
+  // cards and then there's nothing after that". Held back until the quantity
+  // is done so we're pointing at the next step, not nagging on arrival.
+  // border-out matches the version forms' required-field convention.
+  const flagDest = specResolved && !awaitingQuantity
+  const countryNeedsAttention = flagDest && destCountryMissing
+  const postcodeNeedsAttention = flagDest && destPostcodeMissing
   // Total is known client-side for a custom quote, a chosen single quantity,
   // or a completed per-person split; a designer-locked grid quantity is shown
   // on Stripe's hosted page (it may be an interpolated in-between). When
@@ -1553,8 +1564,13 @@ export default function OrderPayPage() {
           <p className="mt-1 text-sm text-ink-soft">Reference {order.payment_reference}</p>
 
           <div ref={mountWrapRef} className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
-            {/* LEFT — recap + cost summary */}
-            <PanelShell className="self-start">
+            {/* LEFT — recap + cost summary. Second on a phone (order-2): the
+                summary with its artwork is a full screen on its own, and
+                stacking it first pushed the quantity box to the fold and the
+                delivery fields + button off it entirely — so the form the
+                customer has to fill came after a screenful of confirmation
+                they'd already seen on the proof. Desktop is unchanged. */}
+            <PanelShell className="order-2 self-start lg:order-1">
               <div className="flex items-baseline justify-between gap-3">
                 <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Order summary</p>
                 {spec?.approvedAt && (
@@ -1618,8 +1634,10 @@ export default function OrderPayPage() {
               )}
             </PanelShell>
 
-            {/* RIGHT — inputs (until the intent exists), then the payment form */}
-            <PanelShell className="relative min-h-[300px]">
+            {/* RIGHT — inputs (until the intent exists), then the payment form.
+                First on a phone (order-1) so the page opens on what still
+                needs doing. */}
+            <PanelShell className="relative order-1 min-h-[300px] lg:order-2">
               {!checkout ? (
                 <div className="space-y-4 text-sm">
                   {/* Open-spec chooser (000298): confirm thickness / finish
@@ -1793,15 +1811,20 @@ export default function OrderPayPage() {
                       <p className="font-medium text-ink">Where should we ship these?</p>
                       <p className="text-[13px] text-ink-soft">So we can calculate shipping. You’ll confirm your full delivery address below.</p>
                       <div className="flex flex-col gap-2 sm:flex-row">
-                        <select aria-label="Delivery country" value={destCountry} onChange={(e) => setDestCountry(e.target.value)}
-                          className="h-[38px] flex-1 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]">
+                        <select aria-label="Delivery country" aria-invalid={countryNeedsAttention || undefined}
+                          value={destCountry} onChange={(e) => setDestCountry(e.target.value)}
+                          className={`h-[38px] flex-1 rounded-lg border ${countryNeedsAttention ? 'border-out' : 'border-line'} bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]`}>
                           <option value="">Select country…</option>
                           {SHIP_COUNTRIES.map((c) => (<option key={c.code} value={c.code}>{c.name}</option>))}
                         </select>
-                        <input aria-label="Delivery postcode" value={destPostcode} onChange={(e) => setDestPostcode(e.target.value)}
+                        <input aria-label="Delivery postcode" aria-invalid={postcodeNeedsAttention || undefined}
+                          value={destPostcode} onChange={(e) => setDestPostcode(e.target.value)}
                           placeholder="Postcode / ZIP"
-                          className="h-[38px] flex-1 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
+                          className={`h-[38px] flex-1 rounded-lg border ${postcodeNeedsAttention ? 'border-out' : 'border-line'} bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]`} />
                       </div>
+                      {flagDest && destinationHint != null && (
+                        <p className="text-[13px] font-medium text-out" aria-live="polite">{destinationHint}</p>
+                      )}
                     </div>
                   )}
 
@@ -1864,10 +1887,12 @@ export default function OrderPayPage() {
                                 : 'Continue to payment'}
                   </button>
                   <p className="text-center text-[12px] text-ink-mute" aria-live="polite">
+                    {/* The outstanding delivery field says its own piece in rose
+                        next to the field itself, so this line stays out of the
+                        way rather than repeating it under the button. */}
                     {awaitingQuantity ? 'Select a quantity to see exact prices for each option.'
                       : !specResolved ? 'Confirm your card above to see your total.'
-                        : destinationHint != null ? destinationHint
-                          : 'Secured by Stripe.'}
+                        : 'Secured by Stripe.'}
                   </p>
                 </div>
               ) : (
