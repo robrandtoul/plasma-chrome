@@ -74,6 +74,25 @@ interface Props {
    * reads "Notes for the customer · 2" the moment one is written.
    */
   onCountChange?: (count: number) => void
+  /**
+   * Open with this customer pin already selected, on its own face.
+   *
+   * The way in from the change-request strip's "Show me": the designer has just
+   * read the pin's words up on the strip, so landing them on a different image
+   * with nothing highlighted would make them hunt for it a second time.
+   */
+  focusPinId?: string | null
+  /**
+   * Whether writing NEW callouts is offered (settings.proof_callouts_enabled).
+   *
+   * Defaults true, which is every existing caller. It matters because the panel
+   * is now reachable purely to work through customer pins — and if that setting
+   * is off while pins are on, offering the pen here would let a designer write a
+   * note to a customer who is guaranteed never to see it (the gate hides the
+   * strip on their side even where rows exist). Ticking pins off stays available
+   * either way: that is our own record of work done, not a message to anyone.
+   */
+  canWriteCallouts?: boolean
 }
 
 export function ProofAnnotationEditor({
@@ -84,6 +103,8 @@ export function ProofAnnotationEditor({
   userId,
   onChanged,
   onCountChange,
+  focusPinId,
+  canWriteCallouts = true,
 }: Props) {
   const [images, setImages] = useState<EditorImage[]>([])
   const [annotations, setAnnotations] = useState<ProofAnnotation[]>([])
@@ -189,10 +210,24 @@ export function ProofAnnotationEditor({
   // Numbered to match the checklist below, and in their own colour, because
   // "what they asked for" and "what we told them" are different kinds of thing
   // and must not read as one sequence of dots.
+  //
+  // Which image a pin belongs on: its own anchor, falling back to the
+  // denormalised side. The anchor is ON DELETE SET NULL, so re-uploading artwork
+  // strips it while leaving the face intact — without the fallback such a pin
+  // becomes a line of text pointing at nothing, drawn nowhere and unreachable
+  // from "Show me where". Mirrors pinsOnImage, which decides the same thing for
+  // the hero thumbnails, so the two surfaces can't disagree about where a pin is.
+  const imageIdForPin = useCallback(
+    (p: ProofAnnotation): string | null =>
+      p.proof_version_image_id ??
+      (p.side ? images.find((img) => img.side === p.side)?.id ?? null : null),
+    [images],
+  )
+
   const pinMarkers = pins.map((p, i) => ({
     pin: p,
     number: i + 1,
-    imageId: p.proof_version_image_id,
+    imageId: imageIdForPin(p),
     x: Number(p.x),
     y: Number(p.y),
   }))
@@ -299,6 +334,19 @@ export function ProofAnnotationEditor({
     }
   }
 
+  // Land on the pin the designer clicked through from. Runs once the load
+  // effect has images and annotations in hand — the face can only be chosen
+  // after the image rows are known, and the load effect's own
+  // setActiveImageId defaults to the first image before this can correct it.
+  useEffect(() => {
+    if (!open || !focusPinId || images.length === 0) return
+    const target = annotations.find((a) => a.id === focusPinId)
+    if (!target) return
+    setSelectedPinId(target.id)
+    const imageId = imageIdForPin(target)
+    if (imageId) setActiveImageId(imageId)
+  }, [open, focusPinId, images.length, annotations, imageIdForPin])
+
   const resolvedCount = pins.filter((p) => p.resolved_at != null).length
 
   // Drafts deliberately don't count — the number should mean "what the customer
@@ -340,7 +388,7 @@ export function ProofAnnotationEditor({
               <div className="mb-3 flex flex-wrap gap-1.5">
                 {images.map((img) => {
                   const n = callouts.filter((c) => c.proof_version_image_id === img.id).length
-                  const pinsHere = pins.filter((p) => p.proof_version_image_id === img.id).length
+                  const pinsHere = pins.filter((p) => imageIdForPin(p) === img.id).length
                   const isActive = img.id === active.id
                   const face =
                     img.side === 'front' ? 'Front' : img.side === 'back' ? 'Back' : 'Card'
@@ -374,8 +422,11 @@ export function ProofAnnotationEditor({
                 src={active.signed_url}
                 alt="Click to add a note"
                 draggable={false}
-                onClick={(e) => void place(e.clientX, e.clientY)}
-                className="block w-full cursor-crosshair object-contain"
+                onClick={(e) => {
+                  if (!canWriteCallouts) return
+                  void place(e.clientX, e.clientY)
+                }}
+                className={`block w-full object-contain ${canWriteCallouts ? 'cursor-crosshair' : ''}`}
               />
               {activeItems.map((item) => {
                 const idx = items.findIndex((x) => x.key === item.key)
@@ -426,8 +477,17 @@ export function ProofAnnotationEditor({
               })}
             </div>
             <p className="mt-1.5 text-[11.5px] text-ink-mute">
-              Click the artwork to add a note. The customer sees these beside their card, never
-              drawn on it — a marker only appears if they zoom in.
+              {canWriteCallouts ? (
+                <>
+                  Click the artwork to add a note. The customer sees these beside their card, never
+                  drawn on it — a marker only appears if they zoom in.
+                </>
+              ) : (
+                <>
+                  Notes to the customer are switched off, so this is the customer’s pins only. Tick
+                  each one off as you deal with it.
+                </>
+              )}
             </p>
             {pins.length > 0 && (
               <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-ink-mute">
@@ -559,11 +619,11 @@ export function ProofAnnotationEditor({
                     {/* The point of the whole feature: getting from what they
                         wrote to where they meant. Switches to that side if the
                         pin is on the other one. */}
-                    {p.proof_version_image_id && (
+                    {imageIdForPin(p) && (
                       <button
                         type="button"
                         onClick={() => {
-                          setActiveImageId(p.proof_version_image_id)
+                          setActiveImageId(imageIdForPin(p))
                           setSelectedPinId(p.id)
                         }}
                         className="mt-0.5 block bg-transparent p-0 text-[12px] text-allocated underline decoration-1 underline-offset-2"

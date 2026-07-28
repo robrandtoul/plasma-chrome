@@ -166,6 +166,77 @@ export function calloutStripLabel(callouts: Pick<CustomerCallout, 'author_name'>
   return callouts.length === 1 ? `A note${who}` : `${callouts.length} notes${who}`
 }
 
+// ── Customer pins: one numbering, shared by every surface ────────────────────
+//
+// A pin is referred to by its number in four places — the marker on the hero
+// thumbnail, the list in the change-request strip, the dot and checklist inside
+// the editor, and the numbered list posted to Help Scout. "① back" has to mean
+// the same pin in all of them, so the numbering lives here rather than being
+// recomputed per surface.
+//
+// The number is the pin's position among ALL customer pins on the version, in
+// the stable created_at-then-id order fetchAnnotations returns. Deliberately not
+// per change request: the three on-screen surfaces are read together and must
+// agree, and numbering within an event would make the strip say "1" while the
+// editor beside it says "3". The cost is that a SECOND change request on the
+// same version continues at 3, 4… while its own Help Scout note starts again at
+// 1 — accepted, because the note is a sent artefact read on its own elsewhere,
+// whereas the three app surfaces are on screen at once.
+
+/** A customer pin with the number every surface refers to it by. */
+export interface NumberedPin {
+  pin: ProofAnnotation
+  number: number
+}
+
+/**
+ * Customer pins on a version, numbered from 1 in the order they were placed.
+ *
+ * Input order is trusted (fetchAnnotations already sorts by created_at then id);
+ * this filters to the customer half and attaches the numbers.
+ */
+export function numberCustomerPins(annotations: ProofAnnotation[]): NumberedPin[] {
+  return annotations
+    .filter((a) => a.author_kind === 'customer')
+    .map((pin, i) => ({ pin, number: i + 1 }))
+}
+
+/** The pins that arrived with one specific change request. */
+export function pinsForEvent(pins: NumberedPin[], eventId: string | null): NumberedPin[] {
+  if (!eventId) return []
+  return pins.filter((p) => p.pin.proof_event_id === eventId)
+}
+
+/**
+ * The pins that belong on a given image.
+ *
+ * Matches on the image id, falling back to the denormalised side when a pin has
+ * no image id — the schema allows that (the column is nullable, and the FK is ON
+ * DELETE SET NULL, so re-uploading artwork orphans a pin's anchor while leaving
+ * its side intact). The fallback is what keeps such a pin visible on the face it
+ * was placed on instead of vanishing from the artwork entirely.
+ *
+ * A pin whose image is not among those passed in simply isn't returned — the
+ * hero shows only the first front and first back, so on a multi-recipient proof
+ * some pins have no thumbnail to sit on. Those are never lost: the change-request
+ * strip lists every pin regardless of where it sits.
+ */
+export function pinsOnImage(
+  pins: NumberedPin[],
+  image: { id: string; side: AnnotationSide | null },
+): NumberedPin[] {
+  return pins.filter((p) =>
+    p.pin.proof_version_image_id
+      ? p.pin.proof_version_image_id === image.id
+      : p.pin.side != null && p.pin.side === image.side,
+  )
+}
+
+/** How many of these pins are still to be dealt with. */
+export function unresolvedCount(pins: NumberedPin[]): number {
+  return pins.filter((p) => p.pin.resolved_at == null).length
+}
+
 /** Group annotations by the image they sit on, preserving order. */
 export function groupByImage<T extends { proof_version_image_id: string | null }>(
   items: T[],

@@ -29,6 +29,15 @@ import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { deriveSharedApprovalState, type SharedApprovalState } from '../lib/sharedApproval'
 import { findStrandedMaterialApprovals } from '../lib/strandedApprovals'
 import { ProofAnnotationEditor } from '../components/ProofAnnotationEditor'
+import {
+  fetchAnnotations,
+  markerPosition,
+  numberCustomerPins,
+  pinsForEvent,
+  pinsOnImage,
+  unresolvedCount,
+  type ProofAnnotation,
+} from '../lib/proofAnnotations'
 import { useCalloutsEnabled } from '../lib/useCalloutsEnabled'
 import { addCardToSet, attachProofToSet, createSetFromProof, markSetReviewLinkSent, setReviewPath } from '../lib/proofSets'
 import { duplicateProof } from '../lib/duplicateProof'
@@ -284,7 +293,10 @@ export default function ProofDetailPage() {
   // preview at the top of the main column. One representative front +
   // one back is enough — the version modal and customer view hold the
   // full gallery. Reloaded by loadProof whenever the proof changes.
-  const [heroImages, setHeroImages] = useState<{ url: string; side: 'front' | 'back' | null }[]>([])
+  // id is carried so customer pins can be matched to the face they sit on.
+  const [heroImages, setHeroImages] = useState<
+    { id: string; url: string; side: 'front' | 'back' | null }[]
+  >([])
   const [versions, setVersions] = useState<ModalVersion[]>([])
   // proof_version_id → signed thumbnail URL. Populated alongside
   // versions inside loadProof by batch-signing the first front image
@@ -522,38 +534,51 @@ export default function ProofDetailPage() {
   // calloutsEnabled starts false so the button never flashes in before the
   // settings read lands; a gate must fail closed.
   const [annotationVersion, setAnnotationVersion] = useState<ModalVersion | null>(null)
-  const [annotationCount, setAnnotationCount] = useState(0)
+  const [annotations, setAnnotations] = useState<ProofAnnotation[]>([])
+  /** Pin to open the panel focused on, set by the strip's "Show me". */
+  const [focusPinId, setFocusPinId] = useState<string | null>(null)
   // Shared with the post-save preview gate, which is the primary place notes get
   // written; this page is for adding one later or ticking off customer pins.
   const calloutsEnabled = useCalloutsEnabled()
 
-  // Note count for the hero-card button. Recounted when the version changes or
-  // after the panel edits anything, so the label never lies about what is there.
+  // Every note on the current version, both authors. Refetched when the version
+  // changes or after the panel edits anything, so no surface reading from this
+  // can claim something that isn't there.
+  //
+  // Deliberately NOT gated on calloutsEnabled, unlike the authoring button.
+  // That setting governs whether we can write notes TO a customer; a pin the
+  // customer has already sent is their message to us and must stay readable
+  // whatever we've switched on at our end. Gating the fetch would mean turning
+  // callouts off silently swallowed inbound pins — the exact trapdoor this
+  // change exists to close.
   const currentVersionId = versions.find((v) => v.is_current)?.id ?? null
   const [annotationsStamp, setAnnotationsStamp] = useState(0)
   useEffect(() => {
-    if (!calloutsEnabled || !currentVersionId) {
-      setAnnotationCount(0)
+    if (!currentVersionId) {
+      setAnnotations([])
       return
     }
     let cancelled = false
-    void supabase
-      .from('proof_annotations')
-      .select('id', { count: 'exact', head: true })
-      .eq('proof_version_id', currentVersionId)
-      .eq('author_kind', 'designer')
-      .then(({ count, error }) => {
-        if (cancelled) return
-        if (error) {
-          console.warn('[annotations] could not count notes', error)
-          return
-        }
-        setAnnotationCount(count ?? 0)
+    void fetchAnnotations(currentVersionId)
+      .then((rows) => {
+        if (!cancelled) setAnnotations(rows)
+      })
+      .catch((err) => {
+        // Leave whatever we already had rather than blanking the strip on a
+        // failed read — an empty list here reads as "the customer pointed at
+        // nothing", which is a lie a designer would act on.
+        console.warn('[annotations] could not load notes', err)
       })
     return () => {
       cancelled = true
     }
-  }, [calloutsEnabled, currentVersionId, annotationsStamp])
+  }, [currentVersionId, annotationsStamp])
+
+  // One numbering shared by the strip, the hero markers and the panel — so "①"
+  // means the same pin wherever the designer reads it.
+  const customerPins = numberCustomerPins(annotations)
+  const calloutCount = annotations.filter((a) => a.author_kind === 'designer').length
+  const openPinCount = unresolvedCount(customerPins)
 
   // Real (non-bot) view times per version id for the dot indicators
   // and the VersionDetailModal history panel.
@@ -960,16 +985,20 @@ export default function ProofDetailPage() {
       void (async () => {
         const { data: imgRows } = await supabase
           .from('proof_version_images')
-          .select('image_path, side, sort_order')
+          .select('id, image_path, side, sort_order')
           .eq('proof_version_id', currentForHero.id)
           .eq('is_qr_code', false)
           .order('sort_order', { ascending: true })
         if (isStale()) return
-        const rows = (imgRows ?? []) as Array<{ image_path: string; side: 'front' | 'back' | null }>
+        const rows = (imgRows ?? []) as Array<{
+          id: string
+          image_path: string
+          side: 'front' | 'back' | null
+        }>
         const front = rows.find((r) => r.side !== 'back')
         const back = rows.find((r) => r.side === 'back')
         const picked = [front, back].filter(
-          (r): r is { image_path: string; side: 'front' | 'back' | null } => !!r,
+          (r): r is { id: string; image_path: string; side: 'front' | 'back' | null } => !!r,
         )
         if (picked.length === 0) {
           setHeroImages([])
@@ -986,7 +1015,7 @@ export default function ProofDetailPage() {
         for (const s of signed) if (s.path && s.signedUrl) urlByPath.set(s.path, s.signedUrl)
         setHeroImages(
           picked
-            .map((r) => ({ url: urlByPath.get(r.image_path) ?? '', side: r.side }))
+            .map((r) => ({ id: r.id, url: urlByPath.get(r.image_path) ?? '', side: r.side }))
             .filter((x) => x.url),
         )
       })()
@@ -2339,6 +2368,15 @@ export default function ProofDetailPage() {
         .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0] ?? null)
     : null
 
+  // The pins that arrived with the request the strip is quoting, and a count of
+  // any others still open on this version. Split rather than merged so a pin is
+  // never shown under a comment it didn't come with — attribution matters when
+  // the text IS the instruction.
+  const requestPins = pinsForEvent(customerPins, latestChangeRequest?.id ?? null)
+  const olderOpenPins = customerPins.filter(
+    (m) => m.pin.resolved_at == null && m.pin.proof_event_id !== (latestChangeRequest?.id ?? null),
+  ).length
+
   const quantityRange = currentVersion
     ? quantityRangeLabel({
         customQuote: currentVersion.custom_quote,
@@ -2377,17 +2415,37 @@ export default function ProofDetailPage() {
           {/* Notes for the customer (migration 000347). Lives on the hero card
               rather than the Versions panel below: this is the artwork the note
               is about, and it is what the designer is already looking at.
-              Hidden while settings.proof_callouts_enabled is off. Only ever the
-              current version — a note on a superseded design would never reach
-              the customer. Offered on a locked proof too: an approved customer
-              may still be reading it, and pin tick-off is retrospective. */}
-          {calloutsEnabled && (
+              Only ever the current version — a note on a superseded design would
+              never reach the customer. Offered on a locked proof too: an
+              approved customer may still be reading it, and pin tick-off is
+              retrospective.
+
+              Shown when the authoring gate is on OR the customer has pinned
+              something. The label used to count designer notes only, so a proof
+              carrying a customer's pin and no notes of ours read "Add a note" —
+              nothing on the page said a customer had pointed at anything, and
+              the one way in looked like an empty drawer. Outstanding pins now
+              win the label and take the attention colour, because they are work
+              waiting on us rather than a count of what we've written. */}
+          {(calloutsEnabled || customerPins.length > 0) && (
             <button
               type="button"
-              onClick={() => setAnnotationVersion(currentVersion)}
-              className="flex-none rounded-[6px] border border-line px-2 py-1 text-[12px] text-ink-soft transition-colors hover:border-ink-mute hover:text-ink focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]"
+              onClick={() => {
+                setFocusPinId(null)
+                setAnnotationVersion(currentVersion)
+              }}
+              className={[
+                'flex-none rounded-[6px] border px-2 py-1 text-[12px] transition-colors focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]',
+                openPinCount > 0
+                  ? 'border-low bg-low-soft font-medium text-low hover:border-low'
+                  : 'border-line text-ink-soft hover:border-ink-mute hover:text-ink',
+              ].join(' ')}
             >
-              {annotationCount > 0 ? `Notes · ${annotationCount}` : 'Add a note'}
+              {openPinCount > 0
+                ? `${openPinCount} customer pin${openPinCount === 1 ? '' : 's'}`
+                : calloutCount > 0
+                  ? `Notes · ${calloutCount}`
+                  : 'Add a note'}
             </button>
           )}
         </div>
@@ -2412,6 +2470,37 @@ export default function ProofDetailPage() {
                   loading="lazy"
                   className="block w-full"
                 />
+                {/* Customer pins, on the artwork they were placed on. The most
+                    direct answer to "where did they mean" is the dot sitting on
+                    the card the designer is already looking at.
+
+                    Plain spans, not buttons: this whole card is one button that
+                    opens the version detail, and a nested button is invalid.
+                    Clicking through to a pin is the strip's job. Positioned
+                    against the wrapper, which is safe because the image is the
+                    wrapper's only in-flow child (block, w-full, height auto), so
+                    the two boxes coincide — the condition markerPosition needs.
+
+                    The customer page's "never draw on the artwork" rule is about
+                    what the CUSTOMER is shown; this is our side of the glass,
+                    where the panel already draws the same markers. */}
+                {pinsOnImage(customerPins, img).map((m) => {
+                  const pos = markerPosition(Number(m.pin.x), Number(m.pin.y))
+                  const done = m.pin.resolved_at != null
+                  return (
+                    <span
+                      key={m.pin.id}
+                      aria-hidden="true"
+                      className={[
+                        'pointer-events-none absolute grid h-[20px] w-[20px] place-items-center rounded-full border-2 border-white text-[10.5px] font-medium leading-none tabular-nums text-white shadow-[0_1px_3px_rgba(22,19,17,0.45)]',
+                        done ? 'bg-in-stock' : 'bg-allocated',
+                      ].join(' ')}
+                      style={{ left: pos.left, top: pos.top, transform: 'translate(-50%, -50%)' }}
+                    >
+                      {m.number}
+                    </span>
+                  )
+                })}
                 {heroImages.length > 1 && (
                   <span
                     className="absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider"
@@ -3334,14 +3423,93 @@ export default function ProofDetailPage() {
                     </span>
                   )}
                 </div>
+                {/* What they pointed at, above what they wrote — the same order
+                    the Help Scout note uses, and for the same reason: a pin
+                    carries the specific instruction while the comment is usually
+                    the general framing.
+
+                    This strip is the whole point of the change. It already
+                    pulled the comment to the top of the page and then dropped
+                    the pins that arrived with it, so the path a designer
+                    actually takes (read the request → "Add a new version") ran
+                    straight past the bit where the customer said WHERE. */}
+                {requestPins.length > 0 && (
+                  <div className="mt-2.5">
+                    <p className="text-[12px] font-medium uppercase tracking-wider text-low">
+                      They pointed at {requestPins.length}{' '}
+                      {requestPins.length === 1 ? 'spot' : 'spots'} on the artwork
+                    </p>
+                    <ul className="mt-1.5 space-y-1.5">
+                      {requestPins.map((m) => {
+                        const done = m.pin.resolved_at != null
+                        return (
+                          <li key={m.pin.id} className="flex items-start gap-2">
+                            <span
+                              aria-hidden="true"
+                              className={[
+                                'mt-[1px] grid h-[19px] w-[19px] flex-none place-items-center rounded-full text-[10.5px] font-medium leading-none tabular-nums text-white',
+                                done ? 'bg-in-stock' : 'bg-allocated',
+                              ].join(' ')}
+                            >
+                              {m.number}
+                            </span>
+                            <span
+                              className={[
+                                'min-w-0 text-[13.5px] leading-[1.5]',
+                                done ? 'text-ink-mute line-through' : 'text-ink-soft',
+                              ].join(' ')}
+                            >
+                              {m.pin.side && (
+                                <span className="text-ink-mute">{m.pin.side} · </span>
+                              )}
+                              {m.pin.body}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFocusPinId(m.pin.id)
+                                setAnnotationVersion(currentVersion)
+                              }}
+                              className="mt-[2px] flex-none bg-transparent p-0 text-[12px] text-allocated underline decoration-1 underline-offset-2 hover:text-ink focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]"
+                            >
+                              Show me
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </div>
+                )}
                 {latestChangeRequest?.comment ? (
-                  <p className="mt-2 text-[14px] leading-[1.55] text-ink-soft">
+                  <p className="mt-2.5 text-[14px] leading-[1.55] text-ink-soft">
                     “{latestChangeRequest.comment}”
                   </p>
                 ) : (
                   <p className="mt-2 text-[13px] text-ink-mute">
                     The customer asked for changes on v{currentVersion.version_number}. See the
                     Names section below for the detail.
+                  </p>
+                )}
+                {/* Pins on this version that came with an EARLIER request, so
+                    they belong under neither this comment nor this heading — but
+                    must not go silent either, which is the whole failure being
+                    fixed here. Rare (a request normally begets a new version,
+                    and pins are per-version), and quiet by design. */}
+                {olderOpenPins > 0 && (
+                  <p className="mt-2 text-[12.5px] text-ink-mute">
+                    {olderOpenPins} earlier{' '}
+                    {olderOpenPins === 1 ? 'pin is' : 'pins are'} still open on this
+                    version.{' '}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFocusPinId(null)
+                        setAnnotationVersion(currentVersion)
+                      }}
+                      className="bg-transparent p-0 text-[12.5px] text-allocated underline decoration-1 underline-offset-2 hover:text-ink"
+                    >
+                      Show all pins
+                    </button>
                   </p>
                 )}
                 <div className="mt-3 flex flex-wrap items-center gap-3 max-md:flex-col max-md:items-stretch">
@@ -4416,11 +4584,19 @@ export default function ProofDetailPage() {
       {annotationVersion && session?.user?.id && (
         <ProofAnnotationEditor
           open
-          onClose={() => setAnnotationVersion(null)}
+          onClose={() => {
+            setAnnotationVersion(null)
+            // Cleared on close so reopening from the hero button lands on the
+            // artwork rather than silently re-focusing whatever pin was clicked
+            // through last time.
+            setFocusPinId(null)
+          }}
           versionId={annotationVersion.id}
           versionNumber={annotationVersion.version_number}
           userId={session.user.id}
           onChanged={() => setAnnotationsStamp((n) => n + 1)}
+          focusPinId={focusPinId}
+          canWriteCallouts={calloutsEnabled}
         />
       )}
 

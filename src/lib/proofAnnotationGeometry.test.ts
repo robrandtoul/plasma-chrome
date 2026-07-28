@@ -12,7 +12,12 @@ import {
   cropStyle,
   groupByImage,
   markerPosition,
+  numberCustomerPins,
+  pinsForEvent,
+  pinsOnImage,
   pointToFraction,
+  unresolvedCount,
+  type ProofAnnotation,
 } from './proofAnnotationGeometry'
 
 let passed = 0
@@ -173,6 +178,102 @@ test('groupByImage buckets by image and preserves order within a bucket', () => 
 test('groupByImage keeps unanchored notes under a null key', () => {
   const grouped = groupByImage([{ proof_version_image_id: null, n: 1 }])
   assert.deepEqual(grouped.get(null)?.map((r) => r.n), [1])
+})
+
+// ── Pin numbering ────────────────────────────────────────────────────────────
+//
+// The numbering is what lets the strip, the thumbnail marker and the editor
+// checklist refer to the same pin. These tests pin that agreement.
+
+/** Minimal annotation row; only the fields the numbering reads are meaningful. */
+function ann(over: Partial<ProofAnnotation>): ProofAnnotation {
+  return {
+    id: 'id',
+    proof_version_id: 'v1',
+    proof_version_image_id: null,
+    side: null,
+    associated_name: null,
+    x: 0.5,
+    y: 0.5,
+    body: 'note',
+    author_kind: 'customer',
+    created_by: null,
+    author_name: 'Dean',
+    proof_event_id: null,
+    resolved_at: null,
+    resolved_by: null,
+    created_at: '2026-07-28T10:09:20.000Z',
+    ...over,
+  }
+}
+
+test('numberCustomerPins ignores designer callouts when numbering', () => {
+  // A designer note sitting between two pins must not consume a number, or the
+  // strip and the editor checklist drift apart the moment anyone writes one.
+  const numbered = numberCustomerPins([
+    ann({ id: 'p1' }),
+    ann({ id: 'd1', author_kind: 'designer' }),
+    ann({ id: 'p2' }),
+  ])
+  assert.deepEqual(
+    numbered.map((n) => [n.pin.id, n.number]),
+    [
+      ['p1', 1],
+      ['p2', 2],
+    ],
+  )
+})
+
+test('numberCustomerPins keeps numbering across change requests', () => {
+  // Second request continues at 3 rather than restarting — see the module note.
+  const numbered = numberCustomerPins([
+    ann({ id: 'p1', proof_event_id: 'e1' }),
+    ann({ id: 'p2', proof_event_id: 'e1' }),
+    ann({ id: 'p3', proof_event_id: 'e2' }),
+  ])
+  assert.deepEqual(pinsForEvent(numbered, 'e2').map((n) => n.number), [3])
+})
+
+test('pinsForEvent returns nothing for a request that carried no pins', () => {
+  const numbered = numberCustomerPins([ann({ id: 'p1', proof_event_id: 'e1' })])
+  assert.deepEqual(pinsForEvent(numbered, 'e2'), [])
+  assert.deepEqual(pinsForEvent(numbered, null), [])
+})
+
+test('pinsOnImage matches on image id', () => {
+  const numbered = numberCustomerPins([
+    ann({ id: 'p1', proof_version_image_id: 'img-back', side: 'back' }),
+    ann({ id: 'p2', proof_version_image_id: 'img-front', side: 'front' }),
+  ])
+  assert.deepEqual(
+    pinsOnImage(numbered, { id: 'img-back', side: 'back' }).map((n) => n.pin.id),
+    ['p1'],
+  )
+})
+
+test('pinsOnImage falls back to side when a pin lost its image anchor', () => {
+  // proof_version_image_id is ON DELETE SET NULL, so re-uploading artwork
+  // orphans the anchor. The pin must still show on the face it was placed on.
+  const numbered = numberCustomerPins([ann({ id: 'p1', proof_version_image_id: null, side: 'back' })])
+  assert.deepEqual(
+    pinsOnImage(numbered, { id: 'img-back', side: 'back' }).map((n) => n.pin.id),
+    ['p1'],
+  )
+  assert.deepEqual(pinsOnImage(numbered, { id: 'img-front', side: 'front' }), [])
+})
+
+test('pinsOnImage drops a pin with neither an image id nor a side', () => {
+  // Nowhere honest to draw it. The strip still lists it.
+  const numbered = numberCustomerPins([ann({ id: 'p1', proof_version_image_id: null, side: null })])
+  assert.deepEqual(pinsOnImage(numbered, { id: 'img-front', side: 'front' }), [])
+})
+
+test('unresolvedCount counts only pins not yet ticked off', () => {
+  const numbered = numberCustomerPins([
+    ann({ id: 'p1' }),
+    ann({ id: 'p2', resolved_at: '2026-07-28T11:00:00.000Z' }),
+  ])
+  assert.equal(unresolvedCount(numbered), 1)
 })
 
 console.log(`\n${passed} passed`)

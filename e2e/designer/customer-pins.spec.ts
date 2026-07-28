@@ -122,3 +122,83 @@ test.describe('customer pins on the designer side', () => {
     await expect(page.getByText(/what the customer pointed at/i).first()).toBeVisible()
   })
 })
+
+// ── Discoverability on the proof page ────────────────────────────────────────
+//
+// The panel above worked; nothing pointed at it. A real customer (28 Jul 2026)
+// pinned a spot on his card and the proof page's only signal was a button
+// labelled "Add a note" — because the label counted the designer's own notes and
+// ignored the customer's pins entirely. The strip that exists to pull a change
+// request to the top of the page quoted the comment and dropped the pins that
+// arrived with it, so the path a designer actually takes (read the request →
+// "Add a new version") ran straight past the bit where the customer said WHERE.
+//
+// These tests are about being FOUND, not about the panel working.
+//
+// ⚠ Assert STRUCTURE, never wording.
+
+test.describe('a customer pin makes itself known on the proof page', () => {
+  test.beforeEach(async ({ page }) => {
+    // 'changes' in the id puts the fixture proof in the changes_requested
+    // bucket, which is what renders the strip. See mock-supabase.
+    await page.goto('/verify-harness/index.html?path=/proofs/p-open-changes')
+    await expect(page.getByRole('heading', { name: /realise/i })).toBeVisible()
+  })
+
+  test('the change-request strip lists what the customer pointed at', async ({ page }) => {
+    // The regression this whole change exists to prevent: the strip showing the
+    // comment while the pins that came with it stay invisible.
+    const strip = page.locator('section').filter({ hasText: /customer requested changes/i }).last()
+    await expect(strip.getByRole('listitem')).toHaveCount(2)
+    await expect(strip.getByRole('button', { name: /show me/i })).toHaveCount(2)
+  })
+
+  test('strip rows carry the same numbers as the panel', async ({ page }) => {
+    // A designer cross-references these constantly ("number 2 is done"). The
+    // numbering is computed once and shared, and this is what proves it.
+    const strip = page.locator('section').filter({ hasText: /customer requested changes/i }).last()
+    const rows = strip.getByRole('listitem')
+    await expect(rows.nth(0)).toContainText(/^1/)
+    await expect(rows.nth(1)).toContainText(/^2/)
+  })
+
+  test('the pins are drawn on the artwork already on the page', async ({ page }) => {
+    // The most direct answer to "where did they mean" is a dot on the card the
+    // designer is already looking at — one per face, not both on one.
+    const hero = page.getByRole('button', { name: /open version 1 detail/i })
+    await expect(hero.locator('span[aria-hidden="true"]')).toHaveCount(2)
+  })
+
+  test('the notes button names outstanding pins rather than counting our own notes', async ({ page }) => {
+    // The exact failure reported: with a customer pin waiting and no designer
+    // notes written, the only way in read "Add a note" — indistinguishable from
+    // a proof with nothing on it at all.
+    const button = page.getByRole('button', { name: /pin/i }).filter({ hasNotText: /show me/i })
+    await expect(button).toHaveCount(1)
+    await expect(button).toContainText(/2/)
+  })
+
+  test('"Show me" opens the panel on that pin\'s own face', async ({ page }) => {
+    // Pin 2 is on the back; the panel defaults to the front, so landing on the
+    // back proves the click carried the designer to the right place.
+    const strip = page.locator('section').filter({ hasText: /customer requested changes/i }).last()
+    await strip.getByRole('button', { name: /show me/i }).nth(1).click()
+
+    await expect(page.getByRole('heading', { name: /notes on v1/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^Customer pin 2/ })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^Customer pin 1/ })).toHaveCount(0)
+  })
+
+  test('reopening from the button lands on the artwork, not the last pin clicked', async ({ page }) => {
+    // Focus is a property of the click that carried it, not sticky state — a
+    // designer opening the panel cold should not be dropped somewhere they did
+    // not ask for.
+    const strip = page.locator('section').filter({ hasText: /customer requested changes/i }).last()
+    await strip.getByRole('button', { name: /show me/i }).nth(1).click()
+    await expect(page.getByRole('button', { name: /^Customer pin 2/ })).toBeVisible()
+    await page.getByRole('button', { name: /^close$/i }).click()
+
+    await page.getByRole('button', { name: /pin/i }).filter({ hasNotText: /show me/i }).click()
+    await expect(page.getByRole('button', { name: /^Customer pin 1/ })).toBeVisible()
+  })
+})

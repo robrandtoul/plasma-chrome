@@ -598,7 +598,30 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
     // that only appears on an order-free project.
     if (filters['eq:proof_id']) rows = rows.filter((r) => r.proof_id === filters['eq:proof_id'])
   } else if (table === 'public_dashboard_projects') {
-    rows = DASHBOARD_PROJECTS
+    // ProofDetailPage reads one row by proof_id for its status pill + the
+    // change-request strip's visibility gate. An id containing 'changes'
+    // buckets as changes_requested, which is what puts the strip (and so the
+    // customer-pin list) on screen — see ?path=/proofs/p-open-changes.
+    if (filters['eq:proof_id']) {
+      const pid = String(filters['eq:proof_id'])
+      rows = [{
+        proof_id: pid,
+        status: 'in_progress',
+        current_version_id: `ver-${pid}`,
+        current_version_viewed_at: daysAgo(1),
+        latest_non_view_event_type: pid.includes('changes') ? 'request_changes' : null,
+        latest_non_view_event_at: pid.includes('changes') ? daysAgo(0.2) : null,
+        version_created_at: daysAgo(2),
+        has_open_change_request: pid.includes('changes'),
+        rule_code: null, rule_meta: null,
+        snoozed_until: null, snooze_rule_code: null, snooze_note: null,
+        helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null,
+        last_activity_at: daysAgo(0.2),
+        follow_up_rule_code: null, order_status: null,
+      }]
+    } else {
+      rows = DASHBOARD_PROJECTS
+    }
     if (filters['eq:status']) rows = rows.filter((r) => r.status === filters['eq:status'])
   } else if (table === 'order_link_notes') {
     rows = [{ proof_id: 'p-a1', note: 'Waiting on metal thickness — chased today.', created_by_name: 'Chris Jackson', created_by_initials: 'CJ', created_by_colour: 'teal', updated_at: daysAgo(0.1) }]
@@ -663,6 +686,19 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
       { id: 'img-front', image_path: 'proofs/approved-front.pdf', original_filename: 'Approved_Front.pdf', associated_name: null, side: 'front', layout_id: null },
       { id: 'img-back', image_path: 'proofs/approved-back.pdf', original_filename: 'Approved_Back.pdf', associated_name: null, side: 'back', layout_id: null },
     ]
+  } else if (table === 'proof_events') {
+    // The change request the pins below arrived with — same proof_event_id, so
+    // the detail page's strip can group them under this comment the way
+    // proof-action wrote them.
+    const versionIds: string[] = filters['in:proof_version_id'] ?? []
+    rows = versionIds.map((vid) => ({
+      id: 'evt-1', proof_version_id: vid, name: null, event_type: 'request_changes',
+      actor_name: 'Nolan Bushnell',
+      comment: 'Just numbers on the back please under the barcode starting at 001 working upwards',
+      from_ip: null, from_ua: null, helpscout_thread_id: null,
+      created_at: daysAgo(0.2), round_variant_id: null, side: null,
+      proof_round_variants: null,
+    }))
   } else if (table === 'proof_annotations') {
     // Customer pins as proof-action writes them (migration 000347): one per
     // side, and — the detail that matters — a SHARED created_at, because both
