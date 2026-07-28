@@ -9,6 +9,8 @@ import {
   MessageSquare,
   ShieldCheck,
   Coins,
+  MapPin,
+  CheckCircle2,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { designerColourCss } from '../../lib/designerColours'
@@ -217,6 +219,61 @@ interface ArtworkCheckStats {
   }
 }
 
+// ── Proof annotations (migrations 000347/000362) ─────────────────────────────
+// Usage reporting for coordinate-anchored notes on a proof image. The two
+// halves — designer callouts written for the customer, and customer pins placed
+// alongside a change request — are separate acts by separate people and are
+// never averaged into one "annotations used" figure.
+interface AnnotationSideTotals {
+  notes: number
+  versions: number
+  proofs: number
+  last_at: string | null
+}
+interface CalloutTotals extends AnnotationSideTotals {
+  designers: number
+}
+interface PinTotals extends AnnotationSideTotals {
+  change_requests: number
+}
+interface AnnotationPersonRow {
+  created_by: string | null
+  name: string | null
+  initials: string | null
+  colour: string | null
+  notes: number
+  versions: number
+  proofs: number
+  last_at: string | null
+}
+interface AnnotationWeekRow {
+  week_start: string
+  callouts: number
+  pins: number
+  proofs: number
+}
+interface AnnotationStats {
+  days: number
+  since: string
+  gates: { callouts_enabled: boolean; pins_enabled: boolean }
+  callouts: CalloutTotals
+  pins: PinTotals
+  // `from` on both adoption blocks is the effective start: the later of the
+  // window edge and the first time that half was used. Work predating the
+  // feature could never have used it, so counting it would permanently
+  // understate uptake (the 4%-vs-29% trap from the artwork-check tab).
+  callout_adoption: { from: string | null; versions_created: number; versions_with_callout: number }
+  pin_adoption: {
+    from: string | null
+    change_requests: number
+    change_requests_with_pins: number
+    pins_on_those: number
+  }
+  follow_through: { pins: number; resolved: number; median_hours_to_resolve: number | string | null }
+  by_person: AnnotationPersonRow[]
+  weekly: AnnotationWeekRow[]
+}
+
 const LOSS_LABELS: Record<string, string> = {
   price_too_high: 'Price too high',
   different_direction: 'Wanted a different direction',
@@ -225,7 +282,7 @@ const LOSS_LABELS: Record<string, string> = {
   still_thinking: 'Still thinking',
 }
 
-type Tab = 'funnel' | 'hot' | 'team' | 'products' | 'checks'
+type Tab = 'funnel' | 'hot' | 'team' | 'products' | 'checks' | 'annotations'
 
 const num = (v: number | string | null | undefined): number => {
   if (v == null) return 0
@@ -324,6 +381,15 @@ export default function AdminAnalyticsPage() {
   const [checkLoading, setCheckLoading] = useState(true)
 
   const [checkResponse, setCheckResponse] = useState<CheckResponseStats | null>(null)
+
+  // Annotation usage. Same shape of isolation as the artwork-check fetch above,
+  // and for the same reasons: its own adjustable window, and a missing 000362
+  // must degrade to one explanatory panel rather than taking the page down.
+  const [annDays, setAnnDays] = useState(30)
+  const [annStats, setAnnStats] = useState<AnnotationStats | null>(null)
+  const [annError, setAnnError] = useState<string | null>(null)
+  const [annLoading, setAnnLoading] = useState(true)
+
   // Anthropic bills in USD; this converts for a familiar second figure only.
   // Null simply hides the pound line — the dollar figure is the real one.
   const [fxRates, setFxRates] = useState<ExchangeRates | null>(null)
@@ -360,6 +426,26 @@ export default function AdminAnalyticsPage() {
       cancelled = true
     }
   }, [checkDays])
+
+  useEffect(() => {
+    let cancelled = false
+    setAnnLoading(true)
+    void (async () => {
+      const { data, error: rpcErr } = await supabase.rpc('analytics_annotations', { p_days: annDays })
+      if (cancelled) return
+      if (rpcErr) {
+        setAnnError(rpcErr.message)
+        setAnnStats(null)
+      } else {
+        setAnnError(null)
+        setAnnStats(data as AnnotationStats)
+      }
+      setAnnLoading(false)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [annDays])
 
   useEffect(() => {
     let cancelled = false
@@ -419,6 +505,7 @@ export default function AdminAnalyticsPage() {
     { id: 'team', label: 'Team', icon: Users },
     { id: 'products', label: 'Products', icon: Boxes },
     { id: 'checks', label: 'Artwork checks', icon: ShieldCheck },
+    { id: 'annotations', label: 'Annotations', icon: MapPin },
   ]
 
   return (
@@ -477,6 +564,15 @@ export default function AdminAnalyticsPage() {
               error={checkError}
               days={checkDays}
               onDaysChange={setCheckDays}
+            />
+          )}
+          {tab === 'annotations' && (
+            <AnnotationsSection
+              stats={annStats}
+              loading={annLoading}
+              error={annError}
+              days={annDays}
+              onDaysChange={setAnnDays}
             />
           )}
         </>
@@ -1570,6 +1666,408 @@ function CheckWeeklyChart({ rows }: { rows: CheckWeekRow[] }) {
         <span className="inline-flex items-center gap-1.5 text-[11px] text-ink-mute">
           <span className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--c-low)' }} />
           Found something
+        </span>
+      </div>
+    </div>
+  )
+}
+
+// ── 6. Annotations ───────────────────────────────────────────────────────────
+// Is anyone using the coordinate-anchored notes? Two independent halves, never
+// averaged: designers writing callouts for customers to read, and customers
+// pinning a spot instead of describing it in prose. Either can legitimately be
+// dark while the other is busy — they are separate gates (000347).
+function AnnotationsSection({
+  stats,
+  loading,
+  error,
+  days,
+  onDaysChange,
+}: {
+  stats: AnnotationStats | null
+  loading: boolean
+  error: string | null
+  days: number
+  onDaysChange: (d: number) => void
+}) {
+  const ranges = [7, 30, 90]
+
+  const rangeStrip = (
+    <div className="mb-4 flex items-center gap-2">
+      <span className="text-xs font-semibold uppercase tracking-wider text-ink-dim">Last</span>
+      {ranges.map((r) => (
+        <button
+          key={r}
+          onClick={() => onDaysChange(r)}
+          className={[
+            'rounded-full px-3 py-1 text-xs transition-colors',
+            days === r
+              ? 'bg-ink text-surface font-semibold'
+              : 'bg-surface text-ink-mute ring-1 ring-line hover:text-ink',
+          ].join(' ')}
+        >
+          {r} days
+        </button>
+      ))}
+    </div>
+  )
+
+  if (error) {
+    return (
+      <div className="rounded-2xl bg-out-soft p-6 text-sm text-out ring-1 ring-out">
+        Couldn’t load annotation usage: {error}
+        <p className="mt-2 text-ink-mute">
+          If this says the function does not exist, migration <code>000362</code> hasn’t been applied yet.
+        </p>
+      </div>
+    )
+  }
+  // Same belt-and-braces arm as the checks tab: an unrecognised shape (older
+  // function signature, stubbed client) degrades to the empty path rather than
+  // throwing on stats.callouts.notes and white-screening the page.
+  if (loading || !stats || !stats.callouts || !stats.pins) {
+    return (
+      <>
+        {rangeStrip}
+        {loading ? (
+          <div className="flex justify-center py-16">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-gray-900" />
+          </div>
+        ) : (
+          <PanelShell title="Annotations" eyebrow="Usage" icon={MapPin} accent="var(--c-brand)">
+            <p className="text-sm text-ink-mute">No annotation usage data available yet.</p>
+          </PanelShell>
+        )}
+      </>
+    )
+  }
+
+  const gates = stats.gates ?? { callouts_enabled: false, pins_enabled: false }
+  const c = stats.callouts
+  const p = stats.pins
+  const byPerson = stats.by_person ?? []
+  const weeklyRows = stats.weekly ?? []
+  const ca = stats.callout_adoption ?? { from: null, versions_created: 0, versions_with_callout: 0 }
+  const pa = stats.pin_adoption ?? { from: null, change_requests: 0, change_requests_with_pins: 0, pins_on_those: 0 }
+  const ft = stats.follow_through ?? { pins: 0, resolved: 0, median_hours_to_resolve: null }
+
+  const calloutRate = pct(ca.versions_with_callout, ca.versions_created)
+  const pinRate = pct(pa.change_requests_with_pins, pa.change_requests)
+  const resolveRate = pct(ft.resolved, ft.pins)
+  const pinsPerRequest = pa.change_requests_with_pins > 0 ? pa.pins_on_those / pa.change_requests_with_pins : 0
+
+  // Both switched off is a completely different story from "nobody uses it",
+  // and the raw numbers below can't tell them apart.
+  if (!gates.callouts_enabled && !gates.pins_enabled) {
+    return (
+      <>
+        {rangeStrip}
+        <PanelShell title="Annotations are switched off" eyebrow="Usage" icon={MapPin} accent="var(--c-out)">
+          <p className="text-sm text-ink-mute">
+            Neither designer callouts nor customer pins are enabled, so there is nothing to measure. Both are
+            independent switches under <Link className="underline" to="/admin/settings">Admin → Settings</Link>.
+          </p>
+        </PanelShell>
+      </>
+    )
+  }
+
+  if (c.notes === 0 && p.notes === 0) {
+    return (
+      <>
+        {rangeStrip}
+        <PanelShell title="Annotations" eyebrow="Usage" icon={MapPin} accent="var(--c-brand)">
+          <p className="text-sm text-ink-mute">
+            No notes have been written in the last {stats.days} days. Try a longer window — and note that callouts are{' '}
+            {gates.callouts_enabled ? 'on' : 'off'} and customer pins are {gates.pins_enabled ? 'on' : 'off'} under{' '}
+            <Link className="underline" to="/admin/settings">Admin → Settings</Link>.
+          </p>
+        </PanelShell>
+      </>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {rangeStrip}
+
+      {/* The two halves, side by side and never combined. Each shows volume,
+          the spread it is drawn from, and its own uptake rate. */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <PanelShell
+          title="Designer callouts"
+          eyebrow={gates.callouts_enabled ? 'Notes written for the customer' : 'Switched off'}
+          icon={MessageSquare}
+          accent="var(--c-brand)"
+        >
+          <div className="flex items-baseline gap-2">
+            <span className="text-3xl font-bold text-ink">{c.notes}</span>
+            <span className="text-sm text-ink-mute">
+              note{c.notes === 1 ? '' : 's'} · {c.designers} designer{c.designers === 1 ? '' : 's'}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-ink-mute">
+            Across {c.versions} version{c.versions === 1 ? '' : 's'} on {c.proofs} project
+            {c.proofs === 1 ? '' : 's'}
+            {c.last_at ? ` · last on ${fmtDate(c.last_at)}` : ''}
+          </p>
+          <div className="mt-3 border-t border-line-soft pt-3">
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-bold text-ink">{fmtPct(calloutRate)}</span>
+              <span className="text-sm text-ink-mute">of new versions get one</span>
+            </div>
+            <p className="mt-1 text-xs text-ink-mute">
+              {ca.versions_with_callout} of {ca.versions_created} version
+              {ca.versions_created === 1 ? '' : 's'} created since{' '}
+              {ca.from ? fmtDate(ca.from) : 'the start of the window'}.
+            </p>
+          </div>
+        </PanelShell>
+
+        <PanelShell
+          title="Customer pins"
+          eyebrow={gates.pins_enabled ? 'Pointing instead of describing' : 'Switched off'}
+          icon={MapPin}
+          accent="var(--c-allocated)"
+        >
+          <div className="flex items-baseline gap-2">
+            <span className="text-3xl font-bold text-ink">{p.notes}</span>
+            <span className="text-sm text-ink-mute">
+              pin{p.notes === 1 ? '' : 's'} · {p.change_requests} change request
+              {p.change_requests === 1 ? '' : 's'}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-ink-mute">
+            Across {p.versions} version{p.versions === 1 ? '' : 's'} on {p.proofs} project
+            {p.proofs === 1 ? '' : 's'}
+            {p.last_at ? ` · last on ${fmtDate(p.last_at)}` : ''}
+          </p>
+          <div className="mt-3 border-t border-line-soft pt-3">
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-bold text-ink">{fmtPct(pinRate)}</span>
+              <span className="text-sm text-ink-mute">of change requests come with pins</span>
+            </div>
+            <p className="mt-1 text-xs text-ink-mute">
+              {pa.change_requests_with_pins} of {pa.change_requests} request
+              {pa.change_requests === 1 ? '' : 's'} since{' '}
+              {pa.from ? fmtDate(pa.from) : 'the start of the window'}
+              {pa.change_requests_with_pins > 0
+                ? ` · ${pinsPerRequest.toFixed(1)} pins each when they do`
+                : ''}
+              .
+            </p>
+          </div>
+        </PanelShell>
+      </div>
+
+      {/* The framing note. Both rates are quoted against work that could
+          actually have used the feature, which is not the same as all work —
+          and a reader who assumes otherwise will read them as far worse than
+          they are. */}
+      <div className="rounded-xl bg-canvas px-4 py-3 text-sm ring-1 ring-line-soft">
+        <span className="font-semibold text-ink">Both rates count only work that could have used the feature.</span>{' '}
+        <span className="text-ink-soft">
+          Versions made before callouts existed could never have carried one, and change requests submitted before pins
+          existed could never have carried one either — counting them would understate uptake for months. Each rate
+          therefore starts at the first time that half was used. The callout rate is a cohort figure about{' '}
+          <em>new</em> versions, so it won’t match the raw version count above: a designer usually annotates a version
+          that already exists, and those sit outside both sides of the fraction.
+        </span>
+      </div>
+
+      {/* Concentration. Early on, a handful of notes from one person on one
+          test project reads as broad adoption unless the spread is stated. */}
+      {c.notes + p.notes > 0 && (c.proofs <= 2 || p.proofs <= 2) && (
+        <div className="rounded-xl bg-canvas px-4 py-3 text-sm ring-1 ring-line-soft">
+          <span className="font-semibold text-ink">Still concentrated.</span>{' '}
+          <span className="text-ink-soft">
+            {c.notes} callout{c.notes === 1 ? '' : 's'} on {c.proofs} project{c.proofs === 1 ? '' : 's'}, {p.notes} pin
+            {p.notes === 1 ? '' : 's'} on {p.proofs} — few enough that one person trying it out on one job moves every
+            figure on this tab. Test fixtures are counted like any other project; nothing is filtered out, because an
+            exclusion list baked into a migration goes stale silently and starts hiding real customers.
+          </span>
+        </div>
+      )}
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <PanelShell
+          title="Pins ticked off"
+          eyebrow="Follow-through"
+          icon={CheckCircle2}
+          accent={ft.pins > 0 && ft.resolved === 0 ? 'var(--c-low)' : 'var(--c-in-stock)'}
+        >
+          <div className="flex items-baseline gap-2">
+            <span className="text-3xl font-bold text-ink">{fmtPct(resolveRate)}</span>
+            <span className="text-sm text-ink-mute">
+              {ft.resolved} of {ft.pins} pin{ft.pins === 1 ? '' : 's'}
+            </span>
+          </div>
+          {num(ft.median_hours_to_resolve) > 0 && (
+            <p className="mt-1 text-sm text-ink-soft">
+              Typically ticked off after {resolveDelayLabel(num(ft.median_hours_to_resolve))}.
+            </p>
+          )}
+          <p className="mt-2 text-xs text-ink-mute">
+            {ft.pins > 0 && ft.resolved === 0
+              ? 'Nobody has ticked a pin off yet. That isn’t necessarily a backlog — the change may well have been made without anyone touching the checkbox — but it does mean the tick-off can’t be trusted as a record of what’s done.'
+              : 'Counts customer pins only. A designer’s own callout isn’t a task, so folding it in would invent a permanent backlog nobody was meant to clear.'}
+          </p>
+        </PanelShell>
+
+        <PanelShell title="Callouts per week" eyebrow="Both halves" icon={TrendingUp} accent="var(--c-brand)">
+          <AnnotationWeeklyChart rows={weeklyRows} />
+        </PanelShell>
+      </div>
+
+      <PanelShell title="Who writes callouts" eyebrow="Designers only" icon={Users} accent="var(--c-allocated)">
+        <AnnotationPeopleTable rows={byPerson} />
+        <p className="mt-3 text-xs text-ink-mute">
+          Customer pins carry the name the customer typed, not a profile, so they can’t be listed here — they’re in the
+          Customer pins panel above.
+        </p>
+      </PanelShell>
+    </div>
+  )
+}
+
+// Hours are the stored unit; neither "0.4 hours" nor "73 hours" reads well.
+function resolveDelayLabel(hours: number): string {
+  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))} minutes`
+  if (hours < 48) return `${Math.round(hours)} hour${Math.round(hours) === 1 ? '' : 's'}`
+  const d = Math.round(hours / 24)
+  return `${d} day${d === 1 ? '' : 's'}`
+}
+
+function AnnotationPeopleTable({ rows }: { rows: AnnotationPersonRow[] }) {
+  if (rows.length === 0) {
+    return <p className="text-sm text-ink-mute">No callouts written in this window.</p>
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-line">
+            <th className={thCls}>Designer</th>
+            <th className={thCls}>Callouts</th>
+            <th className={thCls}>Versions</th>
+            <th className={thCls}>Projects</th>
+            <th className={thCls}>Last one</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.created_by ?? r.name ?? 'unknown'} className="border-b border-line-soft last:border-0">
+              <td className="px-3 py-2">
+                <span className="inline-flex items-center gap-2">
+                  <span
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-white"
+                    style={{ backgroundColor: designerColourCss(r.colour) }}
+                  >
+                    {r.initials ?? '?'}
+                  </span>
+                  <span className="text-ink">{r.name ?? 'Unknown'}</span>
+                </span>
+              </td>
+              <td className="px-3 py-2 font-semibold text-ink">{r.notes}</td>
+              <td className="px-3 py-2 text-ink-soft">{r.versions}</td>
+              <td className="px-3 py-2 text-ink-soft">{r.proofs}</td>
+              <td className="px-3 py-2 text-ink-mute">{fmtDate(r.last_at)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function AnnotationWeeklyChart({ rows }: { rows: AnnotationWeekRow[] }) {
+  if (rows.length === 0) return <p className="text-sm text-ink-mute">No notes yet.</p>
+  const W = Math.max(rows.length * 70, 320)
+  const H = 190
+  const padL = 8
+  const padR = 8
+  const padTop = 14
+  const padBot = 26
+  const chartH = H - padTop - padBot
+  const colW = (W - padL - padR) / rows.length
+  const maxN = Math.max(...rows.map((r) => Math.max(r.callouts, r.pins)), 1)
+  // Two bars per week rather than a stack: these are different people doing
+  // different things, and a stack would invite reading the total as one number.
+  const barW = Math.min(colW * 0.26, 18)
+
+  return (
+    <div className="overflow-x-auto">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        width="100%"
+        height={H}
+        role="img"
+        aria-label="Callouts and customer pins per week"
+        style={{ maxWidth: W }}
+      >
+        {[0, 0.5, 1].map((g) => {
+          const y = padTop + chartH * (1 - g)
+          return (
+            <g key={g}>
+              <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="var(--c-line-soft)" strokeWidth={1} />
+              <text x={W - padR} y={y - 2} fontSize={9} textAnchor="end" fill="var(--c-ink-dim)">
+                {Math.round(maxN * g)}
+              </text>
+            </g>
+          )
+        })}
+        {rows.map((r, i) => {
+          const centre = padL + colW * i + colW / 2
+          const hC = (r.callouts / maxN) * chartH
+          const hP = (r.pins / maxN) * chartH
+          const xC = centre - barW - 2
+          const xP = centre + 2
+          return (
+            <g key={r.week_start}>
+              <rect
+                x={xC}
+                y={padTop + chartH - hC}
+                width={barW}
+                height={hC}
+                rx={3}
+                fill="color-mix(in srgb, var(--c-brand) 55%, transparent)"
+              />
+              <rect
+                x={xP}
+                y={padTop + chartH - hP}
+                width={barW}
+                height={hP}
+                rx={3}
+                fill="color-mix(in srgb, var(--c-allocated) 55%, transparent)"
+              />
+              {r.callouts > 0 && (
+                <text x={xC + barW / 2} y={padTop + chartH - hC - 4} fontSize={9} textAnchor="middle" fill="var(--c-ink-soft)" fontWeight={600}>
+                  {r.callouts}
+                </text>
+              )}
+              {r.pins > 0 && (
+                <text x={xP + barW / 2} y={padTop + chartH - hP - 4} fontSize={9} textAnchor="middle" fill="var(--c-ink-soft)" fontWeight={600}>
+                  {r.pins}
+                </text>
+              )}
+              <text x={centre} y={padTop + chartH + 12} fontSize={9} textAnchor="middle" fill="var(--c-ink-mute)">
+                {fmtDate(r.week_start)}
+              </text>
+              <text x={centre} y={padTop + chartH + 22} fontSize={8} textAnchor="middle" fill="var(--c-ink-dim)">
+                {r.proofs} project{r.proofs === 1 ? '' : 's'}
+              </text>
+            </g>
+          )
+        })}
+      </svg>
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-ink-mute">
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--c-brand)' }} />
+          Designer callouts
+        </span>
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-ink-mute">
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--c-allocated)' }} />
+          Customer pins
         </span>
       </div>
     </div>

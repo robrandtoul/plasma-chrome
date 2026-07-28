@@ -896,6 +896,39 @@ export const supabase: any = {
         error: null,
       }
     }
+    // Annotation usage (migration 000362). Shaped to exercise every arm of the
+    // Analytics → Annotations tab rather than to mirror live: both gates on,
+    // both halves in use, several designers writing callouts, and a resolve
+    // rate that is neither 0% nor 100%. The live figures on 2026-07-28 are far
+    // smaller (6 callouts, 5 pins, nothing ticked off) — a fixture that copied
+    // them would leave the table, the chart and the follow-through panel with
+    // nothing to show.
+    if (name === 'analytics_annotations') {
+      return {
+        data: {
+          days: 30,
+          since: daysAgo(30),
+          gates: { callouts_enabled: true, pins_enabled: true },
+          callouts: { notes: 34, versions: 21, proofs: 16, designers: 3, last_at: daysAgo(0) },
+          pins: { notes: 27, versions: 12, proofs: 11, change_requests: 14, last_at: daysAgo(1) },
+          callout_adoption: { from: daysAgo(26), versions_created: 74, versions_with_callout: 19 },
+          pin_adoption: { from: daysAgo(26), change_requests: 41, change_requests_with_pins: 14, pins_on_those: 27 },
+          follow_through: { pins: 27, resolved: 18, median_hours_to_resolve: 19.5 },
+          by_person: [
+            { created_by: 'u1', name: 'Rob Randtoul', initials: 'RR', colour: 'blue', notes: 18, versions: 11, proofs: 9, last_at: daysAgo(0) },
+            { created_by: 'u2', name: 'Jack Johnson', initials: 'JJ', colour: 'purple', notes: 11, versions: 7, proofs: 5, last_at: daysAgo(2) },
+            { created_by: 'u4', name: 'Donna Lambe', initials: 'DL', colour: 'coral', notes: 5, versions: 3, proofs: 2, last_at: daysAgo(9) },
+          ],
+          weekly: [
+            { week_start: daysAgo(21), callouts: 2, pins: 0, proofs: 2 },
+            { week_start: daysAgo(14), callouts: 7, pins: 4, proofs: 6 },
+            { week_start: daysAgo(7), callouts: 16, pins: 13, proofs: 11 },
+            { week_start: daysAgo(0), callouts: 9, pins: 10, proofs: 8 },
+          ],
+        },
+        error: null,
+      }
+    }
     if (name === 'dashboard_tile_counts') {
       return {
         data: {
