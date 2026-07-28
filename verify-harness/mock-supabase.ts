@@ -575,6 +575,12 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
     rows = ORDERS
     if (Array.isArray(filters['in:status'])) rows = rows.filter((r) => filters['in:status'].includes(r.status))
     if (filters['eq:id']) rows = rows.filter((r) => r.id === filters['eq:id'])
+    // ProofDetailPage scopes its order read to the proof (.eq('proof_id', …)),
+    // and its header actions branch on what comes back. Without this filter
+    // every proof id was handed the WHOLE order list, so the detail page
+    // always looked like it had a live pay link — which silently hid any UI
+    // that only appears on an order-free project.
+    if (filters['eq:proof_id']) rows = rows.filter((r) => r.proof_id === filters['eq:proof_id'])
   } else if (table === 'public_dashboard_projects') {
     rows = DASHBOARD_PROJECTS
     if (filters['eq:status']) rows = rows.filter((r) => r.status === filters['eq:status'])

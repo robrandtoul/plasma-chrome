@@ -397,6 +397,19 @@ export default function ProofDetailPage() {
     setAddMaterialMode('intent')
   }
 
+  // ── Add a version to an APPROVED project ───────────────────────────
+  // The everyday "customer approved, then asked for one more thing"
+  // case — most often a colleague's card added to a signed-off design.
+  // Until this existed the only visible action on a locked project was
+  // Reopen, which calls reopen_proof and DELETES every approval row on
+  // the proof (migration 000158), throwing away a sign-off nobody asked
+  // to undo. Adding a version instead is non-destructive: NewVersionPage's
+  // resetApprovedProofToInProgress() flips the parent status back at SAVE
+  // time and leaves the approval history alone, and the carry-forward
+  // block re-applies each unchanged slot's approval to the new version.
+  // Gated on there being no order to unpick — see canAddVersionKeepingApprovals.
+  const [addVersionDialog, setAddVersionDialog] = useState(false)
+
   // ── Duplicate project (the repeat-order path) ──────────────────────
   // A finished order's customer wants more cards: rather than rebuilding
   // from scratch, copy the current design into a fresh open project as
@@ -2104,6 +2117,20 @@ export default function ProofDetailPage() {
     : reopenOrder.status === 'paid' ? 'paid'
     : reopenOrder.status === 'fulfilled' ? 'fulfilled'
     : 'none'
+  // Can this APPROVED project take a new version without going through
+  // Reopen? Two conditions:
+  //
+  //   * approved, not abandoned — an abandoned project is meant to stay
+  //     shut (the customer page shows a closed state), so it keeps the
+  //     Reopen-only treatment;
+  //   * no order left to unpick. reopenOrder (not hasOpenOrder) is the
+  //     right test: it also catches a LAPSED pay link, which is still
+  //     'sent' in the DB and reactivatable from the Orders page, so a
+  //     customer could pay against superseded artwork. Any order in
+  //     sent / paid / fulfilled means the order-aware Reopen — which
+  //     cancels the link or holds the job for revision — is the correct
+  //     route, and this shortcut stays hidden.
+  const canAddVersionKeepingApprovals = isApproved && !reopenOrder
   const orderInvoiceProblem = !!latestOrder && !latestOrder.xero_invoice_id && !!latestOrder.xero_invoice_error && latestOrder.payment_method !== 'offline'
   const orderSummary: { text: string; tone: 'good' | 'wait' | 'dead' } | null = (() => {
     if (!latestOrder) return null
@@ -3084,6 +3111,20 @@ export default function ProofDetailPage() {
                     </ButtonCoral>
                   )
                 )}
+                {/* Add a new version on an APPROVED project. Ghost, not
+                    coral: Create order stays the primary action, because
+                    that's where most approved projects go next. This is
+                    the non-destructive alternative to Reopen — see
+                    canAddVersionKeepingApprovals for when it's offered. */}
+                {canAddVersionKeepingApprovals && (
+                  <ButtonGhost
+                    icon={Plus}
+                    className="max-md:w-full max-md:h-[50px] max-md:text-[15px]"
+                    onClick={() => setAddVersionDialog(true)}
+                  >
+                    Add a new version
+                  </ButtonGhost>
+                )}
                 <ButtonGhost
                   icon={ExternalLink}
                   className="max-md:w-full max-md:h-[50px] max-md:text-[15px]"
@@ -3868,11 +3909,16 @@ export default function ProofDetailPage() {
             eyebrow="Newest first"
             padded={false}
             action={
-              !isLocked && (
+              (!isLocked || canAddVersionKeepingApprovals) && (
                 <ButtonGhost
                   size="sm"
                   icon={Plus}
-                  onClick={() => navigate(`/proofs/${proof.id}/versions/new`)}
+                  onClick={() => {
+                    // Approved projects get the explainer first; open
+                    // ones go straight to the form as they always have.
+                    if (canAddVersionKeepingApprovals) setAddVersionDialog(true)
+                    else navigate(`/proofs/${proof.id}/versions/new`)
+                  }}
                 >
                   New version
                 </ButtonGhost>
@@ -4437,6 +4483,40 @@ export default function ProofDetailPage() {
         />
       )}
 
+      {/* Add-a-version-to-an-approved-project explainer. The designer is
+          about to act on a project that reads "approved", so the dialog's
+          job is to say what happens to that approval — and to make the
+          contrast with Reopen (which wipes it) explicit, since Reopen sits
+          one click away in the overflow menu. */}
+      {addVersionDialog && proof && (
+        <ConfirmDialog
+          title="Add a new version"
+          message={
+            <>
+              <p>
+                This project is approved. Saving a new version reopens it so the
+                customer can approve the new one.
+              </p>
+              <p className="mt-2">
+                The existing approvals are kept. Where a person's artwork is
+                unchanged their approval carries across, so only new or changed
+                cards need approving again — unlike Reopen project, which clears
+                every approval on the project.
+              </p>
+              <p className="mt-2">
+                Nothing changes until you save the new version.
+              </p>
+            </>
+          }
+          confirmLabel="Add a new version"
+          onConfirm={() => {
+            setAddVersionDialog(false)
+            navigate(`/proofs/${proof.id}/versions/new`)
+          }}
+          onCancel={() => setAddVersionDialog(false)}
+        />
+      )}
+
       {/* Duplicate project confirm dialog (repeat-order path) */}
       {duplicateDialog && proof && (
         <ConfirmDialog
@@ -4493,10 +4573,17 @@ export default function ProofDetailPage() {
           message = `This order was PAID (${money}) and placed with ${placedWith} on ${placedDate}. Before reopening: (1) cancel the job in Stock Control, (2) check with ${checker} that it has NOT printed. The previously-approved artwork must not be produced. The payment is NOT refunded automatically.`
           checkbox = { label: "I've cancelled the Stock Control job.", checked: reopenJobCancelled, onChange: setReopenJobCancelled }
           confirmDisabled = !reopenJobCancelled
+        } else if (isAbandoned) {
+          message = 'Reopen this project? This will reopen the project and allow new proof versions to be added. Any approvals recorded before it was abandoned are cleared.'
         } else {
-          message = isAbandoned
-            ? 'Reopen this project? This will reopen the project and allow new proof versions to be added.'
-            : 'Reopen this project? It will go back to in progress and you\'ll be able to add new proof versions.'
+          // Approved, nothing to unpick order-side — which is exactly when
+          // "Add a new version" does the same job without discarding the
+          // customer's sign-off. Reopen keeps its uses (starting over,
+          // undoing an approval given in error), so it isn't blocked; it
+          // just stops being silent about what it costs. The old copy
+          // described only the status flip, which made the destructive
+          // action read like the routine one.
+          message = 'Reopen this project? It goes back to in progress and clears every approval on it, so the customer has to sign off again from scratch. If you only need to add or change a card, use "Add a new version" instead — that keeps the approvals already given.'
         }
         return (
           <ConfirmDialog
