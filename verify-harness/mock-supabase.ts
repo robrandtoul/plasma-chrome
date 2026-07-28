@@ -274,6 +274,10 @@ const ORDERS: FixtureOrder[] = [
   // Recently ordered — the new half-way failure: the job IS in Stock Control
   // but the workshop note never went, so nobody knows to make it.
   order({ id: 'o10', status: 'fulfilled', paid_at: daysAgo(15), fulfilled_at: daysAgo(12), handoff_at: daysAgo(12), production_note_posted_at: null, stock_order_number: '403912', proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact(null, 'Jian Yang') } }),
+  // Recently ordered — a long company name against a full-length reference and
+  // a five-figure quantity: the widest a row gets in real data, which is what
+  // used to break the layout on a phone.
+  order({ id: 'o13', status: 'fulfilled', quantity: 10000, payment_reference: 'ORD-A7A33935C2', paid_at: daysAgo(9), fulfilled_at: daysAgo(7), handoff_at: daysAgo(7), production_note_posted_at: daysAgo(7), stock_order_number: '403914', artwork_check_verdict: 'flagged', artwork_checked_at: daysAgo(7), artwork_check: ARTWORK_REPORT_FLAGGED, proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Elite Credentials International', 'Bertram Gilfoyle') } }),
 ].map((o, i) => ({ ...o, proof_id: `p-${o.id}` }))
 
 // Approved proofs with no order yet — the Links-to-send worklist. approved_at

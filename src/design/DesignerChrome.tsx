@@ -253,10 +253,23 @@ export function DesignerChrome({
         {/* The scroller is itself a flex column on mobile so a page can opt
             into filling the remaining height exactly (ChatPage does, with
             flex-1) instead of guessing at viewport maths. Normal pages are
-            plain blocks inside it and scroll as before. */}
+            plain blocks inside it and scroll as before.
+
+            The two child rules are what keep a page inside the screen. Every
+            page container is `mx-auto`, and an auto cross-margin opts a flex
+            item OUT of stretching: it is sized shrink-to-fit instead, which
+            never goes below its MIN-CONTENT width. So one row that couldn't
+            wrap sized this column wider than the phone — and since the header
+            and the tab bar are items of the same column, the whole app slid
+            sideways, leaving every right-hand control (Copy link, Combine
+            payments…, the Sort picker) off-screen with no scrollbar to
+            explain why. max-w-full clamps the column back to the screen and
+            min-w-0 stops the automatic minimum size re-inflating it; content
+            wraps to fit instead. Anything genuinely unshrinkable overflows
+            inside the scroller as before, so nothing becomes unreachable. */}
         <div
           id="app-scroll"
-          className="max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col max-md:overflow-y-auto max-md:overscroll-contain"
+          className="max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col max-md:overflow-y-auto max-md:overscroll-contain max-md:*:min-w-0 max-md:*:max-w-full"
         >
       <DesignerHeader
         active={active}

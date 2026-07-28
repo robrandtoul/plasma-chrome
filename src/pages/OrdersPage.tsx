@@ -626,13 +626,21 @@ function matchesSearch(o: OrderRow, q: string): boolean {
 // repeated in the section heading a scroll below).
 type ViewKey = 'awaiting' | 'to_order'
 
+// Shared shape for every chip on this page. whitespace-nowrap + shrink-0 are
+// load-bearing on a phone: a chip is a label, not a paragraph, and without
+// them a squeezed row wrapped "In Stock Control" onto three lines inside its
+// own pill, turning each chip into a green blob (Rob's screenshot, 28 Jul).
+// Rows that hold chips wrap, so a chip that keeps its width just moves down.
+const CHIP_BASE =
+  'inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ring-1'
+
 // One tick in a To-order card's readiness row: the prep steps (folder / date /
 // colour) as scannable chips, so a collapsed card still says exactly what's
 // left before the order can be placed.
 function PrepChip({ ok, label }: { ok: boolean; label: string }) {
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ${
+      className={`${CHIP_BASE} ${
         ok
           ? 'bg-[var(--c-in-stock-soft)] text-in-stock ring-[var(--c-in-stock)]/40'
           : 'bg-[var(--c-low-soft)] text-low ring-[var(--c-low)]/40'
@@ -654,7 +662,7 @@ function ArtworkChip({ verdict, onOpen }: { verdict: 'clear' | 'flagged' | 'defe
       type="button"
       onClick={onOpen}
       title="Open the artwork check report"
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)] ${
+      className={`${CHIP_BASE} hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)] ${
         verdict === 'clear'
           ? 'bg-[var(--c-in-stock-soft)] text-in-stock ring-[var(--c-in-stock)]/40'
           : verdict === 'defect'
@@ -675,7 +683,7 @@ function ArtworkChip({ verdict, onOpen }: { verdict: 'clear' | 'flagged' | 'defe
 // refused order, the "Needs action" panel for an unsent message.
 function HandoffChip({ state }: { state: HandoffState }) {
   if (state.kind === 'none') return null
-  const base = 'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1'
+  const base = CHIP_BASE
   if (state.kind === 'done') {
     return (
       <span className={`${base} bg-[var(--c-in-stock-soft)] text-in-stock ring-[var(--c-in-stock)]/40`} title="This order is in Stock Control and the message that goes with it was sent.">
@@ -2272,8 +2280,13 @@ export default function OrdersPage() {
               ].filter(Boolean).join(' · ')
               return (
                 <section className="mt-10">
+                  {/* The heading takes the whole width on a phone so Combine
+                      payments… drops to its own line. Sharing the line squeezed
+                      the heading to half the screen — its three-word summary
+                      wrapped to three lines around a stranded "Hide", and the
+                      button hung off the right edge. */}
                   <div className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-2 ${SECTION_HEADER_STICKY}`}>
-                    <h2 className="min-w-0 flex-1 text-sm font-semibold uppercase tracking-wide text-ink-mute">
+                    <h2 className="min-w-0 flex-1 text-sm font-semibold uppercase tracking-wide text-ink-mute max-md:w-full max-md:flex-none">
                       <button
                         type="button"
                         onClick={() => setWaitingOpen(!shown)}
@@ -2468,22 +2481,30 @@ export default function OrdersPage() {
                   </h2>
                   {recentShown && (
                     <>
+                      {/* One row per order on a desktop; on a phone the same
+                          parts stack — customer + reference across the top, then
+                          the facts and the chips wrapping under it. The row used
+                          to be a single unwrappable line, so a phone broke the
+                          customer's name mid-word and pushed Copy link off the
+                          screen entirely. */}
                       <div className="mt-3 divide-y divide-line-soft rounded-xl border border-line bg-surface">
                         {recentlyOrdered.map((o) => (
                           <div
                             key={o.id}
                             id={`order-card-${o.id}`}
-                            className={`flex items-center justify-between gap-4 px-4 py-3 text-sm transition-shadow duration-500 ${
+                            className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 text-sm transition-shadow duration-500 ${
                               flashOrderId === o.id ? 'rounded-lg ring-2 ring-[var(--c-brand)]' : ''
                             }`}
                           >
-                            <div className="min-w-0">
+                            <div className="min-w-0 max-md:w-full">
                               <Link to={`/proofs/${o.proof_id}`} className="font-medium text-ink hover:underline">
                                 {customerLabel(o)}
                               </Link>
-                              <span className="ml-2 text-ink-mute">{o.payment_reference}</span>
+                              {/* The reference never breaks mid-code — it drops
+                                  whole onto the next line when the name is long. */}
+                              <span className="ml-2 whitespace-nowrap text-ink-mute">{o.payment_reference}</span>
                             </div>
-                            <div className="flex items-center gap-3 text-ink-soft">
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-ink-soft max-md:w-full md:flex-nowrap">
                               {/* Did this order actually land in Stock Control, message
                                   and all? Quiet green when it did; amber when the
                                   message still needs sending (the Needs action panel
@@ -2492,13 +2513,22 @@ export default function OrdersPage() {
                               {artworkChipsOn && o.artwork_check_verdict && (
                                 <ArtworkChip verdict={o.artwork_check_verdict} onOpen={() => void openArtworkReport(o)} />
                               )}
-                              <span>{o.quantity != null ? `${o.quantity.toLocaleString()} cards` : 'Custom'}</span>
-                              <span className="text-ink-mute">Ordered {formatDate(o.fulfilled_at)}</span>
+                              {/* What and when, as one quiet line. On a phone it
+                                  leads the row (order-first) so the facts sit under
+                                  the customer's name and the chips fall below them;
+                                  the inner gap matches the row's, so a desktop row
+                                  looks exactly as it always has. */}
+                              <span className="flex items-center gap-x-3 max-md:order-first max-md:w-full">
+                                <span className="whitespace-nowrap">{o.quantity != null ? `${o.quantity.toLocaleString()} cards` : 'Custom'}</span>
+                                <span className="whitespace-nowrap text-ink-mute">Ordered {formatDate(o.fulfilled_at)}</span>
+                              </span>
+                              {/* Pushed to the end of the row on a phone, where it
+                                  is the only thing here you can actually press. */}
                               <button
                                 type="button"
                                 onClick={() => void copyLink(o)}
                                 title="Copy the customer's order link (doubles as their tracking page)"
-                                className="shrink-0 rounded px-2 py-1 text-[12px] text-ink-soft ring-1 ring-line hover:bg-canvas"
+                                className="shrink-0 rounded px-2 py-1 text-[12px] text-ink-soft ring-1 ring-line hover:bg-canvas max-md:ml-auto max-md:min-h-[36px] max-md:px-3"
                               >
                                 {copiedId === o.id ? 'Copied' : 'Copy link'}
                               </button>
@@ -3314,14 +3344,19 @@ function OrderCard({
         <div className="flex shrink-0 flex-col gap-2 md:items-end">
           {/* One visible primary + the "⋯" menu. While prep is unfinished the
               primary is "Prepare order" (opens the form); once every gate is
-              green it becomes the review-and-place action itself. */}
+              green it becomes the review-and-place action itself. That one
+              wraps rather than holding a single line on a phone: buttons are
+              whitespace-nowrap by default, so a long supplier name ("Review and
+              order from QX Metals") refused to shrink and shoved the "⋯" menu
+              off the screen on a narrower handset — taking Copy order link and
+              Download invoice with it. min-h, not h, so two lines fit. */}
           <div className="flex items-center gap-2 max-md:w-full">
             {!canOrder && !expanded ? (
               <ButtonInk onClick={() => setExpanded(true)} className="max-md:h-[50px] max-md:flex-1 max-md:text-[15px]">
                 Prepare order
               </ButtonInk>
             ) : (
-              <ButtonInk onClick={onReview} disabled={!canOrder} className="max-md:h-[50px] max-md:flex-1 max-md:text-[15px]">
+              <ButtonInk onClick={onReview} disabled={!canOrder} className="max-md:min-h-[50px] max-md:min-w-0 max-md:flex-1 max-md:whitespace-normal max-md:py-1.5 max-md:text-[15px] max-md:leading-tight">
                 {route !== 'supplier'
                   ? 'Review and push to production'
                   : supplierCount > 1
