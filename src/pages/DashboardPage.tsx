@@ -73,6 +73,7 @@ import {
   bundleSentState,
   bundleShownHere,
   EMPTY_BUNDLE_INDEX,
+  hoistBundleSections,
   type BundleIndex,
   type BundleInfo,
   type BundleMemberRow,
@@ -1611,9 +1612,12 @@ function BundleBlock({
 }
 
 /**
- * Treatment B — for a card whose siblings aren't in this section (a different
- * day bucket, or filtered out by a tile). The row keeps its place in the sort;
- * rows are never moved between sections to force adjacency.
+ * Treatment B — for a card whose siblings aren't in the visible list at all
+ * (filtered out by a tile or search, or outside the dashboard working set), or
+ * a card sitting in the Pinned / Snoozed sections away from its siblings.
+ * Everything else is gathered into one block by hoistBundleSections, so this
+ * line is the fallback that keeps the relationship visible when gathering
+ * isn't possible.
  *
  * Deliberately a quiet LINE in the row's secondary stack, not a chip beside the
  * company name. Two things went wrong when it sat on the name line: a tinted
@@ -3299,15 +3303,20 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     // buckets even when the Snoozed section is hidden.
     for (const s of snoozedSections) for (const p of s.projects) reservedIds.add(p.proof_id)
     const remaining = sortedProjects.filter((p) => !reservedIds.has(p.proof_id))
-    const tailSections = group === 'company'
-      ? groupByCompany(remaining)
-      : groupByTime(remaining)
+    // Bundle cards are then gathered into the section of the bundle's most
+    // recently active card, so the whole bundle renders as one block instead
+    // of splitting across Today / This week / Older when one card moves ahead
+    // of its siblings (see lib/dashboardBundles.ts).
+    const tailSections = hoistBundleSections(
+      group === 'company' ? groupByCompany(remaining) : groupByTime(remaining),
+      bundleIndex,
+    )
     const visibleSnoozed = showSnoozed ? snoozedSections : []
     // "Snoozed" selected in the status dropdown — suppress pins + tail so only
     // the Snoozed section is visible (same as a status filter for other statuses).
     if (snoozedOnly) return visibleSnoozed
     return [...pinSections, ...visibleSnoozed, ...tailSections]
-  }, [sortedProjects, group, minePinAt, teamPinAt, snoozedSections, showSnoozed, snoozedOnly])
+  }, [sortedProjects, group, minePinAt, teamPinAt, snoozedSections, showSnoozed, snoozedOnly, bundleIndex])
 
   const noResults = !loading && sections.every((s) => s.projects.length === 0)
 
@@ -3840,11 +3849,13 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                         // ProjectRow component so chips, menus, and
                         // keyboard interaction behave identically.
                         const virtualise = section.kind === 'time' && section.key === 'older' && section.projects.length > 30
-                        // Bundle siblings that landed in this section are
-                        // gathered into one block; everything else keeps its
-                        // place. The section's COUNT still counts projects, so
-                        // gathering rows never changes the number in the header
-                        // (or any tile count — those are server-side).
+                        // Bundle siblings were already hoisted into one
+                        // section (hoistBundleSections, in the sections memo);
+                        // here they're gathered into one block at the topmost
+                        // member's position. The section's COUNT still counts
+                        // projects, so gathering rows never changes the number
+                        // in the header (or any tile count — those are
+                        // server-side).
                         const rowItems = buildRowItems(section.projects, bundleIndex)
                         return (
                           <div key={section.key} className="mt-6 first:mt-0">

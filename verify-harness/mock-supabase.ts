@@ -341,12 +341,12 @@ const DASHBOARD_PROJECTS = [
     helpscout_last_customer_reply_at: daysAgo(0.05),
   },
   // ——— Bundle fixtures (proof_sets, 000311) ———
-  // Reproduces the case that prompted the feature: two cards of one bundle
-  // separated by an unrelated row, so the dashboard gave no sign they were
-  // connected. p-b1 + p-b2 land in Today and gather into a block; p-b3 is old
-  // enough to fall into another section, where it carries the chip instead —
-  // so one screenshot exercises both treatments AND the "1 card not shown
-  // here" reconciliation in the block header.
+  // Reproduces the case that prompted the feature: cards of one bundle
+  // scattered through the list, so the dashboard gave no sign they were
+  // connected. p-b1 + p-b2 land in Today; p-b3 is four days older — since the
+  // 2026-07-28 hoist rule (hoistBundleSections) it no longer stays behind in
+  // This week with a chip, but rides up so all three cards render as ONE block
+  // in Today. The abandoned p-b4 stays out, so the header reads "3 cards".
   {
     proof_id: 'p-b1',
     status: 'in_progress',

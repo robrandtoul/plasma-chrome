@@ -12,10 +12,11 @@ import {
   bundleSentState,
   bundleShownHere,
   EMPTY_BUNDLE_INDEX,
+  hoistBundleSections,
   type BundleMemberRow,
   type BundleSetRow,
 } from './dashboardBundles'
-import type { DashboardProject } from './dashboardGrouping'
+import type { DashboardProject, ProjectSection } from './dashboardGrouping'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -233,6 +234,108 @@ test('counts only the cards present in this list', () => {
   assertEqual(bundleShownHere([project('a'), project('b')], info), 2)
   assertEqual(bundleShownHere([project('a'), project('b'), project('c')], info), 3)
   assertEqual(bundleShownHere([project('x')], info), 0)
+})
+
+// ── hoistBundleSections ───────────────────────────────────────────────────────
+
+console.log('\nhoistBundleSections')
+
+function timeSection(key: string, ids: string[]): ProjectSection {
+  return { key, title: key, kind: 'time', projects: ids.map(project) }
+}
+
+const sectionIds = (s: ProjectSection) => s.projects.map((p) => p.proof_id).join(',')
+
+test('a card racing ahead pulls the whole bundle into its section', () => {
+  // The Experience Auto Group case (2026-07-28): v8 freshly sent lands in
+  // Today while its two siblings sit in Older — the bundle rides up together.
+  const index = buildBundleIndex(
+    [member('v8', 's1'), member('v7', 's1'), member('mb', 's1')],
+    [set('s1')],
+  )
+  const out = hoistBundleSections(
+    [timeSection('today', ['v8', 'other']), timeSection('older', ['x', 'v7', 'mb', 'y'])],
+    index,
+  )
+  assertEqual(out.length, 2)
+  assertEqual(sectionIds(out[0]), 'v8,other,v7,mb', 'siblings appended after Today rows')
+  assertEqual(sectionIds(out[1]), 'x,y', 'Older keeps its unrelated rows in order')
+  // And the merged section renders as one block anchored at the fresh card.
+  const items = buildRowItems(out[0].projects, index)
+  assertEqual(keys(items), 'bundle:s1,other')
+  if (items[0].kind === 'bundle') {
+    assertEqual(items[0].projects.map((p) => p.proof_id).join(','), 'v8,v7,mb')
+  }
+})
+
+test('a section emptied by hoisting is dropped', () => {
+  const index = buildBundleIndex([member('a', 's1'), member('b', 's1')], [set('s1')])
+  const out = hoistBundleSections(
+    [timeSection('today', ['a']), timeSection('older', ['b'])],
+    index,
+  )
+  assertEqual(out.length, 1)
+  assertEqual(sectionIds(out[0]), 'a,b')
+})
+
+test('a bundle already in one section leaves every section untouched', () => {
+  const index = buildBundleIndex([member('a', 's1'), member('b', 's1')], [set('s1')])
+  const input = [timeSection('today', ['a', 'b']), timeSection('older', ['x'])]
+  const out = hoistBundleSections(input, index)
+  assertEqual(sectionIds(out[0]), 'a,b')
+  assertEqual(sectionIds(out[1]), 'x')
+  assert(out[0] === input[0] && out[1] === input[1], 'untouched sections keep their identity')
+})
+
+test('a lone member whose siblings are filtered out of the list stays put', () => {
+  // The chip case: sibling z is not in any section (tile filter / search /
+  // outside the working set), so there is nothing to gather.
+  const index = buildBundleIndex([member('a', 's1'), member('z', 's1')], [set('s1')])
+  const out = hoistBundleSections(
+    [timeSection('today', ['a']), timeSection('older', ['x'])],
+    index,
+  )
+  assertEqual(sectionIds(out[0]), 'a')
+  assertEqual(sectionIds(out[1]), 'x')
+})
+
+test('two bundles anchor independently in their own freshest sections', () => {
+  const index = buildBundleIndex(
+    [member('a1', 's1'), member('a2', 's1'), member('b1', 's2'), member('b2', 's2')],
+    [set('s1'), set('s2')],
+  )
+  const out = hoistBundleSections(
+    [
+      timeSection('today', ['a1']),
+      timeSection('week', ['b1', 'a2']),
+      timeSection('older', ['b2']),
+    ],
+    index,
+  )
+  assertEqual(out.length, 2, 'older emptied and dropped')
+  assertEqual(sectionIds(out[0]), 'a1,a2')
+  assertEqual(sectionIds(out[1]), 'b1,b2')
+})
+
+test('no bundles at all is a pass-through', () => {
+  const input = [timeSection('today', ['a']), timeSection('older', ['b'])]
+  assert(hoistBundleSections(input, EMPTY_BUNDLE_INDEX) === input, 'same array back')
+})
+
+test('every project survives the hoist', () => {
+  const index = buildBundleIndex(
+    [member('a', 's1'), member('b', 's1'), member('c', 's1')],
+    [set('s1')],
+  )
+  const input = [
+    timeSection('today', ['a', 'x']),
+    timeSection('week', ['b', 'y']),
+    timeSection('older', ['z', 'c']),
+  ]
+  const out = hoistBundleSections(input, index)
+  const rendered = out.flatMap((s) => s.projects.map((p) => p.proof_id))
+  assertEqual(rendered.length, 6, 'no row is dropped')
+  assertEqual(new Set(rendered).size, 6, 'no row is duplicated')
 })
 
 // ── Summary ───────────────────────────────────────────────────────────────────

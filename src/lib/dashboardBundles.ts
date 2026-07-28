@@ -9,23 +9,32 @@
 // two rows each showing their own follow-up state describe a chase that doesn't
 // exist.
 //
-// Two treatments, and which one applies is decided per SECTION:
+// Two treatments:
 //
-//   A. Bundle block — when 2+ of a bundle's cards are in the same section, they
-//      are pulled adjacent and wrapped in one container, so the grouping reads
-//      as containment. Same shape the Orders page uses for a combined payment
+//   A. Bundle block — every card of a bundle that's in the visible list is
+//      gathered into ONE container, hoisted into the section of the bundle's
+//      most recently active card (hoistBundleSections below). Originally the
+//      block only formed when 2+ cards happened to share a section, so a fresh
+//      send split off into Today while its siblings sat grouped in Older.
+//      Rob's call (2026-07-28) is that the bundle always travels together: the
+//      per-row status pills already say which card is new / viewed / responded
+//      to, so one block with mixed pills is clearer than a scattered bundle.
+//      The container shape matches the Orders page's combined payment
 //      (OrdersPage.tsx, "the group header is the container, not a sibling
 //      banner"), so staff learn the pattern once.
-//   B. Chip — a card whose siblings aren't in the same section keeps its place
-//      in the sort and carries a "Bundle of N" chip instead. Rows are never
-//      teleported into another day bucket to force adjacency: silently filing a
-//      card under the wrong day would be worse than the problem being fixed.
+//   B. Chip — a card whose siblings aren't in the visible list at all (tile
+//      filter, search, or outside the dashboard working set), or a card
+//      sitting in the Pinned / Snoozed special sections away from its
+//      siblings, keeps its place in the sort and carries a "Part of a bundle
+//      of N" line instead. Those sections state a fact about the card ("you
+//      pinned this", "you snoozed this") that its siblings don't share, so
+//      they are never pulled in to force adjacency.
 //
 // Deliberately NOT joined into public_dashboard_projects. Membership is fetched
 // as a small standalone query and merged client-side, exactly like proof_pins
 // (000155) — no migration, and bundle churn doesn't force a dashboard refetch.
 
-import type { DashboardProject } from './dashboardGrouping'
+import type { DashboardProject, ProjectSection } from './dashboardGrouping'
 import type { ProofStatus } from './types'
 
 /**
@@ -195,4 +204,73 @@ export function buildRowItems(
  */
 export function bundleShownHere(projects: DashboardProject[], info: BundleInfo): number {
   return projects.reduce((n, p) => (info.memberIds.includes(p.proof_id) ? n + 1 : n), 0)
+}
+
+/**
+ * Gather each bundle's cards into ONE section, so the whole bundle renders as
+ * a single block wherever its most recently active card sits.
+ *
+ * Sections arrive in render order (Today → This week → Older, or companies
+ * A→Z), each already sorted, so the first section holding any member is the
+ * bundle's freshest — members from later sections move up into it, appended
+ * after the rows already there. The anchor card keeps its sort position (the
+ * block anchors at the topmost member, see buildRowItems), the hoisted cards
+ * stay in their relative order, and rows outside the bundle never move. A
+ * section emptied by hoisting is dropped rather than rendered as a bare
+ * heading.
+ *
+ * Only the tail sections are passed in — Pinned / Team / Snoozed are built
+ * separately and deliberately keep the chip treatment (see the header note).
+ * Under company grouping a bundle's cards always share a section (one bundle
+ * = one contact), so this is a no-op there.
+ */
+export function hoistBundleSections(
+  sections: ProjectSection[],
+  index: BundleIndex,
+): ProjectSection[] {
+  if (index.byProof.size === 0) return sections
+
+  // Where does each bundle anchor? The first section (in render order) that
+  // holds any of its cards.
+  const anchorFor = new Map<string, string>()
+  for (const s of sections) {
+    for (const p of s.projects) {
+      const info = index.byProof.get(p.proof_id)
+      if (info && !anchorFor.has(info.setId)) anchorFor.set(info.setId, s.key)
+    }
+  }
+
+  // Split each section into the rows it keeps and the members leaving for an
+  // earlier section. Iterating sections in order means arrivals accumulate in
+  // global sort order.
+  const arrivals = new Map<string, DashboardProject[]>()
+  const kept = sections.map((s) => {
+    const keep: DashboardProject[] = []
+    for (const p of s.projects) {
+      const info = index.byProof.get(p.proof_id)
+      const anchor = info ? anchorFor.get(info.setId) : undefined
+      if (anchor && anchor !== s.key) {
+        const list = arrivals.get(anchor)
+        if (list) list.push(p)
+        else arrivals.set(anchor, [p])
+      } else {
+        keep.push(p)
+      }
+    }
+    return { section: s, keep }
+  })
+
+  const out: ProjectSection[] = []
+  for (const { section, keep } of kept) {
+    const incoming = arrivals.get(section.key)
+    // Untouched section → keep the original object (stable identity for React).
+    if (!incoming && keep.length === section.projects.length) {
+      out.push(section)
+      continue
+    }
+    const projects = incoming ? [...keep, ...incoming] : keep
+    if (projects.length === 0) continue
+    out.push({ ...section, projects })
+  }
+  return out
 }
