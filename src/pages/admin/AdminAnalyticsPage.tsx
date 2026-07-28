@@ -170,6 +170,15 @@ interface CheckWeekRow extends CheckVerdictCounts {
   runs: number
   manual_runs: number
 }
+// Per-day runs (migration 000363). Unlike `weekly`, this series is zero-filled
+// server-side: every calendar day in the window is present, so a quiet day is a
+// visible gap rather than a day the chart silently skips over. Optional on the
+// type so the tab still renders against a database without 000363 applied.
+interface CheckDayRow extends CheckVerdictCounts {
+  day: string
+  runs: number
+  manual_runs: number
+}
 // Did a flagged check change what the designer did next? (migration 000359)
 // Bands come back null when no stamped decision falls in them.
 interface CheckBand {
@@ -206,6 +215,7 @@ interface ArtworkCheckStats {
   by_source: CheckSourceRow[]
   by_person: CheckPersonRow[]
   weekly: CheckWeekRow[]
+  daily?: CheckDayRow[]
   // `from` is the effective start: the later of the window edge and the first
   // pre-send check ever run, so versions that predate the feature don't sit in
   // the denominator making uptake look worse than it is.
@@ -1056,6 +1066,9 @@ function ArtworkChecksSection({
   onDaysChange: (d: number) => void
 }) {
   const ranges = [7, 30, 90]
+  // Day vs week for the run-frequency chart. Declared before the early returns
+  // below — hooks can't sit after a conditional return.
+  const [grain, setGrain] = useState<'day' | 'week'>('day')
 
   const rangeStrip = (
     <div className="mb-4 flex items-center gap-2">
@@ -1116,6 +1129,10 @@ function ArtworkChecksSection({
   const bySource = stats.by_source ?? []
   const byPerson = stats.by_person ?? []
   const weeklyRuns = stats.weekly ?? []
+  const dailyRuns = stats.daily ?? []
+  // Absent only when 000363 hasn't been applied — the server zero-fills every
+  // day in the window, so a genuinely quiet period still returns rows.
+  const hasDaily = dailyRuns.length > 0
   const adoption = stats.proof_adoption ?? { from: null, versions_created: 0, versions_checked: 0 }
   const spend = stats.spend ?? []
 
@@ -1219,8 +1236,42 @@ function ArtworkChecksSection({
       </PanelShell>
 
       <div className="grid gap-3 lg:grid-cols-2">
-        <PanelShell title="Checks per week" eyebrow="Every run, however triggered" icon={TrendingUp} accent="var(--c-brand)">
-          <CheckWeeklyChart rows={weeklyRuns} />
+        {/* Run frequency. Defaults to days — weeks answer "is this used at
+            all", days answer "what does a normal day look like", which is the
+            question when judging whether a spike was one busy afternoon or a
+            fortnight of steady work. Falls back to weeks (toggle hidden) when
+            the daily series is absent, i.e. 000363 isn't applied yet. */}
+        <PanelShell
+          title={hasDaily && grain === 'day' ? 'Checks per day' : 'Checks per week'}
+          eyebrow="Every run, however triggered"
+          icon={TrendingUp}
+          accent="var(--c-brand)"
+          action={
+            hasDaily ? (
+              <div className="flex gap-1">
+                {(['day', 'week'] as const).map((g) => (
+                  <button
+                    key={g}
+                    onClick={() => setGrain(g)}
+                    className={[
+                      'rounded-full px-2.5 py-1 text-[11px] transition-colors',
+                      grain === g
+                        ? 'bg-ink text-surface font-semibold'
+                        : 'bg-surface text-ink-mute ring-1 ring-line hover:text-ink',
+                    ].join(' ')}
+                  >
+                    {g === 'day' ? 'Day' : 'Week'}
+                  </button>
+                ))}
+              </div>
+            ) : undefined
+          }
+        >
+          {hasDaily && grain === 'day' ? (
+            <CheckDailyChart rows={dailyRuns} />
+          ) : (
+            <CheckWeeklyChart rows={weeklyRuns} />
+          )}
         </PanelShell>
 
         <div className="space-y-3">
@@ -1600,6 +1651,96 @@ function CheckSourceTable({ rows, total }: { rows: CheckSourceRow[]; total: numb
 // Weekly run volume, split clear vs found-something. Same visual grammar as
 // WeeklyChart above (bars + week labels), but stacked rather than bar+line —
 // there's no rate here worth a second axis.
+// Runs per day. Same visual language as the weekly chart (total bar, with the
+// found-something portion sitting on top) at a finer grain.
+//
+// Two things differ because 30-90 bars behave nothing like 4:
+//   * Only every Nth date is labelled. At one label per bar they overlap into
+//     an unreadable smear, and a chart you can't read is worse than one axis
+//     tick you have to count from.
+//   * Per-bar run counts are drawn only when the bars are wide enough to hold
+//     them, and never on zero days — a column of "0"s across a quiet fortnight
+//     is noise that buries the days that did something.
+//
+// The series is zero-filled by the server, so quiet days really are gaps here.
+function CheckDailyChart({ rows }: { rows: CheckDayRow[] }) {
+  if (rows.length === 0) return <p className="text-sm text-ink-mute">No runs yet.</p>
+  const H = 190
+  const padL = 8
+  const padR = 8
+  const padTop = 14
+  const padBot = 26
+  const chartH = H - padTop - padBot
+  // Wide enough that a 90-day window stays legible; the panel scrolls.
+  const colW = rows.length > 45 ? 14 : rows.length > 20 ? 22 : 46
+  const W = Math.max(rows.length * colW + padL + padR, 320)
+  const maxRuns = Math.max(...rows.map((r) => r.runs), 1)
+  const barW = Math.min(colW * 0.62, 26)
+  // Aim for ~10 labels regardless of window length.
+  const labelEvery = Math.max(1, Math.ceil(rows.length / 10))
+  const showCounts = colW >= 22
+
+  return (
+    <div className="overflow-x-auto">
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img" aria-label="Artwork checks per day" style={{ maxWidth: W }}>
+        {[0, 0.5, 1].map((g) => {
+          const y = padTop + chartH * (1 - g)
+          return (
+            <g key={g}>
+              <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="var(--c-line-soft)" strokeWidth={1} />
+              <text x={W - padR} y={y - 2} fontSize={9} textAnchor="end" fill="var(--c-ink-dim)">
+                {Math.round(maxRuns * g)}
+              </text>
+            </g>
+          )
+        })}
+        {rows.map((r, i) => {
+          const x = padL + colW * i + (colW - barW) / 2
+          const found = r.flagged + r.defect
+          const hAll = (r.runs / maxRuns) * chartH
+          const hFound = (found / maxRuns) * chartH
+          const yAll = padTop + chartH - hAll
+          return (
+            <g key={r.day}>
+              <title>{`${fmtDate(r.day)} — ${r.runs} run${r.runs === 1 ? '' : 's'}${found > 0 ? `, ${found} found something` : ''}`}</title>
+              <rect x={x} y={yAll} width={barW} height={hAll} rx={2} fill="color-mix(in srgb, var(--c-in-stock) 30%, transparent)" />
+              <rect
+                x={x}
+                y={padTop + chartH - hFound}
+                width={barW}
+                height={hFound}
+                rx={2}
+                fill="color-mix(in srgb, var(--c-low) 65%, transparent)"
+              />
+              {showCounts && r.runs > 0 && (
+                <text x={x + barW / 2} y={yAll - 4} fontSize={9} textAnchor="middle" fill="var(--c-ink-soft)" fontWeight={600}>
+                  {r.runs}
+                </text>
+              )}
+              {i % labelEvery === 0 && (
+                <text x={x + barW / 2} y={padTop + chartH + 12} fontSize={9} textAnchor="middle" fill="var(--c-ink-mute)">
+                  {fmtDate(r.day)}
+                </text>
+              )}
+            </g>
+          )
+        })}
+      </svg>
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-ink-mute">
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--c-in-stock)' }} />
+          Checks run
+        </span>
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-ink-mute">
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--c-low)' }} />
+          Found something
+        </span>
+        <span className="text-[11px] text-ink-dim">Days with no checks are shown as gaps.</span>
+      </div>
+    </div>
+  )
+}
+
 function CheckWeeklyChart({ rows }: { rows: CheckWeekRow[] }) {
   if (rows.length === 0) return <p className="text-sm text-ink-mute">No runs yet.</p>
   const W = Math.max(rows.length * 70, 320)

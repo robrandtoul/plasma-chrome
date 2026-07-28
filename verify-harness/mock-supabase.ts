@@ -877,6 +877,28 @@ export const supabase: any = {
             { week_start: daysAgo(7), runs: 51, clear: 33, flagged: 11, defect: 7, error: 0, manual_runs: 16 },
             { week_start: daysAgo(0), runs: 5, clear: 2, flagged: 1, defect: 1, error: 1, manual_runs: 3 },
           ],
+          // Per-day runs (000363). Zero-filled server-side, so the fixture
+          // includes empty days too — the whole point of the chart is that a
+          // quiet day reads as a gap rather than being skipped over.
+          daily: Array.from({ length: 30 }, (_, i) => {
+            const back = 29 - i
+            // A dead first week, then steady weekday use with quiet weekends —
+            // the shape the zero-fill exists to make visible.
+            const dow = (new Date(Date.parse(daysAgo(back))).getUTCDay() + 6) % 7
+            const quiet = back > 22 || dow >= 5
+            const runs = quiet ? 0 : [3, 7, 5, 9, 4, 6, 8][i % 7]
+            const flagged = runs > 0 ? Math.floor(runs / 4) : 0
+            const defect = runs > 6 ? 1 : 0
+            return {
+              day: daysAgo(back),
+              runs,
+              clear: Math.max(0, runs - flagged - defect),
+              flagged,
+              defect,
+              error: 0,
+              manual_runs: runs > 0 ? Math.min(runs, 2) : 0,
+            }
+          }),
           proof_adoption: { from: daysAgo(4), versions_created: 49, versions_checked: 14 },
           // Per-(gate, model) spend buckets, copied from the live figures on
           // 2026-07-27 so the cost panel shows realistic money. Includes an
