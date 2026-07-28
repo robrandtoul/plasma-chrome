@@ -63,7 +63,12 @@ interface OrderPayload {
   order_kind: string | null
   shipping_treatment: 'full_cost' | 'goodwill' | 'free' | 'manual'
   shipping_charged: number | null
+  // The rating destination. Doubles as the designer's optional country hint
+  // AND the customer's own answer, which create-checkout-session persists —
+  // so both halves must pre-fill on a revisit, or the form comes back looking
+  // finished with one empty box (see the load effect).
   ship_dest_country: string | null
+  ship_dest_postcode: string | null
   vat_treatment: string | null
   currency: Currency
   expires_at: string | null
@@ -543,9 +548,14 @@ export default function OrderPayPage() {
             .then(({ error: e }) => { if (e) console.error('[OrderPayPage] record pay-link open failed:', e.message) })
         }, 1500)
       }
-      // Pre-fill the destination country from the designer's optional hint so
-      // the customer usually just adds their postcode.
+      // Pre-fill the destination from the designer's optional hint so the
+      // customer usually just adds their postcode — and, on a revisit, from
+      // whatever a previous checkout call persisted. Both halves or neither:
+      // restoring only the country left the form looking complete with an
+      // empty postcode box, and the button then named the country (visibly
+      // filled) as the thing to fix, which reads as a broken button.
       if (o.ship_dest_country) setDestCountry(o.ship_dest_country)
+      if (o.ship_dest_postcode) setDestPostcode(o.ship_dest_postcode)
       // Open-quantity revisit: pre-fill the inputs with the pick a previous
       // checkout call persisted, so the customer sees (and can change) their
       // earlier choice rather than a mysteriously fixed figure.
@@ -1403,9 +1413,29 @@ export default function OrderPayPage() {
       (thicknessOpen && specVariants.length > 0) ||
       (finishOpen && specFinishes.length > 0))
   // full_cost / goodwill orders need the customer's delivery country + postcode
-  // before we can rate the carriage at checkout.
-  const destinationComplete =
-    !shippingComputedAtCheckout || (!!destCountry && destPostcode.trim().length > 0)
+  // before we can rate the carriage at checkout. The two halves are tracked
+  // separately so the button can name the one that's actually outstanding:
+  // "Enter delivery country & postcode" sitting next to an already-filled
+  // country reads as the button being broken rather than as an instruction.
+  const destCountryMissing = shippingComputedAtCheckout && !destCountry
+  const destPostcodeMissing = shippingComputedAtCheckout && destPostcode.trim().length === 0
+  const destinationComplete = !destCountryMissing && !destPostcodeMissing
+  const destinationPrompt =
+    destCountryMissing && destPostcodeMissing
+      ? 'Enter delivery country & postcode'
+      : destCountryMissing
+        ? 'Select a delivery country'
+        : destPostcodeMissing
+          ? 'Enter a delivery postcode'
+          : null
+  const destinationHint =
+    destCountryMissing && destPostcodeMissing
+      ? 'Enter where we’re shipping to so we can calculate shipping.'
+      : destCountryMissing
+        ? 'Choose the delivery country so we can calculate shipping.'
+        : destPostcodeMissing
+          ? 'Add the delivery postcode so we can calculate shipping.'
+          : null
   // Total is known client-side for a custom quote, a chosen single quantity,
   // or a completed per-person split; a designer-locked grid quantity is shown
   // on Stripe's hosted page (it may be an interpolated in-between). When
@@ -1829,14 +1859,14 @@ export default function OrderPayPage() {
                       : awaitingQuantity ? 'Choose a quantity to continue'
                         : thicknessOpen && chosenVariantId == null ? 'Choose a thickness to continue'
                           : finishOpen && chosenOptionId == null ? 'Choose a finish to continue'
-                            : !destinationComplete ? 'Enter delivery country & postcode'
+                            : destinationPrompt != null ? destinationPrompt
                               : payTotal != null ? `Continue to payment — ${formatPrice(payTotal, order.currency)}`
                                 : 'Continue to payment'}
                   </button>
                   <p className="text-center text-[12px] text-ink-mute" aria-live="polite">
                     {awaitingQuantity ? 'Select a quantity to see exact prices for each option.'
                       : !specResolved ? 'Confirm your card above to see your total.'
-                        : !destinationComplete ? 'Enter where we’re shipping to so we can calculate shipping.'
+                        : destinationHint != null ? destinationHint
                           : 'Secured by Stripe.'}
                   </p>
                 </div>

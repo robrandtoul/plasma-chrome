@@ -874,7 +874,28 @@ export default function OrderGroupPayPage() {
   // ── Payable ────────────────────────────────────────────────────────
   const shippingComputedAtCheckout =
     group.shipping_treatment === 'full_cost' || group.shipping_treatment === 'goodwill'
-  const destinationComplete = !shippingComputedAtCheckout || (!!destCountry && !!destPostcode.trim())
+  // Two halves tracked separately so the button names the one that's actually
+  // outstanding — naming a field the customer can see is already filled reads
+  // as a broken button. Mirrors OrderPayPage.
+  const destCountryMissing = shippingComputedAtCheckout && !destCountry
+  const destPostcodeMissing = shippingComputedAtCheckout && !destPostcode.trim()
+  const destinationComplete = !destCountryMissing && !destPostcodeMissing
+  const destinationPrompt =
+    destCountryMissing && destPostcodeMissing
+      ? 'Enter delivery country & postcode'
+      : destCountryMissing
+        ? 'Select a delivery country'
+        : destPostcodeMissing
+          ? 'Enter a delivery postcode'
+          : null
+  const destinationHint =
+    destCountryMissing && destPostcodeMissing
+      ? 'Enter where we’re shipping to so we can calculate shipping.'
+      : destCountryMissing
+        ? 'Choose the delivery country so we can calculate shipping.'
+        : destPostcodeMissing
+          ? 'Add the delivery postcode so we can calculate shipping.'
+          : null
   const effectiveDestCountry = normaliseShipDestination(
     shippingComputedAtCheckout ? destCountry : group.ship_dest_country ?? '',
     shippingComputedAtCheckout ? destPostcode : '',
@@ -1471,14 +1492,14 @@ export default function OrderGroupPayPage() {
                 >
                   {paying ? 'Loading secure payment…'
                     : !allChoicesMade ? 'Choose your options above'
-                      : !destinationComplete ? 'Enter delivery country & postcode'
+                      : destinationPrompt != null ? destinationPrompt
                         : 'Continue to payment'}
                 </button>
                 <p className="text-center text-[12px] text-ink-mute" aria-live="polite">
                   {!allChoicesMade
                     ? 'A couple of choices are still needed above before payment.'
-                    : !destinationComplete
-                      ? 'Enter where we’re shipping to so we can calculate shipping.'
+                    : destinationHint != null
+                      ? destinationHint
                       : 'Secured by Stripe.'}
                 </p>
               </div>
