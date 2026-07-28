@@ -1197,8 +1197,9 @@ function ProjectRow({
               thumb ? 'cursor-zoom-in' : '',
             ].join(' ')}
           >
+            {/* object-COVER, not contain — see the desktop row below. */}
             {thumb ? (
-              <img src={thumb.thumb_url} alt="" loading="lazy" className="w-full h-full object-contain" />
+              <img src={thumb.thumb_url} alt="" loading="lazy" className="w-full h-full object-cover" />
             ) : (
               thumbInitials
             )}
@@ -1334,11 +1335,21 @@ function ProjectRow({
         >
           {thumb ? (
             <>
+              {/* object-COVER: fill the box and centre-crop the overflow.
+                  The box is a fixed 72x52 but proof artwork is every shape
+                  there is — a square mockup, a 3:2 photo, the odd portrait —
+                  so object-contain left dark bars down the sides of anything
+                  narrower than the box (a 4:5 mockup painted 42px wide in a
+                  72px box: 15px of dead plate each side). At postage-stamp
+                  size the bars cost more recognition than a centre crop does,
+                  and the card is centred in practically every mockup. Nothing
+                  is lost either way — the hover preview and the click-through
+                  lightbox both stay object-contain and show the whole image. */}
               <img
                 src={thumb.thumb_url}
                 alt=""
                 loading="lazy"
-                className="w-full h-full object-contain"
+                className="w-full h-full object-cover"
               />
               {/* Hover affordance — a Maximize glyph in a dark scrim
                   appears on thumb hover so designers know the thumb

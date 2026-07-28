@@ -20,6 +20,22 @@ function swatch(colour: string, label: string): string {
   return `data:image/svg+xml;base64,${btoa(svg)}`
 }
 
+// Same idea, but at an arbitrary aspect ratio, with a bright inset rectangle
+// standing in for the card so it's obvious how the artwork is framed inside a
+// fixed-ratio thumbnail box. Real proof images are all sorts of shapes — a
+// square mockup, a 3:2 photo, an occasional portrait — and the row thumbnail
+// has one fixed box, so the fit behaviour is the thing worth eyeballing.
+function aspectSwatch(colour: string, label: string, w: number, h: number): string {
+  const inset = Math.round(Math.min(w, h) * 0.16)
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="${colour}"/><rect x="${inset}" y="${inset}" width="${w - inset * 2}" height="${h - inset * 2}" rx="6" fill="#ffffff" opacity="0.22"/><text x="${w / 2}" y="${h / 2 + 7}" font-family="sans-serif" font-size="20" fill="#ffffff" text-anchor="middle">${label}</text></svg>`
+  return `data:image/svg+xml;base64,${btoa(svg)}`
+}
+
+// Shapes the row thumbnails get cycled through, deterministically per version
+// id, so one screenshot shows square / landscape / portrait / wide side by side.
+const THUMB_SHAPES: Array<[number, number]> = [[200, 200], [200, 133], [160, 200], [200, 112]]
+const THUMB_SHAPE_COLOURS = ['#1f2937', '#7c2d12', '#1e3a5f', '#3f6212']
+
 // ——— shared shapes ———
 const steel = { code: 'metal_steel', display_name: 'Stainless Steel', production_route: 'in_house', lead_time_max_days: 5, outsourced_supplier_ids: [] as string[] }
 const letterpress = { code: 'paper_letterpress', display_name: 'Letterpress', production_route: 'supplier', lead_time_max_days: 7, outsourced_supplier_ids: ['s1'] }
@@ -969,6 +985,27 @@ export const supabase: any = {
           data: { ok: true, mode: 'live', required: true, cached: true, report: ARTWORK_REPORT_FLAGGED },
           error: null,
         }
+      }
+      // Row thumbnails on the dashboard / orders / flagged pages. Without this
+      // every row falls through to its initials placeholder, so the thumbnail
+      // treatment itself can't be verified here at all. Shape is picked from
+      // the version id (not request order), so a row keeps the same artwork
+      // across refetches and screenshots are stable.
+      if (name === 'dashboard-thumbnails') {
+        const ids: string[] = Array.isArray(opts?.body?.versionIds) ? opts.body.versionIds : []
+        const thumbs: Record<string, { thumb_url: string; preview_url: string; full_url: string }> = {}
+        for (const id of ids) {
+          let hash = 0
+          for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0
+          const [w, h] = THUMB_SHAPES[hash % THUMB_SHAPES.length]
+          const colour = THUMB_SHAPE_COLOURS[hash % THUMB_SHAPE_COLOURS.length]
+          // ASCII only — btoa emits Latin-1 bytes, and a non-ASCII label (an
+          // '×', say) decodes as invalid UTF-8, so the SVG never parses and the
+          // thumbnail silently renders as a 0x0 broken image.
+          const url = aspectSwatch(colour, `${w}x${h}`, w, h)
+          thumbs[id] = { thumb_url: url, preview_url: url, full_url: url }
+        }
+        return { data: { thumbs }, error: null }
       }
       if (name === 'customer-proof-images') {
         const proofId: string = opts?.body?.proofId ?? ''
