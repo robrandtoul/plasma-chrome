@@ -1259,7 +1259,7 @@ export default function OrderGroupPayPage() {
                       <span className="num text-[15px] font-medium text-brand">{note?.label ?? v.display_name}</span>
                       {note?.name && <span className="text-sm font-medium text-ink">{note.name}</span>}
                       {prevThickness.badgeId === v.id && prevThickness.badgeText && (
-                        <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand">
+                        <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-[var(--c-brand-800)]">
                           {prevThickness.badgeText}
                         </span>
                       )}

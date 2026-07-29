@@ -41,7 +41,11 @@ interface FinishChoiceCardProps {
   /**
    * Optional pill after the name — "Your last order · March 2022" for a
    * returning customer (000364). Brand-toned to read as personal history,
-   * distinct from the green catalogue "Most popular" on thickness cards.
+   * distinct from the catalogue "Most popular" on thickness cards. The text
+   * is brand-800, not brand: on the customer page brand is #58c59d, which
+   * on the brand-soft tint is only 1.8:1 — unreadable at 11px. brand-800
+   * (#24664f) gives 5.7:1, matching the deepened-text treatment the other
+   * customer-page pills already use (see --c-in-stock in design-tokens.css).
    */
   badge?: string | null
   selected: boolean
@@ -108,7 +112,7 @@ export function FinishChoiceCard({ name, priceLabel, imageSrc, imageAlt, descrip
           <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <span className="text-sm font-medium text-ink">{name}</span>
             {badge && (
-              <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand">{badge}</span>
+              <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-[var(--c-brand-800)]">{badge}</span>
             )}
           </span>
           <span className="shrink-0 text-[12px] text-ink-soft">{priceLabel}</span>
