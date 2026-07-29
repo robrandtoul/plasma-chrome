@@ -29,6 +29,7 @@ import { usePersonalisationPricing } from '../lib/quote/usePersonalisationPricin
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { computeQrArtworkChangedSlots, isQrSlotFlagged, resolveQrEffectiveKeep } from '../lib/qrCarryForward'
 import { rostersAreDisjoint } from '../lib/strandedApprovals'
+import { selectionShapeLoss } from '../lib/selectionShapeLoss'
 import { resolveCurrency, type CurrencySuggestion } from '../lib/currencyResolver'
 import { fetchConversationContext } from '../lib/conversationContext'
 import { createSetFromProof, markSetReviewLinkSent, resolveCustomerReviewLink, type CustomerReviewLink } from '../lib/proofSets'
@@ -2998,6 +2999,26 @@ export default function NewVersionPage() {
     }
   }
 
+  // Entering a Selection is a whole-version change, not an additive one:
+  // the variant-round save path forces names=[] and writes ONLY the
+  // per-direction artwork, so the recipient roster and every carried /
+  // uploaded per-person image are dropped on save. The rule + copy live
+  // in selectionShapeLoss.ts (tested via `pnpm test:selection-loss`);
+  // this just feeds it the form's current contents and asks.
+  //
+  // Returns true when the flip may proceed, false when the designer
+  // declined — callers MUST check, and must run this BEFORE applying any
+  // other state, or a decline leaves the form half-switched.
+  function confirmEnteringSelection(): boolean {
+    const loss = selectionShapeLoss({
+      names,
+      carriedImageCount: v1Carry?.images.length ?? 0,
+      uploadedImageCount: Object.values(imagesByOption).reduce((n, list) => n + list.length, 0),
+    })
+    if (!loss.destructive) return true
+    return window.confirm(loss.message!)
+  }
+
   // Single point where the wizard's resolved shape drives the form's
   // existing mode state. Keeping the mapping here (and in
   // deriveFormState) means the Phase 2 `shape` column drops in without
@@ -3048,8 +3069,18 @@ export default function NewVersionPage() {
       setHasPersonalisation(false)
       return
     }
-    // Card type is settled FIRST because it is the only step here that can
-    // prompt (and be declined). Doing it before the variant-round / per-
+    // The Selection guard runs before EVERYTHING else that mutates form
+    // state, including the card-type flip below. Ordering matters: the
+    // card-type handler applies its change (and drops orphaned images) as
+    // a side effect, so asking about Selection afterwards would leave the
+    // form half-switched on a decline. Rolling the wizard back here is
+    // enough because nothing has been applied yet.
+    if (fs.isVariantRound && !isVariantRound && !confirmEnteringSelection()) {
+      setWizardAnswers(prevAnswers)
+      return
+    }
+    // Card type is settled next because it is the only other step here that
+    // can prompt (and be declined). Doing it before the variant-round / per-
     // direction setters means a declined confirm leaves nothing half-applied
     // — we simply roll the wizard back and bail. The setters below read the
     // current render's values, so the order is otherwise immaterial.
