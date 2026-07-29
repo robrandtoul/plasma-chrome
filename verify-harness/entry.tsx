@@ -13,7 +13,7 @@
 // Pass ?path=/flagged for the Flagged board (watch_items / watch_updates
 // fixtures in mock-supabase) — used to verify the card layout at mobile
 // widths (the page uniquely carries both a search field and a header CTA).
-import { StrictMode } from 'react'
+import { StrictMode, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import OrdersPage from '../src/pages/OrdersPage'
@@ -41,6 +41,7 @@ import ArtworkCheckReportView, { type ArtworkCheckReport } from '../src/componen
 import VersionPreviewGate from '../src/components/VersionPreviewGate'
 import { ProofAnnotationEditor } from '../src/components/ProofAnnotationEditor'
 import Modal from '../src/components/Modal'
+import ContactNameNudge from '../src/components/ContactNameNudge'
 import { ButtonGhost } from '../src/design'
 import type { GridImage } from '../src/components/ImageGrid'
 import { useEffect } from 'react'
@@ -442,6 +443,94 @@ function PreviewGateRig() {
   )
 }
 
+// ?path=/contact-name-nudge — the first-name-only prompt in every state it can
+// reach, using the real live contacts that prompted it (2026-07-29 audit).
+// Pure props, so no fixture data is needed. The order below is the point: the
+// two "silent" rows must render nothing at all.
+function ContactNameNudgeRig() {
+  const rows: Array<{ label: string; el: ReactNode }> = [
+    {
+      label: 'Help Scout has a fuller name (the Karen Law case)',
+      el: (
+        <ContactNameNudge
+          fullName="Karen" email="karen.law@limiai.co" helpscoutName="Karen Law"
+          onApply={() => {}}
+        />
+      ),
+    },
+    {
+      label: 'Surname read off the email address (lower confidence, says so)',
+      el: (
+        <ContactNameNudge
+          fullName="Caleb" email="calebhozan16@gmail.com" onApply={() => {}}
+        />
+      ),
+    },
+    {
+      label: 'Editing, no suggestion available — warns anyway',
+      el: (
+        <ContactNameNudge
+          fullName="Sam" email="sami69@mac.com" onApply={() => {}} warnWithoutSuggestion
+        />
+      ),
+    },
+    {
+      label: 'Saving, and a failed write',
+      el: (
+        <ContactNameNudge
+          fullName="Kane" email="kane_adams@ymail.com" onApply={() => {}}
+          busy error="Couldn't update the name: permission denied"
+        />
+      ),
+    },
+    {
+      label: 'SILENT — staging surface with nothing to offer',
+      el: <ContactNameNudge fullName="Karan" email="karan@servicewing.com" onApply={() => {}} />,
+    },
+    {
+      label: 'PILL, nothing to suggest — warns and offers an inline field',
+      el: (
+        <ContactNameNudge
+          fullName="Karan" email="karan@servicewing.com" onApply={() => {}}
+          warnWithoutSuggestion allowEdit
+        />
+      ),
+    },
+    {
+      label: 'PILL, suggestion present — accept as-is or adjust the cruft first',
+      el: (
+        <ContactNameNudge
+          fullName="Andrea" email="andreaegidio@beyond-group.it"
+          helpscoutName="Andrea Egidio Marazzi - Beyond Group"
+          onApply={() => {}} warnWithoutSuggestion allowEdit
+        />
+      ),
+    },
+    {
+      label: 'SILENT — name already has a surname',
+      el: (
+        <ContactNameNudge
+          fullName="Karen Law" email="karen.law@limiai.co" onApply={() => {}} warnWithoutSuggestion
+        />
+      ),
+    },
+  ]
+  return (
+    <div className="min-h-screen bg-canvas p-10">
+      <div className="mx-auto max-w-lg space-y-6">
+        {rows.map((r) => (
+          <div key={r.label}>
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-mute">
+              {r.label}
+            </p>
+            <div className="rounded-lg border border-dashed border-line bg-surface p-3">{r.el}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function Elsewhere() {
   return <div style={{ padding: 40 }} data-nav-target>navigated away</div>
 }
@@ -458,7 +547,9 @@ const requestedPath =
 
 // ?path=/palette mounts the ⌘K designer command palette on its own, open, so
 // its layout and the fixture-backed proof search can be checked headlessly.
-const tree = requestedPath === '/detail-markers' ? (
+const tree = requestedPath === '/contact-name-nudge' ? (
+  <ContactNameNudgeRig />
+) : requestedPath === '/detail-markers' ? (
   <DetailMarkersRig />
 ) : requestedPath === '/customer-pins' ? (
   <CustomerPinsRig />

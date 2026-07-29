@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { logAudit } from '../lib/audit'
+import ContactNameNudge from '../components/ContactNameNudge'
 import {
   ConfirmDialog,
   ProjectList,
@@ -468,6 +469,18 @@ function ContactEditFields({ edit, companies, onChange, onSave, onCancel, saveLa
           <button onClick={onCancel} disabled={edit.saving} className="text-xs font-medium text-ink-mute hover:text-ink disabled:opacity-50">Cancel</button>
         </div>
       </div>
+      {/* Where the backlog of first-name-only contacts actually gets cleared:
+          this editor is shared by the add and edit paths, so both are covered. */}
+      <ContactNameNudge
+        fullName={edit.draftFullName}
+        email={edit.draftEmail}
+        onApply={(name) => onChange({ draftFullName: name })}
+        warnWithoutSuggestion
+        // Every other control in this row is gated on edit.saving; without
+        // this the button stays live mid-save and the correction it applies
+        // is dropped by the in-flight write.
+        busy={edit.saving}
+      />
       {edit.rowError && <p className="mt-2 rounded-md bg-out-soft px-3 py-1.5 text-xs text-out">{edit.rowError}</p>}
     </div>
   )

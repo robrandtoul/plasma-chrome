@@ -7,6 +7,7 @@ import { parseHelpscoutUrl, MIN_OVERRIDE_REASON_LENGTH } from '../lib/helpscout'
 import { titleCase } from '../lib/titleCase'
 // QuoteLink now rendered inside DesignerChrome (PR 35).
 import Modal from '../components/Modal'
+import ContactNameNudge from '../components/ContactNameNudge'
 import { DesignerChrome, ButtonInk } from '../design'
 import { ChevronRight } from 'lucide-react'
 
@@ -84,6 +85,33 @@ export default function NewProofPage() {
   // record had no organization doesn't wipe the prefilled name +
   // email when the effect re-runs.
   const pendingPasteNewContactRef = useRef<{ name: string; email: string } | null>(null)
+
+  // ── Contact-name nudge ─────────────────────────────────────────────────────
+  // The name Help Scout holds for the customer the paste flow just resolved.
+  // Kept so that reusing an EXISTING contact can offer their fuller HS name:
+  // the paste flow matches on email and reuses the stored row untouched, so a
+  // contact created back when Help Scout only knew "Karen" stayed "Karen" long
+  // after HS gained "Law".
+  //
+  // Stored WITH the email it describes, and only ever offered for a contact
+  // whose email matches. Keying it on the email rather than on "whatever is
+  // selected now" is load-bearing: applyPasteResult sets this before the
+  // contact switch is confirmed, and the switch is delegated to the
+  // contact-load effect, which silently does nothing when the pasted contact
+  // isn't in the loaded company. Without the check, a paste for one Karen
+  // could offer her surname for a different Karen — and the nudge writes
+  // straight to a live customer row.
+  const [hsCustomerName, setHsCustomerName] = useState<{ email: string; name: string } | null>(null)
+  const [nameFixBusy, setNameFixBusy] = useState(false)
+  const [nameFixError, setNameFixError] = useState<string | null>(null)
+  // Set after a successful write so the designer can put it back. The pill is
+  // the only nudge that persists instead of staging, and once a name has two
+  // tokens the prompt goes silent forever — so without this, a mis-click is
+  // unrecoverable for anyone who isn't an admin (the contact editor is behind
+  // RequireAdmin).
+  const [nameFixUndo, setNameFixUndo] = useState<{ id: string; previous: string } | null>(null)
+  // Mirrors selectedContact.id for reads after an await — see applyContactNameFix.
+  const selectedContactIdRef = useRef<string | null>(null)
 
   // ── Proof fields ───────────────────────────────────────────────────────────
   const [helpscoutUrl, setHelpscoutUrl] = useState('')
@@ -269,6 +297,12 @@ export default function NewProofPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedContact?.id])
 
+  // Mirror of the selected contact's id, readable after an await. Used by
+  // applyContactNameFix to tell whether the designer moved on mid-write.
+  useEffect(() => {
+    selectedContactIdRef.current = selectedContact?.id ?? null
+  }, [selectedContact?.id])
+
   async function runHelpscoutLookup(rawEmail: string) {
     const email = rawEmail.trim().toLowerCase()
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return
@@ -443,6 +477,12 @@ export default function NewProofPage() {
     const displayName = titleCase(`${result.customer.firstName} ${result.customer.lastName}`.trim())
     const organization = result.customer.organization?.trim()
 
+    // Remember what Help Scout calls them, so the nudge can offer it if the
+    // contact we're about to reuse is stored under a barer name. Paired with
+    // the email so it can never be offered for a different customer.
+    setHsCustomerName({ email, name: displayName })
+    setNameFixError(null)
+
     // Look up an existing contact by email, cross-company.
     const { data: existingContact } = await supabase
       .from('contacts')
@@ -572,6 +612,11 @@ export default function NewProofPage() {
     // contact — clear the sticky ref so later identity flips don't
     // re-apply the stale paste data on top of the chosen contact.
     pendingPasteNewContactRef.current = null
+    // A hand-picked contact isn't necessarily the customer the paste resolved,
+    // so the remembered Help Scout name no longer describes them.
+    setHsCustomerName(null)
+    setNameFixError(null)
+    setNameFixUndo(null)
     setSelectedContact(c)
     setContactSearch(c.full_name)
     setContactOpen(false)
@@ -592,11 +637,93 @@ export default function NewProofPage() {
     // paste-staged ref so it doesn't re-apply on the next effect
     // pass when the contact-load effect's resets wipe the form.
     pendingPasteNewContactRef.current = null
+    setHsCustomerName(null)
+    setNameFixError(null)
+    setNameFixUndo(null)
     setSelectedContact(null)
     setAddingContact(false)
     setContactSearch('')
     setNewContactName('')
     setNewContactEmail('')
+  }
+
+  // Set the new-contact name, keeping the paste-staged ref in step with it.
+  //
+  // The ref is sticky: the contact-load effect re-applies its {name, email} on
+  // every pass so a company / individual-mode flip doesn't wipe pasted data.
+  // The flip side is that it replays HELP SCOUT's name, so a designer who
+  // corrects "Arnel" to "Arnel Burkic" and then ticks "No company" silently
+  // gets "Arnel" back — losing the correction with nothing on screen to say so.
+  // Writing the edit through to the ref makes the replay reproduce what the
+  // designer actually chose.
+  //
+  // Deliberately name-only. The email field has the same latent staleness, but
+  // it's pre-existing, and email is the key the Help Scout lookup dedupes on —
+  // not somewhere to make an unrequested change.
+  function updateNewContactName(name: string) {
+    setNewContactName(name)
+    if (pendingPasteNewContactRef.current) {
+      pendingPasteNewContactRef.current = { ...pendingPasteNewContactRef.current, name }
+    }
+  }
+
+  // Apply a fuller name to the ALREADY-SAVED contact behind the selected-contact
+  // pill. Writes immediately rather than waiting for the proof to be created:
+  // the fix is about the customer record, not this proof, and a designer who
+  // then abandons the form shouldn't lose the correction. Contacts are
+  // authenticated-updatable (migration 000015), so no elevated path is needed.
+  async function applyContactNameFix(name: string, isUndo = false) {
+    const target = selectedContact
+    if (!target || nameFixBusy) return
+    setNameFixBusy(true)
+    setNameFixError(null)
+    const { error } = await supabase
+      .from('contacts')
+      .update({ full_name: name })
+      .eq('id', target.id)
+    setNameFixBusy(false)
+    if (error) {
+      setNameFixError(`Couldn't update the name: ${error.message}`)
+      return
+    }
+
+    // The contact row is corrected either way, so the cached list is always
+    // refreshed — it's keyed by id, so this is right whoever is selected now.
+    setAllContacts((prev) =>
+      prev
+        .map((c) => (c.id === target.id ? { ...c, full_name: name } : c))
+        .sort((a, b) => a.full_name.localeCompare(b.full_name)),
+    )
+
+    // Audited on the strength of the write, not of what the form shows — the
+    // row changed regardless of who is selected by the time this resolves.
+    void logAudit({
+      action: 'contact.updated',
+      targetType: 'contact',
+      targetId: target.id,
+      targetLabel: name,
+      // beforeValue/afterValue, not metadata — the admin Activity viewer builds
+      // its diff from those two columns and shows "No data changes recorded"
+      // otherwise. Matches the emitter in CustomerDetailPage.
+      beforeValue: { full_name: target.full_name },
+      afterValue: { full_name: name },
+    })
+
+    // Offer the way back — except on the undo itself, which would just loop.
+    setNameFixUndo(isUndo ? null : { id: target.id, previous: target.full_name })
+
+    // Form state is a different matter. The designer can hit "Change" or pick
+    // somebody else while the write is in flight, and re-selecting the contact
+    // they just abandoned would do more than look odd: the Help Scout lookup
+    // effect is keyed on selectedContact.id, so resurrecting a superseded
+    // contact re-fires match-helpscout-conversation, which on a zero-match
+    // result calls clearHelpscoutLink() and forces the override panel —
+    // tearing down a Help Scout link the designer had already resolved. Only
+    // touch the form when the contact is still the selected one.
+    if (selectedContactIdRef.current !== target.id) return
+
+    setSelectedContact({ ...target, full_name: name })
+    setContactSearch(name)
   }
 
   // ── Submit ─────────────────────────────────────────────────────────────────
@@ -1133,19 +1260,55 @@ export default function NewProofPage() {
 
               {/* Selected contact pill */}
               {selectedContact && (
-                <div className="flex items-center justify-between rounded-lg bg-canvas px-3 py-2.5">
-                  <div>
-                    <span className="text-sm font-medium text-ink">{selectedContact.full_name}</span>
-                    <span className="ml-2 text-sm text-ink-mute">{selectedContact.email}</span>
+                <>
+                  <div className="flex items-center justify-between rounded-lg bg-canvas px-3 py-2.5">
+                    <div>
+                      <span className="text-sm font-medium text-ink">{selectedContact.full_name}</span>
+                      <span className="ml-2 text-sm text-ink-mute">{selectedContact.email}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={clearContact}
+                      className="ml-3 shrink-0 text-xs text-ink-mute underline hover:text-ink-soft"
+                    >
+                      Change
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={clearContact}
-                    className="ml-3 shrink-0 text-xs text-ink-mute underline hover:text-ink-soft"
-                  >
-                    Change
-                  </button>
-                </div>
+                  {/* Warns even with nothing to suggest, and offers an inline
+                      field: this is the screen where the designer has the Help
+                      Scout thread open, and it's where every already-existing
+                      contact lands — including the ones the matcher can't help
+                      with. allowEdit is what makes that honest, since here
+                      "apply" writes to the customer record rather than a form. */}
+                  <ContactNameNudge
+                    fullName={selectedContact.full_name}
+                    email={selectedContact.email}
+                    helpscoutName={
+                      hsCustomerName &&
+                      hsCustomerName.email === selectedContact.email.trim().toLowerCase()
+                        ? hsCustomerName.name
+                        : null
+                    }
+                    onApply={(name) => void applyContactNameFix(name)}
+                    warnWithoutSuggestion
+                    allowEdit
+                    busy={nameFixBusy}
+                    error={nameFixError}
+                  />
+                  {nameFixUndo && nameFixUndo.id === selectedContact.id && (
+                    <p className="mt-2 text-xs text-ink-mute">
+                      Saved as <span className="font-medium text-ink">{selectedContact.full_name}</span>.{' '}
+                      <button
+                        type="button"
+                        onClick={() => void applyContactNameFix(nameFixUndo.previous, true)}
+                        disabled={nameFixBusy}
+                        className="underline hover:text-ink disabled:opacity-50"
+                      >
+                        Undo
+                      </button>
+                    </p>
+                  )}
+                </>
               )}
 
               {/* New contact inline form */}
@@ -1171,9 +1334,18 @@ export default function NewProofPage() {
                     <input
                       type="text"
                       value={newContactName}
-                      onChange={(e) => setNewContactName(e.target.value)}
+                      onChange={(e) => updateNewContactName(e.target.value)}
                       placeholder="e.g. Alice Thompson"
                       className={inputClass}
+                    />
+                    {/* Warns even with no suggestion: this name is usually
+                        pre-filled from Help Scout, and the designer has the
+                        thread open and may simply know the surname. */}
+                    <ContactNameNudge
+                      fullName={newContactName}
+                      email={newContactEmail}
+                      onApply={updateNewContactName}
+                      warnWithoutSuggestion
                     />
                   </div>
                   <div>

@@ -26,6 +26,7 @@
     "test:nudges": "tsx supabase/functions/_shared/nudgeDecision.test.ts",
     "test:thread-text": "tsx supabase/functions/_shared/customerThreadText.test.ts",
     "test:message-html": "tsx supabase/functions/_shared/messageHtml.test.ts",
+    "test:contact-names": "tsx src/lib/contactNames.test.ts",
     "test:material-match": "tsx src/lib/matchMaterial.test.ts",
     "test:wizard": "tsx src/components/ProofShapeWizard.test.ts",
     "test:image-match": "tsx src/lib/matchImageToName.test.ts",
