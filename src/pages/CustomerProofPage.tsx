@@ -33,6 +33,8 @@ import { QrCodePanel, qrRowsForSlot } from '../components/QrCodePanel'
 import { BUNDLE_PARAM, BUNDLE_TOKEN_PARAM } from '../lib/customerProofUrl'
 import { setReviewPath } from '../lib/proofSets'
 import { ActionPanel } from '../components/ActionPanel'
+import { ReadyToOrderPanel } from '../components/ReadyToOrderPanel'
+import { parseProofOrderState, readyToOrderCopy, type ProofOrderStatePayload } from '../lib/proofOrderState'
 import { ShareWithTeamPanel } from '../components/ShareWithTeamPanel'
 import DeclineFeedbackPanel from '../components/DeclineFeedbackPanel'
 import { ProofDetailView } from '../components/ProofDetailView'
@@ -130,6 +132,12 @@ export default function CustomerProofPage() {
   const [variantRows, setVariantRows] = useState<PublicMaterialVariant[]>([])
   const [activeOptionCode, setActiveOptionCode] = useState<string | null>(null)
   const [publicSettings, setPublicSettings] = useState<PublicSettings | null>(null)
+  // Is a payment link waiting for this proof? A bare state only — never the
+  // link, the order id or its token (migration 000367). Drives the "Ready to
+  // order?" card, which exists because the price grid here is a lookup and
+  // customers reasonably try to buy from it. Null until loaded, and left null
+  // on any failure, which renders no card at all.
+  const [orderState, setOrderState] = useState<ProofOrderStatePayload | null>(null)
   // Detail view (Phase 2 — replaces the dark fullscreen lightbox).
   // Non-modal, light-register zoom that coexists with the request-
   // changes panel. `images` is the navigable set (the clicked image's
@@ -974,6 +982,7 @@ export default function CustomerProofPage() {
     setPersonalisationPricing({})
     setActiveOptionCode(null)
     setNotFound(false)
+    setOrderState(null)
 
     // One SECURITY DEFINER RPC replaces the previous fan-out across
     // public_proofs / public_proof_versions / public_material_options /
@@ -984,9 +993,16 @@ export default function CustomerProofPage() {
     // relevant to the proof UUID it already knows. The views
     // themselves are no longer anon-readable; this is the only
     // customer-page entry point now.
-    const [graphResult, settingsResult] = await Promise.all([
+    const [graphResult, settingsResult, orderStateResult] = await Promise.all([
       supabase.rpc('public_get_customer_proof', { p_proof_id: proofId }),
       getPublicSettings(),
+      // Is a payment link waiting? Additive and deliberately tolerant: this
+      // RPC (000367) is newer than the page, so ANY failure — including
+      // "function does not exist" where the migration hasn't been applied
+      // yet — must leave the page exactly as it was rather than break it.
+      // Handled below, never thrown: supabase-js resolves errors, not
+      // rejects, so this can't take down the Promise.all.
+      supabase.rpc('public_get_proof_order_state', { p_proof_id: proofId }),
     ])
 
     if (graphResult.error || graphResult.data == null) {
@@ -1000,6 +1016,9 @@ export default function CustomerProofPage() {
     const graph = graphResult.data as CustomerProofGraph
     setProof(graph.proof)
     setPublicSettings(settingsResult)
+    // parseProofOrderState is an allow-list, so nothing beyond the state and
+    // a live link's expiry can reach the UI even if the payload grows.
+    setOrderState(orderStateResult.error ? null : parseProofOrderState(orderStateResult.data))
 
     const rawVersions = graph.versions ?? []
     setVersions(rawVersions)
@@ -1849,6 +1868,14 @@ export default function CustomerProofPage() {
     )
   }
 
+  // "Ready to order?" card — null when there is nothing honest to say (state
+  // not loaded, RPC unavailable, already paid, or a proof still in progress
+  // with no link out). Declared above renderVariantRound because ALL THREE
+  // pricing surfaces render it: the variant-round card below, and the
+  // narrow- and wide-table blocks further down. The copy itself lives in
+  // src/lib/proofOrderState.ts and is asserted verbatim by its test.
+  const readyToOrder = readyToOrderCopy(orderState, proof?.status ?? null)
+
   // Top-level variant-round render. Returns a fragment with two
   // <section>s: pricing card on top, then the variant comparison grid.
   // Replaces the proofs IIFE entirely on variant-round versions; the
@@ -2168,6 +2195,19 @@ export default function CustomerProofPage() {
               </div>
             )}
           </PanelShell>
+        )}
+
+        {/* "Ready to order?" — the third and last pricing surface. A
+            Selection proof renders a full price grid AND the "Need a price
+            for a specific quantity?" lookup, i.e. exactly the two controls
+            the customer in the 000367 header tried to order from, so it
+            needs the signpost just as much as the other two blocks. Sits
+            inside the same !is_per_direction_pricing gate: a per-direction
+            round shows no pricing at all, so it gets no card either. No
+            order-N class — this div is already the order-4 slot's child, in
+            normal flow. */}
+        {!activeVersion.is_per_direction_pricing && readyToOrder && (
+          <ReadyToOrderPanel copy={readyToOrder} />
         )}
       </div>
     )
@@ -3015,6 +3055,16 @@ export default function CustomerProofPage() {
                       </p>
                     </div>
                   )}
+
+                {/* "Ready to order?" — the prices above are a lookup, not a
+                    shop. Sits with the pricing cluster (order-8) so it is the
+                    next thing read after the grid a customer just tried to
+                    click. Carries no link by design; see ReadyToOrderPanel.
+                    ⚠ Duplicated in the wide-table pricing block below —
+                    patch both. */}
+                {readyToOrder && (
+                  <ReadyToOrderPanel copy={readyToOrder} className="order-8 lg:order-none" />
+                )}
               </>
             )}
 
@@ -3993,6 +4043,14 @@ export default function CustomerProofPage() {
                     </p>
                   </div>
                 )}
+
+            {/* "Ready to order?" — see the note on the twin in the
+                narrow-table pricing block above. Same card, same slot; the
+                narrow and wide blocks are mutually exclusive, and a variant
+                round renders neither (it has its own copy, above). */}
+            {readyToOrder && (
+              <ReadyToOrderPanel copy={readyToOrder} className="order-8 lg:order-none" />
+            )}
             </>
           )}
 
