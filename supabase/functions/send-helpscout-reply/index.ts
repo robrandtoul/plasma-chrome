@@ -21,12 +21,26 @@
 //   before per-designer attribution shipped, so no regression.
 //
 // POST body:
-//   { proof_id: string, version_id: string, body: string, template_id?: string }
+//   { proof_id: string, version_id: string, body: string,
+//     template_id?: string, hs_status?: 'pending' | 'closed' }
 //
 // template_id is the reply_templates id the editor was seeded from. It is
 // a label only (the client renders and can freely edit the body), never
 // proof of content. When it is a 'nudge_*' template, a proof_nudges ledger
 // row is recorded after the send — see the block below the HS POST.
+//
+// hs_status is the state the Help Scout conversation is left in. It defaults
+// to 'pending' (the historical, and still overwhelmingly common, behaviour:
+// the designer is asking the customer to review a proof, so the thread belongs
+// in the customer's queue). 'closed' exists for the project-abandoned notice,
+// which ends the exchange rather than opening one — see postReply. Anything
+// unrecognised falls back to 'pending', so the six existing call sites
+// (MessageSendPanel, OrderBuilderModal, SendPayLinkModal, GroupOrdersModal,
+// RecordOfflinePaymentModal, SetWorkspacePage) are untouched and NEITHER
+// deploy order breaks. They are not quite symmetric, though: shipping the
+// frontend first means an abandon notice posts with status 'pending' while
+// the dialog says the conversation was closed — cosmetic and self-correcting
+// on the redeploy, but redeploy this function promptly.
 //
 // Response (200):
 //   { thread_id: number }
@@ -108,24 +122,31 @@ async function fetchPrimaryCustomerId(
 // Wrapper around the shared postStaffReply helper. Adds the
 // diagnostic console.log breadcrumbs this file relies on (see the
 // header docstring) and shapes the result as { thread_id } for the
-// existing call site. Status flips to 'pending' here — the designer
-// is asking the customer to review a proof, so the conversation
-// belongs in the customer's queue.
+// existing call site.
+//
+// Status defaults to 'pending' — nearly every send here is the designer
+// asking the customer to review a proof, so the conversation belongs in the
+// customer's queue. The one exception is the abandon notice, which passes
+// 'closed': that message ENDS the exchange, and leaving a closed-off project
+// sitting in Pending would put it straight back in the chase queue the
+// designer just took it out of. Help Scout reopens the conversation on its own
+// if the customer replies.
 async function postReply(
   token: string,
   conversationId: string,
   text: string,
   userId: number,
   customerId: number,
+  hsStatus: 'pending' | 'closed',
 ): Promise<SendReplyResult> {
-  console.log('[send-helpscout-reply] POST reply', { conversationId, userId, bodyLen: text.length })
+  console.log('[send-helpscout-reply] POST reply', { conversationId, userId, bodyLen: text.length, hsStatus })
   let threadId = 0
   try {
     threadId = await postStaffReply(token, conversationId, {
       text,
       userId,
       customerId,
-      status: 'pending',
+      status: hsStatus,
     })
   } catch (err) {
     // Surface the HS response details in the breadcrumb stream
@@ -185,6 +206,12 @@ Deno.serve(async (req) => {
     let versionId: string | undefined
     let body: string | undefined
     let templateId: string | undefined
+    // Which state the Help Scout conversation should be left in. Anything
+    // other than an explicit 'closed' — absent, misspelt, a stale caller
+    // predating this field — falls back to the historical 'pending', so
+    // deploying this ahead of any frontend is a no-op for every existing
+    // caller.
+    let hsStatus: 'pending' | 'closed' = 'pending'
     try {
       const parsed = await req.json()
       proofId = typeof parsed?.proof_id === 'string' ? parsed.proof_id.trim() : undefined
@@ -195,6 +222,7 @@ Deno.serve(async (req) => {
       templateId = typeof parsed?.template_id === 'string'
         ? parsed.template_id.trim() || undefined
         : undefined
+      if (parsed?.hs_status === 'closed') hsStatus = 'closed'
     } catch (parseErr) {
       console.error('[send-helpscout-reply] body parse failed', parseErr)
       return json({ error: 'Invalid JSON body', debug: debugFromError(parseErr) }, 400)
@@ -293,7 +321,7 @@ Deno.serve(async (req) => {
       // following a bare URL into the link's href — the iPhone-404 bug on
       // the first-proof / revision templates, whose copy sits after {url}.
       // See _shared/messageHtml.ts.
-      result = await postReply(token, conversationId, messageBodyToHtml(body), userIdNum, customerId)
+      result = await postReply(token, conversationId, messageBodyToHtml(body), userIdNum, customerId, hsStatus)
     } catch (hsErr) {
       if (hsErr instanceof HsError) {
         const upstream = hsErr.status === 404 ? 404 : 502

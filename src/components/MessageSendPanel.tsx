@@ -31,6 +31,9 @@ import {
   type TemplateContext,
 } from '../lib/replyTemplates'
 import { getRepliesEnabled } from '../lib/repliesEnabled'
+// Was a module-private copy here; lifted to src/lib/edgeError.ts when the
+// abandon notice became a fourth call site that needed it.
+import { extractServerError } from '../lib/edgeError'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -469,25 +472,3 @@ function formatThreadTimestamp(iso: string): string {
   })
 }
 
-// supabase-js wraps every non-2xx function response in a
-// FunctionsHttpError whose .message is the generic "Edge Function
-// returned a non-2xx status code". The actual function-emitted body
-// is on err.context (the underlying Response). Read it explicitly
-// so the designer sees our error copy ("HELPSCOUT_DEFAULT_USER_ID
-// not set", "Help Scout reply error (400): ...") rather than the
-// wrapper. Falls back to fallbackMessage when the body is missing,
-// not JSON, or doesn't contain an error field.
-async function extractServerError(err: unknown, fallbackMessage: string): Promise<string> {
-  const ctx = (err as { context?: Response }).context
-  if (!ctx || typeof ctx.clone !== 'function') return fallbackMessage
-  try {
-    const cloned = ctx.clone()
-    const parsed = await cloned.json()
-    if (parsed && typeof parsed === 'object' && typeof parsed.error === 'string') {
-      return parsed.error
-    }
-  } catch {
-    // Body not JSON, body already consumed, etc — fall through.
-  }
-  return fallbackMessage
-}

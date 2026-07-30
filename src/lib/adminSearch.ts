@@ -138,7 +138,7 @@ export const ADMIN_DESTINATIONS: AdminDestination[] = [
     path: '/admin/content/messages',
     group: 'Messaging & automation',
     icon: 'content',
-    keywords: ['reply templates', 'email templates', 'message bodies', 'confirmations', 'proof messages', 'reminder wording', 'templates', 'approve confirmation', 'change request confirmation', 'nudge templates', 'order messages'],
+    keywords: ['reply templates', 'email templates', 'message bodies', 'confirmations', 'proof messages', 'reminder wording', 'templates', 'approve confirmation', 'change request confirmation', 'nudge templates', 'order messages', 'project messages', 'project closed', 'abandon message', 'closing a project'],
     description: 'The message bodies sent to customers.',
   },
   {

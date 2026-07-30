@@ -10,7 +10,14 @@ import VersionDetailModal, { type ModalVersion } from '../components/VersionDeta
 import HelpScoutEditModal from '../components/HelpScoutEditModal'
 import Modal from '../components/Modal'
 import MessageSendPanel from '../components/MessageSendPanel'
+import AbandonProjectDialog from '../components/AbandonProjectDialog'
+import {
+  ABANDON_TEMPLATE_ID,
+  notifyBlocker,
+  resolveNoticeVersionId,
+} from '../lib/abandonNotice'
 import { firstName } from '../lib/firstName'
+import { extractServerError } from '../lib/edgeError'
 import { getRepliesEnabled } from '../lib/repliesEnabled'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
 import { invalidateApprovedNoOrderCount } from '../lib/approvedNoOrder'
@@ -665,6 +672,21 @@ export default function ProofDetailPage() {
   // immediately on entry and is cleared on every exit path.
   const statusActionInFlightRef = useRef(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  // Abandon dialog's optional "let the customer know" note. The error is shown
+  // inside the dialog rather than as a toast because the dialog stays open on
+  // failure — and one of the two failures leaves real work outstanding.
+  //
+  // The ref records "this project is already closed; only the message still
+  // needs sending", so pressing the button again retries the send alone and
+  // can't re-run the flip or double-audit it.
+  //
+  // ⚠ It is TAGGED WITH THE PROOF ID. /proofs/:id has no key on its Route, so
+  // React reuses this component instance when the id changes — which the
+  // header's prev/next worklist arrows do constantly — and a ref survives
+  // that. An untagged flag would leak onto the NEXT project and skip its flip.
+  const [abandonError, setAbandonError] = useState<string | null>(null)
+  const abandonNoticeRef = useRef<{ proofId: string } | null>(null)
+  const abandonClosedPendingNotice = !!proof && abandonNoticeRef.current?.proofId === proof.id
   const [showHelpscoutEdit, setShowHelpscoutEdit] = useState(false)
   // Internal-notes inline edit state. notesEditing flips the panel
   // into textarea mode; notesDraft holds the editing buffer so Cancel
@@ -1825,27 +1847,158 @@ export default function ProofDetailPage() {
     navigate('/')
   }
 
-  async function handleAbandon() {
+  // Abandon, optionally telling the customer.
+  //
+  // Order matters, and it is the SAME order order-lifecycle uses server-side
+  // for the identical decision: the status flip lands FIRST, then a
+  // best-effort customer notice. Sending first reads more careful, and was the
+  // first cut here, but it buys a worse set of failures:
+  //
+  //   * "customer told the project is closed, project still open" is a lie we
+  //     told someone, and the only exit is a second message correcting it;
+  //   * guarding the retry against a double-send needs a record of the send,
+  //     and an in-memory ref is destroyed by the page refresh that a designer
+  //     naturally reaches for after an error — so the SECOND attempt would
+  //     cheerfully email the customer a duplicate closure notice.
+  //
+  // Flipping first has neither problem. The status is its own durable record
+  // (an abandoned proof can't even reach this dialog again — Abandon is hidden
+  // while locked), so the send happens at most once per confirm; and the
+  // remaining failure, "closed but the note didn't go", is honest, visible and
+  // fixable by hand in Help Scout. The dialog stays open to say so and offer a
+  // retry of the send alone.
+  async function handleAbandon(notify: boolean, noticeBody: string) {
     if (!proof) return
     setStatusWorking(true)
-    const { error } = await supabase
-      .from('proofs')
-      .update({ status: 'abandoned', abandoned_at: new Date().toISOString() })
-      .eq('id', proof.id)
+    setAbandonError(null)
+
+    // Recomputed here rather than read from render scope — handlers in this
+    // file can't see the render-scope consts (see handleDownloadZip). Checked
+    // BEFORE the flip so a notify that can't work doesn't silently degrade
+    // into a silent close the designer didn't choose.
+    const versionId = notify ? resolveNoticeVersionId(versions) : null
+    if (notify && !versionId) {
+      setStatusWorking(false)
+      setAbandonError('This project has no proof version to send the message against. Untick the box to close it silently, then message the customer in Help Scout.')
+      return
+    }
+
+    // ── 1. The flip (skipped when a previous attempt already did it and only
+    //       the notice failed — see abandonNoticeRef below). ──
+    const alreadyClosed = abandonNoticeRef.current?.proofId === proof.id
+    if (!alreadyClosed) {
+      const { error } = await supabase
+        .from('proofs')
+        .update({ status: 'abandoned', abandoned_at: new Date().toISOString() })
+        .eq('id', proof.id)
+      if (error) {
+        // Previously this branch didn't exist: a failed abandon closed the
+        // dialog, showed no toast and logged nothing, so it looked identical
+        // to a successful one. Keep the dialog open with the reason.
+        setStatusWorking(false)
+        setAbandonError(`Couldn't close the project: ${error.message}`)
+        return
+      }
+    }
+
+    // ── 2. The notice (best-effort; the project is already closed) ──
+    let noticeThreadId: number | null = null
+    let noticeFailure: string | null = null
+    if (notify && versionId) {
+      const { data, error } = await supabase.functions.invoke<{ thread_id?: number; error?: string }>(
+        'send-helpscout-reply',
+        {
+          body: {
+            proof_id: proof.id,
+            version_id: versionId,
+            body: noticeBody,
+            template_id: ABANDON_TEMPLATE_ID,
+            // A closing note ends the exchange; leaving the thread Pending
+            // would drop the project straight back into the chase queue the
+            // designer just took it out of. Help Scout reopens it if the
+            // customer replies — which is exactly what the message invites.
+            hs_status: 'closed',
+          },
+        },
+      )
+      if (error) {
+        // The real reason lives on error.context, not error.message — see
+        // extractServerError. Without it every distinct failure (replies
+        // paused, conversation missing, HS 4xx) reads as the same useless
+        // "Edge Function returned a non-2xx status code".
+        noticeFailure = await extractServerError(error, error.message)
+      } else if (data?.error) {
+        noticeFailure = data.error
+      } else {
+        // thread_id is 0 when Help Scout answers 201 without a parseable
+        // Resource-Id / Location header. That is "sent but unverifiable", NOT
+        // a failure — the house reading everywhere else (MessageSendPanel,
+        // SendPayLinkModal). Treating it as a failure here would tell the
+        // designer to retry a message the customer already has.
+        noticeThreadId = typeof data?.thread_id === 'number' ? data.thread_id : 0
+      }
+    }
+
     setStatusWorking(false)
-    setStatusDialog(null)
-    if (!error) {
+
+    if (noticeFailure) {
+      // The project IS closed. Remember that, so pressing the button again
+      // retries only the message and can't re-run the flip or re-audit.
+      abandonNoticeRef.current = { proofId: proof.id }
+      // Reason only — the dialog switches to its retry framing, whose heading
+      // and lead already say the project is closed and the customer wasn't
+      // told. Repeating that here just buries the bit that's actually new.
+      setAbandonError(noticeFailure)
+      // Only on the FIRST failure — this branch is also where a failed retry
+      // lands, and re-logging would put a second proof.abandoned row in the
+      // audit trail for one closure (with a now-wrong beforeValue, since
+      // loadProof has since refreshed proof.status to 'abandoned').
+      if (!alreadyClosed) {
+        void logAudit({
+          action: 'proof.abandoned',
+          targetType: 'proof',
+          targetId: proof.id,
+          targetLabel: proof.contacts.full_name,
+          beforeValue: { status: proof.status },
+          afterValue: { status: 'abandoned', customer_notified: false, notify_failed: noticeFailure },
+        })
+        if (id) loadProof(id)
+      }
+      return
+    }
+
+    // Only audit the close once — a retry that finally sends the notice has
+    // already logged the close above, and re-logging would double-count it.
+    if (!alreadyClosed) {
       void logAudit({
         action: 'proof.abandoned',
         targetType: 'proof',
         targetId: proof.id,
         targetLabel: proof.contacts.full_name,
         beforeValue: { status: proof.status },
-        afterValue: { status: 'abandoned' },
+        // Whether the customer was told is the part of this decision that
+        // can't be reconstructed later from the row alone.
+        afterValue: {
+          status: 'abandoned',
+          customer_notified: noticeThreadId != null,
+          ...(noticeThreadId ? { helpscout_thread_id: noticeThreadId } : {}),
+        },
       })
-      showToast('Project abandoned')
-      if (id) loadProof(id)
+    } else if (noticeThreadId != null) {
+      // The retry succeeded — record the send on its own, so the audit trail
+      // shows the customer did eventually get told.
+      void logAudit({
+        action: 'proof.reply_sent',
+        targetType: 'proof',
+        targetId: proof.id,
+        targetLabel: proof.contacts.full_name,
+        metadata: { template_id: ABANDON_TEMPLATE_ID, ...(noticeThreadId ? { helpscout_thread_id: noticeThreadId } : {}) },
+      })
     }
+    abandonNoticeRef.current = null
+    setStatusDialog(null)
+    showToast(noticeThreadId != null ? 'Project abandoned and the customer told' : 'Project abandoned')
+    if (id) loadProof(id)
   }
 
   // Fetch every approved image, assemble a ZIP with a manifest, and
@@ -4684,15 +4837,39 @@ export default function ProofDetailPage() {
         />
       )}
 
-      {/* Abandon confirm dialog */}
+      {/* Abandon confirm dialog, with the optional customer notice */}
       {statusDialog === 'abandon' && (
-        <ConfirmDialog
-          message="Abandon this project? This will lock the project. No new proof versions can be added, and the customer-facing page will show a closed state. You can reopen the project later if needed."
-          confirmLabel="Abandon project"
-          confirmClass="bg-ink hover:opacity-90 text-on-ink"
+        <AbandonProjectDialog
+          contactName={proof.contacts.full_name}
+          companyName={proof.contacts.companies?.name ?? null}
+          blocker={notifyBlocker({
+            helpscoutConversationId: proof.helpscout_conversation_id,
+            versions: versions.map((v) => ({
+              id: v.id,
+              version_number: v.version_number,
+              is_current: v.is_current,
+            })),
+            // Still loading (null) counts as ENABLED here: the blocker copy
+            // names a specific admin setting, and claiming "an admin has
+            // paused replies" during a one-round-trip cold cache would be a
+            // checkable falsehood that sends the designer off to look at a
+            // settings page. A genuinely-paused send is caught server-side
+            // (503) and surfaced in the dialog with the real reason.
+            repliesEnabled: repliesEnabled !== false,
+          })}
           working={statusWorking}
-          onConfirm={guardStatusAction(handleAbandon)}
-          onCancel={() => setStatusDialog(null)}
+          errorMsg={abandonError}
+          closedPendingNotice={abandonClosedPendingNotice}
+          onConfirm={({ notify, body }) => void guardStatusAction(() => handleAbandon(notify, body))()}
+          onCancel={() => {
+            setStatusDialog(null)
+            setAbandonError(null)
+            // abandonNoticeRef is deliberately left alone. It records that
+            // this project is already closed with its notice outstanding, so
+            // a reopened dialog retries the message rather than re-running
+            // (and re-auditing) the close. Proof-tagged, so it can't bleed
+            // onto the next project the worklist arrows land on.
+          }}
         />
       )}
 

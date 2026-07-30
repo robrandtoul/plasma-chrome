@@ -114,7 +114,7 @@ export function substituteVariables(text: string, ctx: TemplateContext): string 
 // Designer-picked templates (first_proof, revision) use unprefixed
 // IDs and render in the "Pre-send messages" sub-section.
 
-export type TemplateVariableScope = 'designer_picked' | 'proof_viewer' | 'order' | 'order_reminder' | 'order_confirmation' | 'order_lifecycle' | 'supplier_order' | 'inhouse_note'
+export type TemplateVariableScope = 'designer_picked' | 'proof_viewer' | 'project_lifecycle' | 'order' | 'order_reminder' | 'order_confirmation' | 'order_lifecycle' | 'supplier_order' | 'inhouse_note'
 
 export interface TemplateVariableMeta {
   // Variable name as it appears between braces in templates. Plain
@@ -143,6 +143,13 @@ export const TEMPLATE_VARIABLES: TemplateVariableMeta[] = [
   { name: 'chosen_variant',      scope: 'proof_viewer',    description: 'Variant the customer picked (variant round only; empty otherwise)',               conditional: true  },
   { name: 'actor_name',          scope: 'proof_viewer',    description: 'Name the customer typed when confirming their action',                            conditional: false },
   { name: 'recipient_name',      scope: 'proof_viewer',    description: "Per-recipient slot on multi-recipient proofs; empty on shared/all-shared proofs — wrap in {? recipient_name}…{/?} when used.", conditional: true },
+  // Project messages (proof_abandoned) — sent only when the designer ticks
+  // "let the customer know" while closing a project off. Deliberately just the
+  // customer's name and company: there is no proof link here, because the
+  // abandoned page shows a closed card with no artwork on it, so sending
+  // someone back to it would be a dead end.
+  { name: 'first_name',          scope: 'project_lifecycle', description: "Customer's first name",                                                          conditional: false },
+  { name: 'company',             scope: 'project_lifecycle', description: 'Company name (when set)',                                                        conditional: true  },
   // Order messages (order_payment_link) — composed by the designer in the order
   // builder before sending the pay-link to the customer.
   { name: 'order_url',           scope: 'order',           description: "Customer order pay-page link",                                                    conditional: false },
@@ -245,6 +252,19 @@ export const DEFAULT_BODIES: Record<string, string> = {
     `Thanks, we've recorded your changes for {version_label}:<br><br>{? change_notes}{change_notes}<br><br>{/?}We'll get an updated proof over to you shortly.`,
   proof_variant_selection_confirmation:
     `Thanks, we've recorded your selection for {version_label}: {chosen_variant}.<br><br>{? change_notes}{change_notes}<br><br>{/?}We'll incorporate this and get an updated proof over to you shortly.`,
+  // Project closed — the optional note a designer can send when abandoning a
+  // project (silent stays the default). Seeded in 000366.
+  //
+  // The copy is written to sit alongside the customer-facing closed screen,
+  // which says only "This proof is closed" and offers a way back in. So: no
+  // reason, no blame, nothing final-sounding, and deliberately no {url} — the
+  // link still loads but renders the closed card with no artwork on it, so
+  // pointing someone back at it would be a dead end. "Reply to this email"
+  // lands on the same Help Scout thread the designer is already in; the closed
+  // page's own contact form opens a fresh Customer Support conversation
+  // instead, which is a worse place for this to arrive.
+  proof_abandoned:
+    `Hi {first_name},\n\nWe're closing off your card proof{? company} for {company}{/?} for now, so it's not left sitting on your list.\n\nNothing's lost at our end — if you'd like to pick it back up, just reply to this email and we'll carry on from where we left off.`,
   // Needs-attention reminders (one-click nudges from the resolve popover).
   // Seeded in 000207; designer_picked variable set; no sign-off.
   // The `_2` / `_final` ids (seeded in 000313) are the per-position bodies

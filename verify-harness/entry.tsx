@@ -42,6 +42,7 @@ import VersionPreviewGate from '../src/components/VersionPreviewGate'
 import { ProofAnnotationEditor } from '../src/components/ProofAnnotationEditor'
 import Modal from '../src/components/Modal'
 import ContactNameNudge from '../src/components/ContactNameNudge'
+import AbandonProjectDialog from '../src/components/AbandonProjectDialog'
 import { ButtonGhost } from '../src/design'
 import type { GridImage } from '../src/components/ImageGrid'
 import { useEffect } from 'react'
@@ -531,6 +532,51 @@ function ContactNameNudgeRig() {
   )
 }
 
+// ?path=/abandon-dialog — the Abandon-project confirm. Pass
+// ?state=silent|blocked|sent (default silent):
+//   silent  — the DEFAULT path, which must stay indistinguishable from the
+//             plain confirm this replaced. Click the checkbox to see the
+//             opt-in state with the editable message.
+//   blocked — the notify option can't be offered (no linked conversation) and
+//             explains itself instead of failing at send time.
+//   retry   — the project closed but its notice failed to send. The dialog
+//             stops offering to close anything and becomes a retry of the
+//             message alone, so nothing claims the project is still open.
+// The template body comes from the fixture supabase client, which returns no
+// row, so the dialog falls back to DEFAULT_BODIES — the copy a fresh install
+// ships with.
+function AbandonDialogRig() {
+  const state = new URLSearchParams(window.location.search).get('state') ?? 'silent'
+  const blocked = state === 'blocked'
+  return (
+    <div className="min-h-screen bg-canvas">
+      <AbandonProjectDialog
+        contactName="Takashi Yamada"
+        companyName="Yanko Design"
+        blocker={
+          blocked
+            ? {
+                code: 'no_conversation',
+                detail:
+                  'No Help Scout conversation is linked to this project, so there’s no thread to post on. Link one first, or message the customer yourself.',
+              }
+            : null
+        }
+        working={false}
+        errorMsg={
+          state === 'retry' ? 'Help Scout conversation not found' : null
+        }
+        closedPendingNotice={state === 'retry'}
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />
+      <p className="p-6 text-xs text-ink-mute">
+        state={state} — try ?state=blocked, ?state=retry. Tick the box for the notify state.
+      </p>
+    </div>
+  )
+}
+
 function Elsewhere() {
   return <div style={{ padding: 40 }} data-nav-target>navigated away</div>
 }
@@ -547,7 +593,9 @@ const requestedPath =
 
 // ?path=/palette mounts the ⌘K designer command palette on its own, open, so
 // its layout and the fixture-backed proof search can be checked headlessly.
-const tree = requestedPath === '/contact-name-nudge' ? (
+const tree = requestedPath === '/abandon-dialog' ? (
+  <AbandonDialogRig />
+) : requestedPath === '/contact-name-nudge' ? (
   <ContactNameNudgeRig />
 ) : requestedPath === '/detail-markers' ? (
   <DetailMarkersRig />

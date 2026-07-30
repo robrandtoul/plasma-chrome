@@ -119,10 +119,20 @@ function buildSampleContext(company: CompanyMode, version: VersionMode): Templat
 // `inhouse_production_note` is the one template here that never reaches a
 // customer — it's the note our own workshop reads — so it gets its own group
 // rather than sitting among the customer messages.
-type TemplateGroupKey = 'pre_send' | 'post_action' | 'nudge' | 'order' | 'workshop'
+type TemplateGroupKey = 'pre_send' | 'post_action' | 'project' | 'nudge' | 'order' | 'workshop'
+
+// Designer-triggered notices about the PROJECT itself rather than about a
+// customer action. `proof_abandoned` is `proof_`-prefixed to match the
+// codebase's own vocabulary for the event (the `proof.abandoned` audit action,
+// the `proof_abandoned` timeline milestone), so it needs naming here to escape
+// the post-action rule below — exactly the exact-id override `order_cancelled`
+// / `order_revision` use to escape the `order_` rules. A set rather than a
+// prefix test so a future `proof_*` confirmation can't join by accident.
+const PROJECT_TEMPLATES = new Set(['proof_abandoned'])
 
 function templateGroup(id: string): TemplateGroupKey {
   if (id === 'inhouse_production_note') return 'workshop'
+  if (PROJECT_TEMPLATES.has(id)) return 'project'
   if (id.startsWith('proof_')) return 'post_action'
   if (id.startsWith('nudge_')) return 'nudge'
   if (id.startsWith('order_')) return 'order'
@@ -137,6 +147,11 @@ function templateGroup(id: string): TemplateGroupKey {
 // apply to an order pay-link.
 function templateScope(id: string): TemplateVariableScope {
   if (id === 'inhouse_production_note') return 'inhouse_note'
+  // Must sit above the proof_ rule — see PROJECT_TEMPLATES. These carry the
+  // customer's name and company, not the just-recorded-action variables, and
+  // deliberately no {url}: the abandoned proof page shows a closed card with
+  // no artwork on it, so offering a link to insert would invite a dead end.
+  if (PROJECT_TEMPLATES.has(id)) return 'project_lifecycle'
   if (id.startsWith('proof_')) return 'proof_viewer'
   if (id.startsWith('order_reminder')) return 'order_reminder'
   if (id === 'order_paid_confirmation') return 'order_confirmation'
@@ -318,6 +333,12 @@ export default function AdminTemplatesSection() {
             heading="Post-action confirmations"
             blurb="Sent automatically by the proof viewer when a customer approves, requests changes, or picks a variant. Edits affect every customer's confirmation email."
             templates={templates.filter((t) => templateGroup(t.id) === 'post_action')}
+            onSaved={handleSaved}
+          />
+          <TemplateGroup
+            heading="Project messages"
+            blurb="Notices about the project itself, sent only when the designer ticks the box that offers them. Closing a project off stays silent by default."
+            templates={templates.filter((t) => templateGroup(t.id) === 'project')}
             onSaved={handleSaved}
           />
           <TemplateGroup
@@ -628,6 +649,7 @@ function VariableHelpPanel() {
   // sub-section split above. Each scope renders the same dl shape.
   const designerPicked = TEMPLATE_VARIABLES.filter((v) => v.scope === 'designer_picked')
   const proofViewer = TEMPLATE_VARIABLES.filter((v) => v.scope === 'proof_viewer')
+  const projectLifecycle = TEMPLATE_VARIABLES.filter((v) => v.scope === 'project_lifecycle')
   const order = TEMPLATE_VARIABLES.filter((v) => v.scope === 'order')
   const orderReminder = TEMPLATE_VARIABLES.filter((v) => v.scope === 'order_reminder')
   const orderConfirmation = TEMPLATE_VARIABLES.filter((v) => v.scope === 'order_confirmation')
@@ -653,6 +675,18 @@ function VariableHelpPanel() {
       </h4>
       <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
         {proofViewer.map((v) => (
+          <div key={v.name} className="contents">
+            <dt className="font-mono text-ink-soft">{`{${v.name}}`}</dt>
+            <dd className="text-ink-mute">{v.description}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <h4 className="mt-4 text-xs font-semibold uppercase tracking-wider text-ink-dim">
+        Project message variables
+      </h4>
+      <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
+        {projectLifecycle.map((v) => (
           <div key={v.name} className="contents">
             <dt className="font-mono text-ink-soft">{`{${v.name}}`}</dt>
             <dd className="text-ink-mute">{v.description}</dd>

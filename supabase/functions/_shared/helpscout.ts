@@ -329,10 +329,17 @@ export async function fetchCustomer(
 // (`/threads/{id}` at the end), or 0 if the header is missing or
 // unparseable. The HS API responds 201 with no body on success.
 //
-// Two callers with slightly different status semantics:
-//   * send-helpscout-reply  — passes status:'pending'. The designer
+// Callers with slightly different status semantics:
+//   * send-helpscout-reply  — defaults to status:'pending'. The designer
 //     is asking the customer to review a proof, so the conversation
 //     belongs in the customer's queue, not the team's.
+//   * the abandon notice (also via send-helpscout-reply, which now passes
+//     the caller's choice through) — 'closed'. A "we're closing this off"
+//     note is the end of the exchange, not an ask; parking it in Pending
+//     would leave a closed project sitting in the chase queue, which is the
+//     opposite of what the designer just decided. Help Scout reopens the
+//     conversation by itself if the customer replies, which is exactly the
+//     invitation the message makes.
 //   * proof-action's confirmation reply — omits status. The reply is
 //     a system-generated confirmation of the customer's just-recorded
 //     action; the conversation status reflects whatever HS already
@@ -345,7 +352,7 @@ export async function postStaffReply(
     text: string
     userId: number
     customerId: number
-    status?: 'pending'
+    status?: 'pending' | 'closed'
   },
 ): Promise<number> {
   const requestBody: Record<string, unknown> = {
