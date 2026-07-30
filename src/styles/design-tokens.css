@@ -167,21 +167,32 @@
      brand-700 (#32896a, 4.02:1). */
   --c-focus:      var(--c-brand-700);
 
-  /* Approved-signal trial: cyan family (customer page only), option B.
-     The approved pill / status is coloured-text-on-soft-bg, so a
-     deepened cyan (#0a6f69, ~5.4:1 on the tint — legible) is the text
-     and a pale #2fe4db tint the background. Keeps the cyan family Rob
-     picked while staying readable, consistent with the soft pills. */
-  --c-in-stock:      #0a6f69;
-  --c-in-stock-soft: #dafaf9;
+  /* Approved signal (customer page only): a conventional green.
+     The cyan this replaces (#0a6f69) was never chosen for its hue — it
+     was the root green #0e9b4e deepened for legibility, because the
+     approved pill is coloured-text-on-soft-tint and #0e9b4e manages
+     only 2.97:1 on its own tint, well under the 4.5:1 AA needs at the
+     pill's 11px. Deepening it fixed the contrast and lost the green.
+     #17703c is the same move done in the green family: 5.59:1 on the
+     tint below, so slightly MORE legible than the cyan it replaces,
+     and white-on-fill for the check medallion goes 6.02 -> 6.14:1.
+     ⚠ Hue matters as much as contrast here. At 145deg this sits ~13deg
+     off the page accent (--c-brand-500 #58c59d, 158deg), so approval
+     reads as its own signal rather than a dark version of the page
+     furniture — which is exactly what a legible-but-wrong candidate
+     like #24664f (159deg, 1deg off the accent) would have done. */
+  --c-in-stock:      #17703c;
+  --c-in-stock-soft: #dcfce7;
 
   /* Changes-requested / "Heads up" signal: deepened amber (customer
      page only). The amber pill is coloured-text-on-soft-tint like the
      others, and the root #e8a200 was far too light to read on its own
      pale tint (~1.8:1). Deepen the text to #8a5a00 (~6:1 on the tint)
      and warm the soft background, exactly as the approved pill above
-     was deepened to a legible cyan. Keeps changes-requested clearly
-     distinct from the green approved signal on this page. */
+     was deepened for the same reason. Keeps changes-requested clearly
+     distinct from the green approved signal on this page — approved
+     and changes-requested share the pill and cap-bar idiom exactly, so
+     hue is the ONLY thing telling them apart at a glance. */
   --c-low:      #8a5a00;
   --c-low-soft: #fff1d6;
 

@@ -1145,12 +1145,12 @@ export default function AdminSettingsPage() {
           <section id="order-tracking" className={SECTION_CLASS}>
             <h3 className="mb-1 text-sm font-semibold text-ink">Customer order tracking</h3>
             <p className="mb-4 text-xs text-ink-mute">
-              Shows a quiet order-progress strip on the customer&rsquo;s paid screen. Off by default — turn it on, then choose how much detail each route and supplier reveals. <span className="font-medium">Broad</span> shows date-free stages (In production → On its way → Delivered) so a late supplier stays invisible; <span className="font-medium">Granular</span> adds an estimated arrival date.
+              Shows a quiet order-progress strip on the customer&rsquo;s paid screen — and, since the proof page learned about orders, on their proof page too. Off by default — turn it on, then choose how much detail each route and supplier reveals. <span className="font-medium">Broad</span> shows date-free stages (In production → On its way → Delivered) so a late supplier stays invisible; <span className="font-medium">Granular</span> adds the customer&rsquo;s outbound tracking number, on the paid screen only.
             </p>
             <div className="space-y-5">
               <FieldRow
                 label="Customer order tracking enabled"
-                help="The master switch. When off (the default), the customer sees nothing after Paid — exactly today's behaviour. Turn on to start showing the progress strip, governed by the levels below. In-house jobs have no shipping data, so they top out at 'On its way' with no date."
+                help="The master switch. When off, the customer sees nothing after Paid on either the paid screen or their proof page. Turn on to start showing the progress strip, governed by the levels below. Delivered only appears for carriers that report it — FedEx does, DPD does not, so a UK parcel shows a shorter journey that finishes at 'On its way' rather than a step it can never reach."
                 saved={recentlySaved('customer_tracking_enabled')}
                 working={working.customer_tracking_enabled}
                 error={errors.customer_tracking_enabled}
@@ -1167,7 +1167,7 @@ export default function AdminSettingsPage() {
                 <>
                   <FieldRow
                     label="In-house orders"
-                    help="Disclosure level for orders you produce in-house. In-house has no carrier tracking, so Granular behaves like Broad (no date or link)."
+                    help="Disclosure level for orders you produce in-house. In-house parcels carry no tracking number through to the customer, so Granular behaves like Broad here."
                     saved={recentlySaved('customer_tracking_config')}
                     working={working.customer_tracking_config}
                     error={errors.customer_tracking_config}

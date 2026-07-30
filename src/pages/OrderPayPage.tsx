@@ -16,6 +16,13 @@ import { isEuVatCountry } from '../lib/euVatArea'
 import { hasThicknessGuide, thicknessSetForMaterial, type ThicknessOption } from '../lib/metalThicknessNotes'
 import { parsePreviousSpec, chooserGuidance, quantityHint } from '../lib/previousSpec'
 import { finishIsPreferenceOnly } from '../lib/materialTraits'
+import {
+  STAGE_META,
+  progressFraction,
+  stageIndexIn,
+  stepsFor,
+  type TrackingProjection,
+} from '../lib/orderTracking'
 import { SHIP_COUNTRIES } from '../lib/shipCountries'
 import { loadStripeJs, type StripeLike, type StripeElementsLike } from '../lib/stripeJs'
 import type { GridImage } from '../components/ImageGrid'
@@ -133,29 +140,9 @@ interface OrderPayload {
 // Only the projected result crosses to the client — never a raw Stock Control
 // row. 'broad' is date-free; 'granular' adds the customer's outbound tracking
 // number (a clickable carrier link is deferred until a carrier URL is available).
-type TrackingStage = 'paid' | 'in_production' | 'on_its_way' | 'delivered'
-type TrackingProjection =
-  | { level: 'off' }
-  | { level: 'broad' | 'granular'; stage?: TrackingStage; tracking_number?: string }
-
-// Customer-facing copy per tracking stage: the headline + the one line that
-// replaces the old static "what happens next" box, so it stays accurate on
-// every visit (not just right after payment).
-const STAGE_META: Record<TrackingStage, { label: string; line: string }> = {
-  paid:          { label: 'Paid',          line: 'We’ve got your order and we’re getting it ready.' },
-  in_production: { label: 'In production', line: 'We’re making your cards now — we’ll email you the moment they’re on their way.' },
-  on_its_way:    { label: 'On its way',    line: 'Your cards are on their way.' },
-  delivered:     { label: 'Delivered',     line: 'Delivered — we hope they look great.' },
-}
-const STAGE_STEPS: { key: TrackingStage; label: string }[] = [
-  { key: 'paid', label: 'Paid' },
-  { key: 'in_production', label: 'In production' },
-  { key: 'on_its_way', label: 'On its way' },
-  { key: 'delivered', label: 'Delivered' },
-]
-function stageIndex(stage: TrackingStage): number {
-  return stage === 'delivered' ? 3 : stage === 'on_its_way' ? 2 : stage === 'in_production' ? 1 : 0
-}
+// Stages, their copy and the step list now live in src/lib/orderTracking.ts —
+// shared with the proof page's compact strip (000371), so the two surfaces
+// cannot disagree about where an order has got to. Only the layout is local.
 
 // Metals (and similar) express their variant as a thickness ("300 micron"),
 // which reads clearer to a customer than the generic "Option" label.
@@ -878,10 +865,16 @@ export default function OrderPayPage() {
   // Leads with the current stage + a stage-driven line (which replaces the old
   // static "what happens next" box), then a horizontal progress bar. Renders
   // nothing unless tracking is enabled AND resolves to a real stage, so with the
-  // master switch off the screen is unchanged. Granular appends an ETA.
+  // master switch off the screen is unchanged. Granular appends the customer's
+  // outbound TRACKING NUMBER — not an ETA; 000269 dropped the ETA because the
+  // only one we had was the inbound supplier's, which is the wrong leg.
   function renderStatusBlock(p: TrackingProjection | undefined) {
     if (!p || p.level === 'off' || !p.stage) return null
-    const stageIdx = stageIndex(p.stage)
+    // Steps vary per parcel: a carrier that never reports delivery gets a
+    // three-step rail that can finish, rather than a fourth step it would sit
+    // beneath forever (migration 000370 — DPD has never stamped a delivery).
+    const steps = stepsFor(p.delivery_tracked, p.stage)
+    const stageIdx = stageIndexIn(steps, p.stage)
     const meta = STAGE_META[p.stage]
     return (
       <div className="mt-5 rounded-xl border border-line bg-canvas p-4 sm:p-5">
@@ -891,7 +884,7 @@ export default function OrderPayPage() {
           </span>
           <div className="min-w-0">
             <p className="text-base font-semibold text-ink">{meta.label}</p>
-            <p className="text-[12px] text-ink-mute">Step {stageIdx + 1} of 4</p>
+            <p className="text-[12px] text-ink-mute">Step {stageIdx + 1} of {steps.length}</p>
           </div>
         </div>
         <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">{meta.line}</p>
@@ -904,10 +897,10 @@ export default function OrderPayPage() {
           <div className="absolute left-[11px] right-[11px] top-[11px] h-0.5 bg-line" />
           <div
             className="absolute left-[11px] top-[11px] h-0.5 bg-[var(--c-in-stock)]"
-            style={{ width: `calc((100% - 22px) * ${stageIdx} / 3)` }}
+            style={{ width: `calc((100% - 22px) * ${progressFraction(steps, stageIdx)})` }}
           />
           <ol className="relative flex justify-between">
-            {STAGE_STEPS.map((s, i) => {
+            {steps.map((s, i) => {
               const reached = i <= stageIdx
               const isCurrent = i === stageIdx
               return (

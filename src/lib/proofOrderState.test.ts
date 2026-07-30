@@ -14,6 +14,7 @@ import {
   RESEND_COOLDOWN_MINUTES,
   RESEND_COPY,
   canResendPayLink,
+  orderStatusLine,
   parseProofOrderState,
   readyToOrderCopy,
   resendIsRecent,
@@ -38,14 +39,14 @@ function assertEquals(actual: unknown, expected: unknown, message: string) {
   if (a !== e) throw new Error(`${message}\n      expected: ${e}\n      actual:   ${a}`)
 }
 
-const live: ProofOrderStatePayload = { state: 'awaiting_payment', expiresAt: '2026-08-13T12:44:59Z', resendRequestedAt: null }
+const live: ProofOrderStatePayload = { state: 'awaiting_payment', expiresAt: '2026-08-13T12:44:59Z', resendRequestedAt: null, stage: null, deliveryTracked: null }
 
 // Every state that can produce a panel — used by the copy-honesty sweeps so a
 // new state can't quietly skip them.
 const ALL_PANEL_STATES: ProofOrderStatePayload[] = [
   live,
-  { state: 'link_expired', expiresAt: null, resendRequestedAt: null },
-  { state: 'none', expiresAt: null, resendRequestedAt: null },
+  { state: 'link_expired', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null },
+  { state: 'none', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null },
 ]
 
 console.log('\nparseProofOrderState — defensive parsing')
@@ -53,13 +54,13 @@ console.log('\nparseProofOrderState — defensive parsing')
 test('reads the RPC shape, mapping expires_at to expiresAt', () => {
   assertEquals(
     parseProofOrderState({ state: 'awaiting_payment', expires_at: '2026-08-13T12:44:59Z' }),
-    { state: 'awaiting_payment', expiresAt: '2026-08-13T12:44:59Z', resendRequestedAt: null },
+    { state: 'awaiting_payment', expiresAt: '2026-08-13T12:44:59Z', resendRequestedAt: null, stage: null, deliveryTracked: null },
     'a live link should parse with its deadline',
   )
 })
 
 test('a state with no expiry parses with expiresAt null', () => {
-  assertEquals(parseProofOrderState({ state: 'none' }), { state: 'none', expiresAt: null, resendRequestedAt: null },
+  assertEquals(parseProofOrderState({ state: 'none' }), { state: 'none', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null },
     'jsonb_strip_nulls omits expires_at entirely for non-live states')
 })
 
@@ -92,7 +93,7 @@ test('a live pay link tells them where ordering happens', () => {
 })
 
 test('an expired link offers a fresh one instead of a dead end', () => {
-  const copy = readyToOrderCopy({ state: 'link_expired', expiresAt: null, resendRequestedAt: null }, 'approved')
+  const copy = readyToOrderCopy({ state: 'link_expired', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null }, 'approved')
   assertEquals(copy!.heading, 'Your payment link has expired', 'heading')
   assert(copy!.body.includes('reply to any message from us'),
     'the recovery route must be stated')
@@ -100,12 +101,12 @@ test('an expired link offers a fresh one instead of a dead end', () => {
 })
 
 test('an already-paid order shows nothing — the proof page is not the order page', () => {
-  assertEquals(readyToOrderCopy({ state: 'paid', expiresAt: null, resendRequestedAt: null }, 'approved'), null,
+  assertEquals(readyToOrderCopy({ state: 'paid', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null }, 'approved'), null,
     'a paying customer must never be shown "Ready to order?"')
 })
 
 test('an approved proof with no order yet still gets told how to buy', () => {
-  const copy = readyToOrderCopy({ state: 'none', expiresAt: null, resendRequestedAt: null }, 'approved')
+  const copy = readyToOrderCopy({ state: 'none', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null }, 'approved')
   assert(copy != null, 'this is the approved_no_order customer — the one most likely to be stuck')
   assertEquals(copy!.heading, 'Ready to order?', 'heading')
   assert(copy!.body.includes('reply to any message from us'),
@@ -114,7 +115,7 @@ test('an approved proof with no order yet still gets told how to buy', () => {
 
 test('a proof still in progress is not nudged to order', () => {
   for (const status of ['in_progress', 'dormant', 'abandoned', null, undefined]) {
-    assertEquals(readyToOrderCopy({ state: 'none', expiresAt: null, resendRequestedAt: null }, status), null,
+    assertEquals(readyToOrderCopy({ state: 'none', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null }, status), null,
       `status ${String(status)} should show no ordering panel`)
   }
 })
@@ -170,7 +171,7 @@ console.log('\nthe "send it again" action (000369)')
 test('only a live link can be re-sent', () => {
   assert(canResendPayLink(live), 'awaiting_payment is the one state with something to send')
   for (const s of ['link_expired', 'paid', 'none'] as const) {
-    assert(!canResendPayLink({ state: s, expiresAt: null, resendRequestedAt: null }),
+    assert(!canResendPayLink({ state: s, expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null }),
       `${s} must not offer a resend — an expired link needs a new one, which is a designer's job`)
   }
   assert(!canResendPayLink(null), 'an unread state offers nothing')
@@ -183,7 +184,7 @@ test('the resend stamp parses off the RPC', () => {
       expires_at: '2026-08-13T12:44:59Z',
       resend_requested_at: '2026-07-30T16:00:00Z',
     }),
-    { state: 'awaiting_payment', expiresAt: '2026-08-13T12:44:59Z', resendRequestedAt: '2026-07-30T16:00:00Z' },
+    { state: 'awaiting_payment', expiresAt: '2026-08-13T12:44:59Z', resendRequestedAt: '2026-07-30T16:00:00Z', stage: null, deliveryTracked: null },
     'both timestamps survive the allow-list',
   )
 })
@@ -240,8 +241,8 @@ console.log('\nthe security invariant')
 test('no copy ever contains a link, path or token', () => {
   const payloads: ProofOrderStatePayload[] = [
     live,
-    { state: 'link_expired', expiresAt: null, resendRequestedAt: null },
-    { state: 'none', expiresAt: null, resendRequestedAt: null },
+    { state: 'link_expired', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null },
+    { state: 'none', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null },
   ]
   for (const p of payloads) {
     for (const status of ['approved', 'in_progress']) {
@@ -265,8 +266,86 @@ test('the parsed payload carries no identifiers even if the RPC sends some', () 
     order_id: '12b18b85-f345-4d1d-a659-2e243ee0d67b',
     token: '3266c7ef802261358ad77816f5c93ffb',
   })
-  assertEquals(Object.keys(parsed!).sort(), ['expiresAt', 'resendRequestedAt', 'state'],
-    'the parser is an allow-list: only the three display fields survive — never an id or token')
+  assertEquals(
+    Object.keys(parsed!).sort(),
+    ['deliveryTracked', 'expiresAt', 'resendRequestedAt', 'stage', 'state'],
+    'the parser is an allow-list: only the display fields survive — never an id or token',
+  )
+})
+
+// ── The order status on the approved card (000371) ──────────────────────────
+
+console.log('\nthe order status shown on the approved card (000371)')
+
+test('a paid order in production says where it is', () => {
+  const s = orderStatusLine({
+    state: 'paid', expiresAt: null, resendRequestedAt: null,
+    stage: 'in_production', deliveryTracked: null,
+  })
+  assertEquals(s!.label, 'In production', 'label comes from the shared stage copy')
+  assertEquals(s!.stage, 'in_production', 'the stage drives the progress strip')
+  assert(s!.line.length > 0, 'a stage without a sentence is just jargon')
+})
+
+test('a delivered order is reported as delivered', () => {
+  const s = orderStatusLine({
+    state: 'paid', expiresAt: null, resendRequestedAt: null,
+    stage: 'delivered', deliveryTracked: true,
+  })
+  assertEquals(s!.label, 'Delivered', 'the stage 000370 made reachable')
+})
+
+test('paid with tracking switched off still confirms the payment', () => {
+  // The stage is null when an admin has customer tracking off, or the Stock
+  // Control job was cancelled. Saying nothing at all would leave someone who
+  // came back specifically to check their money with no answer.
+  const s = orderStatusLine({
+    state: 'paid', expiresAt: null, resendRequestedAt: null,
+    stage: null, deliveryTracked: null,
+  })
+  assertEquals(s!.label, 'Paid', 'the payment is still a fact worth stating')
+  assertEquals(s!.stage, null, 'but there is no journey to draw')
+})
+
+test('an outstanding payment is named, without repeating the deadline', () => {
+  const s = orderStatusLine({
+    state: 'awaiting_payment', expiresAt: '2026-08-13T12:44:59Z', resendRequestedAt: null,
+    stage: null, deliveryTracked: null,
+  })
+  assertEquals(s!.label, 'Awaiting payment', 'label')
+  assert(!('expiresAt' in s!), 'the deadline belongs to the Ready-to-order panel alone')
+  assert(!/valid until/i.test(s!.line), 'and must not be restated here in prose either')
+})
+
+test('an expired link and a proof with no order say nothing on the card', () => {
+  // Both are already handled by the Ready-to-order panel, which also carries
+  // the way out. Two messages about one problem is worse than one.
+  for (const state of ['link_expired', 'none'] as const) {
+    assertEquals(
+      orderStatusLine({ state, expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null }),
+      null,
+      `${state} must not add a second voice to the page`,
+    )
+  }
+  assertEquals(orderStatusLine(null), null, 'an unread state shows nothing')
+})
+
+test('the card copy never leaks a link, a token or an amount', () => {
+  const stages = [null, 'paid', 'in_production', 'on_its_way', 'delivered'] as const
+  for (const stage of stages) {
+    for (const state of ['awaiting_payment', 'paid'] as const) {
+      const s = orderStatusLine({
+        state, expiresAt: null, resendRequestedAt: null,
+        stage: stage as never, deliveryTracked: null,
+      })
+      if (!s) continue
+      const text = `${s.label} ${s.line}`
+      assert(!/https?:\/\//i.test(text), `"${text}" must contain no URL`)
+      assert(!/\/order|\/p\//i.test(text), `"${text}" must contain no path`)
+      assert(!/[£$€]\s?\d/.test(text), `"${text}" must quote no amount`)
+      assert(!/\btoken\b/i.test(text), `"${text}" must not mention a token`)
+    }
+  }
 })
 
 console.log(`\n${passed} passed, ${failed} failed`)

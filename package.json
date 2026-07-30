@@ -51,6 +51,7 @@
     "test:annotations": "tsx src/lib/proofAnnotationGeometry.test.ts",
     "test:approval-carry": "tsx src/lib/approvalCarry.test.ts",
     "test:abandon-notice": "tsx src/lib/abandonNotice.test.ts",
+    "test:order-tracking": "tsx src/lib/orderTracking.test.ts",
     "test:audit-filters": "tsx src/pages/admin/auditFilters.test.ts",
     "test:dashboard-grouping": "tsx src/lib/dashboardGrouping.test.ts",
     "test:proof-snapshot": "tsx src/lib/proofSnapshot.test.ts",

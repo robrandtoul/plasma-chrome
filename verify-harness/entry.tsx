@@ -43,6 +43,10 @@ import { ProofAnnotationEditor } from '../src/components/ProofAnnotationEditor'
 import Modal from '../src/components/Modal'
 import ContactNameNudge from '../src/components/ContactNameNudge'
 import AbandonProjectDialog from '../src/components/AbandonProjectDialog'
+import ApprovedOrderStatus from '../src/components/ApprovedOrderStatus'
+import { StatusRule } from '../src/design'
+import { orderStatusLine, type OrderStatusLine, type ProofOrderStatePayload } from '../src/lib/proofOrderState'
+import type { TrackingStage } from '../src/lib/orderTracking'
 import { ButtonGhost } from '../src/design'
 import type { GridImage } from '../src/components/ImageGrid'
 import { useEffect } from 'react'
@@ -577,6 +581,85 @@ function AbandonDialogRig() {
   )
 }
 
+// ?path=/approved-order-status — the approved card on /p/:id in every
+// post-approval state, under the real .customer-accent scope so the approved
+// token resolves to the customer-page green rather than the designer one.
+//
+// Two things to look at: the colour (000371 moved it off the cyan it had been
+// deepened to, back into a conventional green at equal legibility), and the
+// step count — a DPD parcel gets a three-step rail that COMPLETES, because DPD
+// has never once reported a delivery, while a FedEx one keeps the fourth step
+// it can actually reach.
+function ApprovedOrderStatusRig() {
+  useEffect(() => {
+    document.documentElement.classList.add('customer-accent')
+    return () => document.documentElement.classList.remove('customer-accent')
+  }, [])
+  const rows: Array<{ label: string; status: OrderStatusLine | null }> = [
+    { label: 'Approved, no order yet — card unchanged from before', status: null },
+    { label: 'Awaiting payment', status: orderStatusLine(mkState('awaiting_payment')) },
+    { label: 'Paid, tracking off / job cancelled', status: orderStatusLine(mkState('paid')) },
+    { label: 'Paid — step 1 of 4', status: orderStatusLine(mkState('paid', 'paid')) },
+    { label: 'In production', status: orderStatusLine(mkState('paid', 'in_production')) },
+    { label: 'On its way — FedEx, 4 steps (Delivered still to come)', status: orderStatusLine(mkState('paid', 'on_its_way', true)) },
+    { label: 'On its way — DPD, 3 steps and COMPLETE (no delivery sync)', status: orderStatusLine(mkState('paid', 'on_its_way', false)) },
+    { label: 'Delivered', status: orderStatusLine(mkState('paid', 'delivered', true)) },
+  ]
+  return (
+    <div className="min-h-screen bg-canvas p-8">
+      <div className="mx-auto flex max-w-[380px] flex-col gap-6">
+        {rows.map((r) => (
+          <div key={r.label}>
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-mute">
+              {r.label}
+            </p>
+            {/* Mirrors the approved card's own chrome so the status footer is
+                judged in the setting it actually ships in. */}
+            <div
+              className="relative rounded-[14px] bg-in-stock-soft px-5 py-4 shadow-card"
+              style={{ border: '1px solid color-mix(in srgb, var(--c-in-stock) 35%, transparent)' }}
+            >
+              <StatusRule colour="var(--c-in-stock)" />
+              <div className="flex items-center gap-3.5">
+                <span
+                  aria-hidden="true"
+                  className="grid place-items-center shrink-0 rounded-full"
+                  style={{ width: 36, height: 36, background: 'var(--c-in-stock)', color: 'var(--c-on-in-stock)' }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 12 12" fill="none">
+                    <path d="M2.5 6.5L5 9L9.5 3.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </span>
+                <div className="min-w-0 leading-tight">
+                  <p className="font-display font-medium tracking-[-0.01em]" style={{ color: 'var(--c-in-stock)', fontSize: 20 }}>
+                    Approved
+                  </p>
+                  <p className="mt-0.5 text-[13px] text-ink-soft">Signed off 24 July</p>
+                </div>
+              </div>
+              {r.status && <ApprovedOrderStatus status={r.status} />}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function mkState(
+  state: 'awaiting_payment' | 'paid',
+  stage: TrackingStage | null = null,
+  deliveryTracked: boolean | null = null,
+): ProofOrderStatePayload {
+  return {
+    state,
+    expiresAt: state === 'awaiting_payment' ? '2026-08-13T12:44:59Z' : null,
+    resendRequestedAt: null,
+    stage,
+    deliveryTracked,
+  }
+}
+
 function Elsewhere() {
   return <div style={{ padding: 40 }} data-nav-target>navigated away</div>
 }
@@ -593,7 +676,9 @@ const requestedPath =
 
 // ?path=/palette mounts the ⌘K designer command palette on its own, open, so
 // its layout and the fixture-backed proof search can be checked headlessly.
-const tree = requestedPath === '/abandon-dialog' ? (
+const tree = requestedPath === '/approved-order-status' ? (
+  <ApprovedOrderStatusRig />
+) : requestedPath === '/abandon-dialog' ? (
   <AbandonDialogRig />
 ) : requestedPath === '/contact-name-nudge' ? (
   <ContactNameNudgeRig />

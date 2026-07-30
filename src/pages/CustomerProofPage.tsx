@@ -36,11 +36,13 @@ import { ActionPanel } from '../components/ActionPanel'
 import { ReadyToOrderPanel, type ResendState } from '../components/ReadyToOrderPanel'
 import {
   canResendPayLink,
+  orderStatusLine,
   parseProofOrderState,
   readyToOrderCopy,
   resendIsRecent,
   type ProofOrderStatePayload,
 } from '../lib/proofOrderState'
+import ApprovedOrderStatus from '../components/ApprovedOrderStatus'
 import { ShareWithTeamPanel } from '../components/ShareWithTeamPanel'
 import DeclineFeedbackPanel from '../components/DeclineFeedbackPanel'
 import { ProofDetailView } from '../components/ProofDetailView'
@@ -1887,6 +1889,12 @@ export default function CustomerProofPage() {
   // src/lib/proofOrderState.ts and is asserted verbatim by its test.
   const readyToOrder = readyToOrderCopy(orderState, proof?.status ?? null)
 
+  // Where the order has got to, shown on the approved card in the left rail
+  // (000371). Its sibling above answers "how do I buy these?"; this answers
+  // "where is the thing I bought?" — see the note in proofOrderState.ts about
+  // why neither repeats the other.
+  const orderStatus = orderStatusLine(orderState)
+
   // Ask us to re-send the pay link on the proof's Help Scout thread. The
   // request body is the proof id ALONE — no token, no address — and the
   // response carries only a status, never the URL: /p/ links are shared
@@ -2813,36 +2821,45 @@ export default function CustomerProofPage() {
               if (isApprovedKind) {
                 return (
                   <div
-                    className="order-1 lg:order-none relative flex items-center gap-3.5 rounded-[14px] bg-in-stock-soft px-5 py-4 shadow-card"
+                    className="order-1 lg:order-none relative rounded-[14px] bg-in-stock-soft px-5 py-4 shadow-card"
                     style={{ border: '1px solid color-mix(in srgb, var(--c-in-stock) 35%, transparent)' }}
                   >
                     <StatusRule colour={tokens.inStock} />
-                    <span
-                      aria-hidden="true"
-                      className="grid place-items-center shrink-0 rounded-full"
-                      style={{ width: 36, height: 36, background: 'var(--c-in-stock)', color: 'var(--c-on-in-stock)' }}
-                    >
-                      <svg width="18" height="18" viewBox="0 0 12 12" fill="none">
-                        <path
-                          d="M2.5 6.5L5 9L9.5 3.5"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </span>
-                    <div className="min-w-0 leading-tight">
-                      <p
-                        className="font-display font-medium tracking-[-0.01em]"
-                        style={{ color: 'var(--c-in-stock)', fontSize: 20 }}
+                    <div className="flex items-center gap-3.5">
+                      <span
+                        aria-hidden="true"
+                        className="grid place-items-center shrink-0 rounded-full"
+                        style={{ width: 36, height: 36, background: 'var(--c-in-stock)', color: 'var(--c-on-in-stock)' }}
                       >
-                        {label}
-                      </p>
-                      <p className="mt-0.5 text-[13px] text-ink-soft" aria-label={detailAria}>
-                        {detailVisible}
-                      </p>
+                        <svg width="18" height="18" viewBox="0 0 12 12" fill="none">
+                          <path
+                            d="M2.5 6.5L5 9L9.5 3.5"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </span>
+                      <div className="min-w-0 leading-tight">
+                        <p
+                          className="font-display font-medium tracking-[-0.01em]"
+                          style={{ color: 'var(--c-in-stock)', fontSize: 20 }}
+                        >
+                          {label}
+                        </p>
+                        <p className="mt-0.5 text-[13px] text-ink-soft" aria-label={detailAria}>
+                          {detailVisible}
+                        </p>
+                      </div>
                     </div>
+                    {/* Where the order has got to (000371). Sits on this card
+                        rather than in its own strip so the page has ONE place
+                        that answers "where is this" — approval and everything
+                        that follows from it reading as one story. Renders
+                        nothing until there's an order, so an approved proof
+                        with no order looks exactly as it did. */}
+                    {orderStatus && <ApprovedOrderStatus status={orderStatus} />}
                   </div>
                 )
               }
