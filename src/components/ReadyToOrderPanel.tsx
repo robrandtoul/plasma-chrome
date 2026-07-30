@@ -17,7 +17,10 @@
 // callouts use.
 
 import { CreditCard } from 'lucide-react'
-import type { ReadyToOrderCopy } from '../lib/proofOrderState'
+import { ButtonInk } from '../design'
+import { RESEND_COPY, type ReadyToOrderCopy } from '../lib/proofOrderState'
+
+export type ResendState = 'idle' | 'sending' | 'sent' | 'error'
 
 interface Props {
   copy: ReadyToOrderCopy
@@ -26,10 +29,16 @@ interface Props {
   // its order-N class; without one it defaults to slot 0 and jumps above the
   // artwork on phones (the bug DeclineFeedbackPanel shipped with once).
   className?: string
+  // The "send it again" action (000369). Omit both and the card renders
+  // exactly as it did before the button existed — which is what the
+  // link_expired and no-order states want, since there is nothing to re-send.
+  onResend?: () => void
+  resendState?: ResendState
 }
 
-export function ReadyToOrderPanel({ copy, className }: Props) {
+export function ReadyToOrderPanel({ copy, className, onResend, resendState = 'idle' }: Props) {
   const expiry = formatExpiry(copy.expiresAt)
+  const showResend = typeof onResend === 'function'
 
   return (
     <div
@@ -44,6 +53,30 @@ export function ReadyToOrderPanel({ copy, className }: Props) {
           <p className="mt-1.5 text-[12px] text-ink-mute m-0">
             Your payment link is valid until {expiry}.
           </p>
+        )}
+        {showResend && (
+          <div className="mt-3">
+            {resendState === 'sent' ? (
+              // Terminal for the cooldown window, and driven by the SERVER's
+              // stamp rather than in-session state, so a reload keeps saying
+              // this instead of re-arming the button — the people using it are
+              // refreshing while they hunt for the email.
+              <p className="text-[13px] leading-[1.6] text-ink m-0">{RESEND_COPY.sent}</p>
+            ) : (
+              <>
+                <ButtonInk
+                  size="sm"
+                  busy={resendState === 'sending'}
+                  onClick={onResend}
+                >
+                  {resendState === 'sending' ? RESEND_COPY.sending : RESEND_COPY.action}
+                </ButtonInk>
+                {resendState === 'error' && (
+                  <p className="mt-1.5 text-[13px] leading-[1.6] text-out m-0">{RESEND_COPY.error}</p>
+                )}
+              </>
+            )}
+          </div>
         )}
       </div>
     </div>

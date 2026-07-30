@@ -33,8 +33,14 @@ import { QrCodePanel, qrRowsForSlot } from '../components/QrCodePanel'
 import { BUNDLE_PARAM, BUNDLE_TOKEN_PARAM } from '../lib/customerProofUrl'
 import { setReviewPath } from '../lib/proofSets'
 import { ActionPanel } from '../components/ActionPanel'
-import { ReadyToOrderPanel } from '../components/ReadyToOrderPanel'
-import { parseProofOrderState, readyToOrderCopy, type ProofOrderStatePayload } from '../lib/proofOrderState'
+import { ReadyToOrderPanel, type ResendState } from '../components/ReadyToOrderPanel'
+import {
+  canResendPayLink,
+  parseProofOrderState,
+  readyToOrderCopy,
+  resendIsRecent,
+  type ProofOrderStatePayload,
+} from '../lib/proofOrderState'
 import { ShareWithTeamPanel } from '../components/ShareWithTeamPanel'
 import DeclineFeedbackPanel from '../components/DeclineFeedbackPanel'
 import { ProofDetailView } from '../components/ProofDetailView'
@@ -138,6 +144,10 @@ export default function CustomerProofPage() {
   // customers reasonably try to buy from it. Null until loaded, and left null
   // on any failure, which renders no card at all.
   const [orderState, setOrderState] = useState<ProofOrderStatePayload | null>(null)
+  // The "send it again" button's in-session state (000369). 'sent' is also
+  // derived from the server's own stamp below, so a reload keeps the
+  // acknowledgement rather than re-arming the button.
+  const [resendState, setResendState] = useState<ResendState>('idle')
   // Detail view (Phase 2 — replaces the dark fullscreen lightbox).
   // Non-modal, light-register zoom that coexists with the request-
   // changes panel. `images` is the navigable set (the clicked image's
@@ -983,6 +993,7 @@ export default function CustomerProofPage() {
     setActiveOptionCode(null)
     setNotFound(false)
     setOrderState(null)
+    setResendState('idle')
 
     // One SECURITY DEFINER RPC replaces the previous fan-out across
     // public_proofs / public_proof_versions / public_material_options /
@@ -1876,6 +1887,36 @@ export default function CustomerProofPage() {
   // src/lib/proofOrderState.ts and is asserted verbatim by its test.
   const readyToOrder = readyToOrderCopy(orderState, proof?.status ?? null)
 
+  // Ask us to re-send the pay link on the proof's Help Scout thread. The
+  // request body is the proof id ALONE — no token, no address — and the
+  // response carries only a status, never the URL: /p/ links are shared
+  // broadly and the pay page is deliberately narrow (000367/000369).
+  async function resendPayLink() {
+    if (!id || resendState === 'sending') return
+    setResendState('sending')
+    try {
+      const { data, error } = await supabase.functions.invoke<{ status?: string }>(
+        'resend-pay-link',
+        { body: { proof_id: id } },
+      )
+      // 'unavailable' means there was nothing live to send — treat it as a
+      // failure so the customer gets the "reply to any message" route rather
+      // than a false confirmation.
+      setResendState(!error && data?.status === 'ok' ? 'sent' : 'error')
+    } catch {
+      setResendState('error')
+    }
+  }
+
+  // Offer the button only where a live link exists to re-send. The
+  // acknowledgement is server-derived first (the stamp survives a reload)
+  // and in-session second.
+  const resendOffered = canResendPayLink(orderState)
+  const effectiveResendState: ResendState =
+    resendState === 'idle' && resendIsRecent(orderState?.resendRequestedAt ?? null)
+      ? 'sent'
+      : resendState
+
   // Top-level variant-round render. Returns a fragment with two
   // <section>s: pricing card on top, then the variant comparison grid.
   // Replaces the proofs IIFE entirely on variant-round versions; the
@@ -2207,7 +2248,11 @@ export default function CustomerProofPage() {
             order-N class — this div is already the order-4 slot's child, in
             normal flow. */}
         {!activeVersion.is_per_direction_pricing && readyToOrder && (
-          <ReadyToOrderPanel copy={readyToOrder} />
+          <ReadyToOrderPanel
+            copy={readyToOrder}
+            onResend={resendOffered ? resendPayLink : undefined}
+            resendState={effectiveResendState}
+          />
         )}
       </div>
     )
@@ -3063,7 +3108,12 @@ export default function CustomerProofPage() {
                     ⚠ Duplicated in the wide-table pricing block below —
                     patch both. */}
                 {readyToOrder && (
-                  <ReadyToOrderPanel copy={readyToOrder} className="order-8 lg:order-none" />
+                  <ReadyToOrderPanel
+                    copy={readyToOrder}
+                    className="order-8 lg:order-none"
+                    onResend={resendOffered ? resendPayLink : undefined}
+                    resendState={effectiveResendState}
+                  />
                 )}
               </>
             )}
@@ -4049,7 +4099,12 @@ export default function CustomerProofPage() {
                 narrow and wide blocks are mutually exclusive, and a variant
                 round renders neither (it has its own copy, above). */}
             {readyToOrder && (
-              <ReadyToOrderPanel copy={readyToOrder} className="order-8 lg:order-none" />
+              <ReadyToOrderPanel
+                    copy={readyToOrder}
+                    className="order-8 lg:order-none"
+                    onResend={resendOffered ? resendPayLink : undefined}
+                    resendState={effectiveResendState}
+                  />
             )}
             </>
           )}

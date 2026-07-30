@@ -563,3 +563,18 @@ verify_jwt = true
 # leaning on the CLI default, so a plain deploy can never flip it.
 [functions.ai-draft-miner]
 verify_jwt = true
+
+# resend-pay-link: anon-callable from the unauthenticated proof page — the
+# "Ready to order?" card's "send it again" button (000369). Same posture as
+# proof-action and acknowledge-disclaimer, and stated here rather than left to
+# the CLI default so a plain deploy can never flip it back on.
+#
+# The auth model is deliberately NOT a bearer token: the request body is
+# {proof_id} alone. Nothing is returned but a status (never the pay URL), and
+# the recipient is resolved server-side from the proof's own Help Scout
+# conversation, so a caller can neither receive the link nor address it
+# anywhere. Defence in depth in the handler: UUID validation, the payable must
+# resolve to a live unpaid link, and a 10-minute cooldown enforced as an atomic
+# claim in the stamping UPDATE's WHERE clause.
+[functions.resend-pay-link]
+verify_jwt = false

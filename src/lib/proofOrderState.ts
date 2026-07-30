@@ -26,6 +26,11 @@ export interface ProofOrderStatePayload {
   // Present only on 'awaiting_payment'. ISO timestamp of the live link's
   // deadline — the customer's own, and nothing is derivable from it.
   expiresAt: string | null
+  // When this customer last asked for the link to be re-sent (000369). Echoed
+  // back so a reload shows the acknowledgement rather than re-arming the
+  // button — the population using it is people refreshing while they hunt for
+  // an email, and an in-session-only "sent" would fan out into their thread.
+  resendRequestedAt: string | null
 }
 
 export interface ReadyToOrderCopy {
@@ -36,6 +41,18 @@ export interface ReadyToOrderCopy {
   // beneath the body, formatting the date itself.
   expiresAt: string | null
 }
+
+// Copy for the "send it again" action (000369). Grouped here so the component
+// holds no strings, and asserted verbatim by proofOrderState.test.ts.
+export const RESEND_COPY = {
+  action: 'Email it to me again',
+  sending: 'Sending…',
+  // ⚠ This is the ONE place we may claim a send, because unlike the card's
+  // main body this describes an action we just performed and confirmed. Even
+  // so it promises the THREAD, not the inbox — we can't see their mail.
+  sent: 'Sent — it’s on its way to the email address we have for you. Do check your spam folder if it doesn’t appear.',
+  error: 'We couldn’t send that just now. Please reply to any message from us and we’ll get it to you.',
+} as const
 
 const VALID_STATES: ProofOrderState[] = ['awaiting_payment', 'link_expired', 'paid', 'none']
 
@@ -49,10 +66,36 @@ export function parseProofOrderState(raw: unknown): ProofOrderStatePayload | nul
   if (typeof state !== 'string') return null
   if (!VALID_STATES.includes(state as ProofOrderState)) return null
   const expires = obj.expires_at
+  const resend = obj.resend_requested_at
   return {
     state: state as ProofOrderState,
     expiresAt: typeof expires === 'string' && expires.length > 0 ? expires : null,
+    resendRequestedAt: typeof resend === 'string' && resend.length > 0 ? resend : null,
   }
+}
+
+// How long the acknowledgement stands before the button re-arms. Matches
+// COOLDOWN_MINUTES in supabase/functions/resend-pay-link — the server is the
+// only real gate (it refuses inside the window regardless), so this exists to
+// stop the UI offering an action that would silently do nothing.
+export const RESEND_COOLDOWN_MINUTES = 10
+
+// Was the link re-sent recently enough that we should still be saying so?
+// `now` is injectable for the test; production passes nothing.
+export function resendIsRecent(iso: string | null, now: number = Date.now()): boolean {
+  if (!iso) return false
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return false
+  const age = now - t
+  // Guard the future too: a clock skew shouldn't strand the button forever.
+  return age >= 0 && age < RESEND_COOLDOWN_MINUTES * 60_000
+}
+
+// Whether the "send it again" action should be offered at all. Only a live
+// link can be re-sent — an expired one needs a new link, which is a designer's
+// job, and there is nothing to send when none exists or it's already paid.
+export function canResendPayLink(payload: ProofOrderStatePayload | null): boolean {
+  return payload?.state === 'awaiting_payment'
 }
 
 const NOTHING_TO_ADD =
@@ -97,7 +140,11 @@ export function readyToOrderCopy(
       return {
         eyebrow: 'Ordering',
         heading: 'Ready to order?',
-        body: `${NOTHING_TO_ADD} ${HOW_ORDERING_WORKS} Can’t find yours? ${ASK_AGAIN}`,
+        // No "reply to any message from us" here, unlike the other two
+        // states: this is the one state where a live link exists to re-send,
+        // so the button below is the better answer. The reply route survives
+        // as the button's own error copy (RESEND_COPY.error).
+        body: `${NOTHING_TO_ADD} ${HOW_ORDERING_WORKS} Can’t find yours?`,
         expiresAt: payload.expiresAt,
       }
 

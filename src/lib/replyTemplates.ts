@@ -299,6 +299,14 @@ export const DEFAULT_BODIES: Record<string, string> = {
   order_payment_link:
     `Hi,\n\nYour cards are approved and ready to order. You can choose your quantity, confirm delivery, and pay securely here:\n\n{order_url}\n\nIf you have any questions, just reply to this email.`,
 
+  // Payment link re-sent (000369) — posted automatically when the customer
+  // clicks "Email it to me again" on the "Ready to order?" card on their proof
+  // page. Nobody composes this one, so it greets by name where we have one and
+  // offers a human route if the email still isn't arriving. For a combined
+  // payment {order_url} is the single link covering every card.
+  order_link_resend:
+    `Hi{? first_name} {first_name}{/?},\n\nNo problem — here's the link to order your cards again. You can choose your quantity, confirm delivery, and pay securely here:\n\n{order_url}\n\nIf it keeps not arriving, just reply to this email and we'll sort it out another way.`,
+
   // Offline (bank-transfer) order confirmation the designer sends from the order
   // builder — no "pay" language (it's already recorded as paid). The link is the
   // same order page, which doubles as the tracking page once tracking is on.
