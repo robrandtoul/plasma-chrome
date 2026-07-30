@@ -1,4 +1,4 @@
--- 000366 — only a CUSTOMER open counts as "the customer opened it".
+-- 000368 — only a CUSTOMER open counts as "the customer opened it".
 --
 -- proofs.record_order_pay_link_opened (single orders) has always ended with
 -- `and auth.uid() is null`, so a signed-in designer opening a pay link is a
@@ -73,7 +73,7 @@ comment on function proofs.record_order_group_pay_link_opened(uuid, text) is
   '`auth.uid() is null` guard is load-bearing: a grouped member''s own stamp '
   'stays frozen while grouped, so this is the only "has the customer seen '
   'it" signal the Orders page can show. Keep the guard on any re-emit '
-  '(000366).';
+  '(000368).';
 
 -- ── Bundle review front door (000311) ────────────────────────────────────
 create or replace function proofs.record_proof_set_opened(
@@ -104,4 +104,4 @@ comment on function proofs.record_proof_set_opened(uuid, text) is
   'Stamps proof_sets.last_opened_at on a genuine customer open. Guarded with '
   '`auth.uid() is null` so the workspace''s "Preview customer view" button '
   'does not read as the customer opening the bundle. Keep the guard on any '
-  're-emit (000366).';
+  're-emit (000368).';
