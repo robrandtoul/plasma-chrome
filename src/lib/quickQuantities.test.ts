@@ -49,8 +49,23 @@ check('sorts ascending', quickQuantities([500, 100, 250], null, null), [100, 250
 // No chip survives the clamp → caller renders type-in only, not an empty row.
 check('impossible range → empty', quickQuantities(METAL, 2000, 3000), [])
 
-// Paper/plastic start at 100, so a 25-card chip must never appear for them.
-check('paper list stays paper', quickQuantities([100, 250, 500, 750, 1000], 100, 5000), [100, 250, 500, 750, 1000])
+// Each material carries its own minimum, so the chips are MOQ-correct with no
+// special-casing: metal starts at 25, acrylic/carbon/wood at 50, paper and
+// plastic at 100. A 25-card chip must never appear on a paper order.
+const PAPER = [100, 250, 500, 750, 1000, 1500, 2000, 2500, 3000, 5000]
+check('paper keeps its own 100 floor', quickQuantities(PAPER, 100, 10000), PAPER)
+
+// ...and the minimum can differ BY CURRENCY. On live data Standard Paper
+// starts at 100 in GBP but at 250 in EUR and USD, while the curated list
+// contains 100 for all three. The bounds are read from the tiers loaded for
+// the ORDER's currency, so a US paper order must not offer a 100 chip that
+// can't be charged — which is the whole reason the clamp exists rather than
+// rendering display_quantities raw.
+check(
+  'paper in EUR/USD drops the 100 it cannot charge',
+  quickQuantities(PAPER, 250, 10000),
+  [250, 500, 750, 1000, 1500, 2000, 2500, 3000, 5000],
+)
 
 if (failures > 0) {
   console.error(`\n${failures} failure(s)`)
