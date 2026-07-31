@@ -10,13 +10,20 @@
 // waiting, and (b) it NEVER carries the pay link itself, whatever the RPC
 // sends. See migration 000367 and src/lib/customerProofUrl.ts:26-34.
 
+import { readFileSync } from 'node:fs'
 import {
+  REORDER_COOLDOWN_HOURS,
+  REORDER_COPY,
   RESEND_COOLDOWN_MINUTES,
   RESEND_COPY,
+  REORDER_FORWARD_COPY,
+  canRequestReorder,
   canResendPayLink,
   orderStatusLine,
   parseProofOrderState,
   readyToOrderCopy,
+  reorderForwardLink,
+  reorderRequestIsRecent,
   resendIsRecent,
   type ProofOrderStatePayload,
 } from './proofOrderState.ts'
@@ -39,14 +46,14 @@ function assertEquals(actual: unknown, expected: unknown, message: string) {
   if (a !== e) throw new Error(`${message}\n      expected: ${e}\n      actual:   ${a}`)
 }
 
-const live: ProofOrderStatePayload = { state: 'awaiting_payment', expiresAt: '2026-08-13T12:44:59Z', resendRequestedAt: null, stage: null, deliveryTracked: null }
+const live: ProofOrderStatePayload = { state: 'awaiting_payment', expiresAt: '2026-08-13T12:44:59Z', resendRequestedAt: null, stage: null, deliveryTracked: null, shippedAt: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null }
 
 // Every state that can produce a panel — used by the copy-honesty sweeps so a
 // new state can't quietly skip them.
 const ALL_PANEL_STATES: ProofOrderStatePayload[] = [
   live,
-  { state: 'link_expired', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null },
-  { state: 'none', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null },
+  { state: 'link_expired', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null, shippedAt: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null },
+  { state: 'none', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null, shippedAt: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null },
 ]
 
 console.log('\nparseProofOrderState — defensive parsing')
@@ -54,13 +61,13 @@ console.log('\nparseProofOrderState — defensive parsing')
 test('reads the RPC shape, mapping expires_at to expiresAt', () => {
   assertEquals(
     parseProofOrderState({ state: 'awaiting_payment', expires_at: '2026-08-13T12:44:59Z' }),
-    { state: 'awaiting_payment', expiresAt: '2026-08-13T12:44:59Z', resendRequestedAt: null, stage: null, deliveryTracked: null },
+    { state: 'awaiting_payment', expiresAt: '2026-08-13T12:44:59Z', resendRequestedAt: null, stage: null, deliveryTracked: null, shippedAt: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null },
     'a live link should parse with its deadline',
   )
 })
 
 test('a state with no expiry parses with expiresAt null', () => {
-  assertEquals(parseProofOrderState({ state: 'none' }), { state: 'none', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null },
+  assertEquals(parseProofOrderState({ state: 'none' }), { state: 'none', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null, shippedAt: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null },
     'jsonb_strip_nulls omits expires_at entirely for non-live states')
 })
 
@@ -93,7 +100,7 @@ test('a live pay link tells them where ordering happens', () => {
 })
 
 test('an expired link offers a fresh one instead of a dead end', () => {
-  const copy = readyToOrderCopy({ state: 'link_expired', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null }, 'approved')
+  const copy = readyToOrderCopy({ state: 'link_expired', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null, shippedAt: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null }, 'approved')
   assertEquals(copy!.heading, 'Your payment link has expired', 'heading')
   assert(copy!.body.includes('reply to any message from us'),
     'the recovery route must be stated')
@@ -101,12 +108,12 @@ test('an expired link offers a fresh one instead of a dead end', () => {
 })
 
 test('an already-paid order shows nothing — the proof page is not the order page', () => {
-  assertEquals(readyToOrderCopy({ state: 'paid', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null }, 'approved'), null,
+  assertEquals(readyToOrderCopy({ state: 'paid', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null, shippedAt: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null }, 'approved'), null,
     'a paying customer must never be shown "Ready to order?"')
 })
 
 test('an approved proof with no order yet still gets told how to buy', () => {
-  const copy = readyToOrderCopy({ state: 'none', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null }, 'approved')
+  const copy = readyToOrderCopy({ state: 'none', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null, shippedAt: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null }, 'approved')
   assert(copy != null, 'this is the approved_no_order customer — the one most likely to be stuck')
   assertEquals(copy!.heading, 'Ready to order?', 'heading')
   assert(copy!.body.includes('reply to any message from us'),
@@ -115,7 +122,7 @@ test('an approved proof with no order yet still gets told how to buy', () => {
 
 test('a proof still in progress is not nudged to order', () => {
   for (const status of ['in_progress', 'dormant', 'abandoned', null, undefined]) {
-    assertEquals(readyToOrderCopy({ state: 'none', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null }, status), null,
+    assertEquals(readyToOrderCopy({ state: 'none', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null, shippedAt: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null }, status), null,
       `status ${String(status)} should show no ordering panel`)
   }
 })
@@ -171,7 +178,7 @@ console.log('\nthe "send it again" action (000369)')
 test('only a live link can be re-sent', () => {
   assert(canResendPayLink(live), 'awaiting_payment is the one state with something to send')
   for (const s of ['link_expired', 'paid', 'none'] as const) {
-    assert(!canResendPayLink({ state: s, expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null }),
+    assert(!canResendPayLink({ state: s, expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null, shippedAt: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null }),
       `${s} must not offer a resend — an expired link needs a new one, which is a designer's job`)
   }
   assert(!canResendPayLink(null), 'an unread state offers nothing')
@@ -184,7 +191,7 @@ test('the resend stamp parses off the RPC', () => {
       expires_at: '2026-08-13T12:44:59Z',
       resend_requested_at: '2026-07-30T16:00:00Z',
     }),
-    { state: 'awaiting_payment', expiresAt: '2026-08-13T12:44:59Z', resendRequestedAt: '2026-07-30T16:00:00Z', stage: null, deliveryTracked: null },
+    { state: 'awaiting_payment', expiresAt: '2026-08-13T12:44:59Z', resendRequestedAt: '2026-07-30T16:00:00Z', stage: null, deliveryTracked: null, shippedAt: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null },
     'both timestamps survive the allow-list',
   )
 })
@@ -241,8 +248,8 @@ console.log('\nthe security invariant')
 test('no copy ever contains a link, path or token', () => {
   const payloads: ProofOrderStatePayload[] = [
     live,
-    { state: 'link_expired', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null },
-    { state: 'none', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null },
+    { state: 'link_expired', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null, shippedAt: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null },
+    { state: 'none', expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null, shippedAt: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null },
   ]
   for (const p of payloads) {
     for (const status of ['approved', 'in_progress']) {
@@ -268,7 +275,7 @@ test('the parsed payload carries no identifiers even if the RPC sends some', () 
   })
   assertEquals(
     Object.keys(parsed!).sort(),
-    ['deliveryTracked', 'expiresAt', 'resendRequestedAt', 'stage', 'state'],
+    ['deliveryTracked', 'expiresAt', 'reorderAvailable', 'reorderProofId', 'reorderRequestedAt', 'resendRequestedAt', 'shippedAt', 'stage', 'state'],
     'the parser is an allow-list: only the display fields survive — never an id or token',
   )
 })
@@ -280,7 +287,8 @@ console.log('\nthe order status shown on the approved card (000371)')
 test('a paid order in production says where it is', () => {
   const s = orderStatusLine({
     state: 'paid', expiresAt: null, resendRequestedAt: null,
-    stage: 'in_production', deliveryTracked: null,
+    stage: 'in_production', deliveryTracked: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null,
+    shippedAt: null,
   })
   assertEquals(s!.label, 'In production', 'label comes from the shared stage copy')
   assertEquals(s!.stage, 'in_production', 'the stage drives the progress strip')
@@ -290,7 +298,8 @@ test('a paid order in production says where it is', () => {
 test('a delivered order is reported as delivered', () => {
   const s = orderStatusLine({
     state: 'paid', expiresAt: null, resendRequestedAt: null,
-    stage: 'delivered', deliveryTracked: true,
+    stage: 'delivered', deliveryTracked: true, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null,
+    shippedAt: null,
   })
   assertEquals(s!.label, 'Delivered', 'the stage 000370 made reachable')
 })
@@ -301,7 +310,8 @@ test('paid with tracking switched off still confirms the payment', () => {
   // came back specifically to check their money with no answer.
   const s = orderStatusLine({
     state: 'paid', expiresAt: null, resendRequestedAt: null,
-    stage: null, deliveryTracked: null,
+    stage: null, deliveryTracked: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null,
+    shippedAt: null,
   })
   assertEquals(s!.label, 'Paid', 'the payment is still a fact worth stating')
   assertEquals(s!.stage, null, 'but there is no journey to draw')
@@ -310,7 +320,8 @@ test('paid with tracking switched off still confirms the payment', () => {
 test('an outstanding payment is named, without repeating the deadline', () => {
   const s = orderStatusLine({
     state: 'awaiting_payment', expiresAt: '2026-08-13T12:44:59Z', resendRequestedAt: null,
-    stage: null, deliveryTracked: null,
+    stage: null, deliveryTracked: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null,
+    shippedAt: null,
   })
   assertEquals(s!.label, 'Awaiting payment', 'label')
   assert(!('expiresAt' in s!), 'the deadline belongs to the Ready-to-order panel alone')
@@ -322,7 +333,7 @@ test('an expired link and a proof with no order say nothing on the card', () => 
   // the way out. Two messages about one problem is worse than one.
   for (const state of ['link_expired', 'none'] as const) {
     assertEquals(
-      orderStatusLine({ state, expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null }),
+      orderStatusLine({ state, expiresAt: null, resendRequestedAt: null, stage: null, deliveryTracked: null, shippedAt: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null }),
       null,
       `${state} must not add a second voice to the page`,
     )
@@ -336,7 +347,8 @@ test('the card copy never leaks a link, a token or an amount', () => {
     for (const state of ['awaiting_payment', 'paid'] as const) {
       const s = orderStatusLine({
         state, expiresAt: null, resendRequestedAt: null,
-        stage: stage as never, deliveryTracked: null,
+        stage: stage as never, deliveryTracked: null, reorderAvailable: false, reorderRequestedAt: null, reorderProofId: null,
+    shippedAt: null,
       })
       if (!s) continue
       const text = `${s.label} ${s.line}`
@@ -345,6 +357,166 @@ test('the card copy never leaks a link, a token or an amount', () => {
       assert(!/[£$€]\s?\d/.test(text), `"${text}" must quote no amount`)
       assert(!/\btoken\b/i.test(text), `"${text}" must not mention a token`)
     }
+  }
+})
+
+// ── The reorder panel (000372) ──────────────────────────────────────────────
+
+console.log('\nthe reorder panel (000372)')
+
+test('the gate is the server’s answer, never re-derived here', () => {
+  // Every condition — the master switch, the payment, the absence of a live
+  // link, the quiet window since delivery or dispatch — lives in
+  // _reorder_quiet_period_passed. If the client re-derived any of it, the two
+  // would drift the first time Rob changed the window in Admin → Settings.
+  assert(canRequestReorder({ ...live, state: 'paid', reorderAvailable: true }),
+    'the panel shows when the server says it may')
+  assert(!canRequestReorder({ ...live, state: 'paid', reorderAvailable: false }),
+    'and never when it says it may not — whatever else the payload contains')
+  assert(!canRequestReorder(null), 'an unread state offers nothing')
+})
+
+test('a recent request keeps the acknowledgement across a reload', () => {
+  const now = Date.parse('2026-07-31T12:00:00Z')
+  assert(reorderRequestIsRecent('2026-07-31T09:00:00Z', now),
+    'three hours ago is well inside the window')
+  assert(!reorderRequestIsRecent('2026-07-29T09:00:00Z', now),
+    `two days is past the ${REORDER_COOLDOWN_HOURS}-hour window, so they can ask again`)
+  assert(!reorderRequestIsRecent(null, now), 'never asked → no acknowledgement')
+})
+
+test('a garbled or future stamp never strands the panel', () => {
+  const now = Date.parse('2026-07-31T12:00:00Z')
+  assert(!reorderRequestIsRecent('not-a-date', now), 'unparseable must not read as recent')
+  assert(!reorderRequestIsRecent('2026-08-02T12:00:00Z', now),
+    'a future stamp (clock skew) must re-arm rather than lock the panel forever')
+})
+
+test('the client cooldown matches the server’s', () => {
+  // The server is the only real gate — request-reorder refuses inside its own
+  // window regardless of what the page believes. This constant exists so the
+  // UI doesn't offer a button that would silently do nothing, so the two
+  // numbers drifting apart is exactly the bug it was added to prevent.
+  const fn = readFileSync(
+    new URL('../../supabase/functions/request-reorder/index.ts', import.meta.url),
+    'utf8',
+  )
+  const m = fn.match(/const COOLDOWN_HOURS\s*=\s*(\d+)/)
+  assert(m != null, 'request-reorder should declare COOLDOWN_HOURS')
+  assertEquals(Number(m![1]), REORDER_COOLDOWN_HOURS,
+    'the client window must match the server it is mirroring')
+})
+
+test('the copy asks, and never claims an order, a price or a date', () => {
+  // The whole panel is a REQUEST. A designer prices it, decides whether the
+  // change needs a fresh proof round, and sends the link. Copy that implied
+  // any of that had happened would be a promise made by a page that cannot
+  // keep it — the same failure the Ready-to-order card exists to end.
+  assert(REORDER_COPY.sent.toLowerCase().includes('request'),
+    'the acknowledgement should name what actually landed — a request')
+  for (const [key, v] of Object.entries(REORDER_COPY)) {
+    const t = v.toLowerCase()
+    for (const forbidden of ['/order/', 'token', 'http://', 'https://']) {
+      assert(!t.includes(forbidden),
+        `reorder copy "${key}" must never contain ${forbidden} — /p/ links are shared broadly (000367)`)
+    }
+    assert(!/[£$€]\s?\d/.test(v), `reorder copy "${key}" must quote no amount`)
+    // "we'll send you a payment link" (future) is honest; "we've sent"
+    // (past) would not be — nothing has been sent when this renders.
+    assert(!/\b(we|we’ve|weve|we've) (have )?sent\b/i.test(v),
+      `reorder copy "${key}" must not claim a send that hasn't happened`)
+    assert(!/\border (is )?(placed|confirmed)\b/i.test(v),
+      `reorder copy "${key}" must not claim an order exists`)
+  }
+})
+
+test('nothing the customer clicks or lands on promises an outcome we cannot pick', () => {
+  // Rob, 31 Jul: "if they request a change they are not really requesting a
+  // payment link". The panel has TWO inputs and the second one forks the
+  // outcome — nothing changed goes straight to a payment link, anything
+  // changed needs a fresh proof round first. Only the designer knows which,
+  // by reading the note, so no string shown BEFORE that decision may name one.
+  //
+  // Two places this bites, and both have been wrong at some point: the submit
+  // button (a customer reads it with their change already typed) and the
+  // acknowledgement that replaces the whole form afterwards.
+  const mustNotPromise = /payment link|pay link|invoice|proof to approve/i
+
+  assert(!mustNotPromise.test(REORDER_COPY.action),
+    `the button must name no outcome — it is clicked from both branches (got "${REORDER_COPY.action}")`)
+
+  // The reload case cannot tell the branches apart at all: the note lives in
+  // component state and is gone. So this one must be true either way.
+  assert(!mustNotPromise.test(REORDER_COPY.sent),
+    `the neutral acknowledgement must survive not knowing which branch (got "${REORDER_COPY.sent}")`)
+
+  // The two we CAN pick between must each be specific, or there was no point
+  // splitting them.
+  assert(/payment link/i.test(REORDER_COPY.sentPaymentLink),
+    'the no-changes acknowledgement should say the payment link is coming')
+  assert(/proof/i.test(REORDER_COPY.sentWithNote),
+    'the something-changed acknowledgement should warn a fresh proof may come first')
+  assert(!/^.*\bwe.ll send (you )?a payment link\b/i.test(REORDER_COPY.sentWithNote),
+    'the something-changed acknowledgement must not also promise a link')
+
+  // All three still have to say the ASK landed — that is the one thing that
+  // definitely just happened.
+  for (const k of ['sent', 'sentPaymentLink', 'sentWithNote'] as const) {
+    assert(REORDER_COPY[k].toLowerCase().includes('request'),
+      `acknowledgement "${k}" should name what actually landed — a request`)
+  }
+})
+
+// ── The forward link (000374) ───────────────────────────────────────────────
+
+console.log('\nthe forward link (000374)')
+
+test('the panel and the forward link are mutually exclusive', () => {
+  // They occupy the same slot on the page. Showing both would read as though
+  // the request they already made had gone nowhere.
+  const raised: ProofOrderStatePayload = {
+    ...live, state: 'paid', reorderAvailable: true,
+    reorderRequestedAt: '2026-07-20T09:00:00Z',
+    reorderProofId: '9f1c2b40-1111-4444-8888-aaaaaaaaaaaa',
+  }
+  assert(!canRequestReorder(raised), 'once the reorder exists, stop inviting them to ask')
+  assert(reorderForwardLink(raised) != null, 'and point at it instead')
+
+  const notYet: ProofOrderStatePayload = { ...raised, reorderProofId: null, shippedAt: null }
+  assert(canRequestReorder(notYet), 'before it exists, the panel is the whole answer')
+  assertEquals(reorderForwardLink(notYet), null, 'and there is nothing to point at')
+})
+
+test('the link carries the request date so the page can say when', () => {
+  const l = reorderForwardLink({
+    ...live, reorderRequestedAt: '2026-07-20T09:00:00Z',
+    reorderProofId: '9f1c2b40-1111-4444-8888-aaaaaaaaaaaa',
+  })
+  assertEquals(l!.proofId, '9f1c2b40-1111-4444-8888-aaaaaaaaaaaa', 'destination')
+  assertEquals(l!.requestedAt, '2026-07-20T09:00:00Z', 'and when they asked')
+})
+
+test('an older RPC, or one that has nothing to say, shows no link', () => {
+  // jsonb_strip_nulls drops reorder_proof_id entirely until a reorder project
+  // exists and is safe to name, so "key absent" is the normal case, not an
+  // error — and a bundle deployed ahead of the migration must read the same.
+  assertEquals(parseProofOrderState({ state: 'paid' })!.reorderProofId, null,
+    'a payload with no key at all parses to no link')
+  assertEquals(reorderForwardLink(null), null, 'an unread state shows nothing')
+})
+
+test('the forward copy names the destination without reporting on it', () => {
+  // The reorder's own page answers "where has it got to?". Saying anything
+  // about it from here would be a second, staler voice on one question — the
+  // same divide the Ready-to-order panel keeps from the status card.
+  for (const [key, v] of Object.entries(REORDER_FORWARD_COPY)) {
+    const t = v.toLowerCase()
+    for (const forbidden of ['/order/', 'token', 'http://', 'https://']) {
+      assert(!t.includes(forbidden), `forward copy "${key}" must never contain ${forbidden}`)
+    }
+    assert(!/[£$€]\s?\d/.test(v), `forward copy "${key}" must quote no amount`)
+    assert(!/\b(in production|on its way|delivered|dispatched|shipped)\b/i.test(v),
+      `forward copy "${key}" must not report the reorder's progress`)
   }
 })
 

@@ -310,6 +310,11 @@ const DASHBOARD_PROJECTS = [
     contact_name: 'Ken Ng',
     contact_email: 'kenngkchk@gmail.com',
     approved_at: daysAgo(5),
+    // 000373: raised from a customer reorder request, so the row carries the
+    // brand-toned "Customer reorder" line ALONGSIDE its Approved pill — the
+    // pill can't distinguish this from a fresh sign-off, which is the whole
+    // reason the line exists.
+    reorder_of_proof_id: 'p-a2',
     material_display: 'Stainless Steel',
     designer_name: 'Rob Randtoul',
     designer_initials: 'RR',
@@ -326,6 +331,12 @@ const DASHBOARD_PROJECTS = [
     current_version_id: 'ver-a2',
     current_version_number: 1,
     version_created_at: daysAgo(2),
+    // The other half of 000373: the SOURCE project, between the customer
+    // asking and a designer raising the reorder. Surfaces as a needs-attention
+    // chip so the ask can't be missed.
+    reorder_requested_at: daysAgo(2),
+    rule_code: 'reorder_requested',
+    rule_meta: { days: 2, quantity: 500 },
     company_name: 'Vandelay Industries',
     contact_name: 'Art Vandelay',
     contact_email: 'art@vandelay.example',
@@ -650,7 +661,15 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
       rows = pid ? [{ id: `ver-${pid}`, material_id: ORDERS.find((o) => o.proof_id === pid)?.material_id ?? 'm-steel', is_current: true, version_number: 3, shape: null }] : []
     }
   } else if (table === 'proofs') {
-    if (select.includes('proof_set_id') && !select.includes('contacts(')) {
+    if (filters['eq:reorder_of_proof_id']) {
+      // "Has a reorder already been raised from this project?" (000373).
+      // An id containing 'raised' has one — which both hides the "Raise the
+      // reorder" menu item and renders the forward link on the source, so the
+      // pair links in both directions.
+      rows = String(filters['eq:reorder_of_proof_id']).includes('raised')
+        ? [{ id: 'p-a1-child' }]
+        : []
+    } else if (select.includes('proof_set_id') && !select.includes('contacts(')) {
       // DashboardPage's bundle-membership read (see lib/dashboardBundles.ts).
       rows = BUNDLE_MEMBERS
     } else if (select.includes('contacts(')) {
@@ -673,6 +692,18 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
         disclaimer_acknowledged_at: null,
         proof_set_id: null,
         set_discarded_at: null,
+        // Reorder request fixture (000372) — an id containing 'reorder'
+        // renders the "Raise the reorder" path: the menu item, the
+        // ResolvePopover primary action and the confirm dialog's copy, which
+        // quotes the customer's own words back.
+        reorder_requested_at: /reorder|raised/.test(String(pid)) ? daysAgo(2) : null,
+        reorder_request_note: String(pid).includes('reorder')
+          ? 'Same as before please, but Kelly has left so drop her card.'
+          : null,
+        reorder_request_quantity: String(pid).includes('reorder') ? 500 : null,
+        // An id containing 'child' renders the far side: a project that IS
+        // somebody's reorder, so the facts rail links back.
+        reorder_of_proof_id: String(pid).includes('child') ? 'p-a1' : null,
         contact_id: 'c-1',
         contacts: { full_name: 'Valentina Ring', email: 'valentina@realise.example', companies: { name: 'Realise' } },
       }]

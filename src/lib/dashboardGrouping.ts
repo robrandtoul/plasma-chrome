@@ -18,6 +18,9 @@ export type NeedsAttentionRule =
   | 'approved_earlier_version'
   | 'nudges_exhausted'
   | 'approved_no_order'
+  // 000373: the customer asked for more of these cards from /p/:id and no
+  // reorder project has been raised from it yet.
+  | 'reorder_requested'
 
 // rule_meta from proofs_needing_attention(). Threshold rules carry `days`;
 // approved_earlier_version carries `version`; nudges_exhausted (000221)
@@ -32,6 +35,10 @@ export interface NeedsAttentionMeta {
   sent?: number
   no_contact?: boolean
   others?: string[]
+  // 000373: how many the customer asked for, when they said. Optional — the
+  // quantity field on the reorder panel is optional, so plenty of requests
+  // arrive without one.
+  quantity?: number | null
 }
 
 export interface DashboardProject {
@@ -101,6 +108,18 @@ export interface DashboardProject {
   // order (draft/expired/cancelled/revision don't count). Non-null only on
   // approved proofs, and only read by proofBucket on approved proofs.
   order_status: 'ordered' | 'awaiting_payment' | null
+  // 000373. Non-null only on a project raised FROM a customer reorder request
+  // — never on a designer Duplicate, which is what lets the row say "the
+  // customer asked for this" rather than merely "this looks like a copy".
+  //
+  // Deliberately NOT part of BucketInput: a reorder is provenance, not a
+  // workflow stage, so it must sit ALONGSIDE the Approved / Ordered pill
+  // rather than replacing it and hiding the ordering journey the row exists
+  // to show.
+  reorder_of_proof_id: string | null
+  // The stamp on the SOURCE project. Survives after the reorder is raised, so
+  // the row can still say a customer asked once the rule has cleared.
+  reorder_requested_at: string | null
 }
 
 export type SectionKind = 'pinned' | 'team' | 'snoozed' | 'time' | 'company'

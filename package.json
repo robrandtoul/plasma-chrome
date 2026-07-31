@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "verify": "vite --config vite.verify.config.ts",
     "build": "tsc -b && vite build && vite build --config vite.price-list.config.ts && vite build --config vite.contact-form.config.ts",
     "build:price-list": "vite build --config vite.price-list.config.ts",
     "build:contact-form": "vite build --config vite.contact-form.config.ts",
@@ -52,6 +53,7 @@
     "test:approval-carry": "tsx src/lib/approvalCarry.test.ts",
     "test:abandon-notice": "tsx src/lib/abandonNotice.test.ts",
     "test:order-tracking": "tsx src/lib/orderTracking.test.ts",
+    "test:quick-quantities": "tsx src/lib/quickQuantities.test.ts",
     "test:audit-filters": "tsx src/pages/admin/auditFilters.test.ts",
     "test:dashboard-grouping": "tsx src/lib/dashboardGrouping.test.ts",
     "test:proof-snapshot": "tsx src/lib/proofSnapshot.test.ts",

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { DesignerChrome, useDesignerProfile, useIsMobile, Sheet, ButtonCoral, ButtonGhost, ButtonInk, ProofStatusPill, HelpTip } from '../design'
-import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Layers, Link as LinkIcon, ThumbsDown, PictureInPicture2 } from 'lucide-react'
+import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Layers, Link as LinkIcon, Repeat, ThumbsDown, PictureInPicture2 } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -1220,6 +1220,9 @@ function ProjectRow({
                 {subline && <div className="truncate text-xs text-ink-mute mt-0.5">{subline}</div>}
                 {specLine && <div className="truncate text-xs text-ink-mute mt-0.5">{specLine}</div>}
                 {bundle && !bundleNested && <BundleLine bundle={bundle} shownHere={1} />}
+                {project.reorder_of_proof_id && (
+                  <ReorderLine sourceProofId={project.reorder_of_proof_id} />
+                )}
               </div>
               <OverflowMenu
                 proof={project}
@@ -1399,6 +1402,11 @@ function ProjectRow({
               rather than down with the timing lines. Suppressed inside a block,
               where containment already says it. See BundleLine. */}
           {bundle && !bundleNested && <BundleLine bundle={bundle} shownHere={1} />}
+          {/* Provenance, so it sits with the identity lines under the customer
+              rather than down with the timing ones. See ReorderLine. */}
+          {project.reorder_of_proof_id && (
+            <ReorderLine sourceProofId={project.reorder_of_proof_id} />
+          )}
           {/* Reason chip — third row line, shown on every Needs-attention
               row so the triggering rule is always visible (not just when
               the tile filter is active). Clicking it opens the resolve
@@ -1639,6 +1647,49 @@ function BundleLine({ bundle, shownHere }: { bundle: BundleInfo; shownHere: numb
       {/* Short enough to survive a narrow name column, and no "1 of 3" — the
           cards in a bundle have no order, so a position would be invented. */}
       <span className="truncate">Part of a bundle of {bundle.size}</span>
+    </Link>
+  )
+}
+
+/**
+ * "This project exists because a customer asked for more" (000373).
+ *
+ * Rob's ask was that a pre-approved reorder be visibly distinct from a proof a
+ * customer has just signed off, so it gets handled accordingly rather than
+ * celebrated as a fresh approval. Both read "Approved" on the pill, and both
+ * then walk the same Awaiting payment → Ordered path, so the pill genuinely
+ * cannot tell them apart — this line is the only thing that can.
+ *
+ * ⚠ Deliberately NOT a proofBucket bucket. A bucket would REPLACE the
+ * Approved / Ordered pill, hiding the ordering journey the row exists to
+ * show. Provenance and workflow stage are orthogonal; this is the former.
+ *
+ * Brand-toned rather than `text-ink-dim` like BundleLine: at 11px in the
+ * tertiary stack, ink-dim is the quietest thing on the row and would lose to
+ * a green Approved pill at a glance, which is the exact failure the line was
+ * added to prevent. Brand also stays clear of every bucket colour, so it
+ * reads as "notable" without claiming a workflow state of its own.
+ */
+function ReorderLine({ sourceProofId }: { sourceProofId: string }) {
+  return (
+    <Link
+      to={`/proofs/${sourceProofId}`}
+      // Load-bearing: the whole row is a role="button" that navigates, so
+      // without this the click goes to the row, not the source project.
+      onClick={(e) => e.stopPropagation()}
+      title="The customer asked for more of these — open the project this was raised from"
+      className="mt-1 flex w-fit max-w-full items-center gap-1.5 text-[11px] transition-opacity hover:opacity-80"
+      style={{ color: 'var(--c-brand)' }}
+    >
+      <Repeat size={11} className="shrink-0" aria-hidden="true" />
+      {/* "Customer reorder", not "Reorder": the point is WHO asked. A designer
+          Duplicate never sets reorder_of_proof_id, so this line can only ever
+          mean a customer did.
+          Two words, because the name column is narrow and a longer label
+          truncates to "Customer reorder …" anyway. "Pre-approved" is left off
+          deliberately — the Approved pill is on the same row saying exactly
+          that, and the full sentence lives in the title. */}
+      <span className="truncate">Customer reorder</span>
     </Link>
   )
 }

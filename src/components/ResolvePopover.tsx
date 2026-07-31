@@ -45,6 +45,14 @@ interface ResolvePopoverProps {
   companyName: string | null
   /** Called after a successful auto-snooze so the parent can refresh. */
   onSnoozed?: () => void
+  /**
+   * Raise the reorder project for a `reorder_requested` flag. Supplied only
+   * by the proof detail page — the dashboard call sites leave it undefined,
+   * so the button doesn't appear there. Deliberate: this action CREATES a
+   * project, and doing that from a dashboard row means committing without
+   * having looked at what is being copied.
+   */
+  onRaiseReorder?: () => void
   /** The trigger element (the reason chip or the status pill). */
   children: ReactNode
   className?: string
@@ -63,6 +71,7 @@ export function ResolvePopover({
   contactFullName,
   companyName,
   onSnoozed,
+  onRaiseReorder,
   children,
   className = '',
 }: ResolvePopoverProps) {
@@ -246,7 +255,15 @@ export function ResolvePopover({
           <p className="rounded-md bg-canvas px-2.5 py-1.5 text-[11px] text-ink-soft">{staleNotice}</p>
         )}
         {/* Primary action — depends on the rule. */}
-        {ruleCode === 'request_changes_no_version' ? (
+        {ruleCode === 'reorder_requested' && onRaiseReorder ? (
+          <button
+            type="button"
+            onClick={() => { setOpen(false); onRaiseReorder() }}
+            className={primaryBtn}
+          >
+            Raise the reorder
+          </button>
+        ) : ruleCode === 'request_changes_no_version' ? (
           <button
             type="button"
             onClick={() => { setOpen(false); navigate(`/proofs/${proofId}/versions/new`) }}

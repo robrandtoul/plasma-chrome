@@ -216,6 +216,7 @@ const RULE_LEAD: Record<string, string> = {
   approved_earlier_version: 'Customer approved an earlier version',
   nudges_exhausted: 'Reminders sent, still no response',
   approved_no_order: 'Approved — no order link sent',
+  reorder_requested: 'Customer asked to reorder',
 }
 
 export function summaryLine(i: SummaryInput): SummaryLine | null {

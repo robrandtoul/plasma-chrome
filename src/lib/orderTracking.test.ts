@@ -15,9 +15,12 @@
 import {
   STAGE_META,
   TRACKING_STAGES,
+  formatDispatchDate,
   isTrackingStage,
   progressFraction,
   stageIndexIn,
+  stageLabel,
+  stageLine,
   stepsFor,
   type TrackingStage,
 } from './orderTracking.ts'
@@ -122,6 +125,93 @@ test('isTrackingStage rejects anything unexpected', () => {
   for (const good of TRACKING_STAGES) assert(isTrackingStage(good), `${good} is a stage`)
   for (const bad of [null, undefined, 42, '', 'shipped', 'DELIVERED', {}, []]) {
     assert(!isTrackingStage(bad), `${JSON.stringify(bad)} must not pass as a stage`)
+  }
+})
+
+
+console.log('\ndispatch is an ending, not a waypoint (000375)')
+
+// Rob, 31 Jul: "The current text is always present tense. But this really needs
+// to be past tense when we reach the point where the reorder system kicks in."
+// A DPD parcel stops at `on_its_way` forever — the carrier has never once
+// confirmed a delivery — so "Your cards are on their way" is what a customer
+// reads weeks after the cards landed on their desk, and often at the exact
+// moment they have come back to order more.
+
+const SHIPPED = '2026-06-24T09:15:00Z'
+
+test('a parcel whose carrier never confirms delivery speaks in the past, with a date', () => {
+  assertEquals(stageLabel('on_its_way', false), 'Shipped', 'label')
+  assertEquals(
+    stageLine('on_its_way', { deliveryTracked: false, shippedAt: SHIPPED }),
+    'Your cards were shipped on 24 June 2026.',
+    'line',
+  )
+})
+
+test('a parcel still genuinely in transit is untouched', () => {
+  // FedEx confirms delivery, so `on_its_way` really is a waypoint and the
+  // Delivered step is coming. Dating it would answer a question nobody asked.
+  assertEquals(stageLabel('on_its_way', true), 'On its way', 'label')
+  assertEquals(
+    stageLine('on_its_way', { deliveryTracked: true, shippedAt: SHIPPED }),
+    STAGE_META.on_its_way.line,
+    'line must be the unchanged present tense',
+  )
+  // Not dispatched yet = we do not know the carrier, and unknown must not
+  // silently read as "terminal".
+  assertEquals(stageLine('on_its_way', { deliveryTracked: null, shippedAt: null }),
+    STAGE_META.on_its_way.line, 'unknown carrier keeps the present tense')
+})
+
+test('no stamp means no date, never a borrowed one', () => {
+  // 000375 refuses to fall back to in-house `completed_at`, which means MADE,
+  // not posted. Past tense survives; the invented precision does not.
+  assertEquals(
+    stageLine('on_its_way', { deliveryTracked: false, shippedAt: null }),
+    'Your cards have been sent.',
+    'dateless past tense',
+  )
+  assertEquals(
+    stageLine('on_its_way', { deliveryTracked: false, shippedAt: 'not-a-date' }),
+    'Your cards have been sent.',
+    'an unparseable stamp must not reach a customer as "Invalid Date"',
+  )
+})
+
+test('a delivered parcel always wins, whatever the carrier allow-list says', () => {
+  // The stamp is evidence; the allow-list is a rule of thumb. Same rule
+  // stepsFor already follows.
+  assertEquals(stageLabel('delivered', false), 'Delivered', 'label')
+  assertEquals(stageLine('delivered', { deliveryTracked: false, shippedAt: SHIPPED }),
+    STAGE_META.delivered.line, 'line')
+  assertEquals(stepsFor(false, 'delivered').length, 4, 'and keeps the long rail')
+})
+
+test('the earlier stages never change', () => {
+  for (const stage of ['paid', 'in_production'] as TrackingStage[]) {
+    for (const tracked of [true, false, null]) {
+      assertEquals(stageLabel(stage, tracked), STAGE_META[stage].label, `${stage} label`)
+      assertEquals(stageLine(stage, { deliveryTracked: tracked, shippedAt: SHIPPED }),
+        STAGE_META[stage].line, `${stage} line`)
+    }
+  }
+})
+
+test('the shortened rail names its last step for what it is', () => {
+  const short = stepsFor(false, 'on_its_way')
+  assertEquals(short.length, 3, 'three steps')
+  assertEquals(short[2].label, 'Shipped', 'the terminal step is an ending')
+  assertEquals(short[2].key, 'on_its_way', 'but it is still the same stage underneath')
+  // The long rail keeps the travelling language, because it travels.
+  assertEquals(stepsFor(true, 'on_its_way')[2].label, 'On its way', 'long rail unchanged')
+})
+
+test('the date reads as a person would write it, and matches the card above', () => {
+  // The approved card prints "Signed off 24 June 2026" directly above this.
+  assertEquals(formatDispatchDate(SHIPPED), '24 June 2026', 'long en-GB form')
+  for (const bad of [null, undefined, '', 'yesterday']) {
+    assertEquals(formatDispatchDate(bad), null, `${JSON.stringify(bad)} must yield no date`)
   }
 })
 

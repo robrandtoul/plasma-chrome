@@ -35,6 +35,16 @@ export type TrackingProjection =
       /** Absent = not dispatched yet, so unknown. See header. */
       delivery_tracked?: boolean
       /**
+       * When the parcel actually went (migration 000375). The REAL dispatch
+       * stamp, never the trigger that moved the stage — see that migration on
+       * why in-house `completed_at` must not stand in for it. Absent before
+       * dispatch, and absent afterwards if the stamp was never written.
+       *
+       * Unlike `tracking_number` this IS present on the proof page: a date is
+       * inert, and nobody can act on a parcel with it.
+       */
+      shipped_at?: string
+      /**
        * Pay page only. Deliberately NEVER present on the proof page's payload —
        * /p/:id is shared broadly and a tracking number lets its holder act on
        * the parcel, not just read about it (migration 000371 header).
@@ -69,8 +79,15 @@ const FULL_STEPS: TrackingStep[] = [
   { key: 'delivered', label: 'Delivered' },
 ]
 
-// Same journey, minus a destination we'd never be able to confirm.
-const NO_DELIVERY_STEPS: TrackingStep[] = FULL_STEPS.slice(0, 3)
+// Same journey, minus a destination we'd never be able to confirm — and with
+// the last step renamed, because it is now an ENDING rather than a state the
+// parcel is passing through. "On its way" is right for a FedEx parcel at this
+// point (Delivered follows), and wrong for a DPD one, where nothing follows
+// and the customer is often reading it weeks after the cards landed.
+const NO_DELIVERY_STEPS: TrackingStep[] = [
+  ...FULL_STEPS.slice(0, 2),
+  { key: 'on_its_way', label: 'Shipped' },
+]
 
 /**
  * The steps to draw for this parcel.
@@ -107,4 +124,64 @@ export function stageIndexIn(steps: TrackingStep[], stage: TrackingStage): numbe
 export function progressFraction(steps: TrackingStep[], index: number): number {
   if (steps.length <= 1) return index > 0 ? 1 : 0
   return Math.min(1, Math.max(0, index / (steps.length - 1)))
+}
+
+// ── What to CALL the stage, and what to say about it ────────────────────────
+//
+// STAGE_META holds the default for each stage. Exactly one of them varies, and
+// it is the one this whole distinction exists for: `on_its_way` on a parcel
+// whose carrier never confirms delivery is the END of the journey, not a
+// waypoint. Rob, 31 Jul: "The current text is always present tense. But this
+// really needs to be past tense when we reach the point where the reorder
+// system kicks in" — that population is, by construction, people whose cards
+// arrived weeks ago, and telling them the parcel is still travelling reads as
+// though we have lost it.
+//
+// A stage that has reached `delivered` always uses the delivered copy, whatever
+// the allow-list says — same rule stepsFor follows, and for the same reason:
+// the stamp is evidence.
+
+/** True when `on_its_way` is where this parcel's journey ENDS. */
+function isTerminalDispatch(
+  stage: TrackingStage,
+  deliveryTracked: boolean | null | undefined,
+): boolean {
+  return stage === 'on_its_way' && deliveryTracked === false
+}
+
+export function stageLabel(
+  stage: TrackingStage,
+  deliveryTracked: boolean | null | undefined,
+): string {
+  return isTerminalDispatch(stage, deliveryTracked) ? 'Shipped' : STAGE_META[stage].label
+}
+
+/**
+ * The sentence under the label. `shippedAt` is only ever used on the terminal
+ * dispatch — a FedEx parcel genuinely IS on its way, and dating that would be
+ * telling someone when their still-travelling parcel left, which is not the
+ * question they have.
+ */
+export function stageLine(
+  stage: TrackingStage,
+  opts: { deliveryTracked?: boolean | null; shippedAt?: string | null } = {},
+): string {
+  if (!isTerminalDispatch(stage, opts.deliveryTracked)) return STAGE_META[stage].line
+  const when = formatDispatchDate(opts.shippedAt)
+  // No date recorded — still past tense, just without the detail we cannot
+  // back up. Never falls back to a nearby timestamp that means something else.
+  return when ? `Your cards were shipped on ${when}.` : 'Your cards have been sent.'
+}
+
+/**
+ * "24 June 2026" — the same long form the approved card's "Signed off" line
+ * uses directly above it, so one card doesn't carry two date formats.
+ * Returns null for a missing or unparseable stamp, which drops the date rather
+ * than printing "Invalid Date" at a customer.
+ */
+export function formatDispatchDate(iso: string | null | undefined): string | null {
+  if (!iso) return null
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return null
+  return new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
 }

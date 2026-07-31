@@ -35,14 +35,18 @@ import { setReviewPath } from '../lib/proofSets'
 import { ActionPanel } from '../components/ActionPanel'
 import { ReadyToOrderPanel, type ResendState } from '../components/ReadyToOrderPanel'
 import {
+  canRequestReorder,
   canResendPayLink,
   orderStatusLine,
   parseProofOrderState,
   readyToOrderCopy,
+  reorderForwardLink,
+  reorderRequestIsRecent,
   resendIsRecent,
   type ProofOrderStatePayload,
 } from '../lib/proofOrderState'
 import ApprovedOrderStatus from '../components/ApprovedOrderStatus'
+import { ReorderForwardPanel, ReorderPanel, type ReorderState } from '../components/ReorderPanel'
 import { ShareWithTeamPanel } from '../components/ShareWithTeamPanel'
 import DeclineFeedbackPanel from '../components/DeclineFeedbackPanel'
 import { ProofDetailView } from '../components/ProofDetailView'
@@ -150,6 +154,7 @@ export default function CustomerProofPage() {
   // derived from the server's own stamp below, so a reload keeps the
   // acknowledgement rather than re-arming the button.
   const [resendState, setResendState] = useState<ResendState>('idle')
+  const [reorderState, setReorderState] = useState<ReorderState>('idle')
   // Detail view (Phase 2 — replaces the dark fullscreen lightbox).
   // Non-modal, light-register zoom that coexists with the request-
   // changes panel. `images` is the navigable set (the clicked image's
@@ -996,6 +1001,7 @@ export default function CustomerProofPage() {
     setNotFound(false)
     setOrderState(null)
     setResendState('idle')
+    setReorderState('idle')
 
     // One SECURITY DEFINER RPC replaces the previous fan-out across
     // public_proofs / public_proof_versions / public_material_options /
@@ -1924,6 +1930,33 @@ export default function CustomerProofPage() {
     resendState === 'idle' && resendIsRecent(orderState?.resendRequestedAt ?? null)
       ? 'sent'
       : resendState
+
+  // Ask us for more of these (000372). Same posture as the resend above: the
+  // body carries the proof id plus what they typed and nothing addressable,
+  // the response is a bare status, and the server re-checks eligibility — the
+  // button showing is a convenience, never the authorisation.
+  async function requestReorder(input: { quantity: number | null; note: string }) {
+    if (!id || reorderState === 'sending') return
+    setReorderState('sending')
+    try {
+      const { data, error } = await supabase.functions.invoke<{ status?: string }>(
+        'request-reorder',
+        { body: { proof_id: id, quantity: input.quantity, note: input.note } },
+      )
+      setReorderState(!error && data?.status === 'ok' ? 'sent' : 'error')
+    } catch {
+      setReorderState('error')
+    }
+  }
+
+  // Server-resolved gate; the client never re-derives it. The acknowledgement
+  // is server-derived first (the stamp survives a reload, and a colleague sees
+  // it too) and in-session second.
+  const reorderOffered = canRequestReorder(orderState)
+  // Non-null once a reorder project has been raised from this one and is safe
+  // to name (000374). Mutually exclusive with reorderOffered by construction.
+  const reorderForward = reorderForwardLink(orderState)
+  const reorderAlreadyRequested = reorderRequestIsRecent(orderState?.reorderRequestedAt ?? null)
 
   // Top-level variant-round render. Returns a fragment with two
   // <section>s: pricing card on top, then the variant comparison grid.
@@ -3864,6 +3897,48 @@ export default function CustomerProofPage() {
             )
           })()}
 
+          {/* ───── Reordering (000372 / 000374) ─────
+              Directly below the proof images, above every reference panel.
+              ⚠ Deliberately NOT at the bottom with the decline panel it was
+              built alongside, despite the two being mirror images of each
+              other. They are read by different people at different moments:
+              the decline panel catches someone still deciding, so it belongs
+              where they run out of page — but this only ever renders once an
+              order has been PAID and delivered and the quiet window has
+              lapsed, so its reader has finished deciding, owns the cards, and
+              is almost certainly back for exactly one reason. Everything
+              below (QR contents, spec, thickness, pricing, material notes) is
+              reference material they have already read once.
+
+              order-5 ties with QrCodePanel; the tie breaks on source order,
+              which is why this block sits ABOVE it in the DOM rather than
+              relying on the number alone. Moving either block re-orders the
+              page on mobile even though the classes look unchanged.
+
+              Gate is server-resolved: reorderAvailable already encodes the
+              master switch, the payment, the absence of a live link, and the
+              quiet window since delivery or dispatch. */}
+          {reorderOffered && (
+            <div className="order-5 lg:order-none">
+              <ReorderPanel
+                state={reorderState}
+                alreadyRequested={reorderAlreadyRequested}
+                onSubmit={requestReorder}
+              />
+            </div>
+          )}
+
+          {/* The forward link (000374) — same slot, never alongside the panel.
+              canRequestReorder goes false the moment a link exists, so the two
+              can't both render. Someone returning to find the reorder they
+              asked for has the same one salient reason for being here, so it
+              inherits the same position. */}
+          {reorderForward && (
+            <div className="order-5 lg:order-none">
+              <ReorderForwardPanel link={reorderForward} />
+            </div>
+          )}
+
           {/* ───── QR codes (migrations 000168 / 000169) ─────
               Renders a dedicated verification panel for any QR
               codes on the active version. Sits between the proof
@@ -4219,7 +4294,10 @@ export default function CustomerProofPage() {
               the point where they run out of page, not up where it plants
               doubt before they've even seen the design. It shipped without a
               mobile order-* class, which let it default to slot zero and
-              render above the customer card on phones. */}
+              render above the customer card on phones.
+              (The reorder panel used to sit here too as its mirror image; it
+              moved up to order-5 because its reader has already decided and
+              is back to buy — see the note there.) */}
           {activeVersion.is_current && !proofIsApproved && activeVersion.approvals_enabled && (
             <DeclineFeedbackPanel
               proofId={id ?? ''}
@@ -4228,6 +4306,7 @@ export default function CustomerProofPage() {
               id="decline-feedback"
             />
           )}
+
 
           </div>
         </main>

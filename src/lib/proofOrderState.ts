@@ -18,7 +18,7 @@
 // failing test behind it — the same rule previousSpec.ts follows for the two
 // pay pages.
 
-import { isTrackingStage, STAGE_META, type TrackingStage } from './orderTracking'
+import { isTrackingStage, stageLabel, stageLine, type TrackingStage } from './orderTracking'
 
 // Mirrors the `state` values built by proofs.public_get_proof_order_state.
 export type ProofOrderState = 'awaiting_payment' | 'link_expired' | 'paid' | 'none'
@@ -42,6 +42,26 @@ export interface ProofOrderStatePayload {
   // Whether this parcel's carrier reports delivery. Null before dispatch.
   // Drives the length of the progress rail — see src/lib/orderTracking.ts.
   deliveryTracked: boolean | null
+  // When it actually went (000375). Only ever spoken aloud on a parcel whose
+  // journey ENDS at dispatch — a carrier that never confirms delivery — where
+  // the alternative is telling someone their cards are still travelling weeks
+  // after they arrived. A date, never a handle: 000371's refusal of the
+  // tracking number stands.
+  shippedAt: string | null
+  // May this customer ask for more of these cards (000372)? The whole gate —
+  // master switch, paid, no live link, approved, and the quiet window since
+  // delivery or dispatch — resolved server-side into one boolean, so the
+  // window can change without a frontend deploy.
+  reorderAvailable: boolean
+  // When someone last asked, echoed back so a reload shows the
+  // acknowledgement rather than re-arming the button, and a colleague can see
+  // it has already been done. Same idea as resendRequestedAt.
+  reorderRequestedAt: string | null
+  // The reorder project raised from this one (000374), once it exists AND is
+  // safe to name — approved, or sent. Null while a designer is mid-build, and
+  // null for an abandoned one. This is what stops the bookmark going stale:
+  // the old page becomes a hub pointing at whatever is current.
+  reorderProofId: string | null
 }
 
 export interface ReadyToOrderCopy {
@@ -89,7 +109,143 @@ export function parseProofOrderState(raw: unknown): ProofOrderStatePayload | nul
     // must keep working if the RPC grows a stage the bundle doesn't know.
     stage: isTrackingStage(stage) ? stage : null,
     deliveryTracked: typeof tracked === 'boolean' ? tracked : null,
+    shippedAt:
+      typeof obj.shipped_at === 'string' && obj.shipped_at.length > 0 ? obj.shipped_at : null,
+    // Defaults false, so an older RPC (or a failed read) hides the panel
+    // rather than offering an action the server would refuse.
+    reorderAvailable: obj.reorder_available === true,
+    reorderRequestedAt:
+      typeof obj.reorder_requested_at === 'string' && obj.reorder_requested_at.length > 0
+        ? obj.reorder_requested_at
+        : null,
+    reorderProofId:
+      typeof obj.reorder_proof_id === 'string' && obj.reorder_proof_id.length > 0
+        ? obj.reorder_proof_id
+        : null,
   }
+}
+
+// ── The reorder panel (000372) ──────────────────────────────────────────────
+//
+// Copy lives here with the rest, and is asserted verbatim by the test, so a
+// wording change is a deliberate edit with a failing test behind it.
+//
+// ⚠ Nothing here may promise a price, a date, or that an order has been
+// placed. The customer is asking; a designer decides and sends the link. The
+// panel's job is to make asking easy and to be honest that it is an ask.
+export const REORDER_COPY = {
+  eyebrow: 'Need more?',
+  heading: 'Order these again',
+  body: 'Tell us how many you need and we’ll send you a payment link. Prices are on this page and are current.',
+  quantityLabel: 'How many do you need?',
+  quantityPlaceholder: 'e.g. 500',
+  noteLabel: 'Anything changed? (optional)',
+  notePlaceholder: 'New name, different details, a change of address…',
+  // Deliberately not "changes cost more" — whether a change needs a fresh
+  // proof round is a designer's call, and pre-judging it here would either
+  // over-promise or put someone off mentioning something that matters.
+  noteHint: 'If anything has changed we’ll send a fresh proof to approve first.',
+  // ⚠ Names no outcome, and cannot. This form has TWO inputs, and the second
+  // one — "Anything changed?" — decides what actually happens next: nothing
+  // changed goes straight to a payment link, anything changed needs a fresh
+  // proof round first, which is days, not minutes. Only the designer can tell
+  // which, by reading the note. So a button promising either one is wrong
+  // half the time.
+  //
+  // "Request a payment link" was the first attempt and had exactly that
+  // fault. Before it, "Ask us to reorder" had three others: it made US the
+  // one reordering when the customer is the one buying, "ask us to" put a
+  // paying customer in the position of requesting permission, and it named
+  // nothing at all.
+  //
+  // "Send my request" is true in both branches, keeps the verb-first shape of
+  // "Request changes" (the button they have already used on this page), and
+  // "my" makes it theirs rather than a favour asked of us. The outcome is
+  // stated where it CAN be qualified — the body copy and the note hint
+  // directly above, both of which they read before reaching this.
+  //
+  // A label that changed as they typed in the note box was considered and
+  // rejected: a control relabelling itself under the cursor is unsettling,
+  // and a note is not necessarily a change ("same as before, thanks").
+  action: 'Send my request',
+  sending: 'Sending…',
+  // ⚠ Three acknowledgements, because this is the LAST thing the customer
+  // reads — it replaces the whole form — and it is the worst place in the
+  // feature to promise something that then does not arrive.
+  //
+  // All three promise the ASK landed, never that a link has been SENT: the
+  // designer still has to raise it, and we cannot claim a send we have not
+  // made. Same rule the Ready-to-order copy follows.
+  //
+  // `sent` is the one used when we cannot tell which branch they are in —
+  // specifically on a reload inside the 24-hour window, where the page knows
+  // a request exists but not whether it carried a note. Deliberately says
+  // less rather than guessing.
+  sent: 'Thanks — we’ve got your request and we’ll be in touch shortly.',
+  // No note: nothing has changed, so the payment link is the honest and
+  // reassuring thing to name.
+  sentPaymentLink: 'Thanks — we’ve got your request and we’ll be in touch with a payment link shortly.',
+  // A note: it may be a change, and a change means a fresh proof first. Sets
+  // that expectation now rather than leaving them waiting for a link that
+  // was never coming. Hedged ("if") because a note is not always a change.
+  sentWithNote:
+    'Thanks — we’ve got your request. We’ll read what you’ve told us and come back to you — if it needs a new proof, we’ll send that to approve first.',
+  error: 'We couldn’t send that just now. Please reply to any message from us and we’ll sort it out.',
+} as const
+
+// Should the panel be shown at all? Server-resolved; the client never
+// re-derives the gate, it only reads the answer.
+//
+// The one client-side subtraction is the forward link: once the reorder
+// project exists, the honest thing on this page is "here's the one you asked
+// for", not another invitation to ask. Offering both would read as though the
+// first request had gone nowhere.
+export function canRequestReorder(payload: ProofOrderStatePayload | null): boolean {
+  return payload?.reorderAvailable === true && payload.reorderProofId == null
+}
+
+// ── The forward link (000374) ───────────────────────────────────────────────
+//
+// ⚠ Says what happened and where it went, and nothing about where the reorder
+// has GOT to — that page answers its own status question, and guessing at it
+// from here would be a second, staler voice. Same rule as the divide between
+// the Ready-to-order panel and the approved card's status strip.
+export const REORDER_FORWARD_COPY = {
+  eyebrow: 'Your reorder',
+  heading: 'You asked us for more of these',
+  // Rendered as "<lead> <date>." with the date formatted by the component, so
+  // there is one date format on the page rather than two.
+  lead: 'You asked for a repeat of these on',
+  // Used when the stamp is missing or unparseable — the link still matters.
+  leadNoDate: 'You asked us for a repeat of these.',
+  action: 'Open your reorder',
+} as const
+
+export interface ReorderForwardLink {
+  proofId: string
+  requestedAt: string | null
+}
+
+export function reorderForwardLink(
+  payload: ProofOrderStatePayload | null,
+): ReorderForwardLink | null {
+  if (!payload?.reorderProofId) return null
+  return { proofId: payload.reorderProofId, requestedAt: payload.reorderRequestedAt }
+}
+
+// How long the acknowledgement stands before the panel offers the button
+// again. Matches COOLDOWN_HOURS in supabase/functions/request-reorder — the
+// server is the real gate (it refuses inside the window regardless), so this
+// exists to stop the UI offering an action that would silently do nothing.
+export const REORDER_COOLDOWN_HOURS = 24
+
+export function reorderRequestIsRecent(iso: string | null, now: number = Date.now()): boolean {
+  if (!iso) return false
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return false
+  const age = now - t
+  // Guard the future too: clock skew shouldn't strand the panel forever.
+  return age >= 0 && age < REORDER_COOLDOWN_HOURS * 60 * 60 * 1000
 }
 
 // ── The order status shown on the approved card ─────────────────────────────
@@ -147,8 +303,11 @@ export function orderStatusLine(payload: ProofOrderStatePayload | null): OrderSt
         }
       }
       return {
-        label: STAGE_META[payload.stage].label,
-        line: STAGE_META[payload.stage].line,
+        label: stageLabel(payload.stage, payload.deliveryTracked),
+        line: stageLine(payload.stage, {
+          deliveryTracked: payload.deliveryTracked,
+          shippedAt: payload.shippedAt,
+        }),
         stage: payload.stage,
         deliveryTracked: payload.deliveryTracked,
       }

@@ -44,6 +44,18 @@ export function attentionReason(
         : `${meta?.sent ?? 2} reminders sent — still no response`
     case 'approved_no_order':
       return `Approved ${days ?? '—'} days ago — no order link sent yet`
+    case 'reorder_requested': {
+      // Deliberately leads with the ask rather than the wait: unlike every
+      // other rule here, this one isn't reporting our silence, it's reporting
+      // a customer trying to buy. The quantity is optional on the panel, so
+      // plenty of requests genuinely have none — say nothing rather than an
+      // em dash where a number would go.
+      const qty = meta?.quantity
+      const what = qty != null && qty > 0
+        ? `Customer asked to reorder ${qty}`
+        : 'Customer asked to reorder'
+      return days != null && days > 0 ? `${what} — ${days} days ago` : what
+    }
   }
 }
 
@@ -72,6 +84,13 @@ export function attentionResolution(code: NeedsAttentionRule): string {
       return 'Email reminders have run their course — time for a phone call. If they’ve never opened anything, double-check the email address first (the proof may be landing in spam).'
     case 'approved_no_order':
       return 'The proof is approved but no pay link has gone out. Use “Create order” on the proof to send one — or snooze if this order is being invoiced another way.'
+    case 'reorder_requested':
+      // Points at the button rather than at Duplicate project. Duplicate is
+      // the wrong tool here even though it looks right: it writes no link
+      // back, so this flag would stay up forever, and it leaves the copy
+      // unapproved, so the customer would be asked to sign off artwork they
+      // already bought. "Raise the reorder" does both.
+      return 'They want more of these cards. “Raise the reorder” copies the design into a new project, already approved, and clears this flag. Read their note first — if anything has changed it needs a fresh proof round rather than going straight to a pay link.'
   }
 }
 
@@ -90,6 +109,7 @@ export function attentionShortLabel(code: string): string {
     case 'approved_earlier_version':   return 'earlier version approved'
     case 'nudges_exhausted':           return 'reminders exhausted'
     case 'approved_no_order':          return 'no order sent'
+    case 'reorder_requested':          return 'reorder requested'
     default:                           return code.replace(/_/g, ' ')
   }
 }
@@ -130,6 +150,11 @@ export function nudgeTemplateFor(code: NeedsAttentionRule): NudgeTemplateId | nu
     // designer action, not a customer reminder. Resolve popover falls through
     // to snooze + the resolution copy.
     case 'approved_no_order':
+    // reorder_requested → the customer has just written to us; sending them
+    // an automated "are you still there?" would be absurd. The action is a
+    // designer raising the project. Resolve popover falls through to snooze +
+    // the resolution copy.
+    case 'reorder_requested':
       return null
   }
 }

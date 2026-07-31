@@ -578,3 +578,20 @@ verify_jwt = true
 # claim in the stamping UPDATE's WHERE clause.
 [functions.resend-pay-link]
 verify_jwt = false
+
+# request-reorder: anon-callable from the unauthenticated proof page — the
+# "Need more?" panel a customer sees once their order has been with them a
+# while (000372). Same posture as resend-pay-link, and stated here rather than
+# left to the CLI default so a plain deploy can never flip it back on.
+#
+# The auth model is again NOT a bearer token: the body is {proof_id} plus a
+# quantity and a note, and NOTHING is addressable — the customer is resolved
+# server-side from the proof's own contact row, so a /p/ holder can cause the
+# real customer's project to get a reorder enquiry and can never redirect one
+# anywhere. Eligibility is re-checked server-side against the same function the
+# page reads, and a 24-hour cooldown is claimed atomically in the stamping
+# UPDATE's WHERE clause. Throttled, ineligible and unknown proofs all return
+# the same {status:'ok'} a winner does, so it cannot be used to enumerate which
+# proofs carry paid orders.
+[functions.request-reorder]
+verify_jwt = false

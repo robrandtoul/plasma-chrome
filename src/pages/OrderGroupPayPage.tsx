@@ -15,6 +15,7 @@ import { pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/i
 import { hasThicknessGuide, thicknessSetForMaterial, type ThicknessOption } from '../lib/metalThicknessNotes'
 import { parsePreviousSpec, chooserGuidance, quantityHint } from '../lib/previousSpec'
 import { finishIsPreferenceOnly } from '../lib/materialTraits'
+import { quickQuantities } from '../lib/quickQuantities'
 import { SHIP_COUNTRIES } from '../lib/shipCountries'
 import { loadStripeJs, type StripeLike, type StripeElementsLike } from '../lib/stripeJs'
 import type { GridImage } from '../components/ImageGrid'
@@ -137,6 +138,9 @@ interface MemberChooserData {
   // finish the designer pinned (mirror of the single page's lockedFinishCode).
   lockedFinishCode: string | null
   thicknessNotes: ThicknessOption[]
+  // The material's curated quantity list, for the tappable quick-pick chips on
+  // this member's "How many cards?" step (see src/lib/quickQuantities.ts).
+  displayQuantities: number[] | null
   flatAboveTop: boolean
   perExtraName: number | null
   personNames: string[]
@@ -415,6 +419,7 @@ export default function OrderGroupPayPage() {
             lockedFinishSurTiers,
             lockedFinishCode,
             thicknessNotes,
+            displayQuantities: current.display_quantities ?? null,
             flatAboveTop: pricesFlatAboveTopTier(current.material_code),
             perExtraName: current.split_name_surcharge_snapshot ?? null,
             personNames: current.names ?? [],
@@ -1136,6 +1141,9 @@ export default function OrderGroupPayPage() {
     const qmax = bounds.length > 0
       ? (data.flatAboveTop ? MAX_ONLINE_FLAT_QUANTITY : Math.max(...bounds.map((t) => t.quantity)))
       : null
+    // Tappable quantities for this member, clamped to what it can be charged
+    // for so a chip can never lead to a silently-unpayable group total.
+    const memberQuickQtys = quickQuantities(data.displayQuantities, qmin, qmax)
 
     // The member's own artwork in the ACTIVE finish — the live pick when the
     // finish is open (nothing shown as "chosen" until they tap), the locked
@@ -1191,22 +1199,51 @@ export default function OrderGroupPayPage() {
             )}
           </div>
         ) : qtyOpen ? (
+          // Same treatment as the single-order pay page: tap a quantity rather
+          // than having to discover that a narrow "25+" box is a text field
+          // (see src/lib/quickQuantities.ts). Type-in stays for anything else.
           <div className="rounded-lg border border-line bg-surface p-3">
-            <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <label htmlFor={`q-${m.id}`} className="block text-[13px] font-medium text-ink">How many cards?</label>
-                {qmin != null && qmax != null && (
-                  <p className="mt-0.5 text-[12px] text-ink-mute">Any quantity from {qmin.toLocaleString()} to {qmax.toLocaleString()}.</p>
-                )}
+            <p className="text-[13px] font-medium text-ink">How many cards?</p>
+            <p className="mt-0.5 text-[12px] text-ink-soft">
+              {memberQuickQtys.length > 0
+                ? 'Tap an amount, or type your own below.'
+                : qmin != null && qmax != null
+                  ? `Any quantity from ${qmin.toLocaleString()} to ${qmax.toLocaleString()}.`
+                  : 'Enter the number of cards you need.'}
+            </p>
+
+            {memberQuickQtys.length > 0 && (
+              <div className="mt-2.5 grid grid-cols-3 gap-2 sm:grid-cols-4">
+                {memberQuickQtys.map((q) => {
+                  const active = pick.qty === String(q)
+                  return (
+                    <button key={q} type="button" aria-pressed={active}
+                      onClick={() => setPick(m.id, { qty: String(q) })}
+                      className={`h-10 rounded-lg border text-center text-sm font-semibold transition-colors ${
+                        active
+                          ? 'border-[var(--c-brand)] bg-[var(--c-brand)] text-white'
+                          : 'border-line bg-canvas text-ink hover:border-[var(--c-brand)]'
+                      }`}>
+                      {q.toLocaleString()}
+                    </button>
+                  )
+                })}
               </div>
+            )}
+
+            <div className={`flex items-center justify-between gap-3 ${memberQuickQtys.length > 0 ? 'mt-2.5 border-t border-line-soft pt-2.5' : 'mt-2.5'}`}>
+              <label htmlFor={`q-${m.id}`} className="min-w-0 text-[12px] text-ink-soft">
+                {memberQuickQtys.length > 0 ? 'Other amount' : 'Number of cards'}
+              </label>
               <input
                 id={`q-${m.id}`} type="number" min={qmin ?? 1} max={qmax ?? undefined} step={1} inputMode="numeric"
                 value={pick.qty}
                 onChange={(e) => setPick(m.id, { qty: e.target.value })}
-                placeholder={qmin != null ? `${qmin.toLocaleString()}+` : 'e.g. 250'}
+                placeholder={qmin != null ? `e.g. ${qmin.toLocaleString()}` : 'e.g. 250'}
                 className="h-11 w-28 shrink-0 rounded-lg border border-line bg-canvas px-3 text-right text-sm font-semibold text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
               />
             </div>
+
             {quantityHint(previousSpec) && (
               <p className="mt-1.5 text-[13px] text-ink-soft">{quantityHint(previousSpec)}</p>
             )}

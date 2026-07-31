@@ -45,7 +45,9 @@ import ContactNameNudge from '../src/components/ContactNameNudge'
 import AbandonProjectDialog from '../src/components/AbandonProjectDialog'
 import ApprovedOrderStatus from '../src/components/ApprovedOrderStatus'
 import { StatusRule } from '../src/design'
-import { orderStatusLine, type OrderStatusLine, type ProofOrderStatePayload } from '../src/lib/proofOrderState'
+import { orderStatusLine, reorderForwardLink, type OrderStatusLine, type ProofOrderStatePayload } from '../src/lib/proofOrderState'
+import { ReorderForwardPanel, ReorderPanel, type ReorderState } from '../src/components/ReorderPanel'
+import { REORDER_COPY } from '../src/lib/proofOrderState'
 import type { TrackingStage } from '../src/lib/orderTracking'
 import { ButtonGhost } from '../src/design'
 import type { GridImage } from '../src/components/ImageGrid'
@@ -601,8 +603,9 @@ function ApprovedOrderStatusRig() {
     { label: 'Paid, tracking off / job cancelled', status: orderStatusLine(mkState('paid')) },
     { label: 'Paid — step 1 of 4', status: orderStatusLine(mkState('paid', 'paid')) },
     { label: 'In production', status: orderStatusLine(mkState('paid', 'in_production')) },
-    { label: 'On its way — FedEx, 4 steps (Delivered still to come)', status: orderStatusLine(mkState('paid', 'on_its_way', true)) },
-    { label: 'On its way — DPD, 3 steps and COMPLETE (no delivery sync)', status: orderStatusLine(mkState('paid', 'on_its_way', false)) },
+    { label: 'On its way — FedEx, 4 steps, still travelling (present tense)', status: orderStatusLine(mkState('paid', 'on_its_way', true, SHIPPED_AT)) },
+    { label: 'Shipped — DPD, 3 steps and COMPLETE (past tense + date, 000375)', status: orderStatusLine(mkState('paid', 'on_its_way', false, SHIPPED_AT)) },
+    { label: 'Shipped — DPD with no dispatch stamp recorded (past tense, no date)', status: orderStatusLine(mkState('paid', 'on_its_way', false, null)) },
     { label: 'Delivered', status: orderStatusLine(mkState('paid', 'delivered', true)) },
   ]
   return (
@@ -646,10 +649,15 @@ function ApprovedOrderStatusRig() {
   )
 }
 
+// A real DPD dispatch date, so the past-tense line renders the way a customer
+// would actually see it rather than as a placeholder.
+const SHIPPED_AT = '2026-06-24T09:15:00Z'
+
 function mkState(
   state: 'awaiting_payment' | 'paid',
   stage: TrackingStage | null = null,
   deliveryTracked: boolean | null = null,
+  shippedAt: string | null = null,
 ): ProofOrderStatePayload {
   return {
     state,
@@ -657,7 +665,87 @@ function mkState(
     resendRequestedAt: null,
     stage,
     deliveryTracked,
+    shippedAt,
+    reorderAvailable: false,
+    reorderRequestedAt: null,
+    reorderProofId: null,
   }
+}
+
+// ?path=/reorder-panel — the customer-page "Need more?" panel (000372) in
+// every state it can reach, plus the forward link (000374) that REPLACES it
+// once the reorder project exists.
+//
+// Under the real .customer-accent scope, because this ships on /p/:id and the
+// tokens resolve differently there.
+//
+// The thing to check is the honesty of the copy, not the layout: nothing here
+// may promise a price, a date, or that an order has been placed. The customer
+// is asking; a designer decides and sends the link.
+function ReorderPanelRig() {
+  useEffect(() => {
+    document.documentElement.classList.add('customer-accent')
+    return () => document.documentElement.classList.remove('customer-accent')
+  }, [])
+  const states: Array<{ label: string; state: ReorderState; already: boolean }> = [
+    { label: 'Idle — the whole ask, two questions', state: 'idle', already: false },
+    { label: 'Sending', state: 'sending', already: false },
+    { label: 'Sent — acknowledges the REQUEST, never a send', state: 'sent', already: false },
+    { label: 'Already asked (a reload inside the 24h window)', state: 'idle', already: true },
+    { label: 'Failed — routes them somewhere that works', state: 'error', already: false },
+  ]
+  const forward = reorderForwardLink({
+    ...mkState('paid', 'delivered', true),
+    reorderRequestedAt: '2026-07-20T09:00:00Z',
+    reorderProofId: 'p-a1',
+  })
+  return (
+    // The forward panel links with <Link>, so it needs a Router in scope —
+    // on /p/:id it always has one.
+    <MemoryRouter initialEntries={['/p/p-a1']}>
+      <div className="min-h-screen bg-canvas p-8">
+      <div className="mx-auto flex max-w-[520px] flex-col gap-6">
+        {states.map((s) => (
+          <div key={s.label}>
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-mute">
+              {s.label}
+            </p>
+            <ReorderPanel state={s.state} alreadyRequested={s.already} onSubmit={() => {}} />
+          </div>
+        ))}
+        <div>
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-mute">
+            Reorder raised — shown INSTEAD of the panel above
+          </p>
+          {forward && <ReorderForwardPanel link={forward} />}
+        </div>
+
+        {/* The three acknowledgements side by side. Which one shows depends on
+            the note the customer typed, which lives in component state — so
+            the cards above can only ever render one of them. Quoted here
+            because the whole point of the split is that a customer who told us
+            something changed must NOT be promised a payment link. */}
+        <div>
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-mute">
+            The three acknowledgements
+          </p>
+          <div className="rounded-[14px] border border-line bg-surface p-5 text-[13px] leading-relaxed">
+            {([
+              ['No note — nothing changed', REORDER_COPY.sentPaymentLink],
+              ['Note given — may need a fresh proof', REORDER_COPY.sentWithNote],
+              ['Reload, note unknown', REORDER_COPY.sent],
+            ] as const).map(([label, copy]) => (
+              <div key={label} className="mb-3 last:mb-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-mute">{label}</p>
+                <p className="mt-0.5 text-ink-soft">{copy}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      </div>
+    </MemoryRouter>
+  )
 }
 
 function Elsewhere() {
@@ -676,7 +764,9 @@ const requestedPath =
 
 // ?path=/palette mounts the ⌘K designer command palette on its own, open, so
 // its layout and the fixture-backed proof search can be checked headlessly.
-const tree = requestedPath === '/approved-order-status' ? (
+const tree = requestedPath === '/reorder-panel' ? (
+  <ReorderPanelRig />
+) : requestedPath === '/approved-order-status' ? (
   <ApprovedOrderStatusRig />
 ) : requestedPath === '/abandon-dialog' ? (
   <AbandonDialogRig />

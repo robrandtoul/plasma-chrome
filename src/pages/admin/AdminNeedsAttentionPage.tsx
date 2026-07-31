@@ -17,6 +17,7 @@ type RuleCode =
   | 'approved_earlier_version'
   | 'nudges_exhausted'
   | 'approved_no_order'
+  | 'reorder_requested'
 
 interface Rule {
   enabled: boolean
@@ -93,6 +94,13 @@ interface RuleSpec {
 
 const RULE_SPECS: RuleSpec[] = [
   {
+    code: 'reorder_requested',
+    label: 'Customer asked to reorder',
+    description: 'Fires the moment a customer uses "Order these again" on their own proof page and stays up until a reorder project has been raised from it (“Raise the reorder” on the proof — not Duplicate project, which writes no link back and leaves the copy unapproved). No threshold — every other rule here measures our silence, this one measures a customer trying to buy, so there is no honest number of days to wait before mentioning it. Snooze it if you have decided not to raise the reorder.',
+    hasThreshold: false,
+    hasCalendarToggle: false,
+  },
+  {
     code: 'request_changes_no_version',
     label: 'Customer requested changes, no new version',
     description: 'Fires when the latest customer event on the current version was a change request and no newer version has been shipped since.',
@@ -160,6 +168,11 @@ const RULE_SPECS: RuleSpec[] = [
 ]
 
 const DEFAULT_RULES: Rules = {
+  // No threshold/calendar — fires the moment a customer asks (migration
+  // 000373). Priority 1 shares the ordinal with request_changes_no_version;
+  // the engine's alphabetical rule_code tiebreak favours this one, which is
+  // the precedence we want — someone asking to buy outranks everything.
+  reorder_requested:          { enabled: true,                                       priority: 1 },
   request_changes_no_version: { enabled: true,  threshold_days: 2,  calendar: false, priority: 1 },
   // Enabled since the Phase 2b tag sync shipped (the helpscout-webhook
   // convo.tags handler populates proofs.helpscout_tags) — the rule's data

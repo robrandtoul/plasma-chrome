@@ -195,6 +195,7 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'proof.reply_sent',                label: 'Reply sent to customer' },
     { code: 'proof.internal_notes_updated',    label: 'Internal notes updated' },
     { code: 'proof.duplicated',                label: 'Project duplicated' },
+    { code: 'proof.reorder_raised',            label: 'Reorder raised' },
     { code: 'version.preview_confirmed',       label: 'Proof preview confirmed' },
     { code: 'version.preview_edit_return',     label: 'Returned to edit from preview' },
   ]},

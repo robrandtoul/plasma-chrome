@@ -16,8 +16,10 @@ import { isEuVatCountry } from '../lib/euVatArea'
 import { hasThicknessGuide, thicknessSetForMaterial, type ThicknessOption } from '../lib/metalThicknessNotes'
 import { parsePreviousSpec, chooserGuidance, quantityHint } from '../lib/previousSpec'
 import { finishIsPreferenceOnly } from '../lib/materialTraits'
+import { quickQuantities } from '../lib/quickQuantities'
 import {
-  STAGE_META,
+  stageLabel,
+  stageLine,
   progressFraction,
   stageIndexIn,
   stepsFor,
@@ -209,6 +211,10 @@ export default function OrderPayPage() {
   // `spec.finish` for the recap.
   const [finishTiers, setFinishTiers] = useState<{ quantity: number; surcharge: number }[]>([])
   const [chosenQuantity, setChosenQuantity] = useState<number | null>(null)
+  // The material's curated quantity list, used for the tappable quick-pick
+  // chips on the "How many cards?" step (see src/lib/quickQuantities.ts for
+  // why those exist). Same list the customer saw on the proof's price grid.
+  const [displayQuantities, setDisplayQuantities] = useState<number[] | null>(null)
   // Open-spec chooser (000298): the offerable thicknesses (with their tiers)
   // and finishes (with surcharge schedules + a per-finish artwork swatch),
   // scoped to the order's material from the same proof graph. The customer's
@@ -610,6 +616,7 @@ export default function OrderPayPage() {
               inks: current.ink_names ?? [],
             })
             setFlatAboveTop(pricesFlatAboveTopTier(current.material_code))
+            setDisplayQuantities(current.display_quantities ?? null)
 
             // Open-quantity inputs (only meaningful when order.quantity is
             // null on a grid order, but harmless to capture either way):
@@ -875,7 +882,10 @@ export default function OrderPayPage() {
     // beneath forever (migration 000370 — DPD has never stamped a delivery).
     const steps = stepsFor(p.delivery_tracked, p.stage)
     const stageIdx = stageIndexIn(steps, p.stage)
-    const meta = STAGE_META[p.stage]
+    // Label and line vary for a parcel whose journey ends at dispatch — see
+    // stageLine in lib/orderTracking (migration 000375).
+    const label = stageLabel(p.stage, p.delivery_tracked)
+    const line = stageLine(p.stage, { deliveryTracked: p.delivery_tracked, shippedAt: p.shipped_at })
     return (
       <div className="mt-5 rounded-xl border border-line bg-canvas p-4 sm:p-5">
         <div className="flex items-center gap-3">
@@ -883,11 +893,11 @@ export default function OrderPayPage() {
             <span className="h-2.5 w-2.5 rounded-full bg-[var(--c-in-stock)]" />
           </span>
           <div className="min-w-0">
-            <p className="text-base font-semibold text-ink">{meta.label}</p>
+            <p className="text-base font-semibold text-ink">{label}</p>
             <p className="text-[12px] text-ink-mute">Step {stageIdx + 1} of {steps.length}</p>
           </div>
         </div>
-        <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">{meta.line}</p>
+        <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">{line}</p>
         {p.level === 'granular' && p.tracking_number && (
           <p className="mt-1.5 text-[13px] text-ink-soft">
             Tracking number <span className="font-medium text-ink">{p.tracking_number}</span>
@@ -1504,6 +1514,11 @@ export default function OrderPayPage() {
       : null
   const previewDiscount = previewGoods != null ? cardDiscountForBase(previewGoods) : 0
 
+  // Tappable quantities for the single-person open-quantity step, clamped to
+  // what this order can actually be charged for so a chip can never lead to a
+  // silently-disabled button.
+  const quickQtys = isSingleOpen ? quickQuantities(displayQuantities, singleMin, singleMax) : []
+
   // Quantity inputs (open-quantity orders). One JSX block, two homes: inside
   // the "Confirm your card" section ABOVE the thickness/finish cards for
   // open-spec orders (quantity first, so every option shows its true price
@@ -1534,20 +1549,52 @@ export default function OrderPayPage() {
       )}
     </div>
   ) : isSingleOpen ? (
+    // Quantity is the only type-in on a screen where thickness and finish are
+    // tap-to-choose cards, and a lone right-aligned box placeholdered "25+"
+    // read as a spec chip rather than a field — two customers in two days
+    // could not order because of it (see src/lib/quickQuantities.ts). So the
+    // common quantities are tappable, matching the rest of the step, and the
+    // type-in stays below with a label that says what it is.
     <div className="rounded-xl border border-line bg-canvas p-4">
-      <div className="flex items-center justify-between gap-4">
-        <div className="min-w-0">
-          <label htmlFor="order-quantity" className="block font-medium text-ink">How many cards?</label>
-          {singleMin != null && singleMax != null && (
-            <p className="mt-0.5 text-[12px] text-ink-mute">Any quantity from {singleMin.toLocaleString()} to {singleMax.toLocaleString()}.</p>
-          )}
+      <p className="font-medium text-ink">How many cards?</p>
+      <p className="mt-0.5 text-[13px] text-ink-soft">
+        {quickQtys.length > 0
+          ? 'Tap an amount, or type your own below.'
+          : singleMin != null && singleMax != null
+            ? `Any quantity from ${singleMin.toLocaleString()} to ${singleMax.toLocaleString()}.`
+            : 'Enter the number of cards you need.'}
+      </p>
+
+      {quickQtys.length > 0 && (
+        <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
+          {quickQtys.map((q) => {
+            const active = chosenQuantity === q
+            return (
+              <button key={q} type="button" aria-pressed={active}
+                onClick={() => setChosenQuantity(q)}
+                className={`h-11 rounded-lg border text-center text-base font-semibold transition-colors ${
+                  active
+                    ? 'border-[var(--c-brand)] bg-[var(--c-brand)] text-white'
+                    : 'border-line bg-surface text-ink hover:border-[var(--c-brand)]'
+                }`}>
+                {q.toLocaleString()}
+              </button>
+            )
+          })}
         </div>
+      )}
+
+      <div className={`flex items-center justify-between gap-3 ${quickQtys.length > 0 ? 'mt-3 border-t border-line-soft pt-3' : 'mt-3'}`}>
+        <label htmlFor="order-quantity" className="min-w-0 text-[13px] text-ink-soft">
+          {quickQtys.length > 0 ? 'Other amount' : 'Number of cards'}
+        </label>
         <input id="order-quantity" type="number" min={singleMin ?? 1} max={singleMax ?? undefined} step={1} inputMode="numeric"
           value={chosenQuantity ?? ''}
           onChange={(e) => { const n = parseInt(e.target.value, 10); setChosenQuantity(Number.isFinite(n) && n > 0 ? n : null) }}
-          placeholder={singleMin != null ? `${singleMin.toLocaleString()}+` : 'e.g. 250'}
+          placeholder={singleMin != null ? `e.g. ${singleMin.toLocaleString()}` : 'e.g. 250'}
           className="h-12 w-32 shrink-0 rounded-lg border border-line bg-surface px-3 text-right text-base font-semibold text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
       </div>
+
       {singleRangeHint && <p className="mt-1.5 text-[13px] text-low">{singleRangeHint}</p>}
       {quantityHint(previousSpec) && (
         <p className="mt-1.5 text-[13px] text-ink-soft">{quantityHint(previousSpec)}</p>

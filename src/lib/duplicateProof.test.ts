@@ -10,8 +10,10 @@ import {
   duplicateImagePath,
   duplicateVersionInsert,
   duplicateImageInsert,
+  duplicateApprovalInsert,
   type SourceVersion,
   type SourceImage,
+  type SourceApproval,
 } from './duplicateProofMapping.ts'
 
 let passed = 0
@@ -201,6 +203,90 @@ test('an unknown child id degrades to null, never a dangling reference', () => {
   )
   assertEqual(row.round_variant_id, null)
   assertEqual(row.layout_id, null)
+})
+
+// ── The reorder carry (000372/000373) ──────────────────────────────────────
+//
+// This is the half that turns a customer's "we'd like more" into a project a
+// designer can order from without asking them to approve their own artwork a
+// second time. Everything here fails SILENTLY if it is wrong — a bad slot key
+// produces an approved proof whose Approved-artwork table and production ZIP
+// are empty, with no error anywhere.
+
+const baseApproval: SourceApproval = {
+  name: 'Ada Lovelace',
+  actor_name: 'Ada Lovelace',
+  qr_confirmed_at: null,
+  qr_snapshot: null,
+}
+
+test('carries a recipient slot with its approver and its source version', () => {
+  const row = duplicateApprovalInsert(baseApproval, 'new-v1', 'src-v3', new Map())!
+  assertEqual(row.proof_version_id, 'new-v1')
+  assertEqual(row.name, 'Ada Lovelace')
+  assertEqual(row.state, 'approved')
+  // The human who signed off keeps the attribution — the fact it was carried
+  // is recorded by carried_from_version_id, not by rewriting who approved.
+  assertEqual(row.actor_name, 'Ada Lovelace')
+  assertEqual(row.carried_from_version_id, 'src-v3')
+})
+
+test('carried_from_version_id is always set — it suppresses the finaliser', () => {
+  // Live trigger: WHEN (new.state = 'approved' AND new.carried_from_version_id
+  // IS NULL). A null here would hand the status decision to a trigger whose
+  // slot-count and QR predicates can silently decline to approve, after the UI
+  // has already told the designer the reorder is approved.
+  for (const a of [baseApproval, { ...baseApproval, name: '__shared__' }]) {
+    const row = duplicateApprovalInsert(a, 'new-v1', 'src-v3', new Map())!
+    assertEqual(row.carried_from_version_id, 'src-v3')
+  }
+})
+
+test('the shared slot carries verbatim', () => {
+  const row = duplicateApprovalInsert({ ...baseApproval, name: '__shared__' }, 'v', 's', new Map())!
+  assertEqual(row.name, '__shared__')
+})
+
+test('a Set-collection slot is remapped onto the NEW layout id', () => {
+  // Set-collection approvals are keyed on proof_layouts.id, and the duplicate
+  // mints fresh layout ids. Carrying the source key verbatim would match no
+  // image at all — an approved proof with an empty artwork table.
+  const oldId = '3f2504e0-4f89-41d3-9a0c-0305e82c3301'
+  const newId = '9c858901-8a57-4791-81fe-4c455b099bc9'
+  const row = duplicateApprovalInsert(
+    { ...baseApproval, name: oldId },
+    'new-v1',
+    'src-v3',
+    new Map([[oldId, newId]]),
+  )!
+  assertEqual(row.name, newId)
+})
+
+test('an unmappable layout slot returns null rather than a key matching nothing', () => {
+  // The caller treats a short count as a hard failure and rolls the whole
+  // reorder back, which is the right trade: no reorder beats a reorder that
+  // says Approved and hands production nothing.
+  const orphan = '3f2504e0-4f89-41d3-9a0c-0305e82c3301'
+  assertEqual(duplicateApprovalInsert({ ...baseApproval, name: orphan }, 'v', 's', new Map()), null)
+})
+
+test('a recipient whose name is not a uuid is never mistaken for a layout', () => {
+  const row = duplicateApprovalInsert({ ...baseApproval, name: 'Bob' }, 'v', 's', new Map())!
+  assertEqual(row.name, 'Bob')
+})
+
+test('QR confirmation carries, so a later version of the reorder can carry it on', () => {
+  const row = duplicateApprovalInsert(
+    { ...baseApproval, qr_confirmed_at: '2026-07-20T09:00:00Z', qr_snapshot: { slug: '7k2nq8x' } },
+    'v', 's', new Map(),
+  )!
+  assertEqual(row.qr_confirmed_at, '2026-07-20T09:00:00Z')
+  assertEqual(JSON.stringify(row.qr_snapshot), '{"slug":"7k2nq8x"}')
+})
+
+test('never writes material_option_code — a BEFORE trigger rejects a mismatch', () => {
+  const row = duplicateApprovalInsert(baseApproval, 'v', 's', new Map())!
+  assertEqual('material_option_code' in row, false)
 })
 
 console.log(`\n${passed} passed, ${failed} failed`)

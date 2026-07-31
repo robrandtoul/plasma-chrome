@@ -81,6 +81,8 @@ const TAG_HELP: Record<TagHelpFamily, Record<string, string>> = {
       'We have sent the maximum number of reminders with no reply. This one needs a human nudge, such as a phone call.',
     approved_no_order:
       'The proof is approved but no order (pay) link has been sent to the customer yet.',
+    reorder_requested:
+      'The customer used “Order these again” on their own proof page. It stays flagged until a reorder project has been raised from it.',
   },
 
   // ── Dashboard status buckets. Keyed by ProofBucket (dashboardGrouping).

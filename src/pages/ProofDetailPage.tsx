@@ -55,7 +55,7 @@ import { customerProofPath, openDesignerPreview } from '../lib/customerProofUrl'
 import { formatPrice } from '../lib/currency'
 // QuoteLink now lives inside DesignerChrome (PR 31).
 import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill, PanelShell, tokens } from '../design'
-import { ChevronRight, ChevronLeft, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle, Send, Eye, Flag, MessageSquare, Clock, Activity, Package, HelpCircle, ThumbsDown, ScanSearch } from 'lucide-react'
+import { ChevronRight, ChevronLeft, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle, Send, Eye, Flag, MessageSquare, Clock, Activity, Package, HelpCircle, ThumbsDown, ScanSearch, Repeat } from 'lucide-react'
 import ArtworkCheckReportView, { InlineSpinner, artworkVerdict, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
 import { useProofCheck } from '../lib/useProofCheck'
 import {
@@ -106,6 +106,15 @@ interface Proof {
   // existing set vs start one).
   proof_set_id: string | null
   set_discarded_at: string | null
+  // Customer reorder request (migration 000372). Set when the customer used
+  // "Order these again" on their own proof page; the note and quantity are
+  // their own words, carried onto the new project when the reorder is raised.
+  reorder_requested_at: string | null
+  reorder_request_note: string | null
+  reorder_request_quantity: number | null
+  // Set on the CHILD when a reorder is raised from another project (000373).
+  // Non-null here means "this project IS somebody's reorder".
+  reorder_of_proof_id: string | null
   // Needed by the "bring in an existing project" picker — candidates are
   // this contact's other standalone projects.
   contact_id: string
@@ -441,7 +450,7 @@ export default function ProofDetailPage() {
     setDuplicateBusy(true)
     setDuplicateError(null)
     try {
-      const newProofId = await duplicateProof(proof.id, session.user.id)
+      const { proofId: newProofId } = await duplicateProof(proof.id, session.user.id)
       setDuplicateDialog(false)
       // Route-param change re-runs loadProof, so the page lands on the
       // freshly-created duplicate.
@@ -452,6 +461,56 @@ export default function ProofDetailPage() {
       setDuplicateBusy(false)
     }
   }
+  // ── Raise the reorder (migration 000372/000373) ───────────────────────────
+  // The answer to a customer's "Order these again". Duplicate + carry the
+  // approvals + point back at the source, in one click. See duplicateProof's
+  // DuplicateOptions for why each of those three matters.
+  // Offered only on a project that HAS an outstanding request and is not
+  // itself somebody's reorder. Read from the proof row rather than the
+  // dashboard-derived bucketRow: that view is refreshed on its own schedule
+  // and can be minutes stale, which on an action that creates a project is
+  // the difference between one reorder and two.
+  // Null until the loadProof lookup answers; set to the reorder's proof id once
+  // one exists. Gating on it is what stops the button outliving its own job.
+  const [reorderChildId, setReorderChildId] = useState<string | null>(null)
+  const canRaiseReorder = !!proof?.reorder_requested_at && versions.length > 0 && !reorderChildId
+  const [reorderDialog, setReorderDialog] = useState(false)
+  const [reorderBusy, setReorderBusy] = useState(false)
+  const [reorderError, setReorderError] = useState<string | null>(null)
+  // Set when the reorder was raised but arrived OPEN rather than approved —
+  // the source had no approval rows to carry (a designer-override approval,
+  // or a variant round). Surfaced as a toast on the new project, because a
+  // designer who expected pre-approved and got open would otherwise only find
+  // out by wondering why the customer was asked to approve again.
+  async function handleRaiseReorder() {
+    if (!proof || !session?.user.id || reorderBusy) return
+    setReorderBusy(true)
+    setReorderError(null)
+    try {
+      const { proofId: newProofId, approvalsCarried } = await duplicateProof(proof.id, session.user.id, {
+        raiseReorder: true,
+        requestNote: proof.reorder_request_note,
+        requestQuantity: proof.reorder_request_quantity,
+      })
+      setReorderDialog(false)
+      navigate(`/proofs/${newProofId}`)
+      showToast(
+        approvalsCarried > 0
+          ? 'Reorder raised — already approved, ready to order.'
+          // Covers BOTH ways the pre-approval is declined: the original had no
+          // recorded sign-offs, or it isn't currently approved (someone
+          // reopened it). Naming only the first would have the designer
+          // hunting for missing approval rows on a project whose real problem
+          // is its status.
+          : 'Reorder raised, but it needs approving — the original isn’t currently approved, or has no recorded sign-off to carry across.',
+      )
+    } catch (e) {
+      setReorderError((e as Error).message)
+    } finally {
+      setReorderBusy(false)
+    }
+  }
+
   // Bring an existing standalone project of this customer into the set
   // (creating the set around this proof first if there isn't one).
   async function handleAttachExisting(otherProofId: string) {
@@ -932,7 +991,7 @@ export default function ProofDetailPage() {
     const [proofResult, versionsResult] = await Promise.all([
       supabase
         .from('proofs')
-        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, disclaimer_acknowledged_at, proof_set_id, set_discarded_at, contact_id, contacts(full_name, email, companies(name))')
+        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, disclaimer_acknowledged_at, proof_set_id, set_discarded_at, reorder_requested_at, reorder_request_note, reorder_request_quantity, reorder_of_proof_id, contact_id, contacts(full_name, email, companies(name))')
         .eq('id', proofId)
         .single(),
       supabase
@@ -970,6 +1029,28 @@ export default function ProofDetailPage() {
         const snooze = data as { snooze_rule_code: NeedsAttentionRule | null; snooze_note: string | null }
         setSnoozeRuleCode(snooze.snooze_rule_code ?? null)
         setSnoozeNote(snooze.snooze_note ?? null)
+      })
+
+    // Has a reorder already been raised from this project? (000373)
+    //
+    // The needs-attention rule clears on the CHILD existing, and nothing ever
+    // clears reorder_requested_at — so without this read the source page would
+    // go on offering "Raise the reorder" forever, and its refusal would tell
+    // the designer to use a "Customer reorder" link that only renders on the
+    // child. Reading it here makes the source symmetric with the child: each
+    // one links to the other.
+    //
+    // .then attached deliberately — a bare `void supabase.from(...)` never
+    // issues a request at all (see the lazy-builder rule in CLAUDE.md).
+    void supabase
+      .from('proofs')
+      .select('id')
+      .eq('reorder_of_proof_id', proofId)
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (isStale()) return
+        setReorderChildId((data?.id as string | undefined) ?? null)
       })
 
     // Orders for this proof — drives the inline order-status panel + the
@@ -2942,6 +3023,40 @@ export default function ProofDetailPage() {
             </dd>
           </div>
         )}
+        {/* This project IS somebody's reorder (000373). Worth stating on the
+            child rather than only in its internal notes: it explains why the
+            project arrived already approved, which otherwise looks like a
+            sign-off nobody remembers giving. */}
+        {proof.reorder_of_proof_id && (
+          <div className="min-w-0">
+            <dt className="eyebrow text-ink-mute">Customer reorder</dt>
+            <dd className="mt-1 text-[13px]">
+              <Link
+                to={`/proofs/${proof.reorder_of_proof_id}`}
+                className="inline-flex items-center gap-1 text-ink-soft hover:text-ink"
+              >
+                <Repeat size={11} aria-hidden="true" /> Open the original project
+              </Link>
+            </dd>
+          </div>
+        )}
+        {/* The other direction: this project HAS a reorder. Without it the
+            source is a dead end — the button is correctly gone (it has done
+            its job) but nothing says where the reorder went, so the only route
+            on is a search. The pair links both ways or neither. */}
+        {reorderChildId && (
+          <div className="min-w-0">
+            <dt className="eyebrow text-ink-mute">Customer reorder</dt>
+            <dd className="mt-1 text-[13px]">
+              <Link
+                to={`/proofs/${reorderChildId}`}
+                className="inline-flex items-center gap-1 text-ink-soft hover:text-ink"
+              >
+                <Repeat size={11} aria-hidden="true" /> Reorder raised — open it
+              </Link>
+            </dd>
+          </div>
+        )}
         <div className="min-w-0">
           <dt className="eyebrow text-ink-mute">Created</dt>
           <dd className="mt-1 text-[13px] text-ink-soft">{formatLongDate(proof.created_at)}</dd>
@@ -3264,6 +3379,7 @@ export default function ProofDetailPage() {
                           contactFullName={proof.contacts.full_name}
                           companyName={proof.contacts.companies?.name ?? null}
                           onSnoozed={() => { if (id) loadProof(id) }}
+                          onRaiseReorder={canRaiseReorder ? () => { setReorderError(null); setReorderDialog(true) } : undefined}
                           className="cursor-pointer"
                         >
                           <ProofStatusPill label={statusBucket.label} colour={statusBucket.colour} />
@@ -3421,6 +3537,9 @@ export default function ProofDetailPage() {
                           { label: 'Add another material', onClick: () => void openAddMaterialDialog() },
                           // Repeat-order path: copy this design into a fresh
                           // open project as its v1. Needs a version to copy.
+                          ...(canRaiseReorder
+                            ? [{ label: 'Raise the reorder', onClick: () => { setReorderError(null); setReorderDialog(true) } }]
+                            : []),
                           ...(versions.length > 0
                             ? [{ label: 'Duplicate project', onClick: () => { setDuplicateError(null); setDuplicateDialog(true) } }]
                             : []),
@@ -3437,6 +3556,9 @@ export default function ProofDetailPage() {
                         ]
                       : [
                           { label: 'Add another material', onClick: () => void openAddMaterialDialog() },
+                          ...(canRaiseReorder
+                            ? [{ label: 'Raise the reorder', onClick: () => { setReorderError(null); setReorderDialog(true) } }]
+                            : []),
                           ...(versions.length > 0
                             ? [{ label: 'Duplicate project', onClick: () => { setDuplicateError(null); setDuplicateDialog(true) } }]
                             : []),
@@ -4917,6 +5039,52 @@ export default function ProofDetailPage() {
           errorMsg={duplicateError}
           onConfirm={() => void handleDuplicateProject()}
           onCancel={() => { setDuplicateDialog(false); setDuplicateError(null) }}
+        />
+      )}
+
+      {/* Raise the reorder confirm (000372/000373).
+          ⚠ Its OWN dialog, deliberately not the duplicate one above — that
+          copy promises "approvals stay with this project, and the new one
+          starts open", which this action contradicts on both counts. */}
+      {reorderDialog && proof && (
+        <ConfirmDialog
+          title="Raise the reorder"
+          message={
+            <>
+              <p>
+                Start a new project for {proof.contacts.full_name} with this design copied
+                across{proof.status === 'approved'
+                  ? ', already approved — so you can go straight to an order'
+                  : '. It will need approving, because this project isn’t currently approved'}
+                . This project stays as it is, and its reorder flag clears.
+              </p>
+              {/* The customer's own words, set apart rather than buried in the
+                  paragraph. This is the one thing that must actually be read:
+                  "same again" goes straight to a pay link, anything else needs a
+                  fresh proof round, and the difference is only ever in here. */}
+              {(proof.reorder_request_quantity || proof.reorder_request_note) && (
+                <div className="mt-3 rounded-lg border border-line bg-canvas px-3 py-2.5 text-[13px]">
+                  <div className="eyebrow text-ink-mute">What they asked for</div>
+                  {proof.reorder_request_quantity != null && (
+                    <p className="mt-1 font-medium text-ink">
+                      {proof.reorder_request_quantity.toLocaleString('en-GB')} cards
+                    </p>
+                  )}
+                  {proof.reorder_request_note && (
+                    <p className="mt-1 text-ink-soft">“{proof.reorder_request_note}”</p>
+                  )}
+                </div>
+              )}
+              <p className="mt-3">
+                If anything has changed, send a fresh proof round instead of a pay link.
+              </p>
+            </>
+          }
+          confirmLabel="Raise the reorder"
+          working={reorderBusy}
+          errorMsg={reorderError}
+          onConfirm={() => void handleRaiseReorder()}
+          onCancel={() => { setReorderDialog(false); setReorderError(null) }}
         />
       )}
 

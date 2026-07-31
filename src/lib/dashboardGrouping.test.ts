@@ -83,6 +83,8 @@ function makeProject(overrides: Partial<DashboardProject> = {}): DashboardProjec
     follow_up_last_sent_at:     null,
     has_open_change_request:    false,
     order_status:               null,
+    reorder_of_proof_id:        null,
+    reorder_requested_at:       null,
     ...overrides,
   }
 }
