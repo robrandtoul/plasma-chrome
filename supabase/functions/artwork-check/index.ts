@@ -220,6 +220,7 @@ Deno.serve(async (req) => {
     proof_id: string
     dropbox_folder_url: string | null
     material_id: string | null
+    material_option_id: string | null
     stock_order_number: number | null
     project_name: string | null
     person_quantities: unknown
@@ -234,6 +235,9 @@ Deno.serve(async (req) => {
     is_current: boolean
     material_id: string | null
     material_display: string | null
+    // Unused in proof mode (nothing is ordered yet, so every finish is under
+    // review) — carried so this row still satisfies VersionRow below.
+    material_options: string[] | null
     names: string[] | null
     artwork_check: unknown
     materials: { code: string; display_name: string | null } | null
@@ -248,7 +252,7 @@ Deno.serve(async (req) => {
     // errors here, which the page treats as "check unavailable").
     const { data, error: orderErr } = await admin
       .from('orders')
-      .select('id, proof_id, dropbox_folder_url, material_id, stock_order_number, project_name, person_quantities, artwork_check, artwork_checked_at, artwork_check_running_at')
+      .select('id, proof_id, dropbox_folder_url, material_id, material_option_id, stock_order_number, project_name, person_quantities, artwork_check, artwork_checked_at, artwork_check_running_at')
       .eq('id', orderId)
       .maybeSingle()
     if (orderErr) return json({ ok: false, error: `Order lookup failed: ${orderErr.message}` }, 500)
@@ -260,7 +264,7 @@ Deno.serve(async (req) => {
     if (!proofEnabled) return json({ ok: true, kind: 'proof', enabled: false })
     const { data, error: verErr } = await admin
       .from('proof_versions')
-      .select('id, proof_id, version_number, is_current, material_id, material_display, names, artwork_check, materials(code, display_name)')
+      .select('id, proof_id, version_number, is_current, material_id, material_display, material_options, names, artwork_check, materials(code, display_name)')
       .eq('id', proofVersionId)
       .maybeSingle()
     if (verErr) return json({ ok: false, error: `Version lookup failed: ${verErr.message}` }, 500)
@@ -596,6 +600,7 @@ Deno.serve(async (req) => {
     is_current: boolean
     material_id: string | null
     material_display: string | null
+    material_options: string[] | null
     names: string[] | null
     materials: { code: string; display_name: string | null } | null
   }
@@ -603,7 +608,7 @@ Deno.serve(async (req) => {
   if (order) {
     const { data: versionRows } = await admin
       .from('proof_versions')
-      .select('id, version_number, is_current, material_id, material_display, names, materials(code, display_name)')
+      .select('id, version_number, is_current, material_id, material_display, material_options, names, materials(code, display_name)')
       .eq('proof_id', order.proof_id)
       .order('version_number', { ascending: false })
     const allVersions = (versionRows ?? []) as VersionRow[]
@@ -632,9 +637,9 @@ Deno.serve(async (req) => {
   // images Leg C compares the print files against.
   const { data: imageRows } = await admin
     .from('proof_version_images')
-    .select('image_path, original_filename, is_qr_code, qr_decoded_data, qr_kind, qr_vcard_slug, associated_name, side')
+    .select('image_path, original_filename, is_qr_code, qr_decoded_data, qr_kind, qr_vcard_slug, associated_name, side, material_option')
     .eq('proof_version_id', pv.id)
-  type QrRow = { qr_decoded_data: string | null; qr_kind: string | null; qr_vcard_slug: string | null; associated_name: string | null; side: string | null; is_qr_code?: boolean | null; image_path?: string | null; original_filename?: string | null }
+  type QrRow = { qr_decoded_data: string | null; qr_kind: string | null; qr_vcard_slug: string | null; associated_name: string | null; side: string | null; is_qr_code?: boolean | null; image_path?: string | null; original_filename?: string | null; material_option?: string | null }
   const allImageRows = (imageRows ?? []) as QrRow[]
   const qrRowsTyped = allImageRows.filter((q) => q.is_qr_code === true && q.qr_decoded_data)
   const qrs: QrContext[] = qrRowsTyped.map((q) => ({
@@ -643,6 +648,38 @@ Deno.serve(async (req) => {
     associatedName: q.associated_name,
     side: q.side,
   }))
+  // The finish this ORDER was bought against. A version proofed in three metal
+  // finishes carries three images per side, and only one set is what will
+  // print — feeding Leg C all three makes the model reconcile print files
+  // against artwork the customer didn't buy, which reads as a missing print
+  // file (or masks a real mismatch). Scoped exactly as the designer-facing
+  // hand-off is (src/lib/approvedArtworkFinish.ts); an unresolvable finish
+  // falls back to every image rather than none, so the check never goes blind.
+  // Proof mode is deliberately untouched: nothing is ordered yet, so every
+  // proofed finish is legitimately under review.
+  let approvedImageRows = allImageRows
+  if (order) {
+    const versionOptionCodes = Array.isArray(pv.material_options) ? pv.material_options : []
+    if (versionOptionCodes.length > 0 && order.material_option_id) {
+      const { data: optRow } = await admin
+        .from('material_options')
+        .select('code, display_name')
+        .eq('id', order.material_option_id)
+        .maybeSingle()
+      const opt = optRow as { code: string | null; display_name: string | null } | null
+      const code = opt?.code ?? null
+      if (code) {
+        // QR rows carry no finish tab, so scope only the artwork and keep every
+        // QR row — dropping one would lose a payload the check verifies.
+        const artworkRows = allImageRows.filter((r) => r.is_qr_code !== true)
+        const scoped = artworkRows.filter((r) => r.material_option === code)
+        if (scoped.length > 0) {
+          approvedImageRows = [...allImageRows.filter((r) => r.is_qr_code === true), ...scoped]
+        }
+      }
+    }
+  }
+
   // A hosted vCard QR decodes to only the qcrd.uk short URL; the contact
   // fields the customer approved live in the slug-keyed qr_snapshot written at
   // approval time (000194). Attach each snapshot to its QR so the model
@@ -837,6 +874,11 @@ Deno.serve(async (req) => {
   // what HAD been fetched when the run died.
   const baseCtx: CheckContext = {
     orderLabel,
+    // Deliberately NOT annotated with the ordered finish. A metal finish is a
+    // treatment of the blank, not something in the artwork — print files are
+    // one per side, named by material (02_Front_Steel.ai), never per finish.
+    // Naming the finish here would hand the model a claim it cannot ground in
+    // any file it's reading, which is a false-flag source, not a check.
     materialDisplay: pv.materials?.display_name ?? pv.material_display ?? null,
     materialCode: pv.materials?.code ?? null,
     cutThrough: isCutThroughMaterial(pv.materials?.code),
@@ -1012,7 +1054,7 @@ Deno.serve(async (req) => {
     // returns [] on any failure, so this only ever adds verification.
     const artworkQrSeen = new Set<string>()
     {
-      const { picks, skipped } = pickApprovedImages(allImageRows)
+      const { picks, skipped } = pickApprovedImages(approvedImageRows)
       baseCtx.approvedSkipped.push(...skipped)
       let approvedRawTotal = 0
       const budget = approvedImageBudget(printsRawTotal, attachmentsRawTotal)

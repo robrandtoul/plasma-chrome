@@ -7,6 +7,7 @@ import Modal from '../components/Modal'
 import { logAudit } from '../lib/audit'
 import ArtworkCheckReportView, { InlineSpinner, artworkCheckAuditFields, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
 import { mergeInvestigation, requestInvestigation } from '../lib/useProofCheck'
+import { scopeToOrderedFinish, finishScopeIsUncertain, type FinishScopeOutcome } from '../lib/approvedArtworkFinish'
 
 // OrderReviewPage (/orders/:id/place) — the review-and-confirm screen for placing
 // a PAID order into production. Shows the artwork, spec, quantities, destination
@@ -120,6 +121,12 @@ export default function OrderReviewPage() {
   // The full set of approved artwork for the order's CURRENT version (every
   // name + side), shown as a gallery the reviewer can open full size.
   const [artwork, setArtwork] = useState<GridImage[]>([])
+  // The finish the gallery was narrowed to ("Natural"), and — when it couldn't
+  // be narrowed — how many finishes are therefore shown instead of one.
+  const [artworkFinish, setArtworkFinish] = useState<string | null>(null)
+  const [artworkFinishWarning, setArtworkFinishWarning] = useState<
+    { tabs: number; reason: FinishScopeOutcome } | null
+  >(null)
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState<string | null>(null)
@@ -196,13 +203,16 @@ export default function OrderReviewPage() {
       // Approved artwork for review. Resolve the proof id off the order; ignore
       // failures (the page still works without artwork).
       if (id) {
-        const { data: order } = await supabase.from('orders').select('proof_id, status, fulfilled_at, material_id').eq('id', id).maybeSingle()
+        const { data: order } = await supabase.from('orders').select('proof_id, status, fulfilled_at, material_id, material_option_id').eq('id', id).maybeSingle()
         const proofId = (order as { proof_id?: string } | null)?.proof_id
         const orderStatus = (order as { status?: string } | null)?.status ?? null
         // The order's own material — the artwork gallery must show the version this
         // order was placed against, which for a two-material proof is NOT
         // necessarily the current version (mirrors place-order + OrdersPage).
         const orderMaterialId = (order as { material_id?: string | null } | null)?.material_id ?? null
+        // The finish the customer bought (open-spec pick at checkout, or the
+        // designer's in the builder) — narrows the gallery below.
+        const orderMaterialOptionId = (order as { material_option_id?: string | null } | null)?.material_option_id ?? null
         if (!cancelled) {
           const o = order as { status?: string; fulfilled_at?: string | null } | null
           setRevisionReplace(o?.status === 'revision' && !!o?.fulfilled_at)
@@ -224,19 +234,52 @@ export default function OrderReviewPage() {
             // back to it, then to all non-QR images, if nothing matches.
             const { data: vRows } = await supabase
               .from('proof_versions')
-              .select('id, material_id, is_current, version_number')
+              .select('id, material_id, is_current, version_number, material_options')
               .eq('proof_id', proofId)
               .order('version_number', { ascending: false })
-            const vers = (vRows ?? []) as { id: string; material_id: string | null; is_current: boolean }[]
+            const vers = (vRows ?? []) as { id: string; material_id: string | null; is_current: boolean; material_options: string[] | null }[]
             const matches = orderMaterialId ? vers.filter((v) => v.material_id === orderMaterialId) : []
-            const scopedVersionId =
-              (matches.find((v) => v.is_current) ?? matches[0] ?? vers.find((v) => v.is_current))?.id ?? null
+            const scopedVersion =
+              matches.find((v) => v.is_current) ?? matches[0] ?? vers.find((v) => v.is_current) ?? null
+            const scopedVersionId = scopedVersion?.id ?? null
             const nonQr = ((await supabase.functions.invoke<{ images: GridImage[] }>('customer-proof-images', { body: { proofId } })).data?.images ?? [])
               .filter((img) => img.is_qr_code !== true)
             const scoped = scopedVersionId
               ? nonQr.filter((img) => (img as unknown as { proof_version_id?: string }).proof_version_id === scopedVersionId)
               : []
-            const gallery = scoped.length > 0 ? scoped : nonQr
+            const versionImages = scoped.length > 0 ? scoped : nonQr
+            // …and then to the FINISH this order was bought against. A version
+            // proofed in three metal finishes carries a set per finish; only
+            // one is this order's artwork, and this gallery is the last look
+            // before the files go to production. Same rule as the Orders-page
+            // hand-off panel (src/lib/approvedArtworkFinish.ts): an
+            // unresolvable finish falls back to the whole set rather than an
+            // empty one, and the caption below says which finish is shown.
+            let orderFinishCode: string | null = null
+            let orderFinishLabel: string | null = null
+            const versionOptionCodes = Array.isArray(scopedVersion?.material_options) ? scopedVersion.material_options : []
+            if (versionOptionCodes.length > 0 && orderMaterialOptionId) {
+              const { data: optRow } = await supabase
+                .from('material_options')
+                .select('code, display_name')
+                .eq('id', orderMaterialOptionId)
+                .maybeSingle()
+              const opt = optRow as { code: string | null; display_name: string | null } | null
+              orderFinishCode = opt?.code ?? null
+              orderFinishLabel = opt?.display_name ?? opt?.code ?? null
+            }
+            const finishScope = scopeToOrderedFinish(versionImages, versionOptionCodes, orderFinishCode)
+            if (!cancelled) {
+              // Name the finish only when it actually narrowed the gallery —
+              // a chip beside a full-matrix grid would contradict the warning.
+              setArtworkFinish(finishScope.outcome === 'scoped' ? orderFinishLabel : null)
+              setArtworkFinishWarning(
+                finishScopeIsUncertain(finishScope.outcome) && versionOptionCodes.length > 1
+                  ? { tabs: versionOptionCodes.length, reason: finishScope.outcome }
+                  : null,
+              )
+            }
+            const gallery = finishScope.images
             // Caption each image with name + side, but only show a dimension when
             // it actually varies (mirrors the proof page's approved-artwork
             // table): hide the name when everything is shared, hide the side when
@@ -532,14 +575,32 @@ export default function OrderReviewPage() {
             </p>
 
             {/* Approved artwork — the whole point of the review: see exactly
-                what's being produced. Every name + side of the current version,
-                each opening full size in a lightbox. */}
+                what's being produced. Every name + side of the version this
+                order was placed against, narrowed to the ordered finish, each
+                opening full size in a lightbox. */}
             {artwork.length > 0 && (
               <PanelShell className="mt-6">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Approved artwork</h2>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Approved artwork</h2>
+                  {artworkFinish && (
+                    <span className="rounded-[4px] bg-in-stock-soft px-1.5 py-0.5 text-[11px] font-semibold text-in-stock">
+                      {artworkFinish}
+                    </span>
+                  )}
+                </div>
                 <p className="mt-1 text-xs text-ink-mute">
                   This is exactly what will be produced. Click any image to view it full size.
                 </p>
+                {/* Couldn't narrow to the ordered finish — this is every
+                    proofed finish, most of which the customer didn't buy. */}
+                {artworkFinishWarning !== null && (
+                  <p className="mt-2 rounded-lg border border-low bg-low-soft px-3 py-2 text-xs text-ink-soft">
+                    {artworkFinishWarning.reason === 'finish-missing'
+                      ? `This order’s finish isn’t one of the ${artworkFinishWarning.tabs} proofed here, so all of them are shown.`
+                      : `All ${artworkFinishWarning.tabs} proofed finishes are shown — this order doesn’t record which one was bought.`}{' '}
+                    Confirm the finish before producing these.
+                  </p>
+                )}
                 <div className={`mt-3 grid gap-4 ${artwork.length === 1 ? 'max-w-md' : 'sm:grid-cols-2'}`}>
                   {artwork.map((img) => (
                     <ImageCard key={img.id} image={img} alt={img.label || 'Approved artwork'} onClick={setLightboxSrc} />

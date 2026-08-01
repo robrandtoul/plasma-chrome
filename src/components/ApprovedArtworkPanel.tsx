@@ -29,11 +29,15 @@ export default function ApprovedArtworkPanel({
   projectName,
   customerName,
   materialDisplay,
+  materialOptionId,
 }: {
   proofId: string
   projectName: string
   customerName: string
   materialDisplay: string | null
+  // The order's chosen finish. A proof shown in three metal finishes carries
+  // three images per side; only the ordered one is this order's artwork.
+  materialOptionId: string | null
 }) {
   const [artwork, setArtwork] = useState<ApprovedArtwork | null>(null)
   const [loading, setLoading] = useState(true)
@@ -46,11 +50,11 @@ export default function ApprovedArtworkPanel({
     let cancelled = false
     setLoading(true)
     setLoadError(false)
-    fetchApprovedArtwork(proofId)
+    fetchApprovedArtwork(proofId, { materialOptionId })
       .then((a) => { if (!cancelled) { setArtwork(a); setLoading(false) } })
       .catch(() => { if (!cancelled) { setLoadError(true); setLoading(false) } })
     return () => { cancelled = true }
-  }, [proofId])
+  }, [proofId, materialOptionId])
 
   async function handleZip() {
     if (!artwork) return
@@ -100,11 +104,32 @@ export default function ApprovedArtworkPanel({
             <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-in-stock">
               <Check size={13} strokeWidth={3} aria-hidden="true" />
               Approved artwork
+              {/* The finish these files are for. A proof shown in several
+                  finishes carries a set per finish, and only one was ordered —
+                  naming it here stops the narrowing looking like missing
+                  files. */}
+              {artwork?.finishLabel && (
+                <span className="rounded-[4px] bg-surface px-1.5 py-0.5 text-[11px] font-semibold normal-case tracking-normal text-in-stock">
+                  {artwork.finishLabel}
+                </span>
+              )}
             </span>
             {approvedLabel && (
               <span className="text-[11px] font-medium text-in-stock">Approved {approvedLabel}</span>
             )}
           </div>
+
+          {/* Couldn't narrow to the ordered finish, so this is every proofed
+              finish — say so rather than let the reviewer hand production a
+              set that's mostly cards the customer didn't buy. */}
+          {artwork?.finishUncertain && artwork.finishTabCount > 1 && (
+            <p className="border-b border-low bg-low-soft px-3 py-2 text-[12px] text-ink-soft">
+              {artwork.finishScope === 'finish-missing'
+                ? `This order's finish isn't one of the ${artwork.finishTabCount} proofed here, so all of them are listed.`
+                : `This order doesn't record which of the ${artwork.finishTabCount} proofed finishes was bought, so all of them are listed.`}{' '}
+              Confirm the finish before handing these to production.
+            </p>
+          )}
 
           <ul className="divide-y divide-line-soft bg-surface">
             {files.map((f) => (

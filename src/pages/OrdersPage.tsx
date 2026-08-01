@@ -3288,6 +3288,7 @@ function OrderCard({
               projectName={order.proofs?.contacts?.full_name ?? customerLabel(order)}
               customerName={order.proofs?.contacts?.companies?.name ?? '—'}
               materialDisplay={order.material_variants?.materials?.display_name ?? null}
+              materialOptionId={order.material_option_id}
             />
           )}
             </>
