@@ -1,0 +1,154 @@
+# Tier 3 synthetic check — a real browser confirming a customer can see their
+# artwork on PRODUCTION.
+#
+# The nine Better Stack monitors and the `health` endpoint cover DNS, TLS,
+# Netlify, PostgREST, the anon RPC path, Stripe, Xero and cron freshness. They
+# cannot cover this one thing, because public/_redirects ends with
+# `/*  /index.html  200`: a broken React bundle, a dead customer-proof-images
+# function, a changed RPC shape, or a build carrying a stale anon key all still
+# answer 200 with the shell, and every one of those monitors stays green.
+#
+# WHY ACTIONS RATHER THAN A HOSTED BROWSER MONITOR
+#   • a failure here uploads a TRACE, a video and a screenshot — you can open
+#     the failure and see it, instead of being told a dot went red
+#   • the repo already has Playwright and e2e specs
+#   • it adds no billable Better Stack monitors (the account is already at 20)
+# Alerting still lives in Better Stack: a green run pings a heartbeat, and a
+# failed run deliberately does NOT, so the heartbeat goes stale and Better
+# Stack raises the incident through the same on-call path as everything else.
+
+name: Customer proof view (production)
+
+on:
+  # A deploy is when risk is introduced.
+  push:
+    branches: [main]
+  # Backstop for everything a deploy doesn't cause: a rotated anon key, an
+  # expired storage policy, a Supabase incident, an edge function that stopped
+  # booting. Every 2 hours — comfortably inside the free allowance, and this is
+  # the slow safety net, not the fast alarm.
+  schedule:
+    - cron: '17 */2 * * *' # :17 to stay off the busy top of the hour
+  workflow_dispatch:
+
+# A push landing while the scheduled run is mid-flight would have both hitting
+# production at once and racing to ping the same heartbeat. Queue instead —
+# never cancel, or a cancelled run would look identical to a failed one.
+concurrency:
+  group: proof-view-check
+  cancel-in-progress: false
+
+jobs:
+  proof-view:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Downloading Chromium is the single slowest step, and this workflow runs
+      # ~550 times a month (12 scheduled + ~6 deploys a day). Caching the
+      # browser binary turns most of that into a restore. The OS packages still
+      # have to be installed each time — they live outside the cached path.
+      - name: Cache Playwright browser
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Playwright Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install Chromium system dependencies (cached browser)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+
+      # ── The deploy-timing guard ──────────────────────────────────────────
+      #
+      # Netlify takes a couple of minutes to build. Asserting immediately after
+      # a push therefore tests the PREVIOUS deploy — which, being the one that
+      # was already live and working, passes every assertion. The run goes
+      # green without ever having looked at the commit that was just pushed:
+      # a vacuous pass, and precisely the failure this check exists to remove.
+      #
+      # So on a push we wait for production to actually SERVE this commit.
+      # dist/version.json is emitted at build time from Netlify's COMMIT_REF
+      # (see the plugin in vite.config.ts); we poll until it matches.
+      #
+      # A timeout here FAILS the job rather than continuing, because "the
+      # deploy never arrived" is itself worth knowing — and continuing would
+      # put us right back to testing the old bundle.
+      #
+      # Skipped for schedule/dispatch runs: there is no specific commit to wait
+      # for, and whatever is live is exactly what we want to check.
+      - name: Wait for Netlify to serve this commit
+        if: github.event_name == 'push'
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          URL="https://proofs.plasmadesign.co.uk/version.json"
+          DEADLINE=$(( SECONDS + 600 ))   # 10 minutes
+          echo "Waiting for $URL to report $EXPECTED_SHA"
+          while [ $SECONDS -lt $DEADLINE ]; do
+            SERVED=$(curl -fsS --max-time 15 "$URL" 2>/dev/null \
+                     | python3 -c 'import sys,json; print(json.load(sys.stdin).get("commit",""))' 2>/dev/null || echo "")
+            if [ "$SERVED" = "$EXPECTED_SHA" ]; then
+              echo "✓ production is serving $EXPECTED_SHA"
+              exit 0
+            fi
+            echo "  serving '${SERVED:-<unavailable>}' — waiting…"
+            sleep 15
+          done
+          echo "::error::Timed out after 10 minutes waiting for Netlify to deploy $EXPECTED_SHA."
+          echo "Production is still serving something else, so this check was NOT run against"
+          echo "the pushed commit. Check the Netlify build log — the deploy may have failed."
+          exit 1
+
+      - name: Check the customer proof view
+        env:
+          PROOF_VIEW_PROOF_ID: ${{ secrets.PROOF_VIEW_PROOF_ID }}
+        run: pnpm exec playwright test --config=playwright.prod.config.ts
+
+      # Only on success. A failed run must leave the heartbeat unpinged so it
+      # goes stale and Better Stack raises the incident.
+      - name: Report success to Better Stack
+        if: success()
+        env:
+          HEARTBEAT_URL: ${{ secrets.PROOF_VIEW_HEARTBEAT_URL }}
+        run: |
+          if [ -z "${HEARTBEAT_URL:-}" ]; then
+            echo "::warning::PROOF_VIEW_HEARTBEAT_URL is not set — nothing to ping."
+            exit 0
+          fi
+          # Best-effort: Better Stack being unreachable must not turn a healthy
+          # customer page into a red build. The worst case is one missed ping,
+          # which the next run (≤2h) clears.
+          curl -fsS --max-time 10 -X POST "$HEARTBEAT_URL" > /dev/null \
+            && echo "✓ heartbeat pinged" \
+            || echo "::warning::heartbeat ping failed (the check itself passed)"
+
+      # The reason this runs in Actions at all.
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proof-view-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 14
+          if-no-files-found: ignore

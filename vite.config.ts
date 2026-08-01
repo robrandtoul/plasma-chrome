@@ -1,12 +1,49 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+
+// Emit dist/version.json naming the commit this bundle was built from.
+//
+// WHY: the Tier 3 synthetic check (.github/workflows/proof-view-check.yml)
+// runs a real browser against PRODUCTION after a push to main. Netlify takes
+// a couple of minutes to build, so a check that starts immediately tests the
+// PREVIOUS deploy — and since the previous deploy is by definition working,
+// every assertion passes and the run goes green without ever having looked at
+// the commit that was just pushed. That vacuous pass is the exact failure the
+// check exists to eliminate, so the workflow polls this file until it reports
+// the SHA it is meant to be testing, and only then runs the assertions.
+//
+// COMMIT_REF is set by Netlify automatically — no build-command or dashboard
+// configuration to keep in sync. Locally it is absent and this reads 'dev',
+// which is correct: nothing polls it outside CI.
+//
+// Deliberately a separate asset rather than a value baked into the bundle:
+// the app never reads it, so it adds no runtime code, cannot affect the
+// customer page, and is cheap to fetch on a poll. It doubles as a plain
+// answer to "what is actually deployed right now?".
+function emitVersionJson(): Plugin {
+  return {
+    name: 'plasma-emit-version-json',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'version.json',
+        source: JSON.stringify({
+          commit: process.env.COMMIT_REF ?? 'dev',
+          builtAt: new Date().toISOString(),
+        }),
+      })
+    },
+  }
+}
 
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    emitVersionJson(),
   ],
   build: {
     // Pin the SPA build to exactly index.html so sibling HTML files
