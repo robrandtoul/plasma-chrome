@@ -595,3 +595,19 @@ verify_jwt = false
 # proofs carry paid orders.
 [functions.request-reorder]
 verify_jwt = false
+
+# health: the external uptime endpoint (Better Stack). verify_jwt = false
+# because no monitor can hold a Supabase JWT — and stated here rather than left
+# to the CLI default, because a plain `supabase functions deploy health` would
+# otherwise turn it back on and every monitor would start 401ing on a perfectly
+# healthy stack.
+#
+# It is NOT unauthenticated: the gate is an `X-Health-Key` header compared in
+# constant time against the HEALTH_CHECK_KEY secret, failing closed when that
+# secret is unset. The function is read-only (one settings row, one anon RPC,
+# Stripe GET /v1/balance, Xero GET /connections, one nudge_runs read) and its
+# body carries booleans, status strings and elapsed times only — no secrets,
+# customer names, order counts or revenue — because a single shared header key
+# is a weak enough gate that the body has to be boring on its own merits.
+[functions.health]
+verify_jwt = false

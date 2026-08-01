@@ -68,6 +68,7 @@ import {
   type LedgerRow,
   type NudgeConfig,
 } from '../_shared/nudgeDecision.ts'
+import { pingHeartbeat } from '../_shared/heartbeat.ts'
 
 // The chase rules this sender can auto-send. A rule only actually sends when
 // its automation mode resolves to 'auto' (decideForProof drops everything
@@ -446,6 +447,10 @@ async function run(admin: Admin): Promise<Response> {
   let skipped = 0
   const errors: Array<Record<string, unknown>> = []
   let candidateCount = 0
+  // Set by the catch below. The finally needs to tell a clean finish from a
+  // crash, because it runs on both paths and the Better Stack heartbeat must
+  // only fire on the clean one.
+  let fatalError: string | null = null
 
   // Everything below always lands in the finally-style run-row update.
   try {
@@ -1222,6 +1227,7 @@ async function run(admin: Admin): Promise<Response> {
     // run that died half-way.
     const detail = fatal instanceof Error ? fatal.message : String(fatal)
     errors.push({ fatal: detail })
+    fatalError = detail
     console.error('[send-nudges] run failed', detail)
     return json({ error: detail, run_id: runId }, 500)
   } finally {
@@ -1234,5 +1240,18 @@ async function run(admin: Admin): Promise<Response> {
         errors: errors.length > 0 ? errors : null,
       })
       .eq('id', runId)
+
+    // Better Stack heartbeat — the external "this job completed" signal.
+    // pg_cron's `succeeded` only means it queued the pg_net request (5s
+    // timeout, and this project lost 13 responses in the last 7 days), so
+    // nothing outside this line can currently tell a completed run from a
+    // silently dead one.
+    //
+    // Gated on `fatalError`, and that gate is the whole point: this `finally`
+    // runs on the crash path too, so an ungated ping would report healthy
+    // over a run that died half-way — the exact failure the heartbeat exists
+    // to catch. Placed after the ledger update so the ping means "run closed",
+    // not "run nearly closed". No-op until the secret is set; never throws.
+    if (!fatalError) await pingHeartbeat('BETTERSTACK_HEARTBEAT_SEND_NUDGES')
   }
 }

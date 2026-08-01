@@ -20,10 +20,12 @@
 //
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (platform-provided),
 //      HELPSCOUT_APP_ID, HELPSCOUT_APP_SECRET (same secrets send-nudges uses).
-// Self-contained (only imports supabase-js) so it neither bundles nor risks the
-// widely-imported _shared/helpscout.ts.
+// Self-contained (only imports supabase-js and _shared/heartbeat.ts, itself a
+// zero-import leaf module) so it neither bundles nor risks the widely-imported
+// _shared/helpscout.ts.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { pingHeartbeat } from '../_shared/heartbeat.ts'
 
 // Distinct conversations fetched per run. The cron is frequent (every 15 min)
 // and never-synced proofs are prioritised, so a small cap keeps each run quick
@@ -140,7 +142,13 @@ async function handle(req: Request): Promise<Response> {
     convIds.push(cid)
     if (convIds.length >= BATCH) break
   }
-  if (convIds.length === 0) return json({ ok: true, conversations: 0, reconciled: 0 })
+  if (convIds.length === 0) {
+    // Nothing to reconcile IS a healthy run — every proof is already in sync.
+    // The heartbeat has to fire here too, or a quiet period would look
+    // identical to a dead job and page someone at 3am over nothing.
+    await pingHeartbeat('BETTERSTACK_HEARTBEAT_RECONCILE_TAGS')
+    return json({ ok: true, conversations: 0, reconciled: 0 })
+  }
 
   let token = await getAccessToken(appId, appSecret)
   const nowIso = new Date().toISOString()
@@ -183,6 +191,14 @@ async function handle(req: Request): Promise<Response> {
   }
 
   console.log('[reconcile-helpscout-tags]', { conversations: convIds.length, reconciled, failed })
+
+  // Better Stack heartbeat — see the note on the early return above. Fires on
+  // the success path only (a throw skips this line and lands in the handler's
+  // catch), and per-conversation failures are deliberately NOT treated as a
+  // dead run: this job is designed to leave those unstamped and retry them
+  // next quarter-hour, so it did complete.
+  await pingHeartbeat('BETTERSTACK_HEARTBEAT_RECONCILE_TAGS')
+
   return json({ ok: true, conversations: convIds.length, reconciled, failed, failures: failures.slice(0, 10) })
 }
 

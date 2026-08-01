@@ -25,6 +25,8 @@
     "test:eu-vat": "tsx supabase/functions/_shared/euVatArea.test.ts",
     "test:order-snapshot": "tsx supabase/functions/_shared/orderSpecSnapshot.test.ts",
     "test:nudges": "tsx supabase/functions/_shared/nudgeDecision.test.ts",
+    "test:health": "tsx supabase/functions/_shared/health.test.ts",
+    "test:heartbeat": "tsx supabase/functions/_shared/heartbeat.test.ts",
     "test:thread-text": "tsx supabase/functions/_shared/customerThreadText.test.ts",
     "test:message-html": "tsx supabase/functions/_shared/messageHtml.test.ts",
     "test:contact-names": "tsx src/lib/contactNames.test.ts",

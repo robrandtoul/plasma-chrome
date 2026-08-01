@@ -53,6 +53,7 @@ import {
   EW_BANK_HOLIDAYS_FALLBACK,
   isWithinSendWindow,
 } from '../_shared/nudgeDecision.ts'
+import { pingHeartbeat } from '../_shared/heartbeat.ts'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 // Cadence fallbacks. The live figures come from settings (order_reminders_max /
@@ -489,6 +490,14 @@ async function run(admin: Admin): Promise<Response> {
       // may have landed, so it is never auto-retried.
     }
   }
+
+  // Better Stack heartbeat — the external "this job completed" signal.
+  // pg_cron's `succeeded` only means it queued the pg_net request, so without
+  // this nothing outside the function can tell a completed run from a silently
+  // dead one. On the success path only: this line is unreachable if the run
+  // threw. No-op until the secret is set; never throws, so it cannot cost a
+  // run of reminders.
+  await pingHeartbeat('BETTERSTACK_HEARTBEAT_ORDER_REMINDERS')
 
   return json({ ok: true, mode, note: modeNote || undefined, candidates: candidates.length, superseded: superseded.length, sent, skipped, errors: errors.length })
 }
