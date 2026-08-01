@@ -16,7 +16,10 @@ const OUT = path.join(process.cwd(), 'docs', 'guide-shots')
 test.describe('guide shot', () => {
   test('customer surfaces', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 })
-    await page.goto(`/p/${PROOF_ID}`)
+    // ?preview=1 skips record_proof_view — without it every local run records a
+    // real customer view on the shared fixture, feeding the needs-attention
+    // rules and waking snoozes. See src/lib/customerProofUrl.ts.
+    await page.goto(`/p/${PROOF_ID}?preview=1`)
 
     const strip = page.getByRole('button', { name: /notes? from/i })
     await expect(strip).toBeVisible()
@@ -53,7 +56,10 @@ test.describe('guide shot', () => {
 
   test('customer change request panel', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 })
-    await page.goto(`/p/${PROOF_ID}`)
+    // ?preview=1 skips record_proof_view — without it every local run records a
+    // real customer view on the shared fixture, feeding the needs-attention
+    // rules and waking snoozes. See src/lib/customerProofUrl.ts.
+    await page.goto(`/p/${PROOF_ID}?preview=1`)
     await expect(page.getByRole('button', { name: /notes? from/i })).toBeVisible()
 
     const request = page.getByRole('button', { name: /^Request changes/i }).first()

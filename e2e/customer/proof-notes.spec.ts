@@ -27,7 +27,10 @@ const PROOF_ID = 'b7d0796e-c7a5-44d1-860c-e39f92730521'
 
 test.describe('designer notes on the customer proof page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto(`/p/${PROOF_ID}`)
+    // ?preview=1 skips record_proof_view — without it every local run records a
+    // real customer view on the shared fixture, feeding the needs-attention
+    // rules and waking snoozes. See src/lib/customerProofUrl.ts.
+    await page.goto(`/p/${PROOF_ID}?preview=1`)
     // The page resolves its payload through an anon RPC, so wait for real
     // content rather than load state.
     await expect(page.getByText('Atari Corp').first()).toBeVisible()

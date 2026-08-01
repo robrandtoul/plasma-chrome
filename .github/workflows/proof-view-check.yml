@@ -21,14 +21,31 @@ name: Customer proof view (production)
 
 on:
   # A deploy is when risk is introduced.
+  #
+  # paths-ignore is deliberately narrow: a commit touching ONLY markdown cannot
+  # change the deployed bundle (nothing under src/ or the three vite configs
+  # imports a .md file — checked), and CLAUDE.md and docs/ are edited here
+  # constantly, so skipping those pushes costs no coverage. Everything else
+  # still triggers a run, including edge functions and migrations, because
+  # customer-proof-images and the RPC shape are two of the four failure modes
+  # this exists to catch. Resist widening it.
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
   # Backstop for everything a deploy doesn't cause: a rotated anon key, an
   # expired storage policy, a Supabase incident, an edge function that stopped
-  # booting. Every 2 hours — comfortably inside the free allowance, and this is
-  # the slow safety net, not the fast alarm.
+  # booting.
+  #
+  # Every 6 hours, not every 2. The push trigger above does the real work —
+  # deploys cause almost all of what this catches — and on a PRIVATE repo
+  # Actions minutes are billed, where the push runs already dominate the bill
+  # at ~6 merges a day. Six hours keeps the safety net for the genuinely
+  # deploy-independent failures (storage and customer-proof-images are the two
+  # the `health` endpoint cannot see) at a third of the scheduled cost.
   schedule:
-    - cron: '17 */2 * * *' # :17 to stay off the busy top of the hour
+    - cron: '17 */6 * * *' # :17 to stay off the busy top of the hour
   workflow_dispatch:
 
 # A push landing while the scheduled run is mid-flight would have both hitting
@@ -58,9 +75,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # Downloading Chromium is the single slowest step, and this workflow runs
-      # ~550 times a month (12 scheduled + ~6 deploys a day). Caching the
-      # browser binary turns most of that into a restore. The OS packages still
-      # have to be installed each time — they live outside the cached path.
+      # ~300 times a month (4 scheduled + ~6 deploys a day, less the
+      # markdown-only pushes). Caching the browser binary turns most of that
+      # into a restore. The OS packages still have to be installed each time —
+      # they live outside the cached path.
       - name: Cache Playwright browser
         id: playwright-cache
         uses: actions/cache@v4

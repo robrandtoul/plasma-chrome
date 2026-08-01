@@ -20,7 +20,10 @@ const PROOF_ID = 'b7d0796e-c7a5-44d1-860c-e39f92730521'
 
 // Open the change-request panel and return its dialog locator.
 async function openPanel(page: Page) {
-  await page.goto(`/p/${PROOF_ID}`)
+  // ?preview=1 skips record_proof_view — without it every local run records a
+  // real customer view on the shared fixture, feeding the needs-attention
+  // rules and waking snoozes. See src/lib/customerProofUrl.ts.
+  await page.goto(`/p/${PROOF_ID}?preview=1`)
   await expect(page.getByText('Atari Corp').first()).toBeVisible()
 
   const request = page.getByRole('button', { name: /^Request changes$/ })
