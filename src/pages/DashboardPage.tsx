@@ -441,7 +441,7 @@ interface StatTileProps {
   srLabel?: string
   count: number
   active: boolean
-  tone: 'rose' | 'amber' | 'sky' | 'neutral' | 'violet' | 'green' | 'turquoise' | 'gold' | 'blue' | 'indigo'
+  tone: 'rose' | 'amber' | 'sky' | 'neutral' | 'violet' | 'green' | 'turquoise' | 'gold' | 'blue' | 'indigo' | 'emerald'
   onClick: () => void
   help?: string
   // Optional small red corner count (e.g. orders with a failed Xero invoice).
@@ -484,6 +484,12 @@ const TILE_COLOUR: Record<StatTileProps['tone'], string> = {
   // In follow-up — indigo, matching the in_follow_up pill in dashboardGrouping
   // so the tile and the row pill share one hue.
   indigo:    '#6366f1',
+  // Paid — money in. Deliberately a DEEPER green than `green` (--c-in-stock,
+  // #0e9b4e) rather than the same one: Approved sits three tiles away and is
+  // also green, and at a 12px dot two greens of the same value are a coin
+  // toss. Same family, because both are good outcomes, two shades apart so
+  // they are still tellable at a glance.
+  emerald:   '#047857',
 }
 
 function StatTile({ label, srLabel, count, active, tone, onClick, help, badge, badgeTitle, countNote, navigatesTo, subline }: StatTileProps) {
@@ -511,7 +517,14 @@ function StatTile({ label, srLabel, count, active, tone, onClick, help, badge, b
       // pressed", so a screen-reader user presses it expecting the list below
       // to filter and instead the whole app changes page.
       aria-pressed={navigatesTo ? undefined : active}
-      className="flex flex-col items-start gap-2 px-5 py-5 text-left transition-colors hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)] relative xl:flex-1 xl:min-w-0 max-md:w-[140px] max-md:shrink-0 max-md:snap-start max-md:rounded-[12px] max-md:border max-md:border-line"
+      // ⚠ `xl:px-3` is what makes nine Workflow tiles fit on ONE row. At xl the
+      // zone is a fixed ~768px shared equally, so a ninth tile drops each from
+      // 96px to 85px — and at px-5 the padding alone eats 40px of that, leaving
+      // a 45px content box that breaks "CUSTOMER" mid-word. Tightening to 12px
+      // a side gives 61px, which is MORE room than the 56px eight tiles had at
+      // px-5. Only at xl: below it the tiles are a 140px snap-strip or a 3-col
+      // grid, where the roomier padding is right.
+      className="flex flex-col items-start gap-2 px-5 py-5 text-left transition-colors hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)] relative xl:flex-1 xl:min-w-0 xl:px-3 max-md:w-[140px] max-md:shrink-0 max-md:snap-start max-md:rounded-[12px] max-md:border max-md:border-line"
       style={{
         // Active state: a soft tint of the tile's tone fills the cell
         // background. Cleaner than an inset ring when each cell sits
@@ -564,7 +577,11 @@ function StatTile({ label, srLabel, count, active, tone, onClick, help, badge, b
             {navigatesTo && (
               // Marks a tile that opens another page rather than filtering in
               // place. The accessible name says "opens Orders" in words.
-              <span className="text-ink-dim">{' ↗'}</span>
+              //
+              // Non-breaking space, so the arrow can never be the only thing on
+              // the label's second line — "TO ORDER" above a lone "↗" reads as
+              // a rendering fault rather than a marker.
+              <span className="text-ink-dim">{' ↗'}</span>
             )}
           </span>
         </HelpTip>
@@ -2899,7 +2916,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   // true — the panel ships shown — so the card doesn't flicker out on first
   // paint before the settings read resolves. An admin turning it off hides it.
   const [hotLeadsOn, setHotLeadsOn]       = useState(true)
-  const [orderCounts, setOrderCounts]     = useState<{ awaitingPayment: number; toOrder: number; invoiceProblem: number; awaitingPaymentMoney?: BucketMoney; toOrderMoney?: BucketMoney } | null>(null)
+  const [orderCounts, setOrderCounts]     = useState<{ awaitingPayment: number; toOrder: number; invoiceProblem: number; paid7d: number; awaitingPaymentMoney?: BucketMoney; paid7dMoney?: BucketMoney } | null>(null)
   // current_version_id → thumbnail renditions (thumb / preview / full).
   // Populated in loadDashboard after the projects fetch via the
   // dashboard-thumbnails edge function (which signs each version's first
@@ -3133,17 +3150,32 @@ export default function DashboardPage({ activityView = false }: { activityView?:
       if (cancelled) return
       setOrderingOn(on)
       if (!on) return
-      const [a, o, p] = await Promise.all([
-        // The two money tiles fetch their rows rather than head-counting, so
-        // the stamped amounts can be summed for the sub-line. `count: 'exact'`
+      // "Paid" is a rolling 7-day window, so the cutoff is computed here rather
+      // than in SQL — same clock the Approved tile uses.
+      const paidSince = new Date(Date.now() - 7 * 86_400_000).toISOString()
+      const [a, o, p, w] = await Promise.all([
+        // The money tiles fetch their rows rather than head-counting, so the
+        // stamped amounts can be summed for the sub-line. `count: 'exact'`
         // still rides along, so the tile NUMBER remains an unbounded server
         // count — the rows are only ever used for the money.
         supabase.from('orders').select(ORDER_MONEY_COLUMNS, { count: 'exact' }).eq('status', 'sent'),
-        supabase.from('orders').select(ORDER_MONEY_COLUMNS, { count: 'exact' }).eq('status', 'paid'),
+        // "To order" is a worklist, not money — head-only, no rows.
+        supabase.from('orders').select('id', { count: 'exact', head: true }).eq('status', 'paid'),
         // Paid, no Xero invoice, but a stored Xero error → a real books gap.
         // Offline orders carry neither id nor error, so they're excluded.
         supabase.from('orders').select('id', { count: 'exact', head: true })
           .eq('status', 'paid').is('xero_invoice_id', null).not('xero_invoice_error', 'is', null),
+        // Money actually taken this week. Two exclusions, both deliberate:
+        //   · cancelled — 6 cancelled orders on live still carry a paid_at
+        //     (refunded or voided after the fact), and counting those as
+        //     revenue would overstate the week.
+        //   · reprint — a free replacement off the Flagged board is born paid
+        //     and skips Stripe entirely (000295), so it would add to the count
+        //     while contributing nothing to the total. Nobody paid for it.
+        // Neither column is nullable on live, so `neq` can't silently drop
+        // rows the way it would against a NULL.
+        supabase.from('orders').select(ORDER_MONEY_COLUMNS, { count: 'exact' })
+          .gte('paid_at', paidSince).neq('status', 'cancelled').neq('order_kind', 'reprint'),
       ])
       if (cancelled) return
       // Counts first, money after. ⚠ The exchange-rate lookup must NOT join the
@@ -3156,13 +3188,14 @@ export default function DashboardPage({ activityView = false }: { activityView?:
         awaitingPayment: a.count ?? 0,
         toOrder: o.count ?? 0,
         invoiceProblem: p.count ?? 0,
+        paid7d: w.count ?? 0,
       })
       void getExchangeRates().then((rates) => {
         if (cancelled) return
         setOrderCounts((prev) => prev && {
           ...prev,
           awaitingPaymentMoney: sumOrderMoney(a.data, a.count, rates),
-          toOrderMoney: sumOrderMoney(o.data, o.count, rates),
+          paid7dMoney: sumOrderMoney(w.data, w.count, rates),
         })
       })
     })()
@@ -4176,15 +4209,34 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                           onClick={() => navigate('/orders')}
                         />
                         <StatTile
+                          label="Paid"
+                          // No srLabel: "Paid" is already the whole word, and
+                          // countNote below says the window in the same breath
+                          // as the number ("4 in the last 7 days"), so adding
+                          // one would only make a screen reader say it twice.
+                          countNote={{ short: '7D', spoken: 'in the last 7 days' }}
+                          help="Orders the customer has paid for in the last 7 days, and what they came to. Excludes cancelled orders and free reprints. Opens Orders."
+                          count={orderCounts?.paid7d ?? 0}
+                          subline={bucketMoney(
+                            orderCounts?.paid7dMoney,
+                            '',
+                            'taken',
+                            'Every currency converted to GBP at today’s rate.',
+                          )}
+                          active={false}
+                          navigatesTo="Orders"
+                          tone="emerald"
+                          onClick={() => navigate('/orders')}
+                        />
+                        <StatTile
                           label="To order"
+                          // No money line. It used to show the value of these
+                          // orders, but that is the same money the Paid tile
+                          // two along has just reported — and here it answered
+                          // a question nobody asks of a worklist. What matters
+                          // about "To order" is how many jobs are queued.
                           help="Paid orders still waiting to be placed with production. Opens Orders."
                           count={orderCounts?.toOrder ?? 0}
-                          subline={bucketMoney(
-                            orderCounts?.toOrderMoney,
-                            ' paid',
-                            'already paid',
-                            'Money already taken on orders still waiting to be placed.',
-                          )}
                           badge={orderCounts?.invoiceProblem ?? 0}
                           badgeTitle={
                             orderCounts?.invoiceProblem

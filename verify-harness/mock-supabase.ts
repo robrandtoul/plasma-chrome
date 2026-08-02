@@ -670,6 +670,15 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
     rows = ORDERS
     if (Array.isArray(filters['in:status'])) rows = rows.filter((r) => filters['in:status'].includes(r.status))
     if (filters['eq:id']) rows = rows.filter((r) => r.id === filters['eq:id'])
+    // The dashboard's order-stage tiles each scope by status, and the Paid
+    // tile additionally by paid_at / kind. Without these the tiles were all
+    // handed the WHOLE order list, so Awaiting payment, Paid and To order
+    // rendered the same number and the same money — which looks like a real
+    // bug on screen, and would hide one.
+    if (filters['eq:status']) rows = rows.filter((r) => r.status === filters['eq:status'])
+    if (filters['neq:status']) rows = rows.filter((r) => r.status !== filters['neq:status'])
+    if (filters['neq:order_kind']) rows = rows.filter((r) => (r.order_kind ?? 'production') !== filters['neq:order_kind'])
+    if (filters['gte:paid_at']) rows = rows.filter((r) => r.paid_at != null && r.paid_at >= filters['gte:paid_at'])
     // ProofDetailPage scopes its order read to the proof (.eq('proof_id', …)),
     // and its header actions branch on what comes back. Without this filter
     // every proof id was handed the WHOLE order list, so the detail page
@@ -896,6 +905,8 @@ function makeBuilder(schema: string, table: string): any {
         else if (prop === 'single' || prop === 'maybeSingle') state.single = true
         else if (prop === 'eq') state.filters[`eq:${args[0]}`] = args[1]
         else if (prop === 'in') state.filters[`in:${args[0]}`] = args[1]
+        else if (prop === 'neq') state.filters[`neq:${args[0]}`] = args[1]
+        else if (prop === 'gte') state.filters[`gte:${args[0]}`] = args[1]
         return proxy
       }
     },
