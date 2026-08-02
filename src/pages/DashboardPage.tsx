@@ -2927,7 +2927,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   // true — the panel ships shown — so the card doesn't flicker out on first
   // paint before the settings read resolves. An admin turning it off hides it.
   const [hotLeadsOn, setHotLeadsOn]       = useState(true)
-  const [orderCounts, setOrderCounts]     = useState<{ awaitingPayment: number; toOrder: number; invoiceProblem: number; paid7d: number; awaitingPaymentMoney?: BucketMoney; paid7dMoney?: BucketMoney } | null>(null)
+  const [orderCounts, setOrderCounts]     = useState<{ awaitingPayment: number; toOrder: number; invoiceProblem: number; paid30d: number; awaitingPaymentMoney?: BucketMoney; paid30dMoney?: BucketMoney } | null>(null)
   // current_version_id → thumbnail renditions (thumb / preview / full).
   // Populated in loadDashboard after the projects fetch via the
   // dashboard-thumbnails edge function (which signs each version's first
@@ -3161,9 +3161,9 @@ export default function DashboardPage({ activityView = false }: { activityView?:
       if (cancelled) return
       setOrderingOn(on)
       if (!on) return
-      // "Paid" is a rolling 7-day window, so the cutoff is computed here rather
-      // than in SQL — same clock the Approved tile uses.
-      const paidSince = new Date(Date.now() - 7 * 86_400_000).toISOString()
+      // "Paid" is a rolling 30-day window (the Approved tile keeps its 7), so
+      // the cutoff is computed here rather than in SQL.
+      const paidSince = new Date(Date.now() - 30 * 86_400_000).toISOString()
       const [a, o, p, w] = await Promise.all([
         // The money tiles fetch their rows rather than head-counting, so the
         // stamped amounts can be summed for the sub-line. `count: 'exact'`
@@ -3176,10 +3176,11 @@ export default function DashboardPage({ activityView = false }: { activityView?:
         // Offline orders carry neither id nor error, so they're excluded.
         supabase.from('orders').select('id', { count: 'exact', head: true })
           .eq('status', 'paid').is('xero_invoice_id', null).not('xero_invoice_error', 'is', null),
-        // Money actually taken this week. Two exclusions, both deliberate:
+        // Money actually taken in the last 30 days. Two exclusions, both
+        // deliberate:
         //   · cancelled — 6 cancelled orders on live still carry a paid_at
         //     (refunded or voided after the fact), and counting those as
-        //     revenue would overstate the week.
+        //     revenue would overstate the window.
         //   · reprint — a free replacement off the Flagged board is born paid
         //     and skips Stripe entirely (000295), so it would add to the count
         //     while contributing nothing to the total. Nobody paid for it.
@@ -3199,14 +3200,14 @@ export default function DashboardPage({ activityView = false }: { activityView?:
         awaitingPayment: a.count ?? 0,
         toOrder: o.count ?? 0,
         invoiceProblem: p.count ?? 0,
-        paid7d: w.count ?? 0,
+        paid30d: w.count ?? 0,
       })
       void getExchangeRates().then((rates) => {
         if (cancelled) return
         setOrderCounts((prev) => prev && {
           ...prev,
           awaitingPaymentMoney: sumOrderMoney(a.data, a.count, rates),
-          paid7dMoney: sumOrderMoney(w.data, w.count, rates),
+          paid30dMoney: sumOrderMoney(w.data, w.count, rates),
         })
       })
     })()
@@ -4235,13 +4236,13 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                           label="Paid"
                           // No srLabel: "Paid" is already the whole word, and
                           // countNote below says the window in the same breath
-                          // as the number ("4 in the last 7 days"), so adding
+                          // as the number ("4 in the last 30 days"), so adding
                           // one would only make a screen reader say it twice.
-                          countNote={{ short: '7D', spoken: 'in the last 7 days' }}
-                          help="Orders the customer has paid for in the last 7 days, and what they came to. Excludes cancelled orders and free reprints. Opens Logbook."
-                          count={orderCounts?.paid7d ?? 0}
+                          countNote={{ short: '30D', spoken: 'in the last 30 days' }}
+                          help="Orders the customer has paid for in the last 30 days, and what they came to. Excludes cancelled orders and free reprints. Opens Logbook."
+                          count={orderCounts?.paid30d ?? 0}
                           subline={bucketMoney(
-                            orderCounts?.paid7dMoney,
+                            orderCounts?.paid30dMoney,
                             '',
                             'taken',
                             'Every currency converted to GBP at today’s rate.',
