@@ -341,6 +341,24 @@ const ORDERS: FixtureOrder[] = [
     project_name: 'Hooli reprint',
     proofs: { status: 'approved', helpscout_last_reply_at: daysAgo(4), helpscout_last_customer_reply_at: daysAgo(2), helpscout_conversation_id: 'hs-15', helpscout_conversation_url: 'https://secure.helpscout.net/conversation/15', contacts: contact('Soylent Corp', 'Bill Rich') },
   }),
+  // Revised, re-approved, AND already gone to production once — the Experience
+  // Auto Group shape. Riskier than o15: there is a supplier job out there as
+  // well as stale files in the Dropbox folder, so the card must say BOTH, and
+  // the review page adds its "confirm the old Stock Control job is cancelled"
+  // gate on top.
+  order({
+    id: 'o16',
+    status: 'revision',
+    paid_at: daysAgo(19),
+    fulfilled_at: daysAgo(16),
+    revised_at: daysAgo(14),
+    xero_invoice_id: 'xi-7',
+    date_required: daysAhead(5).slice(0, 10),
+    dropbox_folder_url: 'https://www.dropbox.com/scl/fo/abc/order-1243',
+    stock_order_number: '1243',
+    project_name: 'Tyrell reissue',
+    proofs: { status: 'approved', helpscout_last_reply_at: daysAgo(14), helpscout_last_customer_reply_at: daysAgo(13), helpscout_conversation_id: 'hs-16', helpscout_conversation_url: 'https://secure.helpscout.net/conversation/16', contacts: contact('Tyrell Corp', 'Eldon Tyrell') },
+  }),
   // Recently ordered — placed cleanly: job in Stock Control, workshop note sent.
   order({ id: 'o9', status: 'fulfilled', paid_at: daysAgo(8), fulfilled_at: daysAgo(5), handoff_at: daysAgo(5), production_note_posted_at: daysAgo(5), stock_order_number: '403910', artwork_check_verdict: 'clear', artwork_checked_at: daysAgo(5), artwork_check: ARTWORK_REPORT_CLEAR, proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Pied Piper', 'Richard Hendricks') } }),
   // Recently ordered — the new half-way failure: the job IS in Stock Control

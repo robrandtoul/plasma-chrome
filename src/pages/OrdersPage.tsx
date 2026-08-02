@@ -3157,7 +3157,13 @@ function OrderCard({
     <PanelShell className={`transition-shadow duration-500 ${flash ? 'ring-2 ring-[var(--c-brand)]' : ''}`}>
       {isRevision && (
         <div className="mb-3 rounded-lg bg-out-soft px-3 py-2 text-[13px] font-semibold text-out ring-1 ring-out">
-          Paid · revision in progress — do not produce the previous artwork.
+          {/* "in progress" stops being true the moment the customer signs off
+              the replacement, and this banner rides the card into Place. The
+              warning it carries — don't make the OLD cards — matters just as
+              much then, so only the stale half changes. */}
+          {reapproved
+            ? 'Paid · revised artwork approved — do not produce the previous artwork.'
+            : 'Paid · revision in progress — do not produce the previous artwork.'}
         </div>
       )}
 
@@ -3298,15 +3304,21 @@ function OrderCard({
           {isRevision && (expanded || reapproved) && (
             <p
               className={`mt-2 text-[13px] ${
-                reapproved && !wasPlaced
+                // Tinted for every re-approved revision, INCLUDING one that
+                // already went to production. That case is the riskier of the
+                // two — there is a supplier job out there as well as stale
+                // files in the folder — so it must not be the quieter of them.
+                reapproved
                   ? 'rounded-lg bg-[var(--c-low-soft)]/50 px-3 py-2 text-ink'
                   : 'text-ink-soft'
               }`}
             >
-              {wasPlaced
-                ? 'Already placed: cancel the old Stock Control job, re-approve the new proof, and replace the Dropbox files before re-placing.'
-                : reapproved
-                  ? 'Revised and re-approved — no new payment needed. Check the Dropbox order folder holds the NEW artwork before placing.'
+              {reapproved
+                ? wasPlaced
+                  ? 'Revised and re-approved — no new payment needed. This one already went to production, so cancel the old Stock Control job and swap the Dropbox folder to the NEW artwork before re-placing.'
+                  : 'Revised and re-approved — no new payment needed. Check the Dropbox order folder holds the NEW artwork before placing.'
+                : wasPlaced
+                  ? 'Already went to production. Cancel the old Stock Control job, and replace the Dropbox files once the customer approves the new proof.'
                   : 'Waiting on the customer to approve the new proof. It comes back to Place once they do.'}
             </p>
           )}
