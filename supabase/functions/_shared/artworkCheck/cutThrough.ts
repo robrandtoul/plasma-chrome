@@ -29,6 +29,9 @@
 // reason. A silent "no islands found" that really meant "couldn't read the
 // file" is worse than no check at all — it reads as a clean bill of health.
 
+// Type-only, so this stays a self-contained pure module at runtime.
+import type { CheckSummary } from './types.ts'
+
 export interface CutPoint {
   x: number
   y: number
@@ -1247,6 +1250,105 @@ export function applyCutThroughFindings<
 }
 
 // ── Reporting ──────────────────────────────────────────────────────────────
+
+/**
+ * The one-line record that this check RAN, for the report's "Checks run" list.
+ *
+ * applyCutThroughFindings above only speaks when something is wrong, which left
+ * a pass indistinguishable from the check never running — on a metal order the
+ * reviewer could not tell "measured, nothing would fall out" from "not a
+ * cut-capable material", "the files wouldn't parse", or "the detector is off".
+ * A safety result is worth as much when it passes, so this reports every
+ * outcome, including the two silent ones.
+ *
+ * The wording is picked to be true of BOTH passing routes: a two-sided card
+ * whose cuts are all strutted, and a one-sided card settled by the pessimistic
+ * reading (analyseFace, no `back`). The latter proves nothing would come loose
+ * WITHOUT proving a strut exists, so "no piece would come loose" is the honest
+ * claim and "every piece is strutted" is not.
+ *
+ * Returns null when the check didn't run at all — the caller decides whether
+ * that's expected (not a cut-capable material) or worth reporting.
+ */
+export function summariseCutThrough(faces: CutThroughFace[]): CheckSummary | null {
+  if (faces.length === 0) return null
+
+  let loosePieces = 0
+  let conditionalFaces = 0
+  let cleanFaces = 0
+  let nothingCutFaces = 0
+  let unreadableFaces = 0
+  for (const { result } of faces) {
+    switch (result.status) {
+      case 'dropout': loosePieces += result.islands.length; break
+      case 'possible_dropout': conditionalFaces++; break
+      case 'clean': cleanFaces++; break
+      case 'no_cut_artwork': nothingCutFaces++; break
+      case 'cannot_check': unreadableFaces++; break
+    }
+  }
+
+  const key = 'cut_through'
+  const label = 'Loose pieces'
+  const faceCount = (n: number) => `${n} card face${n === 1 ? '' : 's'}`
+  const measured = faces.length - unreadableFaces
+
+  // Two short sentences rather than one long clause: the UI prints these after
+  // "Loose pieces — ", so a detail that opens with its own dash reads as two
+  // dashes in a row.
+  if (measured === 0) {
+    return {
+      key,
+      label,
+      outcome: 'not_run',
+      detail: `None of the ${faceCount(faces.length)} could be read, so nothing was measured — see “Couldn’t check”.`,
+    }
+  }
+
+  // Partial coverage must never read as full coverage.
+  const tail = unreadableFaces > 0
+    ? ` ${faceCount(unreadableFaces)} couldn’t be read — see “Couldn’t check”.`
+    : ''
+  const measuredSentence = `${faceCount(measured)} measured.`
+
+  // A confirmed loose piece outranks everything else on the run: the deduped
+  // sibling face counts as 'clean', so a pass line here would contradict the
+  // flag sitting directly above it.
+  if (loosePieces > 0) {
+    return {
+      key,
+      label,
+      outcome: 'flagged',
+      detail: `${measuredSentence} ${loosePieces} cut-out piece${loosePieces === 1 ? ' is' : 's are'} not held on — flagged above.${tail}`,
+    }
+  }
+  if (conditionalFaces > 0) {
+    return {
+      key,
+      label,
+      outcome: 'flagged',
+      detail: `${measuredSentence} The other side is missing, so ${conditionalFaces === 1 ? 'one card’s' : `${conditionalFaces} cards’`} cut-outs can’t be settled — flagged above.${tail}`,
+    }
+  }
+  if (cleanFaces > 0) {
+    const also = nothingCutFaces > 0
+      ? ` (${faceCount(nothingCutFaces)} ${nothingCutFaces === 1 ? 'has' : 'have'} nothing cut through.)`
+      : ''
+    return {
+      key,
+      label,
+      outcome: 'passed',
+      detail: `${measuredSentence} No cut-out piece would come loose at the supplier.${also}${tail}`,
+    }
+  }
+  // Ran, found nothing to check. Not a pass — there are no cut-outs to hold on.
+  return {
+    key,
+    label,
+    outcome: 'not_applicable',
+    detail: `${measuredSentence} Nothing is cut through these cards, so no piece can come loose.${tail}`,
+  }
+}
 
 export interface CardCheck {
   label: string

@@ -838,3 +838,67 @@ caught, and how any future flag can be audited.
 effectiveness is what we are now watching. Topological, so a strut that is present but
 hairline reads as clean. `deno check` was not run (Deno absent locally); byte-verified
 against main after deploy instead.
+
+---
+
+## 2026-08-02 — the cut-through check reports that it PASSED ("Checks run")
+
+**The gap.** `applyCutThroughFindings` only ever spoke when something was wrong: a
+`clean` face and a `no_cut_artwork` face both returned `continue`, adding nothing to
+the report. So on a metal order the reviewer had no way to distinguish **"measured, no
+piece would come loose"** from any of "not a cut-capable material", "the print files
+didn't parse", "the detector threw", or "the whole feature is off" — every one of
+those looks identical from the report. Rob, 2026-08-02: *"if nothing is detected with
+the drop-out test, it's completely silent on the report. I think this is a mistake."*
+A safety result is worth as much when it passes.
+
+**What was added.** `summariseCutThrough(faces)` returns one `CheckSummary`
+(`types.ts`) — `{key, label, outcome, detail}` with outcome `passed` | `flagged` |
+`not_applicable` | `not_run` — carried on the report as `checks[]` and rendered by
+`ArtworkCheckReportView` as a **Checks run** group above "Good to know".
+
+**Deliberately not a note.** `checks[]` is NOT in `ARTWORK_CHECK_SCHEMA`: the model
+must not be able to claim a check passed. It is written in code from the measurement,
+the same stance `applyCutThroughFindings` already takes, and it renders in its own
+group rather than in `notes[]` so a reviewer betting a reprint on "nothing will fall
+out" can tell a measurement from a model observation. `prompts.ts`'s "if every piece
+stays attached, say nothing at all" rule is unchanged — the model still stays quiet;
+the code speaks instead.
+
+**Four outcomes, and why they're not three.**
+- `passed` — cut-outs measured, none would come loose. Covers BOTH passing routes:
+  a two-sided card whose cuts are all strutted, and a one-sided card settled by the
+  pessimistic reading. The wording is *"no cut-out piece would come loose"*, never
+  *"every piece is strutted"* — the one-sided route proves the former without
+  proving the latter, and over-claiming there would be a lie about the evidence.
+- `not_applicable` — ran, nothing is cut through. Deliberately **not** dressed as a
+  pass: there is nothing holding on to verify, and a green tick would be false
+  reassurance.
+- `flagged` — the finding is already listed above; this just records that the check
+  is why. Takes precedence over any clean face on the same run, because
+  `dedupeMirroredFaces` leaves the sibling of a real dropout as `clean`, so a naive
+  count would print a pass line directly beneath a red flag.
+- `not_run` — cut-capable material, print files present, and nothing measured
+  (every face `cannot_check`, or `analyseOrderArtwork` threw). Renders amber-tinted:
+  unverified must never look verified inside a green card, the same rule the
+  "Couldn't check" group follows.
+
+Partial coverage never reads as full coverage — the unreadable faces are counted
+separately in the same sentence and point at "Couldn't check".
+
+**Scope.** Order-time check only. The pre-send **proof** check has no vector print
+files (only proof JPEGs), so the detector genuinely cannot run there and its report
+carries no `checks[]` — silence there is honest, but it is now silence of a different
+kind from the order check's, which is worth revisiting if it confuses anyone.
+
+**Back-compatible.** `checks` is optional and absent on every report stored before
+this; those render no group at all rather than implying the run did or didn't measure
+it. `buildReport`'s new parameter is trailing and defaulted, so the proof-check caller
+is unchanged.
+
+**Tests.** 152 in `cutThrough.test.ts` (`pnpm test:cut-through`), the new ones
+covering exactly the two states the check used to be silent on, plus the
+deduped-sibling trap and partial coverage. Harness rig
+`?path=/artwork-report-cutthrough` now shows three panels (red / amber / **green —
+measured and held on**) with strings verbatim from `summariseCutThrough`;
+`?path=/artwork-report` carries the `not_applicable` state.

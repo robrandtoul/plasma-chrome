@@ -34,6 +34,7 @@ import {
   applyCutThroughFindings,
   buildCutThroughContext,
   dedupeMirroredFaces,
+  summariseCutThrough,
   type CutThroughFace,
 } from '../_shared/artworkCheck/cutThrough.ts'
 import {
@@ -1114,7 +1115,27 @@ Deno.serve(async (req) => {
     // model, so a loose piece reaches the verdict whether or not the model
     // chose to repeat it. deriveVerdict runs on the merged report.
     const merged = applyCutThroughFindings(result, cutThroughFaces)
-    return await finish(buildReport(runModel, merged, buildInputs(baseCtx, threadMessages, threadFound), usage))
+    // …and recorded in "Checks run" whatever it found, so a pass is visible
+    // rather than inferred from the absence of a flag. A cut-capable material
+    // whose files all failed to parse says so instead of going quiet.
+    const cutSummary = summariseCutThrough(cutThroughFaces) ?? (
+      baseCtx.cutThrough && cutThroughInput.length > 0
+        ? {
+          key: 'cut_through',
+          label: 'Loose pieces',
+          outcome: 'not_run' as const,
+          detail: 'The check couldn’t run on these print files, so nothing was measured for pieces that might fall out.',
+        }
+        : null
+    )
+    return await finish(buildReport(
+      runModel,
+      merged,
+      buildInputs(baseCtx, threadMessages, threadFound),
+      usage,
+      new Date(),
+      cutSummary ? [cutSummary] : [],
+    ))
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[artwork-check] run failed:', msg)

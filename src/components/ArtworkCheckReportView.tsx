@@ -39,6 +39,17 @@ const FAULT_LABELS: Record<ArtworkInvestigation['fault'], string> = {
   undetermined: 'Couldn’t be determined from the history',
 }
 
+// A deterministic check the function ran itself, recorded whatever it found —
+// pass included. Written in code from the measurement, never by the model:
+// see CheckSummary in supabase/functions/_shared/artworkCheck/types.ts for why
+// a silent pass was the wrong default.
+export interface ArtworkCheckSummary {
+  key: string
+  label: string
+  outcome: 'passed' | 'flagged' | 'not_applicable' | 'not_run'
+  detail: string
+}
+
 export interface ArtworkCheckReport {
   verdict: 'clear' | 'flagged' | 'defect' | 'error'
   summary: string
@@ -49,6 +60,9 @@ export interface ArtworkCheckReport {
   checked_at: string
   error?: string
   investigations?: Record<string, ArtworkInvestigation>
+  // Absent on reports stored before this shipped — those render no "Checks
+  // run" group at all, rather than implying the run did or didn't do it.
+  checks?: ArtworkCheckSummary[]
 }
 
 // Red count for the ❌ headline: defect-grade flags + defect-grade unresolved
@@ -347,6 +361,41 @@ export default function ArtworkCheckReportView({
                 <span>{g}</span>
               </li>
             ))}
+          </ul>
+        </div>
+      )}
+
+      {/* What the run MEASURED for itself, pass or fail. Separate from "Good
+          to know" on purpose: those are the model's observations, these are
+          deterministic results computed in code, and a reviewer betting a
+          reprint on "no piece will fall out" needs to know which one they're
+          reading. A passing safety check that says nothing is
+          indistinguishable from one that never ran (Rob, 2026-08-02). */}
+      {(report.checks?.length ?? 0) > 0 && (
+        <div className="mt-4">
+          <GroupLabel>Checks run</GroupLabel>
+          <ul className="space-y-1.5 text-[13px]">
+            {report.checks!.map((c, i) => {
+              const passed = c.outcome === 'passed'
+              const attention = c.outcome === 'flagged' || c.outcome === 'not_run'
+              return (
+                <li
+                  key={i}
+                  className={`flex gap-2 break-words rounded-md py-1 ${
+                    // Unverified must never look verified inside a green card —
+                    // the same rule the "Couldn't check" group follows.
+                    c.outcome === 'not_run' ? 'bg-[var(--c-low-soft)]/40 px-2' : ''
+                  }`}
+                >
+                  <span aria-hidden className={`shrink-0 ${passed ? 'text-in-stock' : 'text-ink-mute'}`}>
+                    {passed ? '✓' : attention ? '⚠️' : '—'}
+                  </span>
+                  <span className="text-ink-soft">
+                    <span className="font-medium text-ink">{c.label}</span> — {c.detail}
+                  </span>
+                </li>
+              )
+            })}
           </ul>
         </div>
       )}

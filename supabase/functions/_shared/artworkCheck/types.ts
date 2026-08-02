@@ -72,6 +72,35 @@ export interface ModelReport {
   reference_gaps: string[]
 }
 
+// A deterministic check the function ran itself, recorded whatever it found —
+// including when it found nothing.
+//
+// This exists because a safety check that only speaks up when it FAILS gives a
+// reviewer no way to tell "measured, all good" from "never ran". The cut-through
+// detector was silent on a pass for its first three months; on a metal order
+// that silence is indistinguishable from the material not being cut-capable, the
+// files not parsing, or the whole check being off.
+//
+// Deliberately NOT part of ModelReport / ARTWORK_CHECK_SCHEMA: the model must
+// not be able to claim a check passed. These are written in code from the
+// measurement, same stance as applyCutThroughFindings.
+export interface CheckSummary {
+  // Stable identifier, so the UI can special-case one later without matching
+  // on prose. 'cut_through' is the only one today.
+  key: string
+  // Names the check in the reviewer's language, e.g. "Loose pieces".
+  label: string
+  // passed         — it ran, and what it looks for isn't there.
+  // flagged        — it ran and found something; the finding is listed above.
+  // not_applicable — it ran, but this artwork has nothing for it to check.
+  // not_run        — it should have run and couldn't. Never silent.
+  outcome: 'passed' | 'flagged' | 'not_applicable' | 'not_run'
+  // One plain sentence: what was measured and what came of it.
+  detail: string
+}
+
+export type CheckOutcome = CheckSummary['outcome']
+
 export type ArtworkCheckVerdict = 'clear' | 'flagged' | 'defect' | 'error'
 
 // What actually gets fetched and fed to the model — stored on the report so a
@@ -125,4 +154,8 @@ export interface ArtworkCheckReport extends ModelReport {
   // field) — see investigate.ts. Deliberately discarded by a force re-run of
   // the main check (new report, new flags).
   investigations?: Record<string, import('./investigate.ts').Investigation>
+  // The deterministic checks this run performed, pass or fail. Absent on
+  // reports stored before this shipped — the UI shows nothing rather than
+  // claiming an old run was checked or wasn't.
+  checks?: CheckSummary[]
 }

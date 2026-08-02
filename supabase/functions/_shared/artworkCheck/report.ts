@@ -5,6 +5,7 @@
 
 import type {
   ArtworkCheckReport,
+  CheckSummary,
   ModelReport,
   ReportInputs,
   ReportUsage,
@@ -51,6 +52,11 @@ export function buildReport(
   inputs: ReportInputs,
   usage: ReportUsage | null,
   now: Date = new Date(),
+  // The deterministic checks this run performed, pass or fail (see
+  // CheckSummary). Trailing and defaulted so every existing caller is
+  // unchanged; omitted means the report simply says nothing about them, which
+  // is what a report from before this shipped honestly does.
+  checks: CheckSummary[] = [],
 ): ArtworkCheckReport {
   return {
     ...modelReport,
@@ -59,6 +65,7 @@ export function buildReport(
     model,
     usage,
     checked_at: now.toISOString(),
+    ...(checks.length > 0 ? { checks } : {}),
   }
 }
 

@@ -176,6 +176,9 @@ const ARTWORK_REPORT_CUTTHROUGH: ArtworkCheckReport = {
     'The print files match the proof the customer approved.',
   ],
   reference_gaps: [],
+  checks: [
+    { key: 'cut_through', label: 'Loose pieces', outcome: 'flagged', detail: '2 card faces measured. 1 cut-out piece is not held on — flagged above.' },
+  ],
   checked_at: '2026-07-27T11:04:00.000Z',
 }
 
@@ -199,13 +202,43 @@ const ARTWORK_REPORT_CUTTHROUGH_MAYBE: ArtworkCheckReport = {
   corrections: [],
   notes: [],
   reference_gaps: [],
+  checks: [
+    { key: 'cut_through', label: 'Loose pieces', outcome: 'flagged', detail: '1 card face measured. The other side is missing, so one card’s cut-outs can’t be settled — flagged above.' },
+  ],
   checked_at: '2026-07-27T11:04:00.000Z',
+}
+
+// The state the check used to be SILENT on, and the reason "Checks run" exists
+// (Rob, 2026-08-02): the cut-outs were measured and every one is held on. From
+// the report alone a reviewer previously could not tell this apart from the
+// check never having run. Strings verbatim from summariseCutThrough.
+const ARTWORK_REPORT_CUTTHROUGH_PASS: ArtworkCheckReport = {
+  verdict: 'clear',
+  summary: 'Every printed detail matches what the customer supplied, and every piece cut through the card is held on.',
+  cards: [
+    {
+      label: 'Marcus Kane — 01_Front.ai / 01_Back.ai',
+      findings: [
+        { field: 'name', supplied: 'Marcus Kane (request form)', printed: 'Marcus Kane', status: 'match', note: '' },
+        { field: 'company', supplied: 'Kane Joinery (request form)', printed: 'Kane Joinery', status: 'match', note: '' },
+        { field: 'email', supplied: 'marcus@kanejoinery.co.uk (request form)', printed: 'marcus@kanejoinery.co.uk', status: 'match', note: '' },
+        { field: 'mob', supplied: '07700 900412 (customer reply, 2 Jul)', printed: '07700 900412', status: 'match', note: '' },
+      ],
+    },
+  ],
+  corrections: [],
+  notes: ['The back reads reversed because the design cuts right through the card.'],
+  reference_gaps: [],
+  checks: [
+    { key: 'cut_through', label: 'Loose pieces', outcome: 'passed', detail: '2 card faces measured. No cut-out piece would come loose at the supplier.' },
+  ],
+  checked_at: '2026-08-02T10:20:00.000Z',
 }
 
 function ArtworkReportCutThroughRig() {
   return (
     <div className="min-h-screen bg-canvas">
-      <div className="mx-auto grid max-w-5xl gap-6 px-4 py-10 lg:grid-cols-2">
+      <div className="mx-auto grid max-w-6xl gap-6 px-4 py-10 lg:grid-cols-3">
         <div>
           <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-mute">Red — a piece would fall out</p>
           <div className="rounded-lg bg-surface px-3.5 py-3 ring-1 ring-[var(--c-out)]/50">
@@ -220,6 +253,15 @@ function ArtworkReportCutThroughRig() {
           <div className="rounded-lg bg-surface px-3.5 py-3 ring-1 ring-[var(--c-out)]/50">
             <ArtworkCheckReportView
               report={ARTWORK_REPORT_CUTTHROUGH_MAYBE}
+              action={<button type="button" className="text-[13px] font-medium text-brand hover:underline">Re-run</button>}
+            />
+          </div>
+        </div>
+        <div>
+          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-mute">Green — measured and held on</p>
+          <div className="rounded-lg bg-surface px-3.5 py-3 ring-1 ring-[var(--c-in-stock)]/40">
+            <ArtworkCheckReportView
+              report={ARTWORK_REPORT_CUTTHROUGH_PASS}
               action={<button type="button" className="text-[13px] font-medium text-brand hover:underline">Re-run</button>}
             />
           </div>
@@ -272,6 +314,11 @@ const ARTWORK_REPORT_FIXTURE: ArtworkCheckReport = {
   ],
   reference_gaps: [
     'No phone number was supplied in the thread, so the printed number couldn’t be verified.',
+  ],
+  // "Ran, and there was nothing for it to check" — deliberately NOT dressed up
+  // as a pass, since there are no cut-outs to be held on.
+  checks: [
+    { key: 'cut_through', label: 'Loose pieces', outcome: 'not_applicable', detail: '2 card faces measured. Nothing is cut through these cards, so no piece can come loose.' },
   ],
   checked_at: '2026-07-23T09:14:00.000Z',
 }

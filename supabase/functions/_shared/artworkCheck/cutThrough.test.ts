@@ -30,6 +30,7 @@ import {
   reachableFromBorder,
   readArtBox,
   sameCard,
+  summariseCutThrough,
   type ParsedFace,
   type SubPath,
 } from './cutThrough.ts'
@@ -772,6 +773,98 @@ const faceResult = (over: Partial<import('./cutThrough.ts').FaceResult>) => ({
   ])
   eq('clean faces pass through', untouched[0].result.status, 'clean')
   eq('conditionals are never collapsed', untouched[1].result.status, 'possible_dropout')
+}
+
+// ── summariseCutThrough: the check reports that it RAN ─────────────────────
+// The point of the summary is the states applyCutThroughFindings is silent on
+// — a pass and a nothing-to-check — so those carry the most tests here.
+
+{
+  eq('no faces means no summary at all', summariseCutThrough([]), null)
+}
+
+{
+  const s = summariseCutThrough([
+    { label: '01_Front.ai', result: faceResult({ status: 'clean', cutRegions: 3 }) },
+    { label: '01_Back.ai', result: faceResult({ status: 'clean', cutRegions: 3 }) },
+  ])!
+  eq('an all-clean run reports a pass', s.outcome, 'passed')
+  check('counting the faces it measured', /2 card faces/.test(s.detail), s.detail)
+  check('and saying what that proves', /would come loose/i.test(s.detail), s.detail)
+  // The one-sided pass proves "nothing comes loose", NOT "a strut exists" —
+  // claiming the strut would over-report what the detector actually measured.
+  check('without claiming a strut was seen', !/strut/i.test(s.detail), s.detail)
+}
+
+{
+  // The pessimistic one-sided pass (analyseFace with no back) is a real pass
+  // and reads as one: cutRegions is 0 there, so it must not fall through to
+  // the nothing-cut branch.
+  const s = summariseCutThrough([
+    { label: '01_AnthonyDumas.ai', result: faceResult({ status: 'clean', cutRegions: 0, printedWhiteRegions: 5 }) },
+  ])!
+  eq('a one-sided settled face still passes', s.outcome, 'passed')
+  check('worded for one face', /1 card face/.test(s.detail), s.detail)
+}
+
+{
+  const s = summariseCutThrough([
+    { label: 'a.ai', result: faceResult({ status: 'no_cut_artwork', cutRegions: 0 }) },
+    { label: 'b.ai', result: faceResult({ status: 'no_cut_artwork', cutRegions: 0 }) },
+  ])!
+  // Nothing cut is NOT a pass — there is nothing holding on to verify, and
+  // dressing it as one would hand a reviewer false reassurance.
+  eq('nothing cut is not_applicable', s.outcome, 'not_applicable')
+  check('and says so plainly', /nothing is cut through/i.test(s.detail), s.detail)
+}
+
+{
+  const s = summariseCutThrough([
+    { label: 'a.ai', result: faceResult({ status: 'clean', cutRegions: 2 }) },
+    { label: 'b.ai', result: faceResult({ status: 'no_cut_artwork', cutRegions: 0 }) },
+  ])!
+  eq('a mixed run passes', s.outcome, 'passed')
+  check('naming the faces with nothing cut', /1 card face has nothing cut through/.test(s.detail), s.detail)
+}
+
+{
+  // The deduped sibling of a real dropout is 'clean' with no islands, so a
+  // naive count would print a pass line directly under a red flag.
+  const s = summariseCutThrough([
+    { label: 'a.ai', result: faceResult({ status: 'dropout', islands: [{ areaPt2: 17.6, areaMm2: 2.19, x: 26.9, y: 30, widthPt: 4.5, heightPt: 3.9 }] }) },
+    { label: 'b.ai', result: faceResult({ status: 'clean', islands: [] }) },
+  ])!
+  eq('a found piece outranks the clean sibling', s.outcome, 'flagged')
+  check('never claiming a pass alongside it', !/would come loose at the supplier/.test(s.detail), s.detail)
+  check('and pointing at the finding', /flagged above/.test(s.detail), s.detail)
+}
+
+{
+  const s = summariseCutThrough([
+    { label: '02.ai', result: faceResult({ status: 'possible_dropout', cutRegions: 0, islands: [{ areaPt2: 390, areaMm2: 48.28, x: 21, y: 100.8, widthPt: 60, heightPt: 60 }] }) },
+  ])!
+  eq('a one-sided conditional is flagged, not passed', s.outcome, 'flagged')
+  check('explaining what is missing', /the other side is missing/i.test(s.detail), s.detail)
+}
+
+{
+  const s = summariseCutThrough([
+    { label: 'a.ai', result: faceResult({ status: 'cannot_check', reason: 'damaged' }) },
+    { label: 'b.ai', result: faceResult({ status: 'cannot_check', reason: 'damaged' }) },
+  ])!
+  eq('nothing readable is not_run, never a pass', s.outcome, 'not_run')
+  check('sending the reviewer to the gap list', /Couldn’t check/.test(s.detail), s.detail)
+}
+
+{
+  // Partial coverage must not read as full coverage.
+  const s = summariseCutThrough([
+    { label: 'a.ai', result: faceResult({ status: 'clean', cutRegions: 2 }) },
+    { label: 'b.ai', result: faceResult({ status: 'cannot_check', reason: 'damaged' }) },
+  ])!
+  eq('a partial run still passes on what it read', s.outcome, 'passed')
+  check('counting only the measured face', /^1 card face measured\./.test(s.detail), s.detail)
+  check('and declaring the unread one', /1 card face couldn’t be read/.test(s.detail), s.detail)
 }
 
 console.log(`\ncutThrough: ${passed} passed, ${failed} failed`)
