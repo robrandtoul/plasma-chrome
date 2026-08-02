@@ -313,7 +313,8 @@ const ORDERS: FixtureOrder[] = [
     handoff_error: 'material "Letterpress" is not mapped to a Stock Control material',
     proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-4', contacts: contact('Initech', 'Bill Lumbergh') },
   }),
-  // Being revised — paid + placed, artwork being redone.
+  // Being revised — paid + placed, artwork being redone. Proof is back to
+  // in_progress, so this one STAYS under Being revised.
   order({
     id: 'o8',
     status: 'revision',
@@ -321,7 +322,24 @@ const ORDERS: FixtureOrder[] = [
     fulfilled_at: daysAgo(6),
     revised_at: daysAgo(1),
     xero_invoice_id: 'xi-3',
-    proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-5', contacts: contact('Hooli', 'Gavin Belson') },
+    proofs: { status: 'in_progress', helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-5', contacts: contact('Hooli', 'Gavin Belson') },
+  }),
+  // Revised AND re-approved — the case Rob asked for: the customer has signed
+  // off the replacement artwork, so this belongs back in PLACE with the rest of
+  // the work, no second link and no second payment. Never placed
+  // (fulfilled_at null), so there is no old Stock Control job to cancel — it
+  // just needs the Dropbox folder swapping to the new files.
+  order({
+    id: 'o15',
+    status: 'revision',
+    paid_at: daysAgo(11),
+    revised_at: daysAgo(4),
+    xero_invoice_id: 'xi-6',
+    date_required: daysAhead(6).slice(0, 10),
+    dropbox_folder_url: 'https://www.dropbox.com/scl/fo/abc/order-1242',
+    stock_order_number: '1242',
+    project_name: 'Hooli reprint',
+    proofs: { status: 'approved', helpscout_last_reply_at: daysAgo(4), helpscout_last_customer_reply_at: daysAgo(2), helpscout_conversation_id: 'hs-15', helpscout_conversation_url: 'https://secure.helpscout.net/conversation/15', contacts: contact('Soylent Corp', 'Bill Rich') },
   }),
   // Recently ordered — placed cleanly: job in Stock Control, workshop note sent.
   order({ id: 'o9', status: 'fulfilled', paid_at: daysAgo(8), fulfilled_at: daysAgo(5), handoff_at: daysAgo(5), production_note_posted_at: daysAgo(5), stock_order_number: '403910', artwork_check_verdict: 'clear', artwork_checked_at: daysAgo(5), artwork_check: ARTWORK_REPORT_CLEAR, proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Pied Piper', 'Richard Hendricks') } }),

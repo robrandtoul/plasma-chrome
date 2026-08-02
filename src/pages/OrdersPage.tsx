@@ -170,6 +170,10 @@ interface OrderRow {
   // materials.
   material_options: { display_name: string | null } | null
   proofs: {
+    // The PROOF's status (in_progress | approved | dormant | abandoned), not
+    // the order's. Only used to tell a revision the customer has re-approved
+    // (→ ready to place) from one still being redesigned — see isPlaceable.
+    status: string | null
     // Thread-wide reply stamps (000208) — drive the specific grace-pause label.
     helpscout_last_reply_at: string | null
     helpscout_last_customer_reply_at: string | null
@@ -195,7 +199,7 @@ const SELECT = `
   ship_to_name, ship_to_email, ship_to_phone, ship_to_address, customs_tax_id, ship_dest_country, proof_id,
   material_variants(display_name, materials(code, display_name, production_route, lead_time_max_days, outsourced_supplier_ids)),
   material_options(display_name),
-  proofs(helpscout_last_reply_at, helpscout_last_customer_reply_at, helpscout_conversation_id, helpscout_conversation_url, contacts(full_name, companies(name)))
+  proofs(status, helpscout_last_reply_at, helpscout_last_customer_reply_at, helpscout_conversation_id, helpscout_conversation_url, contacts(full_name, companies(name)))
 `
 
 // The dropbox-folder edge function response (uniform { ok } shape).
@@ -620,6 +624,36 @@ function gbpValueOf(o: OrderRow, rates: ExchangeRates | null): number {
 
 function sumGbp(orders: OrderRow[], rates: ExchangeRates | null): number {
   return orders.reduce((acc, o) => acc + gbpValueOf(o, rates), 0)
+}
+
+// Is this order ready to be placed?
+//
+// 'paid' is the ordinary case. The subtle one is 'revision': a revised order
+// NEVER returns to 'paid' — nothing in the system writes that status except the
+// Stripe webhook and offline-payment recording, and the customer already paid —
+// so it stays 'revision' until it goes straight to 'fulfilled'. It becomes
+// placeable again the moment the customer approves the replacement artwork, and
+// before this it sat in the collapsed "Being revised" block with nothing
+// signalling that (Rob, 2026-08-02: "once approved it needs to go back to
+// Place… It doesn't require a second order link or payment").
+//
+// ⚠ `proofs.status === 'approved'` is exactly the predicate OrderReviewPage
+// uses for revisionNeedsApproval, and place-order's own 409 mirrors it. If one
+// of the three changes they must all change, or the page will offer a card the
+// server then refuses.
+//
+// ⚠ Used by BOTH the filtered section buckets and the unfiltered header counts.
+// Route every one of them through this, never through a re-typed status test:
+// the counts and the sections disagreeing is the drift this page has been
+// bitten by before.
+function isPlaceable(o: OrderRow): boolean {
+  if (o.status === 'paid') return true
+  return o.status === 'revision' && o.proofs?.status === 'approved'
+}
+
+/** A revision still waiting on the customer to approve the replacement. */
+function isAwaitingReapproval(o: OrderRow): boolean {
+  return o.status === 'revision' && o.proofs?.status !== 'approved'
 }
 
 // Free-text match across the fields a designer would search by: customer /
@@ -1774,11 +1808,12 @@ export default function OrdersPage() {
           if (ae !== be) return ae - be
           return new Date(b.sent_at ?? 0).getTime() - new Date(a.sent_at ?? 0).getTime()
         }),
-      // To order: paid, not yet placed. A blocking problem (failed invoice)
-      // floats to the top; otherwise newest-paid-first so the most recently
-      // paid order sits at the top.
+      // To order: paid (or a revision the customer has re-approved), not yet
+      // placed. A blocking problem (failed invoice) floats to the top;
+      // otherwise newest-paid-first so the most recently paid order sits at
+      // the top.
       toOrder: filtered
-        .filter((o) => o.status === 'paid')
+        .filter(isPlaceable)
         .sort((a, b) => {
           const ap = hasInvoiceProblem(a) ? 0 : 1
           const bp = hasInvoiceProblem(b) ? 0 : 1
@@ -1786,8 +1821,10 @@ export default function OrdersPage() {
           return new Date(b.paid_at ?? b.sent_at ?? 0).getTime() - new Date(a.paid_at ?? a.sent_at ?? 0).getTime()
         }),
       recentlyOrdered: filtered.filter((o) => o.status === 'fulfilled').slice(0, 30),
-      // Paid/placed orders held while the proof is being redesigned (revision).
-      beingRevised: filtered.filter((o) => o.status === 'revision'),
+      // Orders parked while the proof is being redesigned. Only the ones still
+      // waiting on the customer — once they re-approve, the order is ready to
+      // place and moves up to PLACE with the rest of the work.
+      beingRevised: filtered.filter(isAwaitingReapproval),
     }
   }, [orders, search])
 
@@ -1920,8 +1957,12 @@ export default function OrdersPage() {
   // status overview, independent of the queue's search/filter). The £ on To
   // order is the one figure that's real: paid money awaiting placement.
   const sentAll = orders.filter((o) => o.status === 'sent')
-  const paidAll = orders.filter((o) => o.status === 'paid')
-  const revisionCount = orders.filter((o) => o.status === 'revision').length
+  // Same two predicates the sections use, so the header can't drift from the
+  // list below it. paidAll therefore includes re-approved revisions — they ARE
+  // paid money awaiting placement, which is exactly what the £ figure claims to
+  // count, and they now sit in PLACE where that figure points.
+  const paidAll = orders.filter(isPlaceable)
+  const revisionCount = orders.filter(isAwaitingReapproval).length
 
   // Orders that reached Stock Control but whose workshop note / supplier email
   // never went (docs/order-handoff-spec.md §3.4). Nobody is making these until
@@ -2527,7 +2568,9 @@ export default function OrdersPage() {
                             {` · ${gbpLabel(sumGbp(beingRevised, rates))}`}
                           </h3>
                           <p className="mt-1 text-[13px] text-ink-mute">
-                            Re-approve the new proof and replace the files in the Dropbox order folder, then review &amp; place again.
+                            Waiting on the customer to approve the new proof. Once they do, the order moves
+                            back up to Place — no new link or payment needed — and you replace the files in
+                            the Dropbox order folder before placing it.
                           </p>
                           <div className="mt-3 space-y-4">
                             {beingRevised.map((o) => (
@@ -3104,6 +3147,10 @@ function OrderCard({
   // same prep card: an order revised BEFORE its docket was prepped (folder/date/
   // colour never set) still needs those fields to satisfy the place gate.
   const isRevision = order.status === 'revision'
+  // A revision the customer has approved: placeable again, and now shown in
+  // Place rather than Being revised. Same test as isPlaceable / the review
+  // page's revisionNeedsApproval — keep all three together.
+  const reapproved = isRevision && order.proofs?.status === 'approved'
   const wasPlaced = !!order.fulfilled_at
 
   return (
@@ -3241,11 +3288,26 @@ function OrderCard({
             )}
           </div>
 
-          {expanded && isRevision && (
-            <p className="mt-2 text-[13px] text-ink-soft">
+          {/* A re-approved revision shows this even COLLAPSED, and tinted: it
+              is now sitting in Place looking like ordinary work, but the
+              Dropbox folder still holds the artwork the customer rejected until
+              someone swaps it. Placing it in that state sends the wrong cards
+              to the supplier, which is the one mistake this whole flow exists
+              to prevent. The still-being-revised case stays quiet until opened
+              — nothing can go wrong there yet. */}
+          {isRevision && (expanded || reapproved) && (
+            <p
+              className={`mt-2 text-[13px] ${
+                reapproved && !wasPlaced
+                  ? 'rounded-lg bg-[var(--c-low-soft)]/50 px-3 py-2 text-ink'
+                  : 'text-ink-soft'
+              }`}
+            >
               {wasPlaced
                 ? 'Already placed: cancel the old Stock Control job, re-approve the new proof, and replace the Dropbox files before re-placing.'
-                : 'Re-approve the new proof and make sure the Dropbox order folder holds the new artwork, then place as normal.'}
+                : reapproved
+                  ? 'Revised and re-approved — no new payment needed. Check the Dropbox order folder holds the NEW artwork before placing.'
+                  : 'Waiting on the customer to approve the new proof. It comes back to Place once they do.'}
             </p>
           )}
 
