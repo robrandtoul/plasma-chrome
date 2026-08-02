@@ -524,13 +524,24 @@ function StatTile({ label, srLabel, count, active, tone, onClick, help, badge, b
       // a side gives 61px, which is MORE room than the 56px eight tiles had at
       // px-5. Only at xl: below it the tiles are a 140px snap-strip or a 3-col
       // grid, where the roomier padding is right.
-      className="flex flex-col items-start gap-2 px-5 py-5 text-left transition-colors hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)] relative xl:flex-1 xl:min-w-0 xl:px-3 max-md:w-[140px] max-md:shrink-0 max-md:snap-start max-md:rounded-[12px] max-md:border max-md:border-line"
+      // `md:bg-surface` is what makes the strip's md hairlines visible: the
+      // grid paints a line colour behind a 1px gap, and each tile has to paint
+      // over it or the line colour floods the whole cell. Cancelled at xl,
+      // where the tile sits transparent inside its zone box.
+      className="flex flex-col items-start gap-2 px-5 py-5 text-left transition-colors hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)] relative md:bg-surface xl:bg-transparent xl:flex-1 xl:min-w-0 xl:px-3 max-md:w-[140px] max-md:shrink-0 max-md:snap-start max-md:rounded-[12px] max-md:border max-md:border-line"
       style={{
         // Active state: a soft tint of the tile's tone fills the cell
         // background. Cleaner than an inset ring when each cell sits
         // inside a unified panel — the ring would compete with the
         // panel border and the dividing hairlines.
-        backgroundColor: active ? `color-mix(in srgb, ${tint} 8%, transparent)` : undefined,
+        //
+        // Mixed over the panel colour rather than `transparent`: at md the
+        // tile now sits on the strip's line-coloured background (that is what
+        // draws the hairlines), so a transparent tint would pick up the warm
+        // line colour and render a different shade there than at xl. Mixing
+        // against an explicit base makes the active tile look the same at
+        // every width, whatever is behind it.
+        backgroundColor: active ? `color-mix(in srgb, ${tint} 8%, var(--c-bg-panel))` : undefined,
       }}
     >
       {badge != null && badge > 0 && (
@@ -4099,7 +4110,19 @@ export default function DashboardPage({ activityView = false }: { activityView?:
               <div
                 ref={tilesStripRef}
                 onScroll={handleTilesScroll}
-                className="flex gap-2.5 overflow-x-auto px-4 pb-3 [scroll-snap-type:x_mandatory] md:gap-0 md:overflow-x-visible md:px-0 md:pb-0 md:[scroll-snap-type:none] md:grid md:grid-cols-3 xl:flex xl:items-stretch xl:gap-3 xl:px-6 xl:pt-3 xl:pb-5"
+                // md-only hairlines. Between md and xl the tiles are a plain
+                // 3-column grid with nothing between them, which reads as a
+                // field of floating numbers rather than a set of figures. The
+                // lines are drawn as a 1px GAP over a line-coloured container
+                // — the tiles paint their own background over it — rather than
+                // per-tile borders, which would double up between neighbours
+                // and need unpicking at the edges.
+                //
+                // ⚠ Both halves are md-only and cancelled at xl, where the
+                // zone boxes already own the dividers (xl:divide-x) and a
+                // background here would paint over their rounded corners.
+                // Below md the tiles are a snap-strip with their own borders.
+                className="flex gap-2.5 overflow-x-auto px-4 pb-3 [scroll-snap-type:x_mandatory] md:gap-px md:bg-line-soft md:overflow-x-visible md:px-0 md:pb-0 md:[scroll-snap-type:none] md:grid md:grid-cols-3 xl:flex xl:items-stretch xl:gap-3 xl:bg-transparent xl:px-6 xl:pt-3 xl:pb-5"
               >
                 {/* Triage zone — the cross-cutting alert, set apart so it isn't
                     read as pipeline stage zero. Rose top bracket + rose legend (no
