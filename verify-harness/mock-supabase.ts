@@ -370,6 +370,35 @@ const ORDERS: FixtureOrder[] = [
   order({ id: 'o13', status: 'fulfilled', quantity: 10000, payment_reference: 'ORD-A7A33935C2', paid_at: daysAgo(9), fulfilled_at: daysAgo(7), handoff_at: daysAgo(7), production_note_posted_at: daysAgo(7), stock_order_number: '403914', artwork_check_verdict: 'flagged', artwork_checked_at: daysAgo(7), artwork_check: ARTWORK_REPORT_FLAGGED, proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Elite Credentials International', 'Bertram Gilfoyle') } }),
 ].map((o, i) => ({ ...o, proof_id: `p-${o.id}` }))
 
+// ?busy=1 — a busy month for the dashboard rig: ~105 extra paid production
+// orders spread across the last four weeks, so the Paid tile renders a
+// three-digit count with a five-figure money line. That is the shape that
+// first overflowed the xl tile on live ("115 · £57,385" in a ~61px content
+// box); keep this rig passing and the strip survives a good month. Gated
+// behind the URL flag so the Orders rigs keep their curated ten.
+const BUSY_MONTH_ORDERS: FixtureOrder[] = Array.from({ length: 105 }, (_, i) =>
+  order({
+    id: `busy-${i + 1}`,
+    status: 'fulfilled',
+    quantity: 250,
+    amount_cards: 380 + (i % 7) * 40,
+    amount_shipping: 13,
+    sent_at: daysAgo((i % 28) + 2),
+    paid_at: daysAgo((i % 28) + 0.3),
+    fulfilled_at: daysAgo(i % 28),
+    proofs: {
+      helpscout_last_reply_at: null,
+      helpscout_last_customer_reply_at: null,
+      helpscout_conversation_id: null,
+      contacts: contact('Busy Month Ltd', `Customer ${i + 1}`),
+    },
+  }),
+).map((o) => ({ ...o, proof_id: `p-${o.id}` }))
+
+function busyMonth(): boolean {
+  return new URLSearchParams(window.location.search).get('busy') === '1'
+}
+
 // Approved proofs with no order yet — the Links-to-send worklist. approved_at
 // must postdate the earliest order created_at (the go-live cutoff in
 // keepApprovedNoOrder), which is daysAgo(12) above.
@@ -769,7 +798,7 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
   } else if (table === 'prototype_prices') {
     rows = [{ amount: 95, is_active: true }]
   } else if (table === 'orders') {
-    rows = ORDERS
+    rows = busyMonth() ? ORDERS.concat(BUSY_MONTH_ORDERS) : ORDERS
     if (Array.isArray(filters['in:status'])) rows = rows.filter((r) => filters['in:status'].includes(r.status))
     if (filters['eq:id']) rows = rows.filter((r) => r.id === filters['eq:id'])
     // The dashboard's order-stage tiles each scope by status, and the Paid

@@ -447,12 +447,13 @@ interface StatTileProps {
   // Optional small red corner count (e.g. orders with a failed Xero invoice).
   badge?: number
   badgeTitle?: string
-  // Short qualifier printed after the count in a smaller mono face — "7D" on
-  // Approved, whose number is a rolling 7-day window while every tile beside
-  // it is a live total. Without it, 42 reads as a backlog rather than a week's
-  // throughput. `spoken` is the same fact in words for the tile's accessible
-  // name, since an abbreviation read aloud is worse than nothing.
-  countNote?: { short: string; spoken: string }
+  // ⚠ Rolling-window tiles (Approved 7D, Paid 30D) carry their window marker
+  // inside `label`, never beside the count. At xl the nine-tile strip hands
+  // each tile a ~61px content box, and three count digits at 32px fill it on
+  // their own — the first three-digit month put "115 30D" straight through
+  // the divider into the next tile. The label has two lines of room and
+  // wraps at its space; srLabel says the window in words for the accessible
+  // name (a bare "30D" read aloud is worse than nothing).
   // Names the page a tile OPENS instead of filtering the list in place — three
   // tiles do (Awaiting payment and To order → Orders, Flagged → Flagged) and
   // eight filter, and they used to render identically, so the contract was
@@ -492,17 +493,17 @@ const TILE_COLOUR: Record<StatTileProps['tone'], string> = {
   emerald:   '#047857',
 }
 
-function StatTile({ label, srLabel, count, active, tone, onClick, help, badge, badgeTitle, countNote, navigatesTo, subline }: StatTileProps) {
+function StatTile({ label, srLabel, count, active, tone, onClick, help, badge, badgeTitle, navigatesTo, subline }: StatTileProps) {
   const tint = TILE_COLOUR[tone]
   // One composed accessible name for the whole tile rather than whatever the
   // browser makes of the content. Left to name-from-content it reads "13
   // Awaiting payment 09 ≥ £3,860" — the corner badge first because it comes
-  // first in the DOM, the money running straight into the count, and three of
-  // the things a sighted user gets (the ↗, the "7D", the full label behind a
-  // shortened one) contributing nothing, being aria-hidden or abbreviated.
+  // first in the DOM, the money running straight into the count, and the
+  // things a sighted user gets (the ↗, the full wording behind a shortened
+  // or abbreviated label) contributing nothing, being aria-hidden or terse.
   const accessibleName = [
     srLabel ?? label,
-    countNote ? `${count} ${countNote.spoken}` : `${count}`,
+    `${count}`,
     subline?.spoken,
     badge != null && badge > 0 ? badgeTitle : null,
     navigatesTo ? `opens ${navigatesTo}` : null,
@@ -610,11 +611,6 @@ function StatTile({ label, srLabel, count, active, tone, onClick, help, badge, b
           style={{ fontFeatureSettings: 'var(--num-features)' }}
         >
           {String(count).padStart(2, '0')}
-          {countNote && (
-            <span className="ml-[5px] text-[11px] font-semibold text-ink-dim">
-              {countNote.short}
-            </span>
-          )}
         </span>
         <span
           className="h-[12px] text-[11px] leading-[12px] font-mono tabular-nums text-ink-soft"
@@ -4203,9 +4199,8 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                       onClick={() => toggleTile('customer_responded')}
                     />
                     <StatTile
-                      label="Approved"
+                      label="Approved 7D"
                       srLabel="Approved this week"
-                      countNote={{ short: '7D', spoken: 'in the last 7 days' }}
                       help={tagHelp('tile', 'approved_this_week')}
                       count={approvedThisWeekCount}
                       active={tileFilter === 'approved_this_week'}
@@ -4233,12 +4228,8 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                           onClick={() => navigate('/orders')}
                         />
                         <StatTile
-                          label="Paid"
-                          // No srLabel: "Paid" is already the whole word, and
-                          // countNote below says the window in the same breath
-                          // as the number ("4 in the last 30 days"), so adding
-                          // one would only make a screen reader say it twice.
-                          countNote={{ short: '30D', spoken: 'in the last 30 days' }}
+                          label="Paid 30D"
+                          srLabel="Paid in the last 30 days"
                           help="Orders the customer has paid for in the last 30 days, and what they came to. Excludes cancelled orders and free reprints. Opens Logbook."
                           count={orderCounts?.paid30d ?? 0}
                           subline={bucketMoney(
