@@ -45,6 +45,7 @@ import Modal from '../src/components/Modal'
 import ContactNameNudge from '../src/components/ContactNameNudge'
 import AbandonProjectDialog from '../src/components/AbandonProjectDialog'
 import ApprovedOrderStatus from '../src/components/ApprovedOrderStatus'
+import OrderBuilderModal from '../src/components/OrderBuilderModal'
 import { StatusRule } from '../src/design'
 import { orderStatusLine, reorderForwardLink, type OrderStatusLine, type ProofOrderStatePayload } from '../src/lib/proofOrderState'
 import { ReorderForwardPanel, ReorderPanel, type ReorderState } from '../src/components/ReorderPanel'
@@ -757,6 +758,41 @@ function Stub() {
   return <div style={{ padding: 40 }} data-nav-target>stub admin page</div>
 }
 
+// ?path=/order-builder — the Create-order form, mounted on a fixture steel
+// proof (EUR, three thicknesses, three finishes). Pass ?state=custom-proof to
+// mount it on a proof whose VERSION is a custom quote.
+//
+// What to look at is the "Pricing" field, second from the top:
+//   * standard proof (default) — the Catalogue price / Agreed price pills.
+//     Catalogue is the default and must look exactly as it always did.
+//     Clicking Agreed price reveals the agreed-total box, and everything it
+//     changes is BELOW it: the Option field loses its "customer chooses"
+//     pills (a fixed total can't be repriced by their pick) and the Finish
+//     picker's hint drops the surcharge language.
+//   * ?state=custom-proof — no pills at all, because there is no choice to
+//     offer; the total box shows on its own with the proof named as the
+//     reason. This is the case that used to be the ONLY way to type a total.
+function OrderBuilderRig() {
+  const customProof = new URLSearchParams(window.location.search).get('state') === 'custom-proof'
+  return (
+    <OrderBuilderModal
+      proofId="p-1"
+      currentVersionId="ver-p-1"
+      materialId="m-steel"
+      displayedVariantIds={[]}
+      materialOptionCodes={['natural']}
+      customerLabel="Husbyklinikkene"
+      materialDisplay="Stainless Steel"
+      currency="EUR"
+      namesCount={0}
+      hasPersonalisation={false}
+      versionIsCustomQuote={customProof}
+      hasHelpScoutConversation
+      onClose={() => {}}
+    />
+  )
+}
+
 // ?path=/… is the canonical form, but some embedded preview panes strip the
 // query string on navigation, so #/… is accepted as an equivalent fallback.
 const requestedPath =
@@ -765,7 +801,9 @@ const requestedPath =
 
 // ?path=/palette mounts the ⌘K designer command palette on its own, open, so
 // its layout and the fixture-backed proof search can be checked headlessly.
-const tree = requestedPath === '/reorder-panel' ? (
+const tree = requestedPath === '/order-builder' ? (
+  <OrderBuilderRig />
+) : requestedPath === '/reorder-panel' ? (
   <ReorderPanelRig />
 ) : requestedPath === '/approved-order-status' ? (
   <ApprovedOrderStatusRig />

@@ -102,7 +102,12 @@ interface OrderBuilderModalProps {
   currency: Currency | null
   namesCount: number
   hasPersonalisation: boolean
-  isCustomQuote: boolean
+  // Whether the PROOF VERSION is a custom quote (proof_versions.custom_quote) —
+  // i.e. the customer was never shown a price grid. That forces the agreed-price
+  // basis below. A standard-priced proof can still be ordered at an agreed price
+  // (the designer picks the basis per order); this prop only says what the proof
+  // itself did, never what this order must do.
+  versionIsCustomQuote: boolean
   // Whether the proof is linked to a Help Scout conversation — gates the
   // "Send to customer" action in the success step.
   hasHelpScoutConversation: boolean
@@ -126,7 +131,7 @@ export default function OrderBuilderModal({
   currency,
   namesCount,
   hasPersonalisation,
-  isCustomQuote,
+  versionIsCustomQuote,
   hasHelpScoutConversation,
   strandedApprovals = [],
   onClose,
@@ -187,6 +192,20 @@ export default function OrderBuilderModal({
     return () => { cancelled = true }
   }, [proofId])
   const [customQuoteTotal, setCustomQuoteTotal] = useState('')
+  // How THIS order is priced, independent of how the proof displayed prices:
+  //   'catalogue' — priced from the material's price tiers at checkout
+  //   'custom'    — one agreed total, typed below and taken at face value
+  // A custom-quote PROOF forces 'custom' (there was never a grid to price
+  // from), but a standard-priced proof can still be ordered at an agreed
+  // figure — the common "we settled a price by email" case, which previously
+  // had no route through this form at all. The whole stack downstream already
+  // works off orders.custom_quote_total alone (create-order accepts it on any
+  // order; the pay page and Xero invoice label it "Agreed price"), so this is
+  // purely about offering the choice here.
+  const [pricingBasis, setPricingBasis] = useState<'catalogue' | 'custom'>('catalogue')
+  // The effective basis every gate below reads. OR-ing rather than seeding
+  // state from the prop keeps the two impossible to desync.
+  const isCustomQuote = versionIsCustomQuote || pricingBasis === 'custom'
 
   // Order type: a normal production order, or the flat-fee prototyping service
   // (up to three exact copies of the approved design). Prototype is modelled
@@ -432,9 +451,11 @@ export default function OrderBuilderModal({
   // option — the designer changes it to whatever finish the customer wants.
   useEffect(() => {
     // Load + auto-select the finish even for a custom quote — it's production
-    // spec the supplier needs. The picker below stays hidden for custom quotes
-    // (gated on !isCustomQuote), so the offered/base finish is applied
-    // automatically without asking, and now persists onto the order.
+    // spec the supplier needs, so the offered/base finish is applied and
+    // persisted whether or not the designer touches it. The picker below now
+    // shows on an agreed price too (it used to be hidden), so that automatic
+    // choice is visible and correctable rather than silent; what it can't do
+    // is offer the CUSTOMER the pick, since a fixed total can't be repriced.
     if (!materialId) { setMaterialOptions([]); setOptionId(null); setMaterialCode(null); return }
     let cancelled = false
     void (async () => {
@@ -874,7 +895,9 @@ export default function OrderBuilderModal({
       const raw = customQuoteTotal.trim()
       const c = Number(raw)
       if (raw === '' || !Number.isFinite(c) || c <= 0) {
-        setError('This is a custom-quote proof — enter the agreed total.')
+        setError(versionIsCustomQuote
+          ? 'This is a custom-quote proof — enter the agreed total.'
+          : 'Enter the agreed total, or switch Pricing back to the catalogue price.')
         return
       }
       customQuoteValue = c
@@ -1243,6 +1266,70 @@ export default function OrderBuilderModal({
               )}
             </Field>
 
+            {/* Pricing basis — how THIS order is priced. Sits second, directly
+                under Order type, so everything it changes (the Option field's
+                open-spec pills, whether a variant must be picked, the agreed
+                total) is below it rather than above. A custom-quote proof has
+                no choice to offer: there was never a price grid to bill from. */}
+            {!isPrototype && (
+              <Field
+                label="Pricing"
+                asLabel={false}
+                className="md:col-span-2"
+                // One explanation at a time, in the Field's own hint slot —
+                // an inline note plus the hint stacked two paragraphs of
+                // near-identical prose under the pills.
+                hint={versionIsCustomQuote
+                  ? 'This proof is a custom quote, so the order is billed at the figure you agreed. Shipping and any US tariff are added on top.'
+                  : isCustomQuote
+                    ? 'Billed as a single “Agreed price” line at checkout and on the invoice — shipping and any US tariff are added on top. The proof page keeps showing its own price grid.'
+                    : 'Bill from the catalogue price tiers at checkout, or charge one figure you’ve agreed with the customer. The proof page keeps showing its own price grid either way.'}
+              >
+                {!versionIsCustomQuote && (
+                  <div className="flex flex-wrap gap-2">
+                    {([['catalogue', 'Catalogue price'], ['custom', 'Agreed price']] as const).map(([b, label]) => (
+                      <button
+                        key={b}
+                        type="button"
+                        onClick={() => {
+                          setPricingBasis(b)
+                          setDirty(true)
+                          // Don't leave a typed figure behind when switching back.
+                          // submit() ignores it, but a stale number reappearing on
+                          // a second switch reads as something already saved.
+                          if (b === 'catalogue') setCustomQuoteTotal('')
+                        }}
+                        className={[
+                          'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                          pricingBasis === b ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
+                        ].join(' ')}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {isCustomQuote && (
+                  <div className={versionIsCustomQuote ? '' : 'mt-3'}>
+                    <label htmlFor="order-custom-total" className="mb-1 block text-[13px] text-ink-soft">
+                      Agreed total ({currency ?? 'GBP'})
+                    </label>
+                    <Input
+                      id="order-custom-total"
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      inputMode="decimal"
+                      value={customQuoteTotal}
+                      onChange={(e) => { setCustomQuoteTotal(e.target.value); setDirty(true) }}
+                      placeholder={`Total (${currency ?? 'GBP'})`}
+                      className="max-w-[240px]"
+                    />
+                  </div>
+                )}
+              </Field>
+            )}
+
             {/* Prototype fee + copies — replaces the variant/quantity/pricing
                 fields when the order type is a prototype. */}
             {isPrototype && (
@@ -1361,18 +1448,30 @@ export default function OrderBuilderModal({
                 the finish at order time, so the designer picks it here; the
                 price includes any finish surcharge at checkout. Hidden for a
                 prototype — the finish is the approved design's, auto-applied. */}
-            {!isPrototype && !isCustomQuote && materialOptions.length > 0 && (
+            {!isPrototype && materialOptions.length > 0 && (
               <Field
                 label={optionLabel}
                 asLabel={false}
-                hint={`Which ${optionLabel.toLowerCase()} the customer is ordering — the price includes any ${optionLabel.toLowerCase()} surcharge at checkout.`}
+                hint={isCustomQuote
+                  // An agreed price is billed at face value, so there's no
+                  // surcharge to mention — but the finish is still a PRODUCTION
+                  // spec that reaches the supplier, exactly like the thickness
+                  // above. It was always CAPTURED on a custom quote (the effect
+                  // that loads the options auto-applies the offered/base one);
+                  // showing the picker just makes it visible and correctable,
+                  // which matters now the agreed price can sit on a standard
+                  // proof whose tabbed finish isn't necessarily what was agreed.
+                  ? `Which ${optionLabel.toLowerCase()} these cards are — part of the production spec. The agreed price is unchanged.`
+                  : `Which ${optionLabel.toLowerCase()} the customer is ordering — the price includes any ${optionLabel.toLowerCase()} surcharge at checkout.`}
               >
                 {/* Open-spec pills (000298): offered when the approved
                     version carried 2+ finish tabs — a single-finish proof's
                     artwork IS that finish, so it stays a designer pick — or
                     when the finish is preference-only (gloss/matte, 000303),
-                    which never appears on the artwork at all. */}
-                {finishEligible && (
+                    which never appears on the artwork at all. Not offered on an
+                    agreed price: the total is fixed, so there's nothing for the
+                    customer's pick to reprice (mirrors the thickness rule). */}
+                {finishEligible && !isCustomQuote && (
                   <div className="mb-2 flex flex-wrap gap-2">
                     {([['customer', 'Customer chooses at checkout'], ['locked', 'Lock it now']] as const).map(([m, label]) => {
                       const blocked = paymentMethod === 'offline' && m === 'customer'
@@ -2105,22 +2204,9 @@ export default function OrderBuilderModal({
             </Field>
             )}
 
-            {/* Custom quote total — only for custom-quote proofs (not prototypes) */}
-            {!isPrototype && isCustomQuote && (
-              <Field label="Custom quote total" htmlFor="order-custom-total" hint="This proof is a custom quote, so enter the agreed total.">
-                <Input
-                  id="order-custom-total"
-                  type="number"
-                  min={0}
-                  step={0.01}
-                  inputMode="decimal"
-                  value={customQuoteTotal}
-                  onChange={(e) => setCustomQuoteTotal(e.target.value)}
-                  placeholder={`Total (${currency ?? 'GBP'})`}
-                  className="max-w-[240px]"
-                />
-              </Field>
-            )}
+            {/* The agreed total lives with the Pricing basis near the top of
+                the form, not down here — one place, and its knock-on effects
+                on the Option field are visible below it rather than above. */}
             </div>
 
             {error && (

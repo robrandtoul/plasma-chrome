@@ -4849,7 +4849,7 @@ export default function ProofDetailPage() {
             currency={(currentVersion.currency as 'GBP' | 'EUR' | 'USD' | null) ?? null}
             namesCount={currentVersion.names?.length ?? 0}
             hasPersonalisation={!!currentVersion.has_personalisation}
-            isCustomQuote={!!currentVersion.custom_quote}
+            versionIsCustomQuote={!!currentVersion.custom_quote}
             hasHelpScoutConversation={!!proof.helpscout_conversation_id}
             strandedApprovals={findStrandedMaterialApprovals(versions, approvals)}
             onClose={() => { setShowOrderBuilder(false); invalidateApprovedNoOrderCount(); if (id) void loadProof(id) }}

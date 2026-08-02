@@ -666,6 +666,34 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
       { id: 'm-satin', code: 'plastic_satin', display_name: 'Satin Plastic', category: 'Plastic', production_route: 'in_house', stock_material_id: null },
       { id: 'm-wood', code: 'wood', display_name: 'Wood', category: 'Wood', production_route: 'in_house', stock_material_id: null },
     ]
+  } else if (table === 'material_variants') {
+    // Thickness variants for the order builder's Option field. Steel carries
+    // the three real metal thicknesses so the open-spec pills have something
+    // to open; every material falls back to a single variant so the field
+    // still renders. weight_grams is present so shipping estimates can run.
+    rows = filters['eq:material_id'] === 'm-steel'
+      ? [
+          { id: 'mv-300', display_name: '300 micron', sort_order: 1, weight_grams: 7, variant_type: 'thickness', material_id: 'm-steel' },
+          { id: 'mv-500', display_name: '500 micron', sort_order: 2, weight_grams: 11, variant_type: 'thickness', material_id: 'm-steel' },
+          { id: 'mv-800', display_name: '800 micron', sort_order: 3, weight_grams: 18, variant_type: 'thickness', material_id: 'm-steel' },
+        ]
+      : [{ id: 'mv-only', display_name: 'Standard', sort_order: 1, weight_grams: 10, variant_type: 'thickness', material_id: filters['eq:material_id'] ?? 'm-other' }]
+  } else if (table === 'price_tiers') {
+    // Only ever read as a head/count per variant, to decide whether a variant
+    // is priced in this currency. One row is enough to say "yes".
+    rows = [{ id: 'pt-1' }]
+  } else if (table === 'material_options') {
+    // The metal finish dimension, so the Finish picker renders. Natural is the
+    // base, matching the catalogue.
+    rows = filters['eq:material_id'] === 'm-steel'
+      ? [
+          { id: 'mo-natural', code: 'natural', display_name: 'Natural', is_base: true, sort_order: 1 },
+          { id: 'mo-brushed', code: 'brushed', display_name: 'Brushed', is_base: false, sort_order: 2 },
+          { id: 'mo-mirror', code: 'mirror', display_name: 'Mirror', is_base: false, sort_order: 3 },
+        ]
+      : []
+  } else if (table === 'prototype_prices') {
+    rows = [{ amount: 95, is_active: true }]
   } else if (table === 'orders') {
     rows = ORDERS
     if (Array.isArray(filters['in:status'])) rows = rows.filter((r) => filters['in:status'].includes(r.status))

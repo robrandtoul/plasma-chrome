@@ -498,7 +498,7 @@ interface OrderBuilderArgs {
   currency: Currency | null
   namesCount: number
   hasPersonalisation: boolean
-  isCustomQuote: boolean
+  versionIsCustomQuote: boolean
   hasHelpScoutConversation: boolean
 }
 
@@ -1667,7 +1667,7 @@ export default function OrdersPage() {
         currency: (ver.currency as Currency | null) ?? null,
         namesCount: ver.names?.length ?? 0,
         hasPersonalisation: !!ver.has_personalisation,
-        isCustomQuote: !!ver.custom_quote,
+        versionIsCustomQuote: !!ver.custom_quote,
         hasHelpScoutConversation: item.hasHelpscoutConversation,
       })
     } finally {
