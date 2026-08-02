@@ -4238,7 +4238,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                           // as the number ("4 in the last 7 days"), so adding
                           // one would only make a screen reader say it twice.
                           countNote={{ short: '7D', spoken: 'in the last 7 days' }}
-                          help="Orders the customer has paid for in the last 7 days, and what they came to. Excludes cancelled orders and free reprints. Opens Orders."
+                          help="Orders the customer has paid for in the last 7 days, and what they came to. Excludes cancelled orders and free reprints. Opens Logbook."
                           count={orderCounts?.paid7d ?? 0}
                           subline={bucketMoney(
                             orderCounts?.paid7dMoney,
@@ -4247,9 +4247,16 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                             'Every currency converted to GBP at today’s rate.',
                           )}
                           active={false}
-                          navigatesTo="Orders"
+                          // The Logbook, not Orders. Its two neighbours are
+                          // worklists — things still to chase or place — and
+                          // Orders is where you go to act on them. Paid is a
+                          // record of what already happened, and the Logbook is
+                          // the searchable archive of exactly that, opening on
+                          // its paid totals and 12-week chart. Sending it to the
+                          // work queue landed you among jobs still outstanding.
+                          navigatesTo="Logbook"
                           tone="emerald"
-                          onClick={() => navigate('/orders')}
+                          onClick={() => navigate('/orders/log')}
                         />
                         <StatTile
                           label="To order"
