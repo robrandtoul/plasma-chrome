@@ -12,6 +12,7 @@ import {
   Layers,
   Package,
   FileText,
+  ClipboardList,
   Flag,
   UserCircle,
   LogOut,
@@ -44,6 +45,7 @@ export type DesignerNavId =
   | 'proofs'
   | 'quote'
   | 'orders'
+  | 'orderlog'
   | 'flagged'
   | 'feedback'
   | 'chat'
@@ -69,6 +71,10 @@ const NAV: NavItem[] = [
   // Orders is shown only when the ordering feature is switched on
   // (settings.ordering_enabled) — see the gate in DesignerHeader.
   { id: 'orders', label: 'Orders', to: '/orders' },
+  // Order log — the searchable archive of every order (distinct from the
+  // Orders work queue above, and from the admin-only /admin/orders log).
+  // Shares the ordering_enabled gate with Orders.
+  { id: 'orderlog', label: 'Order log', to: '/orders/log' },
   // Flagged — the shared board of problem projects. All-staff (no gate), so
   // it falls through the visibleNav filter below like Proofs / Quote. (Distinct
   // from the per-proof "Watch" button, which is push-notification opt-in.)
@@ -163,7 +169,7 @@ export function DesignerHeader({
   }, [])
   const visibleNav = NAV.filter((n) => {
     if (n.id === 'admin') return role === 'admin'
-    if (n.id === 'orders') return orderingEnabled
+    if (n.id === 'orders' || n.id === 'orderlog') return orderingEnabled
     return true
   })
   return (
@@ -311,6 +317,7 @@ export function DesignerHeader({
         onClose={() => setAccountOpen(false)}
         user={user}
         role={role}
+        orderingEnabled={orderingEnabled}
         flaggedCount={flaggedCount}
         onEditProfile={onEditProfile}
         onSignOut={onSignOut}
@@ -345,7 +352,8 @@ function BottomTabBar({
   onMore: () => void
 }) {
   const moreActive =
-    active === 'quote' || active === 'flagged' || active === 'admin' || active === 'feedback'
+    active === 'quote' || active === 'flagged' || active === 'admin' || active === 'feedback' ||
+    active === 'orderlog'
   return (
     <nav
       aria-label="Primary"
@@ -478,6 +486,7 @@ function AccountSheet({
   onClose,
   user,
   role,
+  orderingEnabled,
   flaggedCount,
   onEditProfile,
   onSignOut,
@@ -486,6 +495,7 @@ function AccountSheet({
   onClose: () => void
   user: UserProps
   role: 'admin' | 'designer' | null
+  orderingEnabled: boolean
   flaggedCount: number
   onEditProfile?: () => void
   onSignOut?: () => void
@@ -518,6 +528,16 @@ function AccountSheet({
             <FileText size={18} aria-hidden="true" className="text-ink-mute" />
             Quote
           </Link>
+          {orderingEnabled && (
+            <Link
+              to="/orders/log"
+              onClick={onClose}
+              className="flex min-h-[56px] items-center gap-3 border-b border-line-soft px-4 text-[15px] text-ink-soft hover:bg-canvas"
+            >
+              <ClipboardList size={18} aria-hidden="true" className="text-ink-mute" />
+              Order log
+            </Link>
+          )}
           <Link
             to="/flagged"
             onClick={onClose}

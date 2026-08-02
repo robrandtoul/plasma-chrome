@@ -55,6 +55,8 @@
     "test:approval-carry": "tsx src/lib/approvalCarry.test.ts",
     "test:abandon-notice": "tsx src/lib/abandonNotice.test.ts",
     "test:order-tracking": "tsx src/lib/orderTracking.test.ts",
+    "test:order-timeline": "tsx src/lib/orderTimeline.test.ts",
+    "test:order-log": "tsx src/lib/orderLog.test.ts",
     "test:quick-quantities": "tsx src/lib/quickQuantities.test.ts",
     "test:audit-filters": "tsx src/pages/admin/auditFilters.test.ts",
     "test:dashboard-grouping": "tsx src/lib/dashboardGrouping.test.ts",

@@ -658,7 +658,13 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
       rows = ids.map((pid) => ({ proof_id: pid, materials: { code: PROOF_MATERIAL[pid] ?? 'metal_steel' } }))
     } else {
       const pid = filters['eq:proof_id']
-      rows = pid ? [{ id: `ver-${pid}`, material_id: ORDERS.find((o) => o.proof_id === pid)?.material_id ?? 'm-steel', is_current: true, version_number: 3, shape: null }] : []
+      // Batched thumbnail loads (OrdersPage / OrderLogPage) come through
+      // .in('proof_id', ids) — one current version per proof, in the order's
+      // own material so thumbForOrder's material-first lookup resolves.
+      const pids: string[] | null = Array.isArray(filters['in:proof_id']) ? filters['in:proof_id'] : null
+      rows = pids
+        ? pids.map((p) => ({ id: `ver-${p}`, proof_id: p, material_id: ORDERS.find((o) => o.proof_id === p)?.material_id ?? 'm-steel', is_current: true, version_number: 3, shape: null }))
+        : pid ? [{ id: `ver-${pid}`, proof_id: pid, material_id: ORDERS.find((o) => o.proof_id === pid)?.material_id ?? 'm-steel', is_current: true, version_number: 3, shape: null, material_options: [] }] : []
     }
   } else if (table === 'proofs') {
     if (filters['eq:reorder_of_proof_id']) {

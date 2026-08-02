@@ -17,6 +17,7 @@ import { StrictMode, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import OrdersPage from '../src/pages/OrdersPage'
+import OrderLogPage from '../src/pages/OrderLogPage'
 import OrderReviewPage from '../src/pages/OrderReviewPage'
 import ProofDetailPage from '../src/pages/ProofDetailPage'
 import { ProofDetailView } from '../src/components/ProofDetailView'
@@ -843,6 +844,17 @@ const tree = requestedPath === '/reorder-panel' ? (
   <MemoryRouter initialEntries={[requestedPath]}>
     <Routes>
       <Route path="/proofs/:id" element={<ProofDetailPage />} />
+      <Route path="*" element={<Elsewhere />} />
+    </Routes>
+  </MemoryRouter>
+) : requestedPath === '/orders/log' ? (
+  // ?path=/orders/log — the Order log (list + detail against the ORDERS
+  // fixtures; append &order=o5 via ?path=/orders/log to deep-link isn't
+  // supported here, click a row instead). MUST stay above the
+  // startsWith('/orders/') branch or it falls into the place-order rig.
+  <MemoryRouter initialEntries={['/orders/log']}>
+    <Routes>
+      <Route path="/orders/log" element={<OrderLogPage />} />
       <Route path="*" element={<Elsewhere />} />
     </Routes>
   </MemoryRouter>

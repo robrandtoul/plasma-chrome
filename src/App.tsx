@@ -42,6 +42,7 @@ const CustomersPage = lazyWithRetry(() => import('./pages/CustomersPage'), 'Cust
 const CustomerDetailPage = lazyWithRetry(() => import('./pages/CustomerDetailPage'), 'CustomerDetailPage')
 const QuotePage = lazyWithRetry(() => import('./pages/QuotePage'), 'QuotePage')
 const OrdersPage = lazyWithRetry(() => import('./pages/OrdersPage'), 'OrdersPage')
+const OrderLogPage = lazyWithRetry(() => import('./pages/OrderLogPage'), 'OrderLogPage')
 const OrderReviewPage = lazyWithRetry(() => import('./pages/OrderReviewPage'), 'OrderReviewPage')
 const FeedbackPage = lazyWithRetry(() => import('./pages/FeedbackPage'), 'FeedbackPage')
 const ChatPage = lazyWithRetry(() => import('./pages/ChatPage'), 'ChatPage')
@@ -161,6 +162,10 @@ function AppShell() {
         <Route path="/activity" element={<RequireAuth><DashboardPage activityView /></RequireAuth>} />
         <Route path="/quote" element={<RequireAuth><QuotePage /></RequireAuth>} />
         <Route path="/orders" element={<RequireAuth><OrdersPage /></RequireAuth>} />
+        {/* The Order log — the searchable archive of every order, with a
+            per-order detail view (?order=<id>). Static 'log' outranks the
+            :id segment below in React Router's matching. */}
+        <Route path="/orders/log" element={<RequireAuth><OrderLogPage /></RequireAuth>} />
         <Route path="/orders/:id/place" element={<RequireAuth><OrderReviewPage /></RequireAuth>} />
         <Route path="/feedback" element={<RequireAuth><FeedbackPage /></RequireAuth>} />
         <Route path="/chat" element={<RequireAuth><ChatPage /></RequireAuth>} />
