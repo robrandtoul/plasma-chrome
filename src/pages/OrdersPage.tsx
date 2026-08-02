@@ -17,6 +17,7 @@ import { signThumbnails, type ThumbInfo } from '../lib/thumbnails'
 import type { Currency } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import { mergeInvestigation, requestInvestigation } from '../lib/useProofCheck'
+import { holdState, holdBlockReason, repliedLine, HOLD_COPY } from '../lib/orderHolds'
 import OrderBuilderModal from '../components/OrderBuilderModal'
 import GroupOrdersModal, { type GroupCandidate } from '../components/GroupOrdersModal'
 import RecordOfflinePaymentModal from '../components/RecordOfflinePaymentModal'
@@ -28,6 +29,7 @@ import SendPayLinkModal from '../components/SendPayLinkModal'
 import DesignerAvatar from '../components/DesignerAvatar'
 import ApprovedArtworkPanel from '../components/ApprovedArtworkPanel'
 import ArtworkCheckReportView, { type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
+import HoldOrderDialog from '../components/HoldOrderDialog'
 import { ChevronDown, StickyNote } from 'lucide-react'
 
 // Orders / "to order" surface (Ordering & checkout, Step 6 — overhauled).
@@ -98,6 +100,19 @@ interface OrderRow {
   paid_at: string | null
   fulfilled_at: string | null
   revised_at: string | null
+  // On hold while a question is out with the customer (migration 000377).
+  // held_at set = the database refuses to let this order be placed, so this is
+  // a real block rather than a UI hint. held_by_name is stamped SERVER-side by
+  // the trigger — proofs.profiles SELECT is self-or-admin, so the browser can't
+  // read a colleague's name to write it, and a client-supplied one would be
+  // spoofable. Never send it; never send held_by either.
+  held_at: string | null
+  hold_reason: string | null
+  held_by_name: string | null
+  // What the artwork check said when the hold went on, snapshotted because a
+  // re-run overwrites orders.artwork_check wholesale. Fetched so a refetched
+  // row keeps it; this page doesn't render it (the review page does).
+  hold_artwork_flag: Record<string, unknown> | null
   // Hand-off to Stock Control (000332, docs/order-handoff-spec.md §3.4).
   // Placing an order now writes the workshop's job FIRST and sends the human
   // message SECOND, so the two can fail apart: handoff_at set = the job exists;
@@ -161,6 +176,9 @@ interface OrderRow {
     // Whether a Help Scout conversation is linked — gates the combine modal's
     // "Send to customer" action (bundle orders Slice 2).
     helpscout_conversation_id: string | null
+    // The thread itself. A held order's whole point is that a question is out
+    // with the customer, so the card needs a one-click route to go and read it.
+    helpscout_conversation_url: string | null
     contacts: { full_name: string | null; companies: { name: string | null } | null } | null
   } | null
 }
@@ -170,13 +188,14 @@ const SELECT = `
   custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, us_tariff_opted_out,
   card_discount_type, card_discount_value, amount_card_discount, payment_method, order_kind,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, revised_at,
+  held_at, hold_reason, held_by_name, hold_artwork_flag,
   handoff_at, handoff_error, production_note_posted_at, supplier_email_sent_at, supplier_id, supplier_overs,
   artwork_check_verdict, artwork_checked_at,
   date_required, dropbox_folder_url, stock_order_number, project_name, stock_colour, person_quantities,
   ship_to_name, ship_to_email, ship_to_phone, ship_to_address, customs_tax_id, ship_dest_country, proof_id,
   material_variants(display_name, materials(code, display_name, production_route, lead_time_max_days, outsourced_supplier_ids)),
   material_options(display_name),
-  proofs(helpscout_last_reply_at, helpscout_last_customer_reply_at, helpscout_conversation_id, contacts(full_name, companies(name)))
+  proofs(helpscout_last_reply_at, helpscout_last_customer_reply_at, helpscout_conversation_id, helpscout_conversation_url, contacts(full_name, companies(name)))
 `
 
 // The dropbox-folder edge function response (uniform { ok } shape).
@@ -605,6 +624,9 @@ function sumGbp(orders: OrderRow[], rates: ExchangeRates | null): number {
 
 // Free-text match across the fields a designer would search by: customer /
 // company, payment + stock order references, project name, and the spec label.
+// The hold reason joins them for the same reason the Links-to-send note does —
+// it's the most distinctive free text anyone types about an order ("waiting on
+// the mobile number"), so it's how they'll go looking for it again.
 function matchesSearch(o: OrderRow, q: string): boolean {
   if (!q) return true
   const haystack = [
@@ -613,6 +635,7 @@ function matchesSearch(o: OrderRow, q: string): boolean {
     o.stock_order_number,
     o.project_name,
     specLabel(o),
+    o.hold_reason,
   ]
     .filter(Boolean)
     .join(' ')
@@ -837,6 +860,16 @@ export default function OrdersPage() {
   const [cancelTarget, setCancelTarget] = useState<OrderRow | null>(null)
   const [cancelNotify, setCancelNotify] = useState(true)
   const [cancelError, setCancelError] = useState<string | null>(null)
+  // The order whose hold dialog is open, and which way it's going: 'put' asks
+  // for a reason, 'take_off' quotes the existing one back. Busy + error live
+  // here so a failed write is reported inside the dialog rather than vanishing.
+  const [holdTarget, setHoldTarget] = useState<{ order: OrderRow; mode: 'put' | 'take_off' } | null>(null)
+  const [holdBusy, setHoldBusy] = useState(false)
+  const [holdError, setHoldError] = useState<string | null>(null)
+  // The live hold on whichever order the dialog is open for — the take-off
+  // dialog quotes its reason back before you confirm. No reply context here on
+  // purpose: this dialog is about the hold itself, not about who has answered.
+  const holdDialogState = holdTarget ? holdState(holdTarget.order) : null
   const navigate = useNavigate()
   // Per-order reminder roll-up (the automated unpaid-order chase, 000238).
   const [reminders, setReminders] = useState<Record<string, ReminderSummary>>({})
@@ -1588,6 +1621,53 @@ export default function OrdersPage() {
     }
   }
 
+  // Put a paid order on hold, or take it off (migration 000377). Two rules from
+  // that migration, both load-bearing:
+  //
+  //   · Never send held_by / held_by_name. The trigger stamps them from
+  //     auth.uid() server-side, because proofs.profiles SELECT is self-or-admin
+  //     — the browser cannot read a colleague's name to write it, and a
+  //     client-supplied one would be spoofable on a row five people can edit.
+  //   · A release is exactly `held_at = null`. The trigger nulls the reason,
+  //     the attribution and the artwork-flag snapshot itself, so sending the one
+  //     field can't trip orders_hold_shape_check.
+  //
+  // Refetched rather than patched locally: the name the band is about to show
+  // is written by the database, so only a read-back can know it.
+  async function applyHold(order: OrderRow, mode: 'put' | 'take_off', reason: string) {
+    setHoldBusy(true)
+    setHoldError(null)
+    const now = new Date().toISOString()
+    const patch =
+      mode === 'put'
+        ? { held_at: now, hold_reason: reason, updated_at: now }
+        : { held_at: null, updated_at: now }
+    // Awaited, so the lazy PostgREST builder actually runs and its error is
+    // seen — a bare `void supabase.from(...)` here would send nothing at all.
+    const { error } = await supabase.from('orders').update(patch).eq('id', order.id)
+    if (error) {
+      setHoldBusy(false)
+      // The raw PostgREST string is jargon to a non-coder ("JWT expired", "new
+      // row for relation \"orders\" violates check constraint …"), and the
+      // realistic causes here are a lapsed session or a dropped connection.
+      // Keep the detail in the console for diagnosis, not in Rob's face.
+      console.error('[orders] hold write failed:', error)
+      setHoldError('Couldn’t save that. Check your connection, and if it keeps happening sign out and back in.')
+      return
+    }
+    await refetchOrder(order.id)
+    setHoldBusy(false)
+    setHoldTarget(null)
+    void logAudit({
+      action: mode === 'put' ? 'order.held' : 'order.hold_cleared',
+      targetType: 'order',
+      targetId: order.id,
+      targetLabel: `Order ${order.payment_reference ?? order.id}`,
+      beforeValue: mode === 'put' ? null : { hold_reason: order.hold_reason },
+      afterValue: mode === 'put' ? { hold_reason: reason } : null,
+    })
+  }
+
   // Add or replace the shared note on a Links-to-send card. Upsert keyed on
   // proof_id (one note per proof); the DB trigger stamps the editor's identity +
   // updated_at, which we read back so the card updates without a refetch. RLS
@@ -1827,6 +1907,10 @@ export default function OrdersPage() {
       onRetryHandoff={() => void retryHandoff(o)}
       showArtworkChip={artworkChipsOn}
       onOpenArtworkReport={() => void openArtworkReport(o)}
+      /* A revision order can't be put ON hold (revision already blocks it, and
+         the trigger clears a hold on the way in), but the release stays
+         reachable in case one ever arrives here still held. */
+      onHold={(mode) => { setHoldError(null); setHoldTarget({ order: o, mode }) }}
       usTariff={usTariffDutyBilling(o.order_group_id ? groups[o.order_group_id] ?? o : o)}
     />
   )
@@ -2244,6 +2328,7 @@ export default function OrdersPage() {
                             onRetryHandoff={() => void retryHandoff(o)}
                             showArtworkChip={artworkChipsOn}
                             onOpenArtworkReport={() => void openArtworkReport(o)}
+                            onHold={(mode) => { setHoldError(null); setHoldTarget({ order: o, mode }) }}
                             usTariff={usTariffDutyBilling(o.order_group_id ? groups[o.order_group_id] ?? o : o)}
                           />
                         </div>
@@ -2673,6 +2758,18 @@ export default function OrdersPage() {
             onClose={() => { setCancelTarget(null); setCancelError(null) }}
           />
         )}
+
+        {holdTarget && (
+          <HoldOrderDialog
+            mode={holdTarget.mode}
+            customerLabel={customerLabel(holdTarget.order)}
+            state={holdDialogState?.held ? holdDialogState : null}
+            working={holdBusy}
+            errorMsg={holdError}
+            onConfirm={(reason) => void applyHold(holdTarget.order, holdTarget.mode, reason)}
+            onCancel={() => { setHoldTarget(null); setHoldError(null) }}
+          />
+        )}
       </div>
     </DesignerChrome>
   )
@@ -2766,6 +2863,7 @@ function OrderCard({
   proofMaterialCode,
   showArtworkChip = false,
   onOpenArtworkReport,
+  onHold,
   usTariff = null,
 }: {
   order: OrderRow
@@ -2790,6 +2888,8 @@ function OrderCard({
   proofMaterialCode: string | null
   showArtworkChip?: boolean
   onOpenArtworkReport?: () => void
+  /** Opens the hold dialog (000377). Omitted = the menu offers no hold action. */
+  onHold?: (mode: 'put' | 'take_off') => void
   /** US import-duty billing, resolved group-aware by the caller. */
   usTariff?: ReturnType<typeof usTariffDutyBilling>
 }) {
@@ -2800,6 +2900,15 @@ function OrderCard({
   // write the job was refused ('failed') — the placed states belong to orders
   // that have already left this list.
   const handoff = handoffState(order)
+  // Is a question out with the customer about this order (000377)? The reply
+  // stamps are thread-wide and already on the row, so this costs no extra
+  // query — and holdState is shared with the review page so the two surfaces
+  // can't disagree about whether an order is held.
+  const hold = holdState(order, {
+    lastCustomerReplyAt: order.proofs?.helpscout_last_customer_reply_at ?? null,
+    lastStaffReplyAt: order.proofs?.helpscout_last_reply_at ?? null,
+  })
+  const helpscoutUrl = order.proofs?.helpscout_conversation_url ?? null
   const addr = order.ship_to_address
   // Address lines in postal order — county (region) sits between the town/
   // postcode line and the country, matching the admin Order log. Stripe stores
@@ -3003,6 +3112,47 @@ function OrderCard({
           Paid · revision in progress — do not produce the previous artwork.
         </div>
       )}
+
+      {/* On hold, waiting on the customer (000377). Top of the card, like the
+          revision banner, because it's the one thing about this order anybody
+          needs to know before touching it — and the card stays in Place, so
+          without it a held order looks exactly like one nobody got round to.
+
+          Amber, NOT green: on this page var(--c-in-stock) means finished (a
+          ticked Folder / Date chip, an artwork check that came back clear), so
+          a green band would read as "ready" — the opposite of the truth.
+          Amber text is --c-low-ink; the bright --c-low is a fill colour and is
+          barely readable on its own tint. */}
+      {hold.held && (
+        <div className="mb-3 rounded-lg bg-[var(--c-low-soft)] px-3 py-2 ring-1 ring-[var(--c-low)]/50">
+          <p className="text-[13px] font-semibold text-[var(--c-low-ink)]">
+            On hold
+            {hold.byName ? ` · ${hold.byName}` : ''}
+            {formatDate(hold.heldAt) ? ` · ${formatDate(hold.heldAt)}` : ''}
+          </p>
+          {/* The reason verbatim — it is what tells a colleague whether to wait
+              or to go ahead, so it is never summarised or truncated. */}
+          <p className="mt-0.5 break-words text-[13px] text-ink">{hold.reason}</p>
+          {repliedLine(hold) && (
+            <p className="mt-1 text-[12px] text-ink-soft">
+              {repliedLine(hold)}
+              {helpscoutUrl && (
+                <>
+                  {' '}
+                  <a
+                    href={helpscoutUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-ink underline underline-offset-2 hover:no-underline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)]"
+                  >
+                    Open in Help Scout ↗
+                  </a>
+                </>
+              )}
+            </p>
+          )}
+        </div>
+      )}
       <div className="flex flex-col gap-4 md:flex-row md:items-start">
         {thumb && (
           <img
@@ -3023,6 +3173,21 @@ function OrderCard({
               <Pill colour="allocated" title="A free remake after a complaint or damage — £0, no payment or invoice. Link a new Dropbox folder (next order number) and place it like any job.">Free reprint</Pill>
             )}
             {isRevision ? <Pill colour="out">Revision</Pill> : <Pill colour="in-stock">Paid</Pill>}
+            {/* The at-a-glance signal. Held orders deliberately stay in Place
+                (leaving them there keeps them nagging, and moving them would
+                silently drop their failed-invoice alerts), which means the ONLY
+                thing separating a held card from a placeable one while scanning
+                the list is this pill — the band explaining it sits further down
+                the card, past the fold on a phone. Amber, not green: on this
+                page in-stock means finished. */}
+            {hold.held && (
+              <Pill
+                colour="low"
+                title={hold.byName ? `${hold.byName} is waiting on the customer` : 'Waiting on the customer'}
+              >
+                On hold
+              </Pill>
+            )}
             {/* A reprint is offline too, but "Free reprint" already says so — and it
                 must NOT prompt the manual-invoice path (there's nothing to invoice). */}
             {order.payment_method === 'offline' && order.order_kind !== 'reprint' && (
@@ -3136,10 +3301,26 @@ function OrderCard({
               <p className="mt-1 text-[12px] text-ink-soft">
                 Nothing was sent — fix the reason above, then try again.
               </p>
+              {/* Try again is the card's SECOND route into production — it calls
+                  place-order confirm, exactly as the place button does. It must
+                  therefore respect the hold too, and say so in its own words:
+                  left live it would return the 409, and that message would land
+                  under "Stock Control wouldn't accept this order", blaming the
+                  supplier for a hold one of us put on. */}
               {onRetryHandoff && (
-                <ButtonInk size="sm" onClick={onRetryHandoff} disabled={handoffBusy} className="mt-2 max-md:h-11">
-                  {handoffBusy ? 'Trying again…' : 'Try again'}
-                </ButtonInk>
+                <>
+                  <ButtonInk
+                    size="sm"
+                    onClick={onRetryHandoff}
+                    disabled={handoffBusy || hold.held}
+                    className="mt-2 max-md:h-11"
+                  >
+                    {handoffBusy ? 'Trying again…' : 'Try again'}
+                  </ButtonInk>
+                  {hold.held && (
+                    <p className="mt-1.5 text-[12px] text-ink-soft">{holdBlockReason(hold)}</p>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -3357,7 +3538,11 @@ function OrderCard({
                 Prepare order
               </ButtonInk>
             ) : (
-              <ButtonInk onClick={onReview} disabled={!canOrder} className="max-md:min-h-[50px] max-md:min-w-0 max-md:flex-1 max-md:whitespace-normal max-md:py-1.5 max-md:text-[15px] max-md:leading-tight">
+              /* A hold disables placing, but deliberately NOT preparing: the
+                 folder, date and colour can all be sorted out while the
+                 question is with the customer, and canOrder is left alone so
+                 the Details toggle below still renders. */
+              <ButtonInk onClick={onReview} disabled={!canOrder || hold.held} className="max-md:min-h-[50px] max-md:min-w-0 max-md:flex-1 max-md:whitespace-normal max-md:py-1.5 max-md:text-[15px] max-md:leading-tight">
                 {route !== 'supplier'
                   ? 'Review and push to production'
                   : supplierCount > 1
@@ -3371,6 +3556,13 @@ function OrderCard({
               items={[
                 { label: 'View proof & artwork', to: `/proofs/${order.proof_id}` },
                 { label: copied ? 'Link copied' : 'Copy order link', onClick: onCopy },
+                ...(helpscoutUrl
+                  ? [{
+                      label: 'Open in Help Scout ↗',
+                      href: helpscoutUrl,
+                      title: 'Read the customer’s thread for this project',
+                    } satisfies CardMenuItem]
+                  : []),
                 ...(order.xero_invoice_id
                   ? [{
                       label: pdfBusy ? 'Downloading…' : pdfError ? 'Download failed — try again' : 'Download invoice',
@@ -3379,17 +3571,45 @@ function OrderCard({
                       title: "Download this order's Xero invoice as a PDF",
                     } satisfies CardMenuItem]
                   : []),
+                /* The hold lives here, never in the primary slot beside it: on
+                   a phone that slot is a full-width thumb target, and putting
+                   the action that REMOVES the protection there would make the
+                   easiest tap on the card the one that unblocks production.
+                   Last in the menu, so a held order reads top-to-bottom as
+                   "go and read the thread, then take it off".
+                   Not offered on a revision order: revision already blocks
+                   placement, and the trigger clears a hold on the way in. */
+                ...(onHold && hold.held
+                  ? [{
+                      label: HOLD_COPY.take_off,
+                      onClick: () => onHold('take_off'),
+                      title: 'Only once the question has been settled — after this it can go to production',
+                    } satisfies CardMenuItem]
+                  : onHold && !isRevision
+                    ? [{
+                        label: HOLD_COPY.put,
+                        onClick: () => onHold('put'),
+                        title: 'Stops it being pushed into production from here while you wait on the customer',
+                      } satisfies CardMenuItem]
+                    : []),
               ]}
               label={`More actions for ${customerLabel(order)}`}
             />
           </div>
-          {expanded && !canOrder && (
-            <span className="text-right text-[11px] text-ink-mute max-md:text-center max-md:w-full">
-              {!folderVerified
-                ? 'Link & check the order folder to enable'
-                : !datePersisted
-                  ? (dateValue ? 'Confirm the date required to enable' : 'Set a date required to enable')
-                  : 'Choose the stock colour to enable'}
+          {/* Why the place button is unavailable. The hold wins over the prep
+              hints — it's the stronger statement and the only one that needs a
+              decision from a person. Shown whenever the place button itself is
+              on screen (the same `expanded || canOrder` test the ternary above
+              uses), so nothing changes for an order that isn't held. */}
+          {(expanded || canOrder) && (hold.held || !canOrder) && (
+            <span className="text-right text-[11px] text-ink-mute max-md:text-center max-md:w-full md:max-w-[240px]">
+              {hold.held
+                ? holdBlockReason(hold)
+                : !folderVerified
+                  ? 'Link & check the order folder to enable'
+                  : !datePersisted
+                    ? (dateValue ? 'Confirm the date required to enable' : 'Set a date required to enable')
+                    : 'Choose the stock colour to enable'}
             </span>
           )}
           {copied && <span className="text-[11px] text-in-stock md:text-right max-md:w-full max-md:text-center">Link copied</span>}

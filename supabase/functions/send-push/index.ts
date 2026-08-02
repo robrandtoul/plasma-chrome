@@ -52,6 +52,27 @@ const FULFILMENT_EVENTS = new Set([
   'pay_link_opened',
   'project_reaches_to_order_status',
 ])
+// Events whose recipients the CALLER names, rather than us working them out
+// from who owns the project: the two chat pushes (the @mentioned users / the DM
+// recipient) and the order-hold release (the person who put the hold on —
+// often not the designer whose proof it is, so ownership is the wrong question).
+const EXPLICIT_RECIPIENT_EVENTS = new Set([
+  'team_chat_mention',
+  'team_chat_dm',
+  'order_hold_released',
+])
+
+// Fallback lock-screen copy, used only if settings.notification_copy has no
+// entry for the event (a fresh database, or a trigger deployed ahead of its
+// seed). The admin-editable copy always wins.
+const DEFAULT_EXPLICIT_COPY: Record<string, { title: string; body: string }> = {
+  team_chat_dm: { title: '{actor} sent you a message', body: '{snippet}' },
+  team_chat_mention: { title: '{actor} mentioned you', body: '{snippet}' },
+  order_hold_released: {
+    title: 'Your hold was taken off',
+    body: '{actor} took it off the order for {company} — it is no longer held.',
+  },
+}
 
 type PrefValue = 'on' | 'off' | 'own_projects'
 
@@ -63,8 +84,9 @@ interface Body {
   source_kind: 'proof_event' | 'order' | 'proof_finalize' | 'condition' | 'chat'
   source_event_id: string
   actor_user_id?: string | null
-  // Explicit recipients for the chat events — team_chat_mention (the
-  // @mentioned users) and team_chat_dm (the DM recipient, 000324). Other
+  // Explicit recipients, for the events in EXPLICIT_RECIPIENT_EVENTS —
+  // team_chat_mention (the @mentioned users), team_chat_dm (the DM recipient,
+  // 000324) and order_hold_released (whoever put the hold on, 000378). Other
   // event codes resolve recipients from ownership + prefs instead.
   recipient_user_ids?: string[] | null
   vars?: Record<string, string | null | undefined>
@@ -126,10 +148,12 @@ Deno.serve(async (req) => {
   const fulfilmentIds = new Set((settings.fulfilment_user_ids as string[] | null) ?? [])
   const copyMap = (settings.notification_copy as Record<string, { title: string; body: string }> | null) ?? {}
 
-  // Team-chat events: the recipients are explicit (the mentioned users, or the
-  // DM recipient), so these bypass the proof-ownership recipient machinery.
-  if (eventCode === 'team_chat_mention' || eventCode === 'team_chat_dm') {
-    return await handleChatMention(admin, body, copyMap)
+  // Explicit-recipient events bypass the proof-ownership recipient machinery.
+  // Deliberately ABOVE the money-event gate below: an order hold going away is
+  // an internal placement-safety signal, not a sale, so it must still reach the
+  // holder whatever payment_mode says.
+  if (EXPLICIT_RECIPIENT_EVENTS.has(eventCode)) {
+    return await handleExplicitRecipients(admin, body, copyMap)
   }
 
   // Money events stay silent until ordering is actually live, so test orders
@@ -295,12 +319,13 @@ function deepLink(event: string, proofId: string | null): string {
   return proofId ? `/proofs/${proofId}` : '/'
 }
 
-// Team-chat fan-out for the explicit-recipient events: team_chat_mention (the
-// @mentioned users) and team_chat_dm (the DM recipient, 000324). Not derived
-// from any proof, so this is self-contained: for each recipient, respect an
-// account-wide pause or an explicit per-event "off", dedup via the outbox,
-// send to every device, prune dead subscriptions. Deep-links to /chat.
-async function handleChatMention(
+// Fan-out for the events whose recipients arrive named in the request:
+// team_chat_mention (the @mentioned users), team_chat_dm (the DM recipient,
+// 000324) and order_hold_released (whoever put the hold on, 000378). Not
+// derived from any proof, so this is self-contained: for each recipient,
+// respect an account-wide pause or an explicit per-event "off", dedup via the
+// outbox, send to every device, prune dead subscriptions.
+async function handleExplicitRecipients(
   admin: SupabaseClient,
   body: Body,
   copyMap: Record<string, { title: string; body: string }>,
@@ -311,17 +336,27 @@ async function handleChatMention(
   ).filter((id) => id !== body.actor_user_id)
   if (recipientIds.length === 0) return json({ status: 'skipped', reason: 'no_recipients' })
 
+  const isHoldRelease = eventCode === 'order_hold_released'
   const copy =
     copyMap[eventCode] ??
-    (eventCode === 'team_chat_dm'
-      ? { title: '{actor} sent you a message', body: '{snippet}' }
-      : { title: '{actor} mentioned you', body: '{snippet}' })
+    DEFAULT_EXPLICIT_COPY[eventCode] ??
+    { title: 'Proof Viewer', body: 'You have a new update.' }
   const vars = { ...(body.vars ?? {}) }
   const payload: PushPayload = {
     title: clip(interpolate(copy.title, vars), 30),
     body: clip(interpolate(copy.body, vars), 120),
-    url: '/chat',
-    tag: `chat:${body.source_event_id}`,
+    // Tapping a hold release lands on the Orders page, where the order now sits
+    // unblocked; the chat events land in chat.
+    //
+    // Its own `hold:` tag namespace, deliberately NOT the `order:<id>` the
+    // fulfilment events use: same tag means "replace", so sharing one would let
+    // an unrelated order push quietly overwrite the notice that someone removed
+    // your block. Keyed on the order so a second hold release on the SAME order
+    // does replace the first (the newest is the true state).
+    url: isHoldRelease ? '/orders' : '/chat',
+    tag: isHoldRelease
+      ? `hold:${body.order_id ?? body.source_event_id}`
+      : `chat:${body.source_event_id}`,
   }
 
   let sent = 0
@@ -348,12 +383,16 @@ async function handleChatMention(
       continue
     }
 
+    // source_kind comes from the request, not a hardcoded 'chat': setOutcome
+    // below matches the row back by body.source_kind, so writing anything else
+    // here would leave the ledger row stuck on 'queued' for any non-chat event.
+    // (Both chat triggers send 'chat', so this is unchanged for them.)
     const { error: insErr } = await admin.from('notification_outbox').insert({
       event_code: eventCode,
-      source_kind: 'chat',
+      source_kind: body.source_kind,
       source_event_id: body.source_event_id,
-      proof_id: null,
-      order_id: null,
+      proof_id: body.proof_id ?? null,
+      order_id: body.order_id ?? null,
       recipient_user_id: recipientId,
       title: payload.title,
       body: payload.body,
@@ -365,7 +404,7 @@ async function handleChatMention(
         skipped++
         continue
       }
-      console.error('[send-push] mention outbox insert failed', insErr)
+      console.error('[send-push] explicit-recipient outbox insert failed', insErr)
       continue
     }
 

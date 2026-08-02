@@ -1,13 +1,23 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { DesignerChrome, PanelShell, ButtonCoral, ButtonGhost } from '../design'
 import { ImageCard, type GridImage } from '../components/ImageGrid'
 import Modal from '../components/Modal'
 import { logAudit } from '../lib/audit'
-import ArtworkCheckReportView, { InlineSpinner, artworkCheckAuditFields, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
+import ArtworkCheckReportView, { InlineSpinner, artworkCheckAuditFields, type ArtworkCheckReport, type ArtworkFlagRef } from '../components/ArtworkCheckReportView'
+import HoldOrderDialog from '../components/HoldOrderDialog'
 import { mergeInvestigation, requestInvestigation } from '../lib/useProofCheck'
 import { scopeToOrderedFinish, finishScopeIsUncertain, type FinishScopeOutcome } from '../lib/approvedArtworkFinish'
+import {
+  HOLD_COPY,
+  HOLD_REASON_MAX,
+  holdBlockReason,
+  holdState,
+  repliedLine,
+  type HoldReplyContext,
+  type OrderHoldRow,
+} from '../lib/orderHolds'
 
 // OrderReviewPage (/orders/:id/place) — the review-and-confirm screen for placing
 // a PAID order into production. Shows the artwork, spec, quantities, destination
@@ -67,6 +77,10 @@ interface PreviewResponse {
     problems: { code: string; message: string }[]
     warnings: { code: string; message: string }[]
   } | null
+  // The hold, as place-order read it server-side (migration 000377). null =
+  // not on hold; ABSENT = an older deployed function that doesn't know about
+  // holds yet, which is not the same thing — see loadPreview.
+  hold?: OrderHoldRow | null
 }
 
 // The artwork-check edge function's response envelope; the report shape +
@@ -78,6 +92,50 @@ interface ArtworkCheckResponse {
   cached?: boolean
   report?: ArtworkCheckReport
   error?: string
+}
+
+// What the hold dialog is being opened for. A 'put' carries the reason it
+// starts with and the flag it came from; a 'take_off' needs neither.
+type HoldDialogState =
+  | { mode: 'put'; reason: string; flag: Record<string, unknown> | null }
+  | { mode: 'take_off' }
+
+// The pre-written reason for a hold raised off an artwork-check flag.
+//
+// Written as the sentence a colleague needs to read on the Orders card, not as
+// the report's own field names: they are deciding whether to wait or to go
+// ahead, and "mobile_number mismatch" does not tell them that. Editable in the
+// dialog — this is a starting point, not the question actually asked.
+function reasonFromFlag(flag: ArtworkFlagRef): string {
+  const field = flag.field.replace(/_/g, ' ').trim() || 'detail'
+  const printed = flag.printed?.trim()
+  const supplied = flag.supplied?.trim()
+  // Two sentences rather than one dashed clause: the report's own card labels
+  // often carry a dash of their own ("Derrick Smith — front/back"), and a
+  // second one in the same line reads as a stutter.
+  // Present tense, not "Asked …": the hold usually goes on BEFORE the message
+  // is written, so the past tense would assert something that has not happened
+  // and then sit there as the record of it.
+  const head = `Checking the ${field} on ${flag.card} with the customer.`
+  const detail =
+    printed && supplied
+      ? ` Artwork says ${printed}, the brief says ${supplied}.`
+      : printed
+        ? ` Artwork says ${printed}.`
+        : ''
+  const out = `${head}${detail}`
+  // The DB CHECK caps the reason at 500 characters, and the dialog's maxLength
+  // only limits TYPING — a long pre-fill would sail past it and bounce on save.
+  return out.length > HOLD_REASON_MAX ? `${out.slice(0, HOLD_REASON_MAX - 1)}…` : out
+}
+
+function holdDateLabel(iso: string): string {
+  return new Date(iso).toLocaleString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function Row({ label, value }: { label: string; value: ReactNode }) {
@@ -173,11 +231,30 @@ export default function OrderReviewPage() {
     required: boolean
     report: ArtworkCheckReport | null
   }>({ status: 'hidden', live: false, required: false, report: null })
+  // "On hold, waiting on the customer" (migration 000377). Read off the order
+  // row with everything else, so there is never a moment where the page has
+  // rendered and Confirm is live but the hold hasn't loaded yet. The rules all
+  // live in src/lib/orderHolds.ts — this page only fetches and renders.
+  const [hold, setHold] = useState<OrderHoldRow | null>(null)
+  // The proof's Help Scout stamps, for "the customer has replied since you
+  // asked". Thread-wide, so it only ever surfaces the card — nothing acts on it.
+  const [replyCtx, setReplyCtx] = useState<HoldReplyContext | null>(null)
+  // The customer's Help Scout thread, so the "they've replied" prompt has
+  // somewhere to send you.
+  const [helpscoutUrl, setHelpscoutUrl] = useState<string | null>(null)
+  const [holdDialog, setHoldDialog] = useState<HoldDialogState | null>(null)
+  const [holdWorking, setHoldWorking] = useState(false)
+  const [holdError, setHoldError] = useState<string | null>(null)
+  // Bumped on every hold write. A preview requested BEFORE that write can land
+  // after it, carrying the pre-write answer — which on a take-off would put the
+  // band back and block Confirm over a hold that no longer exists.
+  const holdWriteSeq = useRef(0)
 
   const loadPreview = useCallback(async (chosenSupplierId?: string | null, noteArg?: string, oversArg?: number) => {
     if (!id) return
     setError(null)
     setPreviewBusy(true)
+    const seq = holdWriteSeq.current
     try {
       const { data, error: fnErr } = await supabase.functions.invoke<PreviewResponse>('place-order', {
         body: { order_id: id, mode: 'preview', ...(chosenSupplierId ? { supplier_id: chosenSupplierId } : {}), ...(noteArg ? { note: noteArg } : {}), ...(oversArg ? { supplier_overs: oversArg } : {}) },
@@ -189,6 +266,14 @@ export default function OrderReviewPage() {
         return
       }
       setPreview(data)
+      // Every preview is a fresh server read of the hold, so a colleague's hold
+      // shows up here without a page reload. Two guards: skip it entirely if
+      // the field is ABSENT (an older deployed place-order — `?? null` would
+      // then wipe a real hold), and skip it if a hold write happened while this
+      // request was in the air (its answer is older than what we know).
+      if (data.hold !== undefined && holdWriteSeq.current === seq) {
+        setHold(data.hold ?? { held_at: null })
+      }
       if (data.supplier && !chosenSupplierId) setSupplierId(data.supplier.id)
     } finally {
       setPreviewBusy(false)
@@ -203,7 +288,22 @@ export default function OrderReviewPage() {
       // Approved artwork for review. Resolve the proof id off the order; ignore
       // failures (the page still works without artwork).
       if (id) {
-        const { data: order } = await supabase.from('orders').select('proof_id, status, fulfilled_at, material_id, material_option_id').eq('id', id).maybeSingle()
+        const { data: order } = await supabase
+          .from('orders')
+          // Deliberately does NOT name the 000377 hold columns. PostgREST
+          // sends one select= list, so an unknown column fails the WHOLE query
+          // — and this query is what resolves proof_id, so a frontend deployed
+          // before the migration would silently lose the approved-artwork
+          // gallery and the revision-replace banner, not just the hold. The
+          // hold arrives on the preview payload instead (place-order reads it
+          // in its own tolerant query), which keeps the deploy order free in
+          // both directions.
+          .select(
+            'proof_id, status, fulfilled_at, material_id, material_option_id, ' +
+              'proofs(helpscout_last_reply_at, helpscout_last_customer_reply_at, helpscout_conversation_url)',
+          )
+          .eq('id', id)
+          .maybeSingle()
         const proofId = (order as { proof_id?: string } | null)?.proof_id
         const orderStatus = (order as { status?: string } | null)?.status ?? null
         // The order's own material — the artwork gallery must show the version this
@@ -216,6 +316,22 @@ export default function OrderReviewPage() {
         if (!cancelled) {
           const o = order as { status?: string; fulfilled_at?: string | null } | null
           setRevisionReplace(o?.status === 'revision' && !!o?.fulfilled_at)
+          // Hold state comes from the preview payload only (see the select
+          // above) — setting it from this row would overwrite the server's
+          // answer with an undefined.
+          const p = (order as { proofs?: { helpscout_last_reply_at?: string | null; helpscout_last_customer_reply_at?: string | null; helpscout_conversation_url?: string | null } | null } | null)?.proofs
+          setReplyCtx(
+            p
+              ? {
+                  lastStaffReplyAt: p.helpscout_last_reply_at ?? null,
+                  lastCustomerReplyAt: p.helpscout_last_customer_reply_at ?? null,
+                }
+              : null,
+          )
+          // "The customer has replied — worth a read" is an errand, and this
+          // page otherwise has no way out to the thread (its only links are
+          // three "Back to orders"). Without this the prompt is a dead end.
+          setHelpscoutUrl(p?.helpscout_conversation_url ?? null)
         }
         // For a revision order, gate Confirm on the proof being re-approved.
         if (proofId && orderStatus === 'revision' && !cancelled) {
@@ -436,6 +552,60 @@ export default function OrderReviewPage() {
     }
   }
 
+  // Put this order on hold, or take it off. One write either way.
+  //
+  // held_by / held_by_name are deliberately NOT sent: the trigger stamps them
+  // from auth.uid() server-side, because proofs.profiles SELECT is
+  // self-or-admin (the page cannot read a colleague's name) and a
+  // client-supplied name on a shared row would be spoofable. Taking a hold off
+  // is exactly `held_at: null` — the trigger clears the reason, the
+  // attribution and the flag snapshot for us (migration 000377).
+  async function submitHold(reason: string) {
+    if (!id || !holdDialog) return
+    setHoldWorking(true)
+    setHoldError(null)
+    holdWriteSeq.current += 1
+    try {
+      const patch =
+        holdDialog.mode === 'take_off'
+          ? { held_at: null }
+          : {
+              held_at: new Date().toISOString(),
+              hold_reason: reason,
+              hold_artwork_flag: holdDialog.flag,
+            }
+      const { data, error: err } = await supabase
+        .from('orders')
+        .update(patch)
+        .eq('id', id)
+        // Read the row back so the band shows the name the TRIGGER stamped,
+        // rather than an optimistic guess this page isn't allowed to make.
+        .select('held_at, hold_reason, held_by_name')
+        .maybeSingle()
+      if (err) {
+        // The raw PostgREST message is never empty, so putting it first meant
+        // the friendly sentence below could never actually appear — what Rob
+        // saw on a failure was database jargon. Keep the detail in the console.
+        console.error('[order-review] hold write failed:', err)
+        setHoldError('That couldn’t be saved. Check your connection, and if it keeps happening sign out and back in.')
+        return
+      }
+      // No error means the write landed, so the new state is what we wrote —
+      // the read-back only supplies the one field we couldn't know, the name
+      // the trigger stamped. Deriving it this way rather than trusting the
+      // returned row means an empty or odd read can never rub out a hold that
+      // exists, which would show a clear page over a blocked order.
+      setHold({
+        held_at: patch.held_at,
+        hold_reason: patch.held_at ? reason : null,
+        held_by_name: (data as OrderHoldRow | null)?.held_by_name ?? null,
+      })
+      setHoldDialog(null)
+    } finally {
+      setHoldWorking(false)
+    }
+  }
+
   async function confirm() {
     if (!id) return
     setConfirming(true)
@@ -496,7 +666,16 @@ export default function OrderReviewPage() {
   // `required` is only ever true from a live-mode response, so this is inert
   // while the feature is off/shadow. place-order re-checks it server-side.
   const artworkRunNeeded = artworkCheck.required && artworkCheck.report == null
-  const blockReason = revisionNeedsApproval
+  const holdInfo = holdState(hold, replyCtx)
+  // The hold clause goes FIRST. Every other reason here is something the
+  // reviewer can fix on this page in the next minute; a hold is a colleague
+  // waiting on an answer from the customer, and it outranks all of them.
+  // Second in the chain and a held order missing a supplier email would be
+  // told to go and set up a supplier — sending them off to solve the wrong
+  // problem and, worse, implying the order is placeable once they have.
+  const blockReason = holdInfo.held
+    ? holdBlockReason(holdInfo)
+    : revisionNeedsApproval
     ? 'Re-approve the new proof before placing this revision.'
     : (revisionReplace && !oldJobCancelled)
     ? 'Confirm you’ve cancelled the old Stock Control job to place this revision.'
@@ -573,6 +752,62 @@ export default function OrderReviewPage() {
                 {isSupplier ? 'Supplier order' : 'In-house order'}
               </span>
             </p>
+
+            {/* On hold — the one thing on this page that means "don't place
+                this", so it sits above everything, before the artwork the
+                reviewer came here to look at. The reason is quoted rather than
+                summarised: it is the only thing that tells a colleague whether
+                to wait or to go ahead.
+
+                The wording stops at "from here" on purpose. A hand-written
+                Help Scout note carrying Qty:/Card: lines still creates a Stock
+                Control job through the inhouse-order parser, so no control on
+                an order can honestly promise nobody can place it. */}
+            {holdInfo.held && (
+              <div className="mt-4 rounded-lg bg-low-soft px-3.5 py-3 text-[13px] text-ink ring-1 ring-low">
+                <p className="font-medium">
+                  {holdInfo.byName ? `${holdInfo.byName} put this order on hold` : 'This order is on hold'}
+                  {' · '}
+                  {holdDateLabel(holdInfo.heldAt)}
+                </p>
+                <p className="mt-2 text-[11px] font-medium uppercase tracking-wide text-ink-mute">Waiting on</p>
+                <blockquote className="mt-0.5 break-words border-l-[3px] border-low pl-3">
+                  {holdInfo.reason}
+                </blockquote>
+                <p className="mt-2 text-ink-soft">
+                  It can’t be pushed into production from here until someone takes it off hold.
+                </p>
+                {repliedLine(holdInfo) && (
+                  <p className="mt-1.5 font-medium">
+                    {repliedLine(holdInfo)}
+                    {helpscoutUrl && (
+                      <>
+                        {' '}
+                        <a
+                          href={helpscoutUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline underline-offset-2 hover:no-underline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)]"
+                        >
+                          Open in Help Scout ↗
+                        </a>
+                      </>
+                    )}
+                  </p>
+                )}
+                <div className="mt-2.5">
+                  <ButtonGhost
+                    size="sm"
+                    onClick={() => {
+                      setHoldError(null)
+                      setHoldDialog({ mode: 'take_off' })
+                    }}
+                  >
+                    {HOLD_COPY.take_off}
+                  </ButtonGhost>
+                </div>
+              </div>
+            )}
 
             {/* Approved artwork — the whole point of the review: see exactly
                 what's being produced. Every name + side of the version this
@@ -857,6 +1092,34 @@ export default function OrderReviewPage() {
                     onInvestigate={(flag) => void investigateFlag(flag)}
                     investigatingKey={investigatingKey}
                     investigationError={investigationError}
+                    // Not offered while the order is already held: a second
+                    // hold would overwrite a colleague's reason with this
+                    // flag's, and the band above already says what to do next.
+                    onHoldFromFlag={
+                      holdInfo.held
+                        ? undefined
+                        : (flag) => {
+                            setHoldError(null)
+                            setHoldDialog({
+                              mode: 'put',
+                              reason: reasonFromFlag(flag),
+                              // Snapshot the finding onto the hold. The stored
+                              // report is replaced wholesale by every re-run —
+                              // including the automatic one that fires when a
+                              // Dropbox folder is linked — so without this the
+                              // reason would outlive the finding behind it.
+                              flag: {
+                                card: flag.card,
+                                field: flag.field,
+                                supplied: flag.supplied,
+                                printed: flag.printed,
+                                note: flag.note,
+                                severity: flag.severity ?? null,
+                                checked_at: artworkReport?.checked_at ?? null,
+                              },
+                            })
+                          }
+                    }
                   />
                 ) : null}
               </div>
@@ -921,6 +1184,23 @@ export default function OrderReviewPage() {
                   )}
                 </div>
               </>
+            )}
+
+            {holdDialog && (
+              <HoldOrderDialog
+                mode={holdDialog.mode}
+                customerLabel={s.customer}
+                state={holdInfo.held ? holdInfo : null}
+                initialReason={holdDialog.mode === 'put' ? holdDialog.reason : undefined}
+                working={holdWorking}
+                errorMsg={holdError}
+                onConfirm={(reason) => void submitHold(reason)}
+                onCancel={() => {
+                  if (holdWorking) return
+                  setHoldDialog(null)
+                  setHoldError(null)
+                }}
+              />
             )}
 
             {/* Full-size artwork viewer. Portal-based Modal with its own Esc +

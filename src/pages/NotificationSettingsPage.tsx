@@ -28,6 +28,11 @@ const ORDER_EVENTS: { code: string; label: string; hint: string }[] = [
   { code: 'order_paid', label: 'Order paid', hint: 'A customer pays for an order.' },
   { code: 'pay_link_opened', label: 'Pay link opened', hint: 'A customer opens a pay link.' },
   { code: 'project_reaches_to_order_status', label: 'Ready to order', hint: 'A project reaches the to-order stage.' },
+  // Without a row here the only way to silence this would be the account-wide
+  // Pause, which also silences "order paid" — the same trap CHAT_EVENTS below
+  // was added to fix. send-push already honours prefs[code] === 'off' for it
+  // (migration 000378), so this row just exposes what the server could always do.
+  { code: 'order_hold_released', label: 'Hold taken off', hint: 'Someone takes an order off hold that you put on.' },
 ]
 
 // Chat pushes had no controls at all, yet every direct message sends one —

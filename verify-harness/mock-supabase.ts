@@ -254,6 +254,44 @@ const ORDERS: FixtureOrder[] = [
     xero_invoice_id: 'xi-3',
     proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Umbrella Corp', 'Alice Wesker') },
   }),
+  // To order — ON HOLD, waiting on the customer (migration 000377). Fully
+  // prepped, so the place button would otherwise be live: this is the case the
+  // feature exists for. The artwork check flagged something and the answer
+  // isn't back yet.
+  order({
+    id: 'o13',
+    status: 'paid',
+    paid_at: daysAgo(3),
+    xero_invoice_id: 'xi-4',
+    date_required: daysAhead(9).slice(0, 10),
+    dropbox_folder_url: 'https://www.dropbox.com/scl/fo/abc/order-1240',
+    stock_order_number: '1240',
+    project_name: 'Kane Joinery',
+    artwork_check_verdict: 'defect',
+    artwork_checked_at: daysAgo(3),
+    held_at: daysAgo(3),
+    hold_reason: 'Artwork says 07700 900412 but the brief says 07700 900123 — asked Marcus which is right.',
+    held_by_name: 'Rob Randtoul',
+    proofs: { helpscout_last_reply_at: daysAgo(3), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-13', helpscout_conversation_url: 'https://secure.helpscout.net/conversation/13', contacts: contact('Kane Joinery', 'Marcus Kane') },
+  }),
+  // To order — ON HOLD, and the customer has since replied. The card should
+  // surface that as an errand ("worth a read") with a route to the thread —
+  // never as "answered", because the Help Scout stamp is thread-wide and
+  // cannot know what they actually said.
+  order({
+    id: 'o14',
+    status: 'paid',
+    paid_at: daysAgo(6),
+    xero_invoice_id: 'xi-5',
+    date_required: daysAhead(4).slice(0, 10),
+    dropbox_folder_url: 'https://www.dropbox.com/scl/fo/abc/order-1241',
+    stock_order_number: '1241',
+    project_name: 'Vandelay Industries',
+    held_at: daysAgo(5),
+    hold_reason: 'Waiting on confirmation of the new office address before we print it.',
+    held_by_name: 'Chris Jackson',
+    proofs: { helpscout_last_reply_at: daysAgo(5), helpscout_last_customer_reply_at: daysAgo(1), helpscout_conversation_id: 'hs-14', helpscout_conversation_url: 'https://secure.helpscout.net/conversation/14', contacts: contact('Vandelay Industries', 'Art Vandelay') },
+  }),
   // To order — paid, supplier route, folder + date already saved (ready).
   order({
     id: 'o7',

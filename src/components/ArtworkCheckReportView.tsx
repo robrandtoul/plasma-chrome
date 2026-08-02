@@ -152,6 +152,21 @@ function GroupLabel({ children }: { children: ReactNode }) {
   return <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-mute">{children}</p>
 }
 
+// One flag, handed back whole to whoever offers "Hold this and ask the
+// customer". The card + field identify it; printed/supplied/note/severity are
+// the finding itself, snapshotted onto the hold — `orders.artwork_check` is
+// overwritten wholesale by every re-run (including the automatic one the
+// 000337 trigger fires when a Dropbox folder is linked), so the hold has to
+// carry its own copy or the reason outlives the finding that caused it.
+export interface ArtworkFlagRef {
+  card: string
+  field: string
+  printed: string
+  supplied: string
+  note: string
+  severity?: ArtworkFinding['severity']
+}
+
 export default function ArtworkCheckReportView({
   report,
   heading,
@@ -160,6 +175,7 @@ export default function ArtworkCheckReportView({
   onInvestigate,
   investigatingKey,
   investigationError,
+  onHoldFromFlag,
 }: {
   report: ArtworkCheckReport
   // Names the check in the headline — defaults to "Artwork check" (the
@@ -180,6 +196,14 @@ export default function ArtworkCheckReportView({
   onInvestigate?: (flag: { card: string; field: string }) => void
   investigatingKey?: string | null
   investigationError?: { key: string; message: string } | null
+  // When provided, each flag also offers "Hold this and ask the customer" —
+  // the Place-order page's route from a finding to a hold on the order, with
+  // the reason pre-written from the flag.
+  //
+  // Only that page passes it. The Orders-page archive modal and the pre-send
+  // proof check leave it out, so nothing renders there: an archived report has
+  // no order left to hold, and a proof hasn't been paid for yet.
+  onHoldFromFlag?: (flag: ArtworkFlagRef) => void
 }) {
   // Defect-grade flags first — the red items are what the reviewer must see.
   const flags = report.cards.flatMap((c) =>
@@ -279,7 +303,7 @@ export default function ArtworkCheckReportView({
                   {f.supplied && <> vs supplied <span className="font-mono text-[12.5px]">“{f.supplied}”</span></>}
                 </p>
                 {f.note && <p className="mt-1 text-ink-soft">{f.note}</p>}
-                {inv ? (
+                {inv && (
                   <div className="mt-2 rounded-lg border border-line-soft bg-canvas/70 px-3 py-2">
                     <p className="text-[13px] font-semibold text-ink">History: {FAULT_LABELS[inv.fault]}</p>
                     <p className="mt-1 text-[13px] text-ink-soft">{inv.conclusion}</p>
@@ -298,25 +322,51 @@ export default function ArtworkCheckReportView({
                       </details>
                     )}
                   </div>
-                ) : onInvestigate ? (
-                  <div className="mt-1.5">
-                    <button
-                      type="button"
-                      onClick={() => onInvestigate({ card: f.card, field: f.field })}
-                      disabled={!!investigatingKey}
-                      className="text-[13px] font-medium text-brand hover:underline disabled:opacity-50"
-                    >
-                      {busy && <InlineSpinner className="mr-1.5 h-3 w-3" />}
-                      {busy ? 'Reconstructing the history…' : 'Investigate the history'}
-                    </button>
+                )}
+                {/* The two things a reviewer can do with a flag: understand it,
+                    or stop the order while they ask. Investigate drops away once
+                    its history is on screen (it has answered itself); holding
+                    stays offered either way, because reading the history is
+                    often exactly what makes someone decide to ask. */}
+                {(onInvestigate && !inv) || onHoldFromFlag ? (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                    {onInvestigate && !inv && (
+                      <button
+                        type="button"
+                        onClick={() => onInvestigate({ card: f.card, field: f.field })}
+                        disabled={!!investigatingKey}
+                        className="text-[13px] font-medium text-brand hover:underline disabled:opacity-50"
+                      >
+                        {busy && <InlineSpinner className="mr-1.5 h-3 w-3" />}
+                        {busy ? 'Reconstructing the history…' : 'Investigate the history'}
+                      </button>
+                    )}
+                    {onHoldFromFlag && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onHoldFromFlag({
+                            card: f.card,
+                            field: f.field,
+                            printed: f.printed,
+                            supplied: f.supplied,
+                            note: f.note,
+                            severity: f.severity,
+                          })
+                        }
+                        className="text-[13px] font-medium text-brand hover:underline"
+                      >
+                        Hold this and ask the customer
+                      </button>
+                    )}
                     {busy && (
-                      <span className="ml-2 text-[12px] text-ink-mute">
+                      <span className="text-[12px] text-ink-mute">
                         Reading this card’s artwork across every round — takes half a minute or so.
                       </span>
                     )}
-                    {invError && <p className="mt-1 text-[13px] text-out">{invError}</p>}
                   </div>
                 ) : null}
+                {invError && <p className="mt-1 text-[13px] text-out">{invError}</p>}
               </li>
             )
           })}

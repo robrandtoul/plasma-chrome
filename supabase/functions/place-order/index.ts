@@ -15,6 +15,10 @@
 //     order — Stock Control's helpscout-outsourced-order ingests it). Then flips
 //     the order to 'fulfilled' (placed) and audits.
 //
+// An order that is ON HOLD (waiting on an answer from the customer, migration
+// 000377) previews normally — with a `hold` object so the review page can say
+// so — but confirm refuses it with a 409 `order_on_hold`.
+//
 // Route comes from the proof material's production_route (in_house | supplier).
 // The composed text is identical in preview and confirm (single source — what
 // you see is what's sent). verify_jwt = true; designer/admin gate.
@@ -487,6 +491,12 @@ Deno.serve(async (req) => {
   if (orderErr) return json({ ok: false, error: `Order lookup failed: ${orderErr.message}` }, 500)
   if (!order) return json({ ok: false, error: 'Order not found.' }, 404)
 
+  // Is this order on hold, waiting on the customer? (migration 000377). Read for
+  // BOTH modes: preview shows the review page why the Confirm button is off,
+  // confirm refuses below. Its own query, so the main select above stays free of
+  // 000377 columns — the same pre-migration deploy safety as artwork_checked_at.
+  const hold = await loadOrderHold(admin, orderId)
+
   // Read the rollout mode BEFORE any of the gates below — the message-retry
   // state is a live-mode concept, and if the setting is ever rolled back to
   // shadow/off those gates must behave exactly as they did pre-Phase-2.
@@ -521,6 +531,38 @@ Deno.serve(async (req) => {
   }
   if (!order.stock_order_number) return json({ ok: false, error: 'Link and check the Dropbox order folder first (no order number).' }, 400)
   if (!order.date_required) return json({ ok: false, error: 'Set the date required first.' }, 400)
+
+  // On hold, waiting on the customer (migration 000377). Someone raised a query
+  // that has to be settled before the cards are made, so this order must not be
+  // pushed into production — anyone can take it off hold once the answer lands.
+  //
+  // Sits with the artwork-check gate for the same reason: before the Stock
+  // Control write, before the note or supplier email, before anything
+  // irreversible. The database trigger is the real block (it refuses the flip to
+  // 'fulfilled'), but on the legacy 'off'/'shadow' path that flip happens AFTER
+  // the note has already been posted — so this is the guard a human should
+  // actually meet, and it is the one that can explain itself.
+  //
+  // Runs before the artwork-check gate deliberately: telling someone to go and
+  // run a check on an order that shouldn't be placed at all sends them the wrong
+  // way. Skipped on a message retry, like the gates below it — that order is
+  // already in production and the retry only chases the message that never sent.
+  if (mode === 'confirm' && !isMessageRetryCandidate) {
+    if (hold.kind === 'held') {
+      return json({ ok: false, code: 'order_on_hold', error: holdBlockMessage(hold.hold) }, 409)
+    }
+    // Couldn't tell. Fails CLOSED: on the legacy hand-off path the message goes
+    // out before the trigger ever sees the status flip, so guessing "not held"
+    // is the one guess that can't be taken back. Retrying is cheap and the
+    // failure is almost always transient.
+    if (hold.kind === 'unknown') {
+      return json({
+        ok: false,
+        code: 'order_hold_unknown',
+        error: 'Couldn’t check whether this order is on hold, so it hasn’t been placed. Try again in a moment.',
+      }, 503)
+    }
+  }
 
   // Artwork sanity check — the mandatory-RUN gate (docs/artwork-check-spec.md).
   // When settings.artwork_check_required is on (and the check is live), an
@@ -797,7 +839,11 @@ Deno.serve(async (req) => {
     if (mode === 'preview') {
       // Key present only when the feature is on — 'off' responses stay byte-identical.
       const handoffValidation = await runHandoffValidation(pub, handoffMode, handoffPayload)
-      return json({ ok: true, route, subject, note_lines: lines, summary, helpscout_linked: !!conversationId, artwork_plan: artworkPlan, ...(handoffValidation ? { handoff_validation: handoffValidation } : {}) })
+      // `hold` is null unless the order is on hold. Deliberately still ok/200:
+      // the review page renders its whole body behind a successful preview, so
+      // failing here would replace the page with a bare error and leave the
+      // reader no way to read the hold, let alone take it off.
+      return json({ ok: true, route, subject, note_lines: lines, summary, helpscout_linked: !!conversationId, artwork_plan: artworkPlan, hold: hold.kind === 'held' ? hold.hold : null, ...(handoffValidation ? { handoff_validation: handoffValidation } : {}) })
     }
 
     // confirm
@@ -1074,6 +1120,10 @@ Deno.serve(async (req) => {
       ship_by: shipByStr,
       summary,
       artwork_plan: artworkPlan,
+      // Null unless the order is on hold — and still ok/200 either way (see the
+      // in-house preview return). An 'unknown' read shows as null here rather
+      // than blocking the page; confirm is where it fails closed.
+      hold: hold.kind === 'held' ? hold.hold : null,
       ...(handoffValidation ? { handoff_validation: handoffValidation } : {}),
     })
   }
@@ -1477,6 +1527,109 @@ async function loadArtworkCheckGate(admin: SupabaseClient): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+// ── On hold, waiting on the customer ────────────────────────────────────────
+// Migration 000377. Same three fields the frontend's holdState() reads, so the
+// preview payload can be handed to it as-is.
+interface OrderHold {
+  held_at: string | null
+  hold_reason: string | null
+  held_by_name: string | null
+}
+
+// Read the hold in its own query — the loadArtworkCheckGate idiom — so this
+// function stays deployable before migration 000377 lands. Adding these columns
+// to the main order select instead would fail that select outright on an
+// unmigrated database, which would stop EVERY order being placed, not just held
+// ones.
+//
+// THREE outcomes, not two, and the distinction is load-bearing:
+//   'none'    — read fine, not on hold.
+//   'held'    — read fine, on hold.
+//   'unknown' — the read itself failed. NOT the same as "not on hold".
+//
+// It would be tempting to treat 'unknown' as 'none' on the grounds that the
+// 000377 trigger refuses the flip to 'fulfilled' anyway. That reasoning holds
+// in live hand-off mode, where the Stock Control write precedes every send —
+// but NOT in the legacy 'off'/'shadow' modes this function still supports,
+// where the production note is posted (or the supplier emailed) BEFORE
+// markPlaced flips the status. There the trigger would fire after the message
+// had already gone, and in those modes the note IS the hand-off. So a failed
+// read fails closed on confirm.
+//
+// The one error we can safely read as 'none' is "column does not exist"
+// (42703), i.e. the migration hasn't been applied — in which case no hold can
+// exist to miss.
+type OrderHoldRead =
+  | { kind: 'none' }
+  | { kind: 'held'; hold: OrderHold }
+  | { kind: 'unknown' }
+
+async function loadOrderHold(admin: SupabaseClient, orderId: string): Promise<OrderHoldRead> {
+  try {
+    const { data, error } = await admin
+      .from('orders')
+      .select('held_at, hold_reason, held_by_name')
+      .eq('id', orderId)
+      .maybeSingle()
+    if (error) {
+      // Pre-migration database: the feature cannot be in use yet.
+      if ((error as { code?: string }).code === '42703') return { kind: 'none' }
+      console.error('[place-order] hold read failed:', error)
+      return { kind: 'unknown' }
+    }
+    if (!data) return { kind: 'none' }
+    const d = data as OrderHold
+    if (!d.held_at) return { kind: 'none' }
+    return {
+      kind: 'held',
+      hold: { held_at: d.held_at, hold_reason: d.hold_reason ?? null, held_by_name: d.held_by_name ?? null },
+    }
+  } catch (err) {
+    console.error('[place-order] hold read threw:', (err as Error)?.message)
+    return { kind: 'unknown' }
+  }
+}
+
+// The hold timestamp in London time, matching the trigger's own message
+// (to_char(... at time zone 'Europe/London'), migration 000377). fmtDate is
+// deliberately not reused: it has no timeZone, so on the edge runtime it renders
+// UTC — a hold raised at 23:30 UTC during BST would read as the previous day
+// here while the database and the browser both said otherwise.
+function fmtHoldDate(iso: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'Europe/London',
+  })
+}
+
+// The sentence a held order gets on confirm. Names who put it on hold and what
+// they are waiting on, because that is what tells the reader whether to wait or
+// go and chase the answer.
+//
+// Deliberately NOT "nobody can place this order": a hand-written Help Scout note
+// carrying Qty:/Card: lines still creates a Stock Control job through the
+// helpscout-inhouse-order parser, a backstop that never touches an order row —
+// so no control here can promise that. It says only what is true: this order
+// can't be pushed into production from here.
+function holdBlockMessage(hold: OrderHold): string {
+  const who = (hold.held_by_name ?? '').trim()
+  const when = fmtHoldDate(hold.held_at)
+  const reason = (hold.hold_reason ?? '').trim()
+  const opener = who
+    ? `${who} put this order on hold${when ? ` on ${when}` : ''}`
+    : `This order was put on hold${when ? ` on ${when}` : ''}`
+  // The reason is free text a colleague typed, so it may or may not already end
+  // in punctuation — add a full stop only when it doesn't, rather than editing
+  // their words.
+  const stem = reason ? `${opener}: ${reason}` : opener
+  return `${stem}${/[.!?]$/.test(stem) ? '' : '.'} Take it off hold before placing it.`
 }
 
 interface HandoffValidation {
