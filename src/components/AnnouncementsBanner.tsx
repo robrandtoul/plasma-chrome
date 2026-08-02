@@ -15,13 +15,21 @@ import {
 } from '../lib/announcements'
 
 // The dashboard announcements strip (migration 000318). Everyone sees the
-// active notices; admins additionally get the "Post announcement" control and a
-// Remove button on each card. Renders nothing for a designer when there's
-// nothing live, so it costs zero pixels in normal operation.
+// active notices; admins additionally get a Remove button on each card.
+//
+// Renders nothing when there's nothing live — for EVERYONE, admins included.
+// The strip sits above the hero, which is the best real estate on the page, and
+// an empty state there charged rent every morning for a feature that is used
+// occasionally. The "Post announcement" control that used to live in this
+// component's header is now <PostAnnouncementButton />, mounted in the hero's
+// action cluster next to "New project", so admins keep the entry point without
+// the component needing to render an empty shell to hold it.
 //
 // Fetch-on-mount (no realtime — the dashboard reloads through the day and admin
 // posts are infrequent). Active-window filtering is client-side so an expiry
 // that lapses while the page is open hides the card without a refetch.
+// `refreshKey` lets the hero button pull a freshly-posted notice into view: the
+// button owns the modal, so it has no way to hand the new row over directly.
 
 const TONE_ICON: Record<AnnouncementTone, LucideIcon> = {
   info: Info,
@@ -29,12 +37,11 @@ const TONE_ICON: Record<AnnouncementTone, LucideIcon> = {
   warning: AlertTriangle,
 }
 
-export default function AnnouncementsBanner() {
+export default function AnnouncementsBanner({ refreshKey = 0 }: { refreshKey?: number }) {
   const { role } = useAuth()
   const isAdmin = role === 'admin'
   const [items, setItems] = useState<Announcement[]>([])
   const [loading, setLoading] = useState(true)
-  const [composing, setComposing] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -52,7 +59,7 @@ export default function AnnouncementsBanner() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [refreshKey])
 
   const active = items.filter((a) => isAnnouncementActive(a))
 
@@ -77,28 +84,15 @@ export default function AnnouncementsBanner() {
     })
   }
 
-  function handleCreated(a: Announcement) {
-    setItems((prev) => [a, ...prev])
-    setComposing(false)
-  }
-
-  // Nothing to show and not an admin → render nothing (no empty gap).
+  // Nothing live → render nothing, for every role. An admin used to fall
+  // through to a header row and a "No announcements right now" line; the
+  // control that justified it now lives in the hero.
   if (loading) return null
-  if (active.length === 0 && !isAdmin) return null
+  if (active.length === 0) return null
 
   return (
     <div className="mb-6">
-      {isAdmin && (
-        <div className="mb-2 flex items-center justify-between">
-          <span className="eyebrow">Announcements</span>
-          <ButtonGhost size="sm" icon={Megaphone} onClick={() => setComposing(true)}>
-            Post announcement
-          </ButtonGhost>
-        </div>
-      )}
-
-      {active.length > 0 ? (
-        <div className="space-y-2">
+      <div className="space-y-2">
           {active.map((a) => {
             const meta = ANNOUNCEMENT_TONE_META[a.tone]
             const Icon = TONE_ICON[a.tone]
@@ -151,18 +145,40 @@ export default function AnnouncementsBanner() {
               </div>
             )
           })}
-        </div>
-      ) : (
-        isAdmin && (
-          <p className="text-[13px] text-ink-mute">
-            No announcements right now. Post one and everyone will see it here.
-          </p>
-        )
-      )}
-
-      {composing && (
-        <AnnouncementModal onClose={() => setComposing(false)} onCreated={handleCreated} />
-      )}
+      </div>
     </div>
+  )
+}
+
+// The "Post announcement" entry point, split out of the banner so the banner
+// can render nothing when there is nothing to announce. Owns its own modal
+// state; mounted in the dashboard hero's action cluster, admin-only.
+//
+// `onCreated` fires after a successful post so the caller can nudge the banner
+// into refetching — the new notice lives in the database by then, and a refetch
+// is a cheaper contract than threading the created row back across two
+// components that are siblings rather than parent and child.
+export function PostAnnouncementButton({
+  onCreated,
+  className,
+}: { onCreated?: () => void; className?: string }) {
+  const { role } = useAuth()
+  const [composing, setComposing] = useState(false)
+  if (role !== 'admin') return null
+  return (
+    <>
+      <ButtonGhost size="sm" icon={Megaphone} className={className} onClick={() => setComposing(true)}>
+        Post announcement
+      </ButtonGhost>
+      {composing && (
+        <AnnouncementModal
+          onClose={() => setComposing(false)}
+          onCreated={() => {
+            setComposing(false)
+            onCreated?.()
+          }}
+        />
+      )}
+    </>
   )
 }

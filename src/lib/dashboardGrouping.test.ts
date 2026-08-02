@@ -698,6 +698,119 @@ test('version_number carries the current version (0 when none)', () => {
   assertEqual(noVer[0].version_number, 0)
 })
 
+// ── helpscoutReplyEvents() — one reply, one row ───────────────────────────────
+//
+// The reply stamps are per proof but a Help Scout conversation is per customer,
+// so N proofs on one thread used to print N identical rows for a single reply.
+
+console.log('\nhelpscoutReplyEvents() — conversation de-duplication')
+
+// Three proofs on one conversation, all carrying the same reply stamp — the
+// shape a bundle has by design (000317).
+function sharedThread(at: string, ids = ['p1', 'p2', 'p3']) {
+  return ids.map((id) =>
+    makeProject({
+      proof_id: id,
+      contact_name: 'Trevor Lee',
+      helpscout_conversation_id: 'convo-1',
+      helpscout_last_customer_reply_at: at,
+    }),
+  )
+}
+
+test('three proofs sharing a conversation and a reply → exactly one row', () => {
+  const events = helpscoutReplyEvents(sharedThread(hoursAgo(1)))
+  assertEqual(events.length, 1)
+  assertEqual(events[0].event_type, 'customer_reply')
+  assertEqual(events[0].collapsed?.count, 3)
+})
+
+test('collapsing is per direction — a customer and a staff reply stay separate', () => {
+  const at = hoursAgo(1)
+  const events = helpscoutReplyEvents([
+    makeProject({ proof_id: 'p1', helpscout_conversation_id: 'c', helpscout_last_customer_reply_at: at, helpscout_last_reply_at: at }),
+    makeProject({ proof_id: 'p2', helpscout_conversation_id: 'c', helpscout_last_customer_reply_at: at, helpscout_last_reply_at: at }),
+  ])
+  assertEqual(events.length, 2)
+  assert(events.some((e) => e.event_type === 'customer_reply'), 'kept the customer row')
+  assert(events.some((e) => e.event_type === 'staff_reply'), 'kept the staff row')
+  assert(events.every((e) => e.collapsed?.count === 2), 'both collapsed a pair')
+})
+
+test('two replies at different times on one conversation stay two rows', () => {
+  const events = helpscoutReplyEvents([
+    makeProject({ proof_id: 'p1', helpscout_conversation_id: 'c', helpscout_last_customer_reply_at: hoursAgo(1) }),
+    makeProject({ proof_id: 'p2', helpscout_conversation_id: 'c', helpscout_last_customer_reply_at: hoursAgo(5) }),
+  ])
+  assertEqual(events.length, 2)
+  assert(events.every((e) => e.collapsed === undefined), 'neither row claims to cover others')
+})
+
+test('different conversations are never collapsed, even at the same instant', () => {
+  const at = hoursAgo(1)
+  const events = helpscoutReplyEvents([
+    makeProject({ proof_id: 'p1', helpscout_conversation_id: 'c1', helpscout_last_customer_reply_at: at }),
+    makeProject({ proof_id: 'p2', helpscout_conversation_id: 'c2', helpscout_last_customer_reply_at: at }),
+  ])
+  assertEqual(events.length, 2)
+})
+
+// The regression this guards: keying on a null conversation id would fold every
+// unlinked proof that happened to share a timestamp into a single row.
+test('proofs with no conversation id are never collapsed together', () => {
+  const at = hoursAgo(1)
+  const events = helpscoutReplyEvents([
+    makeProject({ proof_id: 'p1', helpscout_conversation_id: null, helpscout_last_customer_reply_at: at }),
+    makeProject({ proof_id: 'p2', helpscout_conversation_id: null, helpscout_last_customer_reply_at: at }),
+  ])
+  assertEqual(events.length, 2)
+  assert(events.every((e) => e.collapsed === undefined), 'no collapse marker')
+})
+
+test('a lone row on a conversation carries no collapsed marker', () => {
+  const events = helpscoutReplyEvents([
+    makeProject({ proof_id: 'p1', helpscout_conversation_id: 'c', helpscout_last_customer_reply_at: hoursAgo(1) }),
+  ])
+  assertEqual(events.length, 1)
+  assertEqual(events[0].collapsed, undefined)
+})
+
+test('the surviving row is the same one regardless of input order', () => {
+  const at = hoursAgo(1)
+  const forward = helpscoutReplyEvents(sharedThread(at, ['p1', 'p2', 'p3']))
+  const reversed = helpscoutReplyEvents(sharedThread(at, ['p3', 'p2', 'p1']))
+  assertEqual(forward[0].proof_id, reversed[0].proof_id)
+  assertEqual(forward[0].id, reversed[0].id)
+})
+
+// Sharing a thread is the trigger, but only a real bundle may be CALLED one —
+// two unrelated projects raised off one email thread collapse identically.
+test('collapsed rows are only marked as a bundle when every proof is in one', () => {
+  const at = hoursAgo(1)
+  const projects = sharedThread(at, ['p1', 'p2'])
+
+  const allInOneBundle = helpscoutReplyEvents(projects, new Map([
+    ['p1', { setId: 'set-a' }],
+    ['p2', { setId: 'set-a' }],
+  ]))
+  assertEqual(allInOneBundle[0].collapsed?.bundle, true)
+
+  const differentBundles = helpscoutReplyEvents(projects, new Map([
+    ['p1', { setId: 'set-a' }],
+    ['p2', { setId: 'set-b' }],
+  ]))
+  assertEqual(differentBundles[0].collapsed?.bundle, false)
+
+  const oneLooseProof = helpscoutReplyEvents(projects, new Map([
+    ['p1', { setId: 'set-a' }],
+  ]))
+  assertEqual(oneLooseProof[0].collapsed?.bundle, false)
+
+  const noBundleInfoAtAll = helpscoutReplyEvents(projects)
+  assertEqual(noBundleInfoAtAll[0].collapsed?.count, 2)
+  assertEqual(noBundleInfoAtAll[0].collapsed?.bundle, false)
+})
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed\n`)

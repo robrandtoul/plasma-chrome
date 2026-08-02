@@ -120,6 +120,25 @@ export interface DashboardProject {
   // The stamp on the SOURCE project. Survives after the reorder is raised, so
   // the row can still say a customer asked once the rule has cleared.
   reorder_requested_at: string | null
+  // 000376. The catalogue category of the current version's material — the
+  // thing the material chips are actually filtering on, rather than the regex
+  // over material_display they used to guess with. Null when the version has
+  // no material at all (a per-direction-pricing Selection stores none).
+  //
+  // OPTIONAL, unlike everything above: a client running against a database
+  // that predates 000376 gets no key at all, which is how the chips know to
+  // fall back to the old name matching. Once the migration is everywhere this
+  // can become `string | null` and the fallback can go.
+  material_category?: string | null
+  // 000376. Has this customer been here before? True when an earlier proof
+  // exists for the same contact OR the conversation carries Help Scout's
+  // durable `repeat customer` tag — on live those two sets overlap by barely a
+  // tenth, so either alone calls a third of our repeat customers new.
+  is_repeat?: boolean | null
+  // 000376. Which project this is in that contact's run — 3 for their third.
+  // Null when only the tag says they are a repeat customer: we know they have
+  // been here, not how often, and an invented ordinal is worse than none.
+  repeat_project_number?: number | null
 }
 
 export type SectionKind = 'pinned' | 'team' | 'snoozed' | 'time' | 'company'
@@ -158,6 +177,12 @@ export interface DashboardLatestEvent {
   version_number: number
   contact_name: string | null
   company_name: string | null
+  // Set only on a synthetic reply row that stood in for several proofs sharing
+  // one Help Scout conversation (see helpscoutReplyEvents). `count` is how many
+  // proofs were collapsed into this row — always ≥ 2, since a lone row carries
+  // no marker at all — and `bundle` says whether those proofs are one bundle,
+  // which is the only case the copy may call them "cards in the bundle".
+  collapsed?: { count: number; bundle: boolean }
 }
 
 // Only surface email replies from the last 30 days in the Latest activity feed.
@@ -176,10 +201,37 @@ const HELPSCOUT_REPLY_WINDOW_MS = 30 * 86_400_000
  *
  * Staff replies are attributed generically ("You") — the webhook records that an
  * agent reply happened, not which teammate sent it.
+ *
+ * ONE REPLY, ONE ROW. The stamps are written per PROOF, but a Help Scout
+ * conversation belongs to a CUSTOMER: a bundle shares one thread by design
+ * (000317), and two unrelated projects raised off the same email thread share
+ * one too. Emitting a row per proof therefore printed the same reply several
+ * times — live, one conversation put four identical Trevor Lee rows in a feed
+ * of twenty. Rows are grouped on (conversation, event type, timestamp) and one
+ * survivor carries `collapsed` so the panel can say what it stands for.
+ *
+ * Two things the grouping is careful about:
+ *  - A proof with no conversation id is never grouped. It shares nothing, and
+ *    keying on a null would fold every unlinked proof into one row.
+ *  - "Bundle" is not assumed. Sharing a thread is the trigger, but only proofs
+ *    that are genuinely one bundle may be described as such, so the caller
+ *    passes bundle membership in and mixed groups fall back to neutral wording.
+ *    (Structural param type, not the BundleInfo import — dashboardBundles
+ *    already imports from this module, so the dependency can only run one way.)
  */
-export function helpscoutReplyEvents(projects: DashboardProject[]): DashboardLatestEvent[] {
+export function helpscoutReplyEvents(
+  projects: DashboardProject[],
+  bundleByProof?: ReadonlyMap<string, { setId: string }>,
+): DashboardLatestEvent[] {
   const cutoff = Date.now() - HELPSCOUT_REPLY_WINDOW_MS
-  const out: DashboardLatestEvent[] = []
+  // Group key → every row that shares it. Rows on a proof with no conversation
+  // id get a key nothing else can collide with, so they pass straight through.
+  const groups = new Map<string, DashboardLatestEvent[]>()
+  const add = (key: string, row: DashboardLatestEvent) => {
+    const existing = groups.get(key)
+    if (existing) existing.push(row)
+    else groups.set(key, [row])
+  }
   for (const p of projects) {
     const base = {
       recipient_name: null,
@@ -189,9 +241,12 @@ export function helpscoutReplyEvents(projects: DashboardProject[]): DashboardLat
       contact_name: p.contact_name,
       company_name: p.company_name,
     }
+    const convo = p.helpscout_conversation_id
+    const keyFor = (type: string, at: string) =>
+      convo ? `c:${convo}|${type}|${at}` : `p:${p.proof_id}|${type}|${at}`
     const customerAt = p.helpscout_last_customer_reply_at
     if (customerAt && new Date(customerAt).getTime() >= cutoff) {
-      out.push({
+      add(keyFor('customer_reply', customerAt), {
         ...base,
         id: `hs-customer-${p.proof_id}`,
         created_at: customerAt,
@@ -201,7 +256,7 @@ export function helpscoutReplyEvents(projects: DashboardProject[]): DashboardLat
     }
     const staffAt = p.helpscout_last_reply_at
     if (staffAt && new Date(staffAt).getTime() >= cutoff) {
-      out.push({
+      add(keyFor('staff_reply', staffAt), {
         ...base,
         id: `hs-staff-${p.proof_id}`,
         created_at: staffAt,
@@ -209,6 +264,30 @@ export function helpscoutReplyEvents(projects: DashboardProject[]): DashboardLat
         actor_name: 'You',
       })
     }
+  }
+
+  const out: DashboardLatestEvent[] = []
+  for (const rows of groups.values()) {
+    if (rows.length === 1) {
+      out.push(rows[0])
+      continue
+    }
+    // Survivor picked by proof id rather than by input order, so the row (and
+    // therefore its React key and the proof it opens) is the same one on every
+    // load even if the projects query comes back in a different order.
+    const sorted = [...rows].sort((a, b) => a.proof_id.localeCompare(b.proof_id))
+    // One shared set id across every collapsed proof means they really are one
+    // bundle. `undefined` in the set means at least one of them is in no bundle
+    // — which is the case that must NOT be described as a bundle, and the case
+    // a size check alone would wave through.
+    const setIds = new Set(sorted.map((r) => bundleByProof?.get(r.proof_id)?.setId))
+    out.push({
+      ...sorted[0],
+      collapsed: {
+        count: sorted.length,
+        bundle: setIds.size === 1 && !setIds.has(undefined),
+      },
+    })
   }
   return out
 }

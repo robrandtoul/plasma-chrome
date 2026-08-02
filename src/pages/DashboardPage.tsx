@@ -15,6 +15,9 @@ import { signThumbnails, type ThumbInfo } from '../lib/thumbnails'
 import { setProofWorklist } from '../lib/proofWorklist'
 import { useAuth } from '../lib/auth'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
+import { orderTotal, type OrderAmounts } from '../lib/orderDisplay'
+import { formatPrice } from '../lib/currency'
+import { getExchangeRates, currencyToGbp, type ExchangeRates } from '../lib/exchangeRates'
 import { getHotLeadsPanelEnabled } from '../lib/hotLeadsPanelEnabled'
 import type { ProofStatus } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
@@ -30,7 +33,7 @@ import { ResolvePopover } from '../components/ResolvePopover'
 import { NudgeOutboxPanel } from '../components/NudgeOutboxPanel'
 import CollapsibleSidebarPanel from '../components/CollapsibleSidebarPanel'
 import HotLeadsCard from '../components/HotLeadsCard'
-import AnnouncementsBanner from '../components/AnnouncementsBanner'
+import AnnouncementsBanner, { PostAnnouncementButton } from '../components/AnnouncementsBanner'
 import SharedDesignerAvatar from '../components/DesignerAvatar'
 import TeamChatPanel from '../components/TeamChatPanel'
 import { useTeamChat } from '../lib/teamChatStore'
@@ -85,7 +88,12 @@ import {
 // imported from ../lib/dashboardGrouping so they can be unit-tested
 // independently of this React component tree.
 
-type SortMode  = 'activity' | 'date' | 'name'
+// 'waiting' is the only ascending clock: oldest activity first, for working a
+// filtered tile from the top. The other three are Activity (newest first),
+// Date (newest created first) and Name (A→Z) — note they do NOT share one
+// comparator, so a new mode needs its own branch in `sortedProjects`, where
+// 'activity' is the fallthrough `else` and would silently swallow it.
+type SortMode  = 'activity' | 'waiting' | 'date' | 'name'
 type GroupMode = 'time' | 'company'
 type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved_this_week' | 'not_viewed' | 'customer_responded' | 'in_follow_up'
 // The same keys as a runtime list, so the ?tile= URL parameter can be
@@ -137,10 +145,27 @@ const CHIPS = [
   { value: 'acrylic', label: 'Acrylic' },
 ] as const
 
-// Each family matches against the proof's material display name (the
-// dashboard row only carries the name, not the catalogue category).
-// The material set is stable; revisit if a material is added whose
-// name doesn't match one of these patterns.
+// Chip → the catalogue category it stands for (materials.category, surfaced on
+// the dashboard row as material_category by 000376). Only 'carbon' differs from
+// its chip key; the rest are the same word.
+const CHIP_CATEGORY: Record<Exclude<ChipKey, 'all'>, string> = {
+  metal:   'metal',
+  paper:   'paper',
+  plastic: 'plastic',
+  carbon:  'carbon_fibre',
+  wood:    'wood',
+  acrylic: 'acrylic',
+}
+
+// ⚠ LEGACY, and only reached against a database older than 000376.
+//
+// The chips used to guess a proof's family by pattern-matching the material's
+// DISPLAY NAME, because the dashboard row carried the name and not the
+// category — with the standing caveat that it would break for any material
+// whose name didn't happen to contain its family. 000376 appends the real
+// category, so this now serves one purpose: keeping the chips working on a
+// client that loads before the migration is applied. Delete it once that has
+// shipped everywhere.
 const MATERIAL_CATEGORY_MATCH: Record<Exclude<ChipKey, 'all'>, RegExp> = {
   metal:   /steel|metal|titanium/i,
   paper:   /letterpress|paper/i,
@@ -150,10 +175,21 @@ const MATERIAL_CATEGORY_MATCH: Record<Exclude<ChipKey, 'all'>, RegExp> = {
   acrylic: /acrylic/i,
 }
 
+// Does a proof belong to a chip's family?
+//
+// `material_category` present (even as null) means the database has 000376 and
+// is authoritative — null is a version with no material at all, which belongs
+// to no family and is correctly excluded by every chip but All. The key being
+// ABSENT is the only case that falls back to name matching.
+function matchesChip(p: DashboardProject, chip: Exclude<ChipKey, 'all'>): boolean {
+  if (p.material_category !== undefined) return p.material_category === CHIP_CATEGORY[chip]
+  return MATERIAL_CATEGORY_MATCH[chip].test(p.material_display ?? '')
+}
+
 function readSort(): SortMode {
   try {
     const v = localStorage.getItem(SORT_KEY)
-    if (v === 'name' || v === 'date' || v === 'activity') return v
+    if (v === 'name' || v === 'date' || v === 'activity' || v === 'waiting') return v
   } catch { /* */ }
   return 'activity'
 }
@@ -262,14 +298,22 @@ function statusLabel(status: ProofStatus): string {
 
 // ── Hero strip helpers ───────────────────────────────────────────────────────
 
-// Time-of-day greeting for the hero. Splits at the standard 12 / 17 hour
+// Which part of the day it is. Splits at the standard 12 / 17 hour
 // boundaries so the greeting tracks the working day — Rob's mornings
 // run long and the cutover at noon / 5pm is what most office tools use.
-function greetingFor(d: Date): string {
+//
+// Both halves of the hero sentence read this one helper ("Good afternoon,
+// Rob" and "…need your attention this afternoon"), so they can't drift
+// apart the way the hard-coded "this morning" suffix used to.
+function dayPartFor(d: Date): 'morning' | 'afternoon' | 'evening' {
   const h = d.getHours()
-  if (h < 12) return 'Good morning'
-  if (h < 17) return 'Good afternoon'
-  return 'Good evening'
+  if (h < 12) return 'morning'
+  if (h < 17) return 'afternoon'
+  return 'evening'
+}
+
+function greetingFor(d: Date): string {
+  return `Good ${dayPartFor(d)}`
 }
 
 // "Wednesday, 27 May" — uses Intl with the default en-GB locale so the
@@ -281,6 +325,110 @@ function todayLabel(d: Date): string {
     day: 'numeric',
     month: 'long',
   })
+}
+
+// ── The waiting clock on a row ───────────────────────────────────────────────
+
+// A wait long enough to be worth flagging. Seven days is the point the review
+// picked, and it matches how the follow-up rules already count — a week with no
+// movement is a chase, not a lull.
+const WAIT_ATTENTION_DAYS = 7
+
+// Render one row's wait as "13d" / "5d" / "today", plus how many whole days it
+// is so the cell can decide whether to raise its voice. Whole days only: the
+// column answers "how long has this been sitting", where hours are noise.
+//
+// ⚠ CALENDAR days, not elapsed 24-hour periods. The section headers this column
+// sits under (Today / This week / Older) come from isSameDay / isThisWeek in
+// dashboardGrouping, which compare against local midnight. Counting elapsed
+// hours instead would disagree with them by up to a day in either direction —
+// something stamped yesterday evening and read this morning is 13 hours old,
+// which "elapsed" calls today but the header files under This week.
+function waitFor(iso: string | null): { text: string; days: number | null } {
+  if (!iso) return { text: '—', days: null }
+  const then = new Date(iso)
+  if (!Number.isFinite(then.getTime())) return { text: '—', days: null }
+  const midnightThen = new Date(then.getFullYear(), then.getMonth(), then.getDate()).getTime()
+  const now = new Date()
+  const midnightToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  // Clamp: a version stamped into tomorrow by clock skew reads as "today",
+  // never as a negative wait. Rounding absorbs the DST hour, where the gap
+  // between two midnights is 23 or 25 hours rather than 24.
+  const days = Math.max(0, Math.round((midnightToday - midnightThen) / 86_400_000))
+  return { text: days === 0 ? 'today' : `${days}d`, days }
+}
+
+// ── Money on the order tiles ─────────────────────────────────────────────────
+
+// Exactly the columns orderTotal() reads, plus the currency it doesn't carry.
+// Kept as one string so the two bucket queries can't drift apart.
+const ORDER_MONEY_COLUMNS =
+  'currency, custom_quote_total, amount_card_discount, amount_us_tariff, amount_cards, amount_tooling, amount_personalisation, amount_shipping'
+
+type OrderMoneyRow = OrderAmounts & { currency: 'GBP' | 'EUR' | 'USD' }
+
+// What a tile's sub-line knows about the money in its bucket.
+interface BucketMoney {
+  /** Everything that could be priced, converted to GBP. */
+  gbp: number
+  /** True when the figure is a floor rather than the whole bucket. */
+  approx: boolean
+}
+
+// Sum one bucket's orders into a single GBP figure.
+//
+// `approx` is the honest part. Two things can leave the total short, and both
+// mean the same thing to a reader — there is more money here than the number
+// says — so both raise the same "≥" prefix:
+//
+//  - An open-spec pay link the customer hasn't opened yet has no stamped
+//    amounts at all (the breakdown is written at checkout, once they've chosen
+//    a quantity), so orderTotal() returns null. Live, four of the nine
+//    awaiting-payment orders are in exactly this state.
+//  - PostgREST caps the returned page while `count` stays exact, so on a very
+//    large bucket the rows could be a subset of what was counted.
+function sumOrderMoney(
+  rows: OrderMoneyRow[] | null,
+  count: number | null,
+  rates: ExchangeRates | null,
+): BucketMoney {
+  if (!rows) return { gbp: 0, approx: true }
+  let gbp = 0
+  let approx = count != null && rows.length < count
+  for (const r of rows) {
+    const total = orderTotal(r)
+    if (total == null) {
+      approx = true
+      continue
+    }
+    gbp += currencyToGbp(total, r.currency, rates)
+  }
+  return { gbp, approx }
+}
+
+// The money sub-line for a tile: "£3,860" / "≥ £3,860 paid" on screen, the same
+// fact in words for the tile's accessible name, and the caveat on hover.
+//
+// Whole pounds — pence in an 11px sub-line is noise, and the figure is a
+// mixed-currency conversion anyway, so it is an indication of the money rather
+// than a ledger balance. The "≥" is doing real work and is explained in both
+// the spoken form and the tooltip: read as an exact figure it would understate
+// the bucket, since an open-spec pay link carries no total until it is paid.
+function bucketMoney(
+  money: BucketMoney | undefined,
+  suffix: string,
+  spokenSuffix: string,
+  approxNote: string,
+): StatTileProps['subline'] {
+  if (!money || money.gbp <= 0) return undefined
+  const amount = formatPrice(Math.round(money.gbp), 'GBP')
+  return {
+    text: `${money.approx ? '≥ ' : ''}${amount}${suffix}`,
+    spoken: money.approx ? `at least ${amount} ${spokenSuffix}` : `${amount} ${spokenSuffix}`,
+    title: money.approx
+      ? `At least this much, converted to GBP at today's rate. ${approxNote}`
+      : `Converted to GBP at today's rate. ${approxNote}`,
+  }
 }
 
 // ── Stat tile ────────────────────────────────────────────────────────────────
@@ -299,6 +447,23 @@ interface StatTileProps {
   // Optional small red corner count (e.g. orders with a failed Xero invoice).
   badge?: number
   badgeTitle?: string
+  // Short qualifier printed after the count in a smaller mono face — "7D" on
+  // Approved, whose number is a rolling 7-day window while every tile beside
+  // it is a live total. Without it, 42 reads as a backlog rather than a week's
+  // throughput. `spoken` is the same fact in words for the tile's accessible
+  // name, since an abbreviation read aloud is worse than nothing.
+  countNote?: { short: string; spoken: string }
+  // Names the page a tile OPENS instead of filtering the list in place — three
+  // tiles do (Awaiting payment and To order → Orders, Flagged → Flagged) and
+  // eight filter, and they used to render identically, so the contract was
+  // invisible until you clicked and lost your place. Draws a small ↗, and says
+  // so in words in the accessible name.
+  navigatesTo?: string
+  // Second line under the count, e.g. the money sitting in an order bucket.
+  // Mono, small, quiet — a supporting figure, never competing with the count.
+  // `spoken` again carries it in words: read as content it would run straight
+  // into the count as "09 ≥ £3,860".
+  subline?: { text: string; spoken: string; title?: string }
 }
 
 // Tone → CSS colour mapping. Design-system tokens where they map
@@ -321,13 +486,31 @@ const TILE_COLOUR: Record<StatTileProps['tone'], string> = {
   indigo:    '#6366f1',
 }
 
-function StatTile({ label, srLabel, count, active, tone, onClick, help, badge, badgeTitle }: StatTileProps) {
+function StatTile({ label, srLabel, count, active, tone, onClick, help, badge, badgeTitle, countNote, navigatesTo, subline }: StatTileProps) {
   const tint = TILE_COLOUR[tone]
+  // One composed accessible name for the whole tile rather than whatever the
+  // browser makes of the content. Left to name-from-content it reads "13
+  // Awaiting payment 09 ≥ £3,860" — the corner badge first because it comes
+  // first in the DOM, the money running straight into the count, and three of
+  // the things a sighted user gets (the ↗, the "7D", the full label behind a
+  // shortened one) contributing nothing, being aria-hidden or abbreviated.
+  const accessibleName = [
+    srLabel ?? label,
+    countNote ? `${count} ${countNote.spoken}` : `${count}`,
+    subline?.spoken,
+    badge != null && badge > 0 ? badgeTitle : null,
+    navigatesTo ? `opens ${navigatesTo}` : null,
+  ].filter(Boolean).join('. ')
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-pressed={active}
+      aria-label={accessibleName}
+      // ⚠ aria-pressed ONLY on the tiles that actually toggle. A navigating
+      // tile with aria-pressed={false} announces as "toggle button, not
+      // pressed", so a screen-reader user presses it expecting the list below
+      // to filter and instead the whole app changes page.
+      aria-pressed={navigatesTo ? undefined : active}
       className="flex flex-col items-start gap-2 px-5 py-5 text-left transition-colors hover:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)] relative xl:flex-1 xl:min-w-0 max-md:w-[140px] max-md:shrink-0 max-md:snap-start max-md:rounded-[12px] max-md:border max-md:border-line"
       style={{
         // Active state: a soft tint of the tile's tone fills the cell
@@ -371,21 +554,48 @@ function StatTile({ label, srLabel, count, active, tone, onClick, help, badge, b
           style={{ backgroundColor: tint }}
         />
         <HelpTip body={help} affordance="none" focusable={false}>
+          {/* No aria-label here: naming is prohibited on a plain span (role
+              generic), and the button above now carries the composed name. */}
           <span
             className="eyebrow text-ink-mute"
-            aria-label={srLabel}
             style={{ whiteSpace: 'normal', lineHeight: 1.2, letterSpacing: '0.02em', overflowWrap: 'break-word' }}
           >
             {label}
+            {navigatesTo && (
+              // Marks a tile that opens another page rather than filtering in
+              // place. The accessible name says "opens Orders" in words.
+              <span className="text-ink-dim">{' ↗'}</span>
+            )}
           </span>
         </HelpTip>
       </div>
-      <span
-        className="mt-auto text-[32px] leading-none font-medium tabular-nums font-mono text-ink"
-        style={{ fontFeatureSettings: 'var(--num-features)' }}
-      >
-        {String(count).padStart(2, '0')}
-      </span>
+      {/* Count and its sub-line, bottom-anchored as a fixed-height group.
+          ⚠ The sub-line row is ALWAYS rendered, empty when the tile has no
+          money to report. That is what keeps every tile's number on one
+          baseline: `mt-auto` bottom-anchors this block, so if the row only
+          existed on the two order tiles, their counts would float ~16px above
+          the other nine and the strip would read as broken. Same reasoning as
+          the empty placeholder divs that hold the grid tracks in ProjectRow. */}
+      <div className="mt-auto flex flex-col items-start gap-1">
+        <span
+          className="text-[32px] leading-none font-medium tabular-nums font-mono text-ink"
+          style={{ fontFeatureSettings: 'var(--num-features)' }}
+        >
+          {String(count).padStart(2, '0')}
+          {countNote && (
+            <span className="ml-[5px] text-[11px] font-semibold text-ink-dim">
+              {countNote.short}
+            </span>
+          )}
+        </span>
+        <span
+          className="h-[12px] text-[11px] leading-[12px] font-mono tabular-nums text-ink-soft"
+          style={{ fontFeatureSettings: 'var(--num-features)' }}
+          title={subline?.title}
+        >
+          {subline?.text ?? ''}
+        </span>
+      </div>
     </button>
   )
 }
@@ -1156,9 +1366,15 @@ function ProjectRow({
     .join('')
     .toUpperCase() || '—'
 
-  const updatedLabel = ts
-    ? new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-    : '—'
+  // The md+ column reads the WAITING clock, not the activity verb's timestamp
+  // above it. They agree for everything still in flight — for an unfinished
+  // proof both resolve to the later of the send and the customer's last event
+  // — and diverge only on approved / abandoned rows, where the verb reports
+  // the moment it finished and "how long has this been waiting" has no
+  // meaning. Reading activityTimestamp() keeps the column in lockstep with the
+  // Waiting-longest sort and the Today / This week grouping, so a sorted list
+  // never shows its own numbers out of order.
+  const waiting = waitFor(activityTimestamp(project))
 
   // ── Mobile: single-column card ─────────────────────────────────────────
   // The desktop multi-column grid + hover-only action overlay can't work on
@@ -1222,6 +1438,13 @@ function ProjectRow({
                 {bundle && !bundleNested && <BundleLine bundle={bundle} shownHere={1} />}
                 {project.reorder_of_proof_id && (
                   <ReorderLine sourceProofId={project.reorder_of_proof_id} />
+                )}
+                {/* Below the reorder line: a reorder is the sharper fact about
+                    THIS project, where being a repeat customer is background
+                    about the person. Suppressed on a reorder, which already
+                    says they have been here — see the desktop copy. */}
+                {project.is_repeat && !project.reorder_of_proof_id && (
+                  <RepeatCustomerLine projectNumber={project.repeat_project_number} />
                 )}
               </div>
               <OverflowMenu
@@ -1407,6 +1630,13 @@ function ProjectRow({
           {project.reorder_of_proof_id && (
             <ReorderLine sourceProofId={project.reorder_of_proof_id} />
           )}
+          {/* Also provenance, and deliberately suppressed on a reorder: that
+              line already establishes the customer has bought before, and
+              stacking two 11px provenance lines under one name pushes the
+              timing lines out of the glance. The sharper fact wins. */}
+          {project.is_repeat && !project.reorder_of_proof_id && (
+            <RepeatCustomerLine projectNumber={project.repeat_project_number} />
+          )}
           {/* Reason chip — third row line, shown on every Needs-attention
               row so the triggering rule is always visible (not just when
               the tile filter is active). Clicking it opens the resolve
@@ -1492,10 +1722,47 @@ function ProjectRow({
           <div className="hidden md:block" />
         )}
 
-        {/* Updated — md+ only. Always shows the activityVerb's
-            timestamp formatted as "27 May". */}
-        <div className="hidden md:block text-[12px] text-ink-mute font-mono tabular-nums" style={{ fontFeatureSettings: 'var(--num-features)' }}>
-          {updatedLabel}
+        {/* Waiting — md+ only. This used to print an absolute "27 May", which
+            is the one thing a queue reader has to do arithmetic on. A wait
+            ("13d") answers the question the column is scanned for directly,
+            and past a week it says so in amber. The exact moment stays one
+            hover away, so nothing is actually lost. */}
+        <div
+          className="hidden md:block text-[12px] font-mono tabular-nums text-center"
+          style={{ fontFeatureSettings: 'var(--num-features)' }}
+        >
+          <span
+            aria-hidden="true"
+            className={
+              waiting.days != null && waiting.days >= WAIT_ATTENTION_DAYS
+                ? 'inline-block rounded-md px-[7px] py-[3px] font-semibold'
+                : 'text-ink-mute'
+            }
+            style={
+              waiting.days != null && waiting.days >= WAIT_ATTENTION_DAYS
+                ? { color: 'var(--c-low-ink)', backgroundColor: 'var(--c-low-soft)' }
+                : undefined
+            }
+            title={
+              waiting.days == null
+                ? undefined
+                : `Last activity ${formatAbsoluteDateTime(activityTimestamp(project))}`
+            }
+          >
+            {waiting.text}
+          </span>
+          {/* "13d" alone is meaningless read aloud — no column has a header in
+              this grid — and the amber past a week is colour-only. Both are
+              said in words here. The exact date, which this column used to
+              print outright, goes in too rather than being locked behind a
+              hover the iPad can't reach. */}
+          <span className="sr-only">
+            {waiting.days == null
+              ? 'No activity recorded'
+              : `Waiting ${waiting.days === 0 ? 'since today' : `${waiting.days} days`}${
+                  waiting.days >= WAIT_ATTENTION_DAYS ? ', over a week' : ''
+                }. Last activity ${formatAbsoluteDateTime(activityTimestamp(project))}`}
+          </span>
         </div>
 
         {/* Owner avatar — md+ only. No version yet → no designer to
@@ -1649,6 +1916,58 @@ function BundleLine({ bundle, shownHere }: { bundle: BundleInfo; shownHere: numb
       <span className="truncate">Part of a bundle of {bundle.size}</span>
     </Link>
   )
+}
+
+/**
+ * "We have done work for this person before" (000376).
+ *
+ * It changes how a project is chased — a returning customer gets a different
+ * tone from a cold one — and the row had no way to say it. Sits in the same
+ * quiet 11px register as BundleLine, and for the same reason: it is provenance,
+ * not a workflow stage, so it must sit ALONGSIDE the status pill rather than
+ * competing with it. Never a badge.
+ *
+ * ⚠ The ordinal is shown only when the view could count it. `is_repeat` is true
+ * either because an earlier proof exists for the contact OR because Help Scout
+ * carries the durable `repeat customer` tag — and on live those two barely
+ * overlap, so the tag-only case is common, not an edge. In that case we know
+ * they have been here before but not how many times, and "· 2nd project" would
+ * be a guess presented as a fact.
+ *
+ * Not a Link: unlike BundleLine and ReorderLine there is no single other page
+ * this points at — "their other projects" is a search, not a destination.
+ */
+function RepeatCustomerLine({ projectNumber }: { projectNumber?: number | null }) {
+  const ordinal = projectNumber != null && projectNumber > 1 ? ordinalLabel(projectNumber) : null
+  return (
+    <div className="mt-1 flex w-fit max-w-full items-center gap-1.5 text-[11px] text-ink-mute">
+      <Repeat size={11} className="shrink-0" aria-hidden="true" />
+      {/* The visible text is clipped to the name column, so the full phrase
+          goes in a sibling for screen readers rather than a `title` — a title
+          on a non-focusable div is announced by nothing and unreachable on
+          touch, which is where half this team reads the dashboard. */}
+      <span className="truncate" aria-hidden="true">
+        Repeat customer{ordinal ? ` · ${ordinal} project` : ''}
+      </span>
+      <span className="sr-only">
+        {ordinal
+          ? `Repeat customer, their ${ordinal} project with us`
+          : 'Repeat customer, they have worked with us before'}
+      </span>
+    </div>
+  )
+}
+
+/** 2 → "2nd", 3 → "3rd", 11 → "11th". */
+function ordinalLabel(n: number): string {
+  const lastTwo = n % 100
+  if (lastTwo >= 11 && lastTwo <= 13) return `${n}th`
+  switch (n % 10) {
+    case 1:  return `${n}st`
+    case 2:  return `${n}nd`
+    case 3:  return `${n}rd`
+    default: return `${n}th`
+  }
 }
 
 /**
@@ -2136,6 +2455,9 @@ function LatestActivityPanel({
             const failed =
               (e.event_type === 'approve' || e.event_type === 'request_changes') &&
               e.helpscout_thread_id == null
+            // Present only when this row stood in for several proofs sharing
+            // one Help Scout conversation (helpscoutReplyEvents).
+            const collapsed = e.collapsed && e.collapsed.count > 1 ? e.collapsed : null
             return (
               <li
                 key={e.id}
@@ -2166,40 +2488,50 @@ function LatestActivityPanel({
                     <span className="font-semibold">{primaryLabel}</span>{' '}
                     <span className="text-ink-soft">{verb}</span>
                   </p>
-                  <div className="mt-1 flex flex-wrap items-center gap-2">
-                    {showActor && (
-                      <>
+                  {/* One reply on a shared Help Scout thread stands for several
+                      proofs. Only say "bundle" when they actually are one —
+                      unrelated projects raised off one thread collapse too. */}
+                  {collapsed && (
+                    <p className="mt-0.5 text-[11px] leading-snug text-ink-mute">
+                      {collapsed.bundle
+                        ? `covers ${collapsed.count} cards in the bundle`
+                        : `covers ${collapsed.count} projects`}
+                    </p>
+                  )}
+                  {(showActor || failed) && (
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      {showActor && (
                         <span className="text-[12px] leading-none text-ink-soft">
                           {e.actor_name}
                         </span>
+                      )}
+                      {failed && (
                         <span
-                          aria-hidden="true"
-                          className="text-[10px] leading-none text-ink-mute"
+                          className="inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold"
+                          style={{
+                            backgroundColor: 'var(--c-low-soft)',
+                            color: 'var(--c-low)',
+                          }}
+                          title="Help Scout notification failed — customer was asked to email."
                         >
-                          ·
+                          notification failed
                         </span>
-                      </>
-                    )}
-                    <span
-                      className="eyebrow text-ink-mute"
-                      title={formatAbsoluteDateTime(e.created_at)}
-                    >
-                      {relativeTime(e.created_at)}
-                    </span>
-                    {failed && (
-                      <span
-                        className="inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold"
-                        style={{
-                          backgroundColor: 'var(--c-low-soft)',
-                          color: 'var(--c-low)',
-                        }}
-                        title="Help Scout notification failed — customer was asked to email."
-                      >
-                        notification failed
-                      </span>
-                    )}
-                  </div>
+                      )}
+                    </div>
+                  )}
                 </div>
+                {/* Timestamp, right-aligned at row level. Deliberately NOT
+                    .eyebrow: that class uppercases, which turned relativeTime's
+                    "4 min ago" into "4M AGO" — and in a feed spanning weeks, a
+                    capital M reads as months. Same size and mono face, minus
+                    the transform. */}
+                <span
+                  className="mt-1 shrink-0 font-mono text-[11px] leading-none tabular-nums text-ink-dim"
+                  style={{ fontFeatureSettings: 'var(--num-features)' }}
+                  title={formatAbsoluteDateTime(e.created_at)}
+                >
+                  {relativeTime(e.created_at)}
+                </span>
               </li>
             )
           })}
@@ -2559,11 +2891,15 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   // and lives under "Recently ordered" there. invoiceProblem = paid orders whose
   // Xero invoice failed (a books gap that's otherwise only visible on /orders).
   const [orderingOn, setOrderingOn]       = useState(false)
+  // Bumped when an admin posts an announcement from the hero. The banner takes
+  // it as a refetch trigger — the composer lives in the hero action cluster
+  // now, so it can't hand the new row straight to the banner beside it.
+  const [announcementsRefresh, setAnnouncementsRefresh] = useState(0)
   // Admin switch for the "Hot leads to chase" card (migration 000280). Starts
   // true — the panel ships shown — so the card doesn't flicker out on first
   // paint before the settings read resolves. An admin turning it off hides it.
   const [hotLeadsOn, setHotLeadsOn]       = useState(true)
-  const [orderCounts, setOrderCounts]     = useState<{ awaitingPayment: number; toOrder: number; invoiceProblem: number } | null>(null)
+  const [orderCounts, setOrderCounts]     = useState<{ awaitingPayment: number; toOrder: number; invoiceProblem: number; awaitingPaymentMoney?: BucketMoney; toOrderMoney?: BucketMoney } | null>(null)
   // current_version_id → thumbnail renditions (thumb / preview / full).
   // Populated in loadDashboard after the projects fetch via the
   // dashboard-thumbnails edge function (which signs each version's first
@@ -2646,6 +2982,14 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     }, { replace: true })
   }, [setSearchParams])
   const [sort, setSort]                   = useState<SortMode>(readSort)
+  // Focusing a tile turns the list into a worklist, and the question changes
+  // from "what moved" to "who has waited longest" — so the sort follows,
+  // and restores when the filter clears. Two guards keep it from being an
+  // annoyance: it stops for the session the moment the designer picks a sort
+  // themselves, and it never writes to localStorage, so their saved default
+  // survives untouched.
+  const sortChosenByHandRef = useRef(false)
+  const sortBeforeTileRef   = useRef<SortMode | null>(null)
   const [group, setGroup]                 = useState<GroupMode>(readGroup)
   const [showAbandoned, setShowAbandoned] = useState<boolean>(readShowAbandoned)
   const [showSnoozed,   setShowSnoozed]   = useState<boolean>(readShowSnoozed)
@@ -2790,15 +3134,37 @@ export default function DashboardPage({ activityView = false }: { activityView?:
       setOrderingOn(on)
       if (!on) return
       const [a, o, p] = await Promise.all([
-        supabase.from('orders').select('id', { count: 'exact', head: true }).eq('status', 'sent'),
-        supabase.from('orders').select('id', { count: 'exact', head: true }).eq('status', 'paid'),
+        // The two money tiles fetch their rows rather than head-counting, so
+        // the stamped amounts can be summed for the sub-line. `count: 'exact'`
+        // still rides along, so the tile NUMBER remains an unbounded server
+        // count — the rows are only ever used for the money.
+        supabase.from('orders').select(ORDER_MONEY_COLUMNS, { count: 'exact' }).eq('status', 'sent'),
+        supabase.from('orders').select(ORDER_MONEY_COLUMNS, { count: 'exact' }).eq('status', 'paid'),
         // Paid, no Xero invoice, but a stored Xero error → a real books gap.
         // Offline orders carry neither id nor error, so they're excluded.
         supabase.from('orders').select('id', { count: 'exact', head: true })
           .eq('status', 'paid').is('xero_invoice_id', null).not('xero_invoice_error', 'is', null),
       ])
       if (cancelled) return
-      setOrderCounts({ awaitingPayment: a.count ?? 0, toOrder: o.count ?? 0, invoiceProblem: p.count ?? 0 })
+      // Counts first, money after. ⚠ The exchange-rate lookup must NOT join the
+      // Promise.all above: it is a bare fetch to a third party with no timeout,
+      // and awaiting it would hold the COUNTS hostage — the tiles would sit at
+      // a confident "00", with the failed-invoice badge suppressed, for as long
+      // as that request hung. Every other caller in the app fires it loose for
+      // the same reason (OrdersPage, the order builder, Quote, Analytics).
+      setOrderCounts({
+        awaitingPayment: a.count ?? 0,
+        toOrder: o.count ?? 0,
+        invoiceProblem: p.count ?? 0,
+      })
+      void getExchangeRates().then((rates) => {
+        if (cancelled) return
+        setOrderCounts((prev) => prev && {
+          ...prev,
+          awaitingPaymentMoney: sumOrderMoney(a.data, a.count, rates),
+          toOrderMoney: sumOrderMoney(o.data, o.count, rates),
+        })
+      })
     })()
     return () => { cancelled = true }
   }, [])
@@ -2970,7 +3336,24 @@ export default function DashboardPage({ activityView = false }: { activityView?:
         return ord?.proof_id ? { id: r.id, created_at: r.created_at, proof_id: ord.proof_id } : null
       })
       .filter((r): r is OrderReminderRow => r !== null)
-    const mergedEvents = [...realEvents, ...helpscoutReplyEvents(typedProjects), ...payLinkOpenEvents((payLinkOpenRows ?? []) as PayLinkOpenRow[], typedProjects), ...payLinkSentEvents((payLinkSentRows ?? []) as PayLinkSentRow[], typedProjects), ...orderReminderEvents(orderReminders, typedProjects), ...proofFeedbackEvents((feedbackRows ?? []) as ProofFeedbackFeedRow[], typedProjects)]
+    // Bundle membership. A failed read keeps whatever index is already on
+    // screen: supabase-js returns data: null on error, so the idiomatic
+    // `?? []` would quietly dissolve every bundle block into loose rows and
+    // read as "these cards aren't related" — the exact wrong answer.
+    //
+    // Computed here, ahead of the feed merge, because helpscoutReplyEvents
+    // needs it: it collapses proofs that share a Help Scout conversation, and
+    // only this index can say whether those proofs are one bundle (and so may
+    // be called "cards in the bundle") or merely share a thread.
+    const nextBundleIndex = bundleMembersError || bundleSetsError
+      ? (console.error('[DashboardPage] bundle membership failed', bundleMembersError ?? bundleSetsError), bundleIndex)
+      : buildBundleIndex(
+          (bundleMemberRows ?? []) as BundleMemberRow[],
+          (bundleSetRows ?? []) as BundleSetRow[],
+        )
+    setBundleIndex(nextBundleIndex)
+
+    const mergedEvents = [...realEvents, ...helpscoutReplyEvents(typedProjects, nextBundleIndex.byProof), ...payLinkOpenEvents((payLinkOpenRows ?? []) as PayLinkOpenRow[], typedProjects), ...payLinkSentEvents((payLinkSentRows ?? []) as PayLinkSentRow[], typedProjects), ...orderReminderEvents(orderReminders, typedProjects), ...proofFeedbackEvents((feedbackRows ?? []) as ProofFeedbackFeedRow[], typedProjects)]
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
       .slice(0, 20)
     setLatestEvents(mergedEvents)
@@ -3006,18 +3389,6 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     }
     setMinePinAt(mine)
     setTeamPinAt(team)
-
-    // Bundle membership. A failed read keeps whatever index is already on
-    // screen: supabase-js returns data: null on error, so the idiomatic
-    // `?? []` would quietly dissolve every bundle block into loose rows and
-    // read as "these cards aren't related" — the exact wrong answer.
-    const nextBundleIndex = bundleMembersError || bundleSetsError
-      ? (console.error('[DashboardPage] bundle membership failed', bundleMembersError ?? bundleSetsError), bundleIndex)
-      : buildBundleIndex(
-          (bundleMemberRows ?? []) as BundleMemberRow[],
-          (bundleSetRows ?? []) as BundleSetRow[],
-        )
-    setBundleIndex(nextBundleIndex)
 
     // Snapshot this successful load so remounting the page (returning from a
     // proof) can paint instantly instead of spinning through a cold fetch.
@@ -3179,8 +3550,34 @@ export default function DashboardPage({ activityView = false }: { activityView?:
 
   function handleSortChange(s: SortMode) {
     setSort(s)
+    // Picking a sort by hand ends the auto-switch below for the session: once
+    // someone has said what order they want, moving it under them is rude.
+    sortChosenByHandRef.current = true
     try { localStorage.setItem(SORT_KEY, s) } catch { /* */ }
   }
+
+  // Follow the tile filter with the Waiting-longest sort, and put the previous
+  // sort back when the filter clears. Keyed on `tileFilter`, which is URL state,
+  // so Back and Forward move it too — which is the behaviour you want, since
+  // those restore the filter as well.
+  useEffect(() => {
+    if (sortChosenByHandRef.current) return
+    if (tileFilter) {
+      if (sortBeforeTileRef.current == null) {
+        sortBeforeTileRef.current = sort
+        setSort('waiting')
+      }
+    } else if (sortBeforeTileRef.current != null) {
+      const previous = sortBeforeTileRef.current
+      sortBeforeTileRef.current = null
+      // Only undo our own switch. If the sort is no longer 'waiting' something
+      // else set it, and that choice outranks the restore.
+      setSort((current) => (current === 'waiting' ? previous : current))
+    }
+    // `sort` is read but deliberately not a dependency: this effect reacts to
+    // the filter changing, and listing it would re-run on the very change the
+    // effect just made.
+  }, [tileFilter])
 
   function handleChipChange(c: ChipKey) {
     setChipFilter(c)
@@ -3217,7 +3614,12 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   const approvedThisWeekCount = tileCounts?.approved_this_week ?? 0
 
   // Filter pipeline: search → chip → tile → status. All AND-combined.
-  const filteredProjects = useMemo(() => {
+  //
+  // The chip step is applied separately, below, rather than inline here. That
+  // is what lets each chip show how many rows it would leave: the count has to
+  // be taken after every OTHER filter but before the chip's own, or "Metal 12"
+  // stops matching what you see the moment a tile is focused.
+  const projectsBeforeChip = useMemo(() => {
     const q = search.trim().toLowerCase()
     return projects.filter((p) => {
       if (q) {
@@ -3229,12 +3631,6 @@ export default function DashboardPage({ activityView = false }: { activityView?:
           p.proof_id,
         ].filter(Boolean).join(' ').toLowerCase()
         if (!hay.includes(q)) return false
-      }
-      // Material-family chip — orthogonal to the status tiles. 'all' is
-      // the no-op default; every other chip keeps only proofs whose
-      // material name matches that family's pattern.
-      if (chipFilter !== 'all') {
-        if (!MATERIAL_CATEGORY_MATCH[chipFilter].test(p.material_display ?? '')) return false
       }
       // Currently-snoozed projects always belong to the Snoozed section —
       // exclude them from every tile filter so they don't appear in the main
@@ -3294,7 +3690,30 @@ export default function DashboardPage({ activityView = false }: { activityView?:
       if (!showAbandoned && p.status === 'abandoned' && q === '') return false
       return true
     })
-  }, [projects, search, tileFilter, showAbandoned, chipFilter])
+  }, [projects, search, tileFilter, showAbandoned])
+
+  // How many rows each material family would leave, given everything else
+  // that's filtered. Drives the "Metal 12" counts and lets a family with
+  // nothing in it stop inviting a dead click.
+  const chipCounts = useMemo(() => {
+    const counts = { all: projectsBeforeChip.length } as Record<ChipKey, number>
+    for (const key of Object.keys(CHIP_CATEGORY) as Array<Exclude<ChipKey, 'all'>>) {
+      counts[key] = 0
+    }
+    for (const p of projectsBeforeChip) {
+      for (const key of Object.keys(CHIP_CATEGORY) as Array<Exclude<ChipKey, 'all'>>) {
+        if (matchesChip(p, key)) counts[key] += 1
+      }
+    }
+    return counts
+  }, [projectsBeforeChip])
+
+  // Material-family chip — orthogonal to the status tiles. 'all' is the no-op
+  // default; every other chip keeps only proofs in that catalogue family.
+  const filteredProjects = useMemo(
+    () => (chipFilter === 'all' ? projectsBeforeChip : projectsBeforeChip.filter((p) => matchesChip(p, chipFilter))),
+    [projectsBeforeChip, chipFilter],
+  )
 
   // Sort
   const sortedProjects = useMemo(() => {
@@ -3307,6 +3726,18 @@ export default function DashboardPage({ activityView = false }: { activityView?:
       })
     } else if (sort === 'date') {
       arr.sort((a, b) => b.created_at.localeCompare(a.created_at))
+    } else if (sort === 'waiting') {
+      // Waiting longest — the same activity clock as below, read ascending, so
+      // the top of a filtered tile is the customer who has been waiting most.
+      // Rows with no clock at all sort last rather than first: an unknown wait
+      // is not evidence of a long one.
+      arr.sort((a, b) => {
+        const at = activityTimestamp(a)
+        const bt = activityTimestamp(b)
+        if (at == null) return bt == null ? 0 : 1
+        if (bt == null) return -1
+        return at.localeCompare(bt)
+      })
     } else {
       // Activity sort — by the shared activity clock (latest_event_at,
       // falling back to last_activity_at). Uses the same helper as
@@ -3358,16 +3789,24 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     // recently active card, so the whole bundle renders as one block instead
     // of splitting across Today / This week / Older when one card moves ahead
     // of its siblings (see lib/dashboardBundles.ts).
-    const tailSections = hoistBundleSections(
-      group === 'company' ? groupByCompany(remaining) : groupByTime(remaining),
-      bundleIndex,
-    )
+    const timeGrouped = group === 'company' ? groupByCompany(remaining) : groupByTime(remaining)
+    // ⚠ Time sections always come back Today → This week → Older, and rows only
+    // hold the sort order WITHIN a section. Every other sort is descending, so
+    // the two agree; 'waiting' is ascending, and left alone it would put the
+    // longest-waiting customer at the BOTTOM of the page — the exact opposite
+    // of what the sort is for. Flip the section order to match the sort. Only
+    // the time buckets are ordered by the same clock, so only they flip;
+    // company grouping is alphabetical and unrelated.
+    const ordered = sort === 'waiting' && group !== 'company'
+      ? [...timeGrouped].reverse()
+      : timeGrouped
+    const tailSections = hoistBundleSections(ordered, bundleIndex)
     const visibleSnoozed = showSnoozed ? snoozedSections : []
     // "Snoozed" selected in the status dropdown — suppress pins + tail so only
     // the Snoozed section is visible (same as a status filter for other statuses).
     if (snoozedOnly) return visibleSnoozed
     return [...pinSections, ...visibleSnoozed, ...tailSections]
-  }, [sortedProjects, group, minePinAt, teamPinAt, snoozedSections, showSnoozed, snoozedOnly, bundleIndex])
+  }, [sortedProjects, group, sort, minePinAt, teamPinAt, snoozedSections, showSnoozed, snoozedOnly, bundleIndex])
 
   const noResults = !loading && sections.every((s) => s.projects.length === 0)
 
@@ -3458,7 +3897,12 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   return (
     <DesignerChrome
       active="proofs"
-      search={{ value: search, onChange: setSearch }}
+      // The shared default says "customer or company", which undersells what
+      // this page's search actually does: the server search (000205) also
+      // matches contact email, Help Scout conversation ids and proof ids, and
+      // reaches proofs outside the loaded working set. Overridden here rather
+      // than in DesignerHeader because other pages' search doesn't do that.
+      search={{ value: search, onChange: setSearch, placeholder: 'Search customers, emails, HS ids…' }}
       activityUnseen={activityHasUnseen}
       onProfileSaved={() => {
         // Refetch dashboard rows so the designer-avatar columns on
@@ -3512,7 +3956,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                 </button>
               </div>
             )}
-            <AnnouncementsBanner />
+            <AnnouncementsBanner refreshKey={announcementsRefresh} />
 
             {/* Unified hero + tile panel. One bordered card spanning
                 the full page width: hero header (eyebrow + greeting +
@@ -3534,15 +3978,51 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                     {needsAttentionCount > 0 && (
                       <>
                         {' · '}
-                        <span className="font-medium" style={{ color: 'var(--c-brand)' }}>
-                          {String(needsAttentionCount).padStart(2, '0')} {needsAttentionCount === 1 ? 'job' : 'jobs'}
-                        </span>
-                        {' need your attention this morning.'}
+                        {/* The count is the shortcut it already looked like: it
+                            toggles the Needs attention tile filter. No
+                            zero-padding here — padStart is tile chrome, and in
+                            prose "6 jobs" reads better than "06 jobs". */}
+                        <button
+                          type="button"
+                          onClick={() => toggleTile('needs_attention')}
+                          aria-pressed={tileFilter === 'needs_attention'}
+                          title={
+                            tileFilter === 'needs_attention'
+                              ? 'Showing only these — click to show everything again'
+                              : 'Show only the projects that need attention'
+                          }
+                          // ⚠ No `focus:outline-none` here, unlike most focusable
+                          // things in this file. In Tailwind v4 `outline-none`
+                          // sets --tw-outline-style: none, and `outline-2`
+                          // resolves outline-style FROM that variable — so the
+                          // pair cancels out and the focus ring never draws.
+                          // (The combination appears at 29 sites across src/;
+                          // this one is left correct rather than consistent.)
+                          className="inline-flex items-baseline rounded-lg px-2.5 pb-0.5 font-medium transition-colors bg-[color-mix(in_srgb,var(--c-brand)_8%,transparent)] hover:bg-[color-mix(in_srgb,var(--c-brand)_16%,transparent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-focus)]"
+                          // --c-brand-700 rather than --c-brand: the coral
+                          // primary measures 2.8:1 on this pale wash, and the
+                          // count is a control now, not decoration. Same hue,
+                          // two stops down, ~5.5:1.
+                          style={{ color: 'var(--c-brand-700)' }}
+                        >
+                          {needsAttentionCount} {needsAttentionCount === 1 ? 'job' : 'jobs'}
+                        </button>
+                        {needsAttentionCount === 1 ? ' needs' : ' need'}
+                        {` your attention this ${dayPartFor(new Date())}.`}
                       </>
                     )}
                   </p>
                 </div>
-                <div className="flex items-center gap-2 max-md:w-full">
+                <div className="flex items-center gap-2 max-md:w-full max-md:flex-wrap">
+                  {/* Admin-only, and renders nothing at all for everyone else
+                      — no wrapper element, so a designer's action cluster is
+                      byte-for-byte what it was. Sits here rather than above the
+                      hero so the announcements strip can disappear entirely
+                      when nothing is live. */}
+                  <PostAnnouncementButton
+                    className="max-md:w-full max-md:h-11"
+                    onCreated={() => setAnnouncementsRefresh((n) => n + 1)}
+                  />
                   {/* New project is a desktop-weight action — starting a
                       project is rarely done from a phone, so mobile gets
                       the quiet ghost treatment instead of the full coral
@@ -3666,6 +4146,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                     <StatTile
                       label="Approved"
                       srLabel="Approved this week"
+                      countNote={{ short: '7D', spoken: 'in the last 7 days' }}
                       help={tagHelp('tile', 'approved_this_week')}
                       count={approvedThisWeekCount}
                       active={tileFilter === 'approved_this_week'}
@@ -3679,14 +4160,29 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                       <>
                         <StatTile
                           label="Awaiting payment"
+                          help="Orders with a live pay link the customer hasn't paid yet. Opens Orders."
                           count={orderCounts?.awaitingPayment ?? 0}
+                          subline={bucketMoney(
+                            orderCounts?.awaitingPaymentMoney,
+                            '',
+                            'outstanding',
+                            'Some links let the customer pick their quantity, so they carry no total until they pay.',
+                          )}
                           active={false}
+                          navigatesTo="Orders"
                           tone="gold"
                           onClick={() => navigate('/orders')}
                         />
                         <StatTile
                           label="To order"
+                          help="Paid orders still waiting to be placed with production. Opens Orders."
                           count={orderCounts?.toOrder ?? 0}
+                          subline={bucketMoney(
+                            orderCounts?.toOrderMoney,
+                            ' paid',
+                            'already paid',
+                            'Money already taken on orders still waiting to be placed.',
+                          )}
                           badge={orderCounts?.invoiceProblem ?? 0}
                           badgeTitle={
                             orderCounts?.invoiceProblem
@@ -3694,6 +4190,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                               : undefined
                           }
                           active={false}
+                          navigatesTo="Orders"
                           tone="blue"
                           onClick={() => navigate('/orders')}
                         />
@@ -3703,9 +4200,10 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                         aren't in the proof list), so it never sets tileFilter. */}
                     <StatTile
                       label="Flagged"
-                      help="Problem projects on the Flagged board (open or monitoring). Opens the board."
+                      help="Problem projects on the Flagged board (open or monitoring). Opens Flagged."
                       count={flaggedOpenCount}
                       active={false}
+                      navigatesTo="Flagged"
                       tone="rose"
                       onClick={() => navigate('/flagged')}
                     />
@@ -3799,20 +4297,43 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                         <span className="eyebrow text-ink-mute pr-1 max-md:shrink-0">Filter</span>
                         {(CHIPS as readonly { value: ChipKey; label: string }[]).map(({ value, label }) => {
                           const isActive = chipFilter === value
+                          const count = chipCounts[value] ?? 0
+                          // A family with nothing in it is disabled rather than
+                          // hidden — the row keeps its shape as filters change
+                          // instead of reshuffling under the cursor.
+                          //
+                          // Two chips are never disabled, or the row becomes a
+                          // dead end: the ACTIVE one (you'd be stuck inside an
+                          // empty family) and 'All' (it is the only control
+                          // that clears a material filter, and its count is the
+                          // pre-chip list — so when a search or tile reduces
+                          // that to zero, disabling it would lock the filter on
+                          // with no way back).
+                          const isEmpty = count === 0 && !isActive && value !== 'all'
                           return (
                             <button
                               key={value}
                               type="button"
                               onClick={() => handleChipChange(value)}
                               aria-pressed={isActive}
+                              disabled={isEmpty}
+                              title={isEmpty ? `No ${label.toLowerCase()} projects in this list` : undefined}
                               className={[
-                                'inline-flex items-center h-[30px] px-3 rounded-full text-[12px] font-medium transition-colors max-md:shrink-0',
+                                'inline-flex items-center gap-1.5 h-[30px] px-3 rounded-full text-[12px] font-medium transition-colors max-md:shrink-0',
                                 isActive
                                   ? 'bg-ink text-on-ink border border-ink'
-                                  : 'border border-line bg-surface text-ink-soft hover:bg-canvas',
+                                  : isEmpty
+                                    ? 'border border-line-soft bg-surface text-ink-dim cursor-not-allowed'
+                                    : 'border border-line bg-surface text-ink-soft hover:bg-canvas',
                               ].join(' ')}
                             >
                               {label}
+                              <span
+                                className={`font-mono text-[11px] tabular-nums ${isActive ? 'opacity-70' : 'text-ink-dim'}`}
+                                style={{ fontFeatureSettings: 'var(--num-features)' }}
+                              >
+                                {count}
+                              </span>
                             </button>
                           )
                         })}
@@ -3833,6 +4354,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                           onChange={(v) => handleSortChange(v as SortMode)}
                           options={[
                             { value: 'activity', label: 'Activity' },
+                            { value: 'waiting',  label: 'Waiting longest' },
                             { value: 'date',     label: 'Date' },
                             { value: 'name',     label: 'Name' },
                           ]}

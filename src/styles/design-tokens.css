@@ -81,6 +81,15 @@
   --c-in-stock-soft: #d0f1d8;
   --c-low:           #e8a200;
   --c-low-soft:      #ffeab0;
+  /* Amber as TEXT on --c-low-soft. --c-low is a fill colour: at #e8a200 it
+     measures ~1.8:1 on its own tint, so anything set in it on that wash is
+     effectively unreadable. The customer page hit this first and solved it by
+     deepening --c-low itself within .customer-accent (see the note further
+     down); this is the same value offered to the designer surfaces, which
+     still need the bright #e8a200 for dots and bars and so cannot deepen the
+     base token. Measured 4.98:1 on --c-low-soft, so it clears AA for small
+     text. Use for small amber chips — the Waiting column past a week. */
+  --c-low-ink:       #8a5a00;
   --c-out:           #d11e3d;
   --c-out-soft:      #fcd0d6;
 

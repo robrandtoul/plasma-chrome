@@ -375,7 +375,12 @@ const DASHBOARD_PROJECTS = [
     designer_avatar_url: null,
     helpscout_conversation_url: 'https://secure.helpscout.net/conversation/3',
     helpscout_conversation_id: 'hs-7',
-    helpscout_last_reply_at: daysAgo(0.05),
+    // ⚠ All three bundle cards carry the SAME reply stamp, because they share
+    // one Help Scout conversation and the webhook stamps every proof on it
+    // together. That is the shape that used to put three identical "was sent a
+    // reply" rows in the Latest activity feed for one reply; the feed now
+    // collapses them into one row reading "covers 3 cards in the bundle".
+    helpscout_last_reply_at: daysAgo(0.03),
     helpscout_last_customer_reply_at: null,
   },
   {
@@ -435,7 +440,70 @@ const DASHBOARD_PROJECTS = [
     designer_avatar_url: null,
     helpscout_conversation_url: 'https://secure.helpscout.net/conversation/3',
     helpscout_conversation_id: 'hs-7',
-    helpscout_last_reply_at: daysAgo(4),
+    // Same conversation as its two siblings, so the same stamp — see the note
+    // on p-b1. This card's own VERSION is four days older, which is what keeps
+    // "Sent 4d ago" on the row; the reply is a property of the thread, not the
+    // card, and there is only one thread.
+    helpscout_last_reply_at: daysAgo(0.03),
+    helpscout_last_customer_reply_at: null,
+  },
+  // ——— 000376 fixtures: the long wait, and the repeat customer ———
+  // Two states nothing else in this list reaches.
+  //
+  // p-r1 has been sitting for 13 days, which is what puts the Waiting column
+  // into its amber treatment (the threshold is 7). Every other fixture is
+  // under a week, so without this the amber branch renders nowhere.
+  //
+  // It is also a repeat customer WITH a known ordinal — an earlier proof for
+  // the same contact exists, so the row can count. p-r2 is the other half:
+  // repeat by Help Scout's `repeat customer` tag alone, with no ordinal, which
+  // on live is the more common of the two and must render as a bare "Repeat
+  // customer" rather than inventing a number.
+  {
+    proof_id: 'p-r1',
+    status: 'in_progress',
+    current_version_id: 'ver-r1',
+    current_version_number: 3,
+    version_created_at: daysAgo(13),
+    company_name: 'Sweet Beats',
+    contact_name: 'Marisa Bell',
+    contact_email: 'marisa@sweetbeats.example',
+    approved_at: null,
+    material_display: 'Matte Black Metal',
+    material_category: 'metal',
+    is_repeat: true,
+    repeat_project_number: 3,
+    designer_name: 'Rob Randtoul',
+    designer_initials: 'RR',
+    designer_colour: 'blue',
+    designer_avatar_url: null,
+    helpscout_conversation_url: 'https://secure.helpscout.net/conversation/9',
+    helpscout_conversation_id: 'hs-9',
+    helpscout_last_reply_at: daysAgo(13),
+    helpscout_last_customer_reply_at: null,
+  },
+  {
+    proof_id: 'p-r2',
+    status: 'in_progress',
+    current_version_id: 'ver-r2',
+    current_version_number: 1,
+    version_created_at: daysAgo(9),
+    company_name: 'Harbour & Moss',
+    contact_name: 'Nadia Okonjo',
+    contact_email: 'nadia@harbourmoss.example',
+    approved_at: null,
+    material_display: 'Brushed Copper',
+    material_category: 'metal',
+    // Tagged in Help Scout, but no earlier proof here — so no ordinal.
+    is_repeat: true,
+    repeat_project_number: null,
+    designer_name: 'Chris Jackson',
+    designer_initials: 'CJ',
+    designer_colour: 'teal',
+    designer_avatar_url: null,
+    helpscout_conversation_url: 'https://secure.helpscout.net/conversation/10',
+    helpscout_conversation_id: 'hs-10',
+    helpscout_last_reply_at: daysAgo(9),
     helpscout_last_customer_reply_at: null,
   },
 ]

@@ -3,13 +3,21 @@
 // dashboard's existing date chrome:
 //
 //   under a minute     → "just now"
-//   under an hour      → "Nm ago"
+//   under an hour      → "N min ago"
 //   under 24 hours     → "Nh ago"
 //   under 7 days       → "Nd ago"
 //   under 4 weeks      → "Nw ago"
 //   older              → short absolute date ("8 May" / "8 May 2025")
 //
-// No i18n pluralisation — "1m ago" / "2m ago" reads fine in the
+// Minutes are spelled "min", not "m". The single letter is the one
+// genuinely ambiguous unit in the ladder — in a list that also spans
+// weeks, "4m ago" reads as four months at a glance, and it read that
+// way for certain in the dashboard's activity feed, where the row
+// rendered it through an uppercasing style as "4M AGO". Every other
+// unit here is unambiguous as a single letter, so only this one is
+// spelled out.
+//
+// No i18n pluralisation — "1 min ago" / "2 min ago" reads fine in the
 // contexts this is used, and British-English summarising ("half
 // an hour ago") would add weight without adding clarity.
 
@@ -28,7 +36,7 @@ export function relativeTime(iso: string | null | undefined): string {
   // Floor lets the next branch pick up exactly when the unit
   // truly changes.
   const min = Math.floor(diffMs / 60_000)
-  if (min < 60) return `${min}m ago`
+  if (min < 60) return `${min} min ago`
 
   const hr = Math.floor(diffMs / 3_600_000)
   if (hr < 24) return `${hr}h ago`
