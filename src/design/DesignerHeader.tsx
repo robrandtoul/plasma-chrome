@@ -65,20 +65,26 @@ interface NavItem {
 // (AdminLayout), which the Admin nav item already leads into. Listing
 // it in the top bar too was redundant (the whole admin section
 // highlights "Admin" anyway).
+// Order matters: this is the left-to-right reading order of the pill strip.
+// The everyday work queues lead (Dashboard → Orders → Logbook → Flagged) and
+// the occasional tools trail (Quote, then Admin).
 const NAV: NavItem[] = [
-  { id: 'proofs', label: 'Proofs', to: '/' },
-  { id: 'quote',  label: 'Quote',  to: '/quote' },
+  // id stays 'proofs' — it's the internal key every page passes as `active`,
+  // and renaming it would churn a dozen files for a label change.
+  { id: 'proofs', label: 'Dashboard', to: '/' },
   // Orders is shown only when the ordering feature is switched on
   // (settings.ordering_enabled) — see the gate in DesignerHeader.
   { id: 'orders', label: 'Orders', to: '/orders' },
-  // Order log — the searchable archive of every order (distinct from the
+  // Logbook — the searchable archive of every order (distinct from the
   // Orders work queue above, and from the admin-only /admin/orders log).
   // Shares the ordering_enabled gate with Orders.
-  { id: 'orderlog', label: 'Order log', to: '/orders/log' },
+  { id: 'orderlog', label: 'Logbook', to: '/orders/log' },
   // Flagged — the shared board of problem projects. All-staff (no gate), so
-  // it falls through the visibleNav filter below like Proofs / Quote. (Distinct
-  // from the per-proof "Watch" button, which is push-notification opt-in.)
+  // it falls through the visibleNav filter below like Dashboard / Quote.
+  // (Distinct from the per-proof "Watch" button, which is push-notification
+  // opt-in.)
   { id: 'flagged', label: 'Flagged', to: '/flagged' },
+  { id: 'quote',  label: 'Quote',  to: '/quote' },
   // Feedback deliberately omitted here — it's a right-aligned icon button
   // next to the account pill (see the header) rather than a text nav pill.
   // /admin (not a specific tab) so the landing page is decided in one
@@ -372,7 +378,7 @@ function BottomTabBar({
         className="flex flex-1 items-center justify-center"
         aria-current={active === 'proofs' ? 'page' : undefined}
       >
-        <TabInner label="Proofs" Icon={Layers} active={active === 'proofs'} />
+        <TabInner label="Dashboard" Icon={Layers} active={active === 'proofs'} />
       </Link>
       {orderingEnabled && (
         <Link
@@ -478,9 +484,10 @@ function TabInner({
 }
 
 // Mobile "More" sheet, opened from the More bottom tab. Carries everything
-// that isn't a first-class tab: Quote, Flagged, Notifications, Feedback, the
-// Admin entry for admins, plus Edit profile + Sign out. (Team chat left this
-// sheet when Chat became its own bottom tab.)
+// that isn't a first-class tab: Logbook, Flagged, Quote, Notifications,
+// Feedback, the Admin entry for admins, plus Edit profile + Sign out — in the
+// same order as the desktop pill strip (see NAV). (Team chat left this sheet
+// when Chat became its own bottom tab.)
 function AccountSheet({
   open,
   onClose,
@@ -520,14 +527,6 @@ function AccountSheet({
         </div>
 
         <div className="mt-1 overflow-hidden rounded-[14px] border border-line bg-surface">
-          <Link
-            to="/quote"
-            onClick={onClose}
-            className="flex min-h-[56px] items-center gap-3 border-b border-line-soft px-4 text-[15px] text-ink-soft hover:bg-canvas"
-          >
-            <FileText size={18} aria-hidden="true" className="text-ink-mute" />
-            Quote
-          </Link>
           {orderingEnabled && (
             <Link
               to="/orders/log"
@@ -535,7 +534,7 @@ function AccountSheet({
               className="flex min-h-[56px] items-center gap-3 border-b border-line-soft px-4 text-[15px] text-ink-soft hover:bg-canvas"
             >
               <ClipboardList size={18} aria-hidden="true" className="text-ink-mute" />
-              Order log
+              Logbook
             </Link>
           )}
           <Link
@@ -550,6 +549,14 @@ function AccountSheet({
                 {flaggedCount > 9 ? '9+' : flaggedCount}
               </span>
             )}
+          </Link>
+          <Link
+            to="/quote"
+            onClick={onClose}
+            className="flex min-h-[56px] items-center gap-3 border-b border-line-soft px-4 text-[15px] text-ink-soft hover:bg-canvas"
+          >
+            <FileText size={18} aria-hidden="true" className="text-ink-mute" />
+            Quote
           </Link>
           <Link
             to="/settings/notifications"

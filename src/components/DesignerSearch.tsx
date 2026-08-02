@@ -40,7 +40,7 @@ interface PageDestination {
 // Kept deliberately short — this is "get me to the right place", not a
 // directory. Admin has its own palette for the deep stuff.
 const PAGES: PageDestination[] = [
-  { kind: 'page', id: 'proofs',   label: 'Proofs',         hint: 'Dashboard',              path: '/',          keywords: 'dashboard home projects list' },
+  { kind: 'page', id: 'proofs',   label: 'Dashboard',      hint: 'All projects',           path: '/',          keywords: 'dashboard home projects list proofs' },
   { kind: 'page', id: 'new',      label: 'New project',    hint: 'Start a proof',          path: '/proofs/new', keywords: 'create add start proof job' },
   { kind: 'page', id: 'orders',   label: 'Orders',         hint: 'Pay links and ordering', path: '/orders',    keywords: 'payment pay link invoice place' },
   { kind: 'page', id: 'quote',    label: 'Quote compiler', hint: 'Price a job',            path: '/quote',     keywords: 'price pricing cost shipping estimate' },
