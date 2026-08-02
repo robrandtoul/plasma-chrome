@@ -1907,9 +1907,10 @@ export default function OrdersPage() {
       onRetryHandoff={() => void retryHandoff(o)}
       showArtworkChip={artworkChipsOn}
       onOpenArtworkReport={() => void openArtworkReport(o)}
-      /* A revision order can't be put ON hold (revision already blocks it, and
-         the trigger clears a hold on the way in), but the release stays
-         reachable in case one ever arrives here still held. */
+      /* Holds work here too. A revision order becomes placeable again the
+         moment the customer approves the new version — while still being
+         'revision' — so a question arising at that point needs the same block
+         a paid order gets. */
       onHold={(mode) => { setHoldError(null); setHoldTarget({ order: o, mode }) }}
       usTariff={usTariffDutyBilling(o.order_group_id ? groups[o.order_group_id] ?? o : o)}
     />
@@ -3577,15 +3578,22 @@ function OrderCard({
                    easiest tap on the card the one that unblocks production.
                    Last in the menu, so a held order reads top-to-bottom as
                    "go and read the thread, then take it off".
-                   Not offered on a revision order: revision already blocks
-                   placement, and the trigger clears a hold on the way in. */
+
+                   Offered on a REVISION order too. It was suppressed there at
+                   first, on the reasoning that revision plus an unapproved
+                   proof already blocks placement — but that has a hole: once
+                   the customer approves the new version the order is placeable
+                   again while STILL being 'revision', so a fresh question at
+                   that point had no button. The database always honoured a
+                   hold there (the trigger's block isn't scoped to paid); only
+                   the UI declined to offer one. */
                 ...(onHold && hold.held
                   ? [{
                       label: HOLD_COPY.take_off,
                       onClick: () => onHold('take_off'),
                       title: 'Only once the question has been settled — after this it can go to production',
                     } satisfies CardMenuItem]
-                  : onHold && !isRevision
+                  : onHold
                     ? [{
                         label: HOLD_COPY.put,
                         onClick: () => onHold('put'),

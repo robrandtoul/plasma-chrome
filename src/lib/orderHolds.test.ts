@@ -9,6 +9,7 @@
 // Run: npx tsx src/lib/orderHolds.test.ts
 
 import {
+  HOLD_COPY,
   HOLD_REASON_MAX,
   customerRepliedSince,
   holdBlockReason,
@@ -141,6 +142,17 @@ const LATER = '2026-08-04T10:00:00.000Z'
 {
   const r = holdBlockReason(holdState({ held_at: HELD, hold_reason: 'x' }))
   check('an unattributed hold still reads as a sentence', /^This is on hold/.test(r ?? ''), r ?? '')
+}
+
+{
+  // The dialog is shown for BOTH a paid order (Place) and a revision order
+  // (Waiting → Being revised), so its body must not name a section. It said
+  // "stays in your Place list" until holds opened up to revision orders.
+  check('the dialog body names no section', !/Place list|Place section/i.test(HOLD_COPY.dialog_body), HOLD_COPY.dialog_body)
+  check('and still scopes the promise to "from here"', /from here/.test(HOLD_COPY.dialog_body), HOLD_COPY.dialog_body)
+  check('never promising nobody can place it', !/nobody|no one/i.test(HOLD_COPY.dialog_body), HOLD_COPY.dialog_body)
+  // "Release" already means "Release from combined payment" on this page.
+  check('no label says Release', ![HOLD_COPY.put, HOLD_COPY.take_off, HOLD_COPY.confirm, HOLD_COPY.take_off_confirm].some((s) => /release/i.test(s)))
 }
 
 // ── Reason validation ──────────────────────────────────────────────────────

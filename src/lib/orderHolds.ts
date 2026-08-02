@@ -145,8 +145,11 @@ export const HOLD_COPY = {
   // Scoped on purpose — "nobody can push it into production" would be the
   // absolute this feature can't deliver (the Help Scout note parser makes
   // Stock Control jobs without an order row at all). Say what is true.
+  //
+  // "where it is" rather than "in your Place list": holds are offered on
+  // revision orders too, and those sit under Being revised, not Place.
   dialog_body:
-    'It stays in your Place list so it keeps nagging, but it can no longer be pushed into production from here until someone takes it off hold.',
+    'It stays in the queue where it is, but it can no longer be pushed into production from here until someone takes it off hold.',
   reason_label: 'What are you waiting on?',
   reason_help:
     'Your colleagues read this, not the customer — it is what tells them whether to wait or to go ahead.',
