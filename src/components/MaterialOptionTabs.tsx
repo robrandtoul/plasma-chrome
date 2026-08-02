@@ -77,7 +77,7 @@ export function MaterialOptionTabs({
               tab.isActive
                 ? 'bg-brand-50 text-brand outline outline-1 -outline-offset-1 outline-brand'
                 : 'text-ink-soft hover:bg-surface hover:text-ink',
-              'focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]',
+              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]',
             ].join(' ')}
           >
             <span className="text-[14px] font-medium leading-none">

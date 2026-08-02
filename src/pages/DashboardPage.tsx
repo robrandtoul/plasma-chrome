@@ -511,7 +511,7 @@ function StatTile({ label, srLabel, count, active, tone, onClick, help, badge, b
       // pressed", so a screen-reader user presses it expecting the list below
       // to filter and instead the whole app changes page.
       aria-pressed={navigatesTo ? undefined : active}
-      className="flex flex-col items-start gap-2 px-5 py-5 text-left transition-colors hover:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)] relative xl:flex-1 xl:min-w-0 max-md:w-[140px] max-md:shrink-0 max-md:snap-start max-md:rounded-[12px] max-md:border max-md:border-line"
+      className="flex flex-col items-start gap-2 px-5 py-5 text-left transition-colors hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)] relative xl:flex-1 xl:min-w-0 max-md:w-[140px] max-md:shrink-0 max-md:snap-start max-md:rounded-[12px] max-md:border max-md:border-line"
       style={{
         // Active state: a soft tint of the tile's tone fills the cell
         // background. Cleaner than an inset ring when each cell sits
@@ -787,7 +787,7 @@ function OverflowMenu({
         aria-expanded={open}
         aria-label="Project actions"
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
-        className="flex h-8 w-8 items-center justify-center rounded text-ink-mute hover:bg-canvas hover:text-ink focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
+        className="flex h-8 w-8 items-center justify-center rounded text-ink-mute hover:bg-canvas hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
       >
         <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor"><circle cx="3" cy="8" r="1.5" /><circle cx="8" cy="8" r="1.5" /><circle cx="13" cy="8" r="1.5" /></svg>
       </button>
@@ -1037,8 +1037,8 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false, 
           onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
           className={
             stripStyle
-              ? 'flex h-7 w-7 items-center justify-center rounded text-ink-mute hover:bg-canvas hover:text-ink focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]'
-              : 'flex h-5 w-5 items-center justify-center rounded-full text-low hover:bg-low-soft focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-low)]'
+              ? 'flex h-7 w-7 items-center justify-center rounded text-ink-mute hover:bg-canvas hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]'
+              : 'flex h-5 w-5 items-center justify-center rounded-full text-low hover:bg-low-soft focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-low)]'
           }
         >
           <ClockIcon className={stripStyle ? 'h-4 w-4' : 'h-3 w-3'} />
@@ -1400,7 +1400,7 @@ function ProjectRow({
           }
         }}
         className={[
-          'relative overflow-hidden rounded-[10px] bg-surface border border-line border-l-[10px] pl-3 pr-2 py-3 transition-colors active:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]',
+          'relative overflow-hidden rounded-[10px] bg-surface border border-line border-l-[10px] pl-3 pr-2 py-3 transition-colors active:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]',
           project.status === 'dormant' ? 'opacity-60' : '',
         ].join(' ')}
         style={{ borderLeftColor: bucket.colour }}
@@ -1525,7 +1525,7 @@ function ProjectRow({
         // border + rounded corners + wide coloured left cap that the
         // overflow-hidden lets respect the rounding. group + relative
         // for the hover-only action overlay further down.
-        'group relative cursor-pointer overflow-hidden rounded-[10px] bg-surface border border-line border-l-[10px] pl-4 pr-5 py-3 transition-colors hover:bg-canvas focus:outline-none focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]',
+        'group relative cursor-pointer overflow-hidden rounded-[10px] bg-surface border border-line border-l-[10px] pl-4 pr-5 py-3 transition-colors hover:bg-canvas focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]',
         project.status === 'dormant' ? 'opacity-60' : '',
       ].join(' ')}
       style={{
@@ -2083,7 +2083,7 @@ interface RowActionButtonProps {
 function RowActionButton({ label, children, href, to, onClick, active }: RowActionButtonProps) {
   const cls = [
     'flex h-7 w-7 items-center justify-center rounded transition-colors',
-    'focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]',
+    'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]',
     active
       ? 'text-ink hover:opacity-90'
       : 'text-ink-mute hover:bg-canvas hover:text-ink',
@@ -2239,7 +2239,7 @@ function UnsnoozeButton({ proof, onUnsnooze }: UnsnoozeButtonProps) {
       title="Unsnooze"
       disabled={saving}
       onClick={handleClick}
-      className="flex h-7 w-7 items-center justify-center rounded hover:opacity-100 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 disabled:opacity-50"
+      className="flex h-7 w-7 items-center justify-center rounded hover:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 disabled:opacity-50"
       style={{
         color: '#7b3ff2',
         // Hover/focus tint sits at a higher source order than the
@@ -2470,7 +2470,7 @@ function LatestActivityPanel({
                     navigate(`/proofs/${e.proof_id}`)
                   }
                 }}
-                className="flex cursor-pointer items-start gap-3 px-5 py-4 transition-colors hover:bg-canvas focus:outline-none focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]"
+                className="flex cursor-pointer items-start gap-3 px-5 py-4 transition-colors hover:bg-canvas focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]"
               >
                 {/* Event-type icon in a tinted 32x32 square. */}
                 <span
@@ -3991,13 +3991,15 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                               ? 'Showing only these — click to show everything again'
                               : 'Show only the projects that need attention'
                           }
-                          // ⚠ No `focus:outline-none` here, unlike most focusable
-                          // things in this file. In Tailwind v4 `outline-none`
-                          // sets --tw-outline-style: none, and `outline-2`
-                          // resolves outline-style FROM that variable — so the
-                          // pair cancels out and the focus ring never draws.
-                          // (The combination appears at 29 sites across src/;
-                          // this one is left correct rather than consistent.)
+                          // ⚠ Never add `focus:outline-none` alongside these. In
+                          // Tailwind v4 `outline-none` sets --tw-outline-style:
+                          // none, and `outline-2` resolves outline-style FROM
+                          // that variable — so the pair cancels out and the
+                          // focus ring never draws. Because it is a variable
+                          // indirection rather than two competing declarations,
+                          // source order and specificity cannot rescue it.
+                          // (The other 29 sites carrying the pair were cleared;
+                          // this one was written correct from the start.)
                           className="inline-flex items-baseline rounded-lg px-2.5 pb-0.5 font-medium transition-colors bg-[color-mix(in_srgb,var(--c-brand)_8%,transparent)] hover:bg-[color-mix(in_srgb,var(--c-brand)_16%,transparent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-focus)]"
                           // --c-brand-700 rather than --c-brand: the coral
                           // primary measures 2.8:1 on this pale wash, and the

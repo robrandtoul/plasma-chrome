@@ -50,7 +50,7 @@ export function ProofCalloutStrip({
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2.5 px-4 py-3 text-left text-[14px] font-medium text-ink transition-colors hover:bg-brand-100 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand-600"
+        className="flex w-full items-center gap-2.5 px-4 py-3 text-left text-[14px] font-medium text-ink transition-colors hover:bg-brand-100 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand-600"
       >
         <MessageSquare size={16} aria-hidden="true" className="flex-none text-brand-700" />
         {/* The label already carries the count ("2 notes from Rob"), so the
@@ -99,7 +99,7 @@ export function ProofCalloutStrip({
                     <button
                       type="button"
                       onClick={() => onViewOnCard(c)}
-                      className="mt-1 bg-transparent p-0 text-[12.5px] text-brand-700 underline decoration-1 underline-offset-2 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+                      className="mt-1 bg-transparent p-0 text-[12.5px] text-brand-700 underline decoration-1 underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
                     >
                       View on the card
                     </button>

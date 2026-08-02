@@ -396,7 +396,7 @@ export function ActionPanel({
             aria-label="Close"
             onClick={closeActionPanel}
             disabled={actionSubmitting}
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-ink-mute transition-colors hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-ink-mute transition-colors hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
           >
             <X size={16} aria-hidden="true" />
           </button>
@@ -574,7 +574,7 @@ export function ActionPanel({
                       <button
                         type="button"
                         onClick={() => setActionDisclaimerExpanded(true)}
-                        className="eyebrow self-start text-ink hover:underline underline-offset-4 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)] focus:outline-none"
+                        className="eyebrow self-start text-ink hover:underline underline-offset-4 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]"
                       >
                         Show disclaimer
                       </button>

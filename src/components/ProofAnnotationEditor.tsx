@@ -531,7 +531,7 @@ export function ProofAnnotationEditor({
                             placeholder="What should the customer know about this?"
                             onChange={(e) => updateDraft(draft.localId, e.target.value)}
                             onBlur={() => void commitDraft(draft.localId)}
-                            className="min-w-0 flex-1 resize-y rounded-[6px] border border-line bg-surface px-2 py-1.5 text-[13px] text-ink placeholder:text-ink-mute focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand-600"
+                            className="min-w-0 flex-1 resize-y rounded-[6px] border border-line bg-surface px-2 py-1.5 text-[13px] text-ink placeholder:text-ink-mute focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand-600"
                           />
                         ) : (
                           <textarea
@@ -550,7 +550,7 @@ export function ProofAnnotationEditor({
                               }
                               if (next !== saved!.body) void saveBody(saved!.id, next)
                             }}
-                            className="min-w-0 flex-1 resize-y rounded-[6px] border border-line bg-surface px-2 py-1.5 text-[13px] text-ink placeholder:text-ink-mute focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand-600"
+                            className="min-w-0 flex-1 resize-y rounded-[6px] border border-line bg-surface px-2 py-1.5 text-[13px] text-ink placeholder:text-ink-mute focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand-600"
                           />
                         )}
                         <button

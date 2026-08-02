@@ -170,7 +170,7 @@ export default function HotLeadsCard({
             onClick={toggleCollapsed}
             aria-expanded={!collapsed}
             aria-controls={regionId}
-            className="flex w-full items-center gap-3 rounded-[6px] text-left focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]"
+            className="flex w-full items-center gap-3 rounded-[6px] text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]"
           >
             <span
               aria-hidden="true"

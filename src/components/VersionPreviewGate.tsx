@@ -296,7 +296,7 @@ export default function VersionPreviewGate({
   const actionBase =
     'inline-flex items-center gap-1.5 rounded-lg border border-line bg-canvas px-3 py-2 ' +
     'text-sm font-medium text-ink-soft transition-colors hover:border-ink-mute hover:text-ink ' +
-    'focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 ' +
+    'focus-visible:outline-2 focus-visible:outline-offset-2 ' +
     'focus-visible:outline-[var(--c-brand)] disabled:cursor-not-allowed disabled:opacity-40'
 
   return (
@@ -389,7 +389,7 @@ export default function VersionPreviewGate({
                     ? 'Loading preview…'
                     : 'Finish the checks below first'
               }
-              className="inline-flex items-center rounded-lg bg-in-stock px-4 py-2 text-sm font-semibold text-on-ink shadow-sm transition-opacity hover:opacity-90 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40"
+              className="inline-flex items-center rounded-lg bg-in-stock px-4 py-2 text-sm font-semibold text-on-ink shadow-sm transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40"
             >
               {confirmLabel}
             </button>

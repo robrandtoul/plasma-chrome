@@ -68,7 +68,7 @@ export default function CollapsibleSidebarPanel({
           aria-controls={regionId}
           className={[
             'flex w-full items-center gap-3 px-5 pt-5 pb-4 text-left transition-colors hover:bg-canvas',
-            'focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]',
+            'focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]',
             collapsed ? '' : 'border-b border-line-soft',
           ].join(' ')}
         >

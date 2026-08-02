@@ -2695,7 +2695,7 @@ export default function ProofDetailPage() {
                 setAnnotationVersion(currentVersion)
               }}
               className={[
-                'flex-none rounded-[6px] border px-2 py-1 text-[12px] transition-colors focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]',
+                'flex-none rounded-[6px] border px-2 py-1 text-[12px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]',
                 openPinCount > 0
                   ? 'border-low bg-low-soft font-medium text-low hover:border-low'
                   : 'border-line text-ink-soft hover:border-ink-mute hover:text-ink',
@@ -2716,7 +2716,7 @@ export default function ProofDetailPage() {
           onClick={() => setSelectedVersion(currentVersion)}
           title="Open version detail"
           aria-label={`Open version ${currentVersion.version_number} detail`}
-          className="block w-full text-left focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]"
+          className="block w-full text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]"
         >
           <div className={['grid gap-2 p-3', heroImages.length > 1 ? 'grid-cols-2' : 'grid-cols-1'].join(' ')}>
             {heroImages.map((img, i) => (
@@ -2844,7 +2844,7 @@ export default function ProofDetailPage() {
                     }}
                     title={`Open v${r.versionNumber} detail`}
                     aria-label={`Version ${r.versionNumber}, ${pal.label}`}
-                    className="flex flex-col items-center gap-0.5 rounded-[8px] px-3 py-1.5 transition-opacity hover:opacity-80 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]"
+                    className="flex flex-col items-center gap-0.5 rounded-[8px] px-3 py-1.5 transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]"
                     style={{
                       backgroundColor: pal.bg,
                       ...(r.isCurrent ? { boxShadow: `inset 0 0 0 2px ${pal.color}` } : {}),
@@ -3782,7 +3782,7 @@ export default function ProofDetailPage() {
                                 setFocusPinId(m.pin.id)
                                 setAnnotationVersion(currentVersion)
                               }}
-                              className="mt-[2px] flex-none bg-transparent p-0 text-[12px] text-allocated underline decoration-1 underline-offset-2 hover:text-ink focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]"
+                              className="mt-[2px] flex-none bg-transparent p-0 text-[12px] text-allocated underline decoration-1 underline-offset-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]"
                             >
                               Show me
                             </button>
@@ -4457,7 +4457,7 @@ export default function ProofDetailPage() {
                         setSelectedVersion(v)
                       }
                     }}
-                    className="flex cursor-pointer gap-4 px-5 py-4 transition-colors hover:bg-canvas focus:outline-none focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]"
+                    className="flex cursor-pointer gap-4 px-5 py-4 transition-colors hover:bg-canvas focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]"
                   >
                     {/* Thumbnail — 120×72 with the same dark-plate
                         placeholder fallback the dashboard rows use

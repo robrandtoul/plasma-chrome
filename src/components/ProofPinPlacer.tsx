@@ -179,7 +179,7 @@ export function ProofPinPlacer({ images, pins, setPins, disabled = false }: Prop
                     onFocus={() => setEditingId(p.localId)}
                     rows={2}
                     placeholder="What needs changing here?"
-                    className="w-full resize-y rounded-[6px] border border-line bg-surface px-2 py-1.5 text-[13px] text-ink placeholder:text-ink-mute focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand-600"
+                    className="w-full resize-y rounded-[6px] border border-line bg-surface px-2 py-1.5 text-[13px] text-ink placeholder:text-ink-mute focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand-600"
                   />
                 </div>
                 <button

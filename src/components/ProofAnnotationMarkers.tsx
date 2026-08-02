@@ -95,7 +95,7 @@ export function ProofAnnotationMarkers({
               onSelect(p.id)
             }}
             onPointerDown={(e) => e.stopPropagation()}
-            className={`${className} focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600`}
+            className={`${className} focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600`}
             style={style}
           >
             {label}

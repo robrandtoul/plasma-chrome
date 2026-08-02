@@ -389,7 +389,7 @@ export function ProofDetailView({
             type="button"
             aria-label="Previous side"
             onClick={() => step(-1)}
-            className="absolute left-2 top-1/2 z-10 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full bg-surface/70 border border-line text-ink transition-colors hover:bg-surface focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)] sm:left-4 sm:h-14 sm:w-14"
+            className="absolute left-2 top-1/2 z-10 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full bg-surface/70 border border-line text-ink transition-colors hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)] sm:left-4 sm:h-14 sm:w-14"
             style={{ backdropFilter: 'blur(4px)' }}
           >
             <span aria-hidden="true" className="text-2xl leading-none">‹</span>
@@ -449,7 +449,7 @@ export function ProofDetailView({
             type="button"
             aria-label="Next side"
             onClick={() => step(1)}
-            className="absolute right-2 top-1/2 z-10 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full bg-surface/70 border border-line text-ink transition-colors hover:bg-surface focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)] sm:right-4 sm:h-14 sm:w-14"
+            className="absolute right-2 top-1/2 z-10 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full bg-surface/70 border border-line text-ink transition-colors hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)] sm:right-4 sm:h-14 sm:w-14"
             style={{ backdropFilter: 'blur(4px)' }}
           >
             <span aria-hidden="true" className="text-2xl leading-none">›</span>
