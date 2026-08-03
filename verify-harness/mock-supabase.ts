@@ -919,7 +919,7 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
         // somebody's reorder, so the facts rail links back.
         reorder_of_proof_id: String(pid).includes('child') ? 'p-a1' : null,
         contact_id: 'c-1',
-        contacts: { full_name: 'Valentina Ring', email: 'valentina@realise.example', companies: { name: 'Realise' } },
+        contacts: { full_name: 'Valentina Ring', email: 'valentina@realise.example', companies: { id: 'co-1', name: 'Realise' } },
       }]
     } else {
       rows = [{ approved_at: daysAgo(1) }]

@@ -8,6 +8,7 @@ import { getWorklistPosition } from '../lib/proofWorklist'
 import ConfirmDialog from '../components/ConfirmDialog'
 import VersionDetailModal, { type ModalVersion } from '../components/VersionDetailModal'
 import HelpScoutEditModal from '../components/HelpScoutEditModal'
+import EditCustomerDialog from '../components/EditCustomerDialog'
 import Modal from '../components/Modal'
 import MessageSendPanel from '../components/MessageSendPanel'
 import AbandonProjectDialog from '../components/AbandonProjectDialog'
@@ -121,7 +122,9 @@ interface Proof {
   contacts: {
     full_name: string
     email: string
-    companies: { name: string } | null
+    // id rides along so the edit-customer dialog can rename the company
+    // without a second lookup.
+    companies: { id: string; name: string } | null
   }
 }
 
@@ -747,6 +750,8 @@ export default function ProofDetailPage() {
   const abandonNoticeRef = useRef<{ proofId: string } | null>(null)
   const abandonClosedPendingNotice = !!proof && abandonNoticeRef.current?.proofId === proof.id
   const [showHelpscoutEdit, setShowHelpscoutEdit] = useState(false)
+  // Edit-customer dialog — the pencil on the header identity block.
+  const [showCustomerEdit, setShowCustomerEdit] = useState(false)
   // Internal-notes inline edit state. notesEditing flips the panel
   // into textarea mode; notesDraft holds the editing buffer so Cancel
   // can revert without touching proof.internal_notes; notesSaving
@@ -991,7 +996,7 @@ export default function ProofDetailPage() {
     const [proofResult, versionsResult] = await Promise.all([
       supabase
         .from('proofs')
-        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, disclaimer_acknowledged_at, proof_set_id, set_discarded_at, reorder_requested_at, reorder_request_note, reorder_request_quantity, reorder_of_proof_id, contact_id, contacts(full_name, email, companies(name))')
+        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, disclaimer_acknowledged_at, proof_set_id, set_discarded_at, reorder_requested_at, reorder_request_note, reorder_request_quantity, reorder_of_proof_id, contact_id, contacts(full_name, email, companies(id, name))')
         .eq('id', proofId)
         .single(),
       supabase
@@ -3305,7 +3310,9 @@ export default function ProofDetailPage() {
               {/* Identity — favour the company name when present (matches
                   the dashboard + customer page); the contact name drops
                   to the subline. Sole traders (company === contact name)
-                  show a single line. */}
+                  show a single line. The pencil opens the edit-customer
+                  dialog — corrections happen where the typo is noticed,
+                  not three navigations away in Admin → Customers. */}
               <div className="eyebrow">Customer</div>
               {(() => {
                 const company = proof.contacts.companies?.name?.trim()
@@ -3314,9 +3321,20 @@ export default function ProofDetailPage() {
                 const secondary = company && company !== person ? person : null
                 return (
                   <>
-                    <h1 className="mt-1.5 font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0" style={{ fontSize: 'clamp(28px, 4vw, 36px)' }}>
-                      {primary}
-                    </h1>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5">
+                      <h1 className="min-w-0 font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0" style={{ fontSize: 'clamp(28px, 4vw, 36px)' }}>
+                        {primary}
+                      </h1>
+                      <button
+                        type="button"
+                        onClick={() => setShowCustomerEdit(true)}
+                        title="Edit customer details"
+                        aria-label="Edit customer details"
+                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-dim transition-colors hover:bg-canvas hover:text-ink"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    </div>
                     {secondary && (
                       <p className="mt-1 text-[14px] text-ink-mute leading-snug">{secondary}</p>
                     )}
@@ -4737,6 +4755,27 @@ export default function ProofDetailPage() {
             showToast('Help Scout link updated.')
           }}
           onClose={() => setShowHelpscoutEdit(false)}
+        />
+      )}
+
+      {/* Edit customer details — opened by the pencil on the header
+          identity block. loadProof refreshes the header (and everything
+          else that renders the names) after a save. */}
+      {showCustomerEdit && (
+        <EditCustomerDialog
+          contactId={proof.contact_id}
+          companyId={proof.contacts.companies?.id ?? null}
+          current={{
+            companyName: proof.contacts.companies?.name ?? null,
+            contactName: proof.contacts.full_name,
+            contactEmail: proof.contacts.email,
+          }}
+          isAdmin={role === 'admin'}
+          onSaved={() => {
+            if (id) loadProof(id)
+            showToast('Customer details updated.')
+          }}
+          onClose={() => setShowCustomerEdit(false)}
         />
       )}
 

@@ -44,6 +44,7 @@ import { ProofAnnotationEditor } from '../src/components/ProofAnnotationEditor'
 import Modal from '../src/components/Modal'
 import ContactNameNudge from '../src/components/ContactNameNudge'
 import AbandonProjectDialog from '../src/components/AbandonProjectDialog'
+import EditCustomerDialog from '../src/components/EditCustomerDialog'
 import ApprovedOrderStatus from '../src/components/ApprovedOrderStatus'
 import OrderBuilderModal from '../src/components/OrderBuilderModal'
 import { StatusRule } from '../src/design'
@@ -632,6 +633,39 @@ function AbandonDialogRig() {
   )
 }
 
+// ?path=/edit-customer-dialog — the pencil-on-the-proof-header dialog
+// (company + contact correction at the point of need). Pass
+// ?state=nocompany for a contact with no company (the company field is
+// omitted rather than offering a rename of nothing), ?state=admin for
+// the admin-only "Open in Admin → Customers" footer link. The fixture
+// client's update() resolves with no row, so clicking Save exercises
+// the failure copy.
+function EditCustomerDialogRig() {
+  const state = new URLSearchParams(window.location.search).get('state') ?? 'designer'
+  const noCompany = state === 'nocompany'
+  return (
+    <MemoryRouter>
+      <div className="min-h-screen bg-canvas">
+        <EditCustomerDialog
+          contactId="contact-1"
+          companyId={noCompany ? null : 'company-1'}
+          current={{
+            companyName: noCompany ? null : 'Harbour design interiors ltd',
+            contactName: 'Shane Collins',
+            contactEmail: 'shane@harbourdesigninteriors.com',
+          }}
+          isAdmin={state === 'admin'}
+          onSaved={() => {}}
+          onClose={() => {}}
+        />
+        <p className="p-6 text-xs text-ink-mute">
+          state={state} — try ?state=nocompany, ?state=admin.
+        </p>
+      </div>
+    </MemoryRouter>
+  )
+}
+
 // ?path=/approved-order-status — the approved card on /p/:id in every
 // post-approval state, under the real .customer-accent scope so the approved
 // token resolves to the customer-page green rather than the designer one.
@@ -856,6 +890,8 @@ const tree = requestedPath === '/order-builder' ? (
   <ApprovedOrderStatusRig />
 ) : requestedPath === '/abandon-dialog' ? (
   <AbandonDialogRig />
+) : requestedPath === '/edit-customer-dialog' ? (
+  <EditCustomerDialogRig />
 ) : requestedPath === '/contact-name-nudge' ? (
   <ContactNameNudgeRig />
 ) : requestedPath === '/detail-markers' ? (
