@@ -10,6 +10,14 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+// Per-area fixture modules (e2e work). Each hook claims only its own fixture
+// ids and returns null otherwise; mock-supabase tries them FIRST and falls
+// through to the fixtures in this file. Keeps parallel e2e work out of this
+// shared file — add fixtures in verify-harness/fixtures/, not here.
+import { customerProofQuery, customerProofRpc, customerProofInvoke } from './fixtures/customer-proof'
+import { payPagesQuery, payPagesRpc, payPagesInvoke } from './fixtures/pay-pages'
+import { versionFormQuery, versionFormRpc, versionFormInvoke } from './fixtures/version-form'
+
 const now = Date.now()
 const daysAgo = (n: number) => new Date(now - n * 864e5).toISOString()
 const daysAhead = (n: number) => new Date(now + n * 864e5).toISOString()
@@ -732,6 +740,9 @@ const FEEDBACK_ITEMS = [
 ]
 
 function resolveQuery(state: QueryState): { data: any; error: null; count?: number } {
+  const hooked = customerProofQuery(state) ?? payPagesQuery(state) ?? versionFormQuery(state)
+  if (hooked) return hooked
+
   const { table, select, single, filters } = state
   let rows: any[] = []
 
@@ -1052,7 +1063,9 @@ export const supabase: any = {
   // `supabase`, not via `.from()`, so they need their own fixture path.
   // Unknown names resolve to an empty array, matching the file's existing
   // "unrelated chrome never breaks the page under test" philosophy.
-  rpc: async (name: string) => {
+  rpc: async (name: string, args?: any) => {
+    const hooked = customerProofRpc(name, args) ?? payPagesRpc(name, args) ?? versionFormRpc(name, args)
+    if (hooked) return hooked
     if (name === 'dashboard_list') return { data: DASHBOARD_PROJECTS, error: null }
     // Stock Control dispatch state (migration 000356) — Admin → Shipping uses
     // this to drop already-sent parcels off the readiness worklist. o9 is
@@ -1216,6 +1229,8 @@ export const supabase: any = {
   },
   functions: {
     invoke: async (name: string, opts?: { body?: any }) => {
+      const hooked = customerProofInvoke(name, opts?.body) ?? payPagesInvoke(name, opts?.body) ?? versionFormInvoke(name, opts?.body)
+      if (hooked) return hooked
       // Full PaymentsStatus shape — AdminSettingsPage reads this on mount and
       // renders payStatus.stripe.* / .xero.* unguarded, so the generic
       // { ok: true } fallback below would crash the whole page.
@@ -1390,6 +1405,12 @@ export const supabase: any = {
         data: paths.map((p) => ({ error: null, path: p, signedUrl: swatch('#334155', p.slice(-8)) })),
         error: null,
       }),
+      // Write-path no-ops so upload flows (version forms) don't crash the
+      // page under test; nothing is persisted, which the specs know.
+      upload: async (path: string) => ({ data: { path }, error: null }),
+      copy: async (_from: string, to: string) => ({ data: { path: to }, error: null }),
+      remove: async (_paths: string[]) => ({ data: [], error: null }),
+      getPublicUrl: (path: string) => ({ data: { publicUrl: swatch('#334155', path.slice(-8)) } }),
     }),
   },
   supabaseUrl: 'https://example.supabase.co',

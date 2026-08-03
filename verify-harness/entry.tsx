@@ -20,6 +20,11 @@ import OrdersPage from '../src/pages/OrdersPage'
 import OrderLogPage from '../src/pages/OrderLogPage'
 import OrderReviewPage from '../src/pages/OrderReviewPage'
 import ProofDetailPage from '../src/pages/ProofDetailPage'
+import CustomerProofPage from '../src/pages/CustomerProofPage'
+import OrderPayPage from '../src/pages/OrderPayPage'
+import OrderGroupPayPage from '../src/pages/OrderGroupPayPage'
+import NewVersionPage from '../src/pages/NewVersionPage'
+import EditVersionPage from '../src/pages/EditVersionPage'
 import { ProofDetailView } from '../src/components/ProofDetailView'
 import DashboardPage from '../src/pages/DashboardPage'
 import FlaggedPage from '../src/pages/FlaggedPage'
@@ -880,6 +885,17 @@ const requestedPath =
   new URLSearchParams(window.location.search).get('path') ||
   (window.location.hash ? window.location.hash.replace(/^#/, '') : null)
 
+// Re-attach any non-`path` query params to the in-app path, so pages that read
+// search params off the router (?token=…, ?for=…) see them inside the
+// MemoryRouter. Rig components that read window.location.search directly
+// (?state=…) are unaffected.
+const extraQuery = (() => {
+  const params = new URLSearchParams(window.location.search)
+  params.delete('path')
+  const qs = params.toString()
+  return qs ? `?${qs}` : ''
+})()
+
 // ?path=/palette mounts the ⌘K designer command palette on its own, open, so
 // its layout and the fixture-backed proof search can be checked headlessly.
 const tree = requestedPath === '/order-builder' ? (
@@ -957,13 +973,46 @@ const tree = requestedPath === '/order-builder' ? (
       <Route path="*" element={<Elsewhere />} />
     </Routes>
   </MemoryRouter>
+) : requestedPath?.startsWith('/p/') ? (
+  // ?path=/p/cp-… — the CUSTOMER proof page against the customer-proof fixture
+  // module (verify-harness/fixtures/customer-proof.ts). Fixture ids are
+  // prefixed cp-; anything unrecognised renders the page's own error state.
+  <MemoryRouter initialEntries={[requestedPath + extraQuery]}>
+    <Routes>
+      <Route path="/p/:id" element={<CustomerProofPage />} />
+      <Route path="*" element={<Elsewhere />} />
+    </Routes>
+  </MemoryRouter>
+) : requestedPath?.startsWith('/order/group/') ? (
+  // ?path=/order/group/grp-…&token=t — the combined pay page against the
+  // pay-pages fixture module. Stripe's iframe never loads here; specs assert
+  // everything up to the card form.
+  <MemoryRouter initialEntries={[requestedPath + extraQuery]}>
+    <Routes>
+      <Route path="/order/group/:id" element={<OrderGroupPayPage />} />
+      <Route path="*" element={<Elsewhere />} />
+    </Routes>
+  </MemoryRouter>
+) : requestedPath?.startsWith('/order/') ? (
+  // ?path=/order/pay-…&token=t — the single-order pay page against the
+  // pay-pages fixture module.
+  <MemoryRouter initialEntries={[requestedPath + extraQuery]}>
+    <Routes>
+      <Route path="/order/:id" element={<OrderPayPage />} />
+      <Route path="*" element={<Elsewhere />} />
+    </Routes>
+  </MemoryRouter>
 ) : requestedPath?.startsWith('/proofs/') ? (
   // ?path=/proofs/p-a1 — the proof detail page against the approved fixture
   // project (use an id containing 'open', e.g. /proofs/p-open, for the
   // in_progress branch). Used to verify the header overflow menu (Duplicate
   // project) + its confirm dialog.
+  // ?path=/proofs/vf-…/versions/new (and …/versions/:versionId/edit) — the
+  // version forms against the version-form fixture module.
   <MemoryRouter initialEntries={[requestedPath]}>
     <Routes>
+      <Route path="/proofs/:id/versions/new" element={<NewVersionPage />} />
+      <Route path="/proofs/:id/versions/:versionId/edit" element={<EditVersionPage />} />
       <Route path="/proofs/:id" element={<ProofDetailPage />} />
       <Route path="*" element={<Elsewhere />} />
     </Routes>

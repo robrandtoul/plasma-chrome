@@ -7,6 +7,14 @@
 # every test file from disk, so this job covers new tests the day they land
 # without anyone remembering to wire them up.
 #
+# The e2e job is the same idea one level up: the unit tests assert pure
+# functions, so nothing here ever RENDERED a page — which is how silently
+# broken UI (dropped writes, dead panels, broken gates) kept reaching
+# customers. It runs the offline Playwright projects (designer + harness):
+# real pages against the fixture backend, no Supabase project, no secrets.
+# The customer/customer-mobile projects hit the live backend and stay
+# local-only on purpose.
+#
 # This reports as a check on the PR. It does not block merging unless the
 # branch protection rules are changed to make it required.
 
@@ -40,3 +48,36 @@ jobs:
 
       - name: Unit tests
         run: pnpm test
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: End-to-end tests (offline projects)
+        run: pnpm exec playwright test --project=designer --project=harness
+
+      # Traces are only written for failures (retain-on-failure), so this
+      # uploads nothing on a green run.
+      - name: Upload failure traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failures
+          path: test-results/
+          retention-days: 7

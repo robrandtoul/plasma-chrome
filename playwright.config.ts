@@ -1,4 +1,25 @@
 import { defineConfig, devices } from '@playwright/test'
+import fs from 'node:fs'
+
+// Managed cloud sandboxes pre-install a Chromium at a fixed path and block
+// `playwright install`, so when the pinned @playwright/test wants a browser
+// revision that isn't there, fall back to the sandbox binary. Absent on real
+// dev machines and in CI (both install matching browsers), so this is a no-op
+// everywhere else.
+const SANDBOX_CHROMIUM = '/opt/pw-browsers/chromium'
+const sandboxLaunch = fs.existsSync(SANDBOX_CHROMIUM)
+  ? { launchOptions: { executablePath: SANDBOX_CHROMIUM } }
+  : {}
+
+// The harness projects are offline by design — a fixture supabase client and
+// no auth — so external requests (the Google Fonts @import in index.css,
+// Stripe's js) must FAIL FAST rather than load or hang: pointing the browser
+// at a dead proxy makes every non-localhost request refuse instantly. Without
+// this, a sandboxed or slow network turns every page load into a ~25s stall
+// waiting on fonts, and a harness test silently grows a real-internet
+// dependency. The customer projects talk to the real Supabase project, so
+// they deliberately don't get this.
+const offline = { proxy: { server: 'http://127.0.0.1:9', bypass: 'localhost,127.0.0.1' } }
 
 // End-to-end tests, added after three bugs shipped that no existing test could
 // have caught (a control in the wrong place, a schema/UI contradiction, and a
@@ -45,19 +66,30 @@ export default defineConfig({
     {
       name: 'customer',
       testMatch: /customer\/.*\.spec\.ts/,
-      use: { ...devices['Desktop Chrome'], baseURL: `http://localhost:${CUSTOMER_PORT}` },
+      use: { ...devices['Desktop Chrome'], ...sandboxLaunch, baseURL: `http://localhost:${CUSTOMER_PORT}` },
     },
     {
       // 57% of change requests are submitted from a phone, so the customer
       // surfaces get a phone run too rather than desktop-only.
       name: 'customer-mobile',
       testMatch: /customer\/.*\.spec\.ts/,
-      use: { ...devices['iPhone 14'], baseURL: `http://localhost:${CUSTOMER_PORT}` },
+      use: { ...devices['iPhone 14'], ...sandboxLaunch, baseURL: `http://localhost:${CUSTOMER_PORT}` },
     },
     {
       name: 'designer',
       testMatch: /designer\/.*\.spec\.ts/,
-      use: { ...devices['Desktop Chrome'], baseURL: `http://localhost:${HARNESS_PORT}` },
+      use: { ...devices['Desktop Chrome'], ...sandboxLaunch, ...offline, baseURL: `http://localhost:${HARNESS_PORT}` },
+    },
+    {
+      // The regression suite proper (August 2026): every spec under
+      // e2e/harness/ runs fully offline against the verify harness — no
+      // Supabase project, no auth, no network — so this project is the one CI
+      // runs on every pull request. Customer-page and pay-page specs live
+      // here too (not under customer/), precisely because they must not need
+      // the real backend.
+      name: 'harness',
+      testMatch: /harness\/.*\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], ...sandboxLaunch, ...offline, baseURL: `http://localhost:${HARNESS_PORT}` },
     },
   ],
 
