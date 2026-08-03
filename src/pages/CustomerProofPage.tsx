@@ -3054,7 +3054,9 @@ export default function CustomerProofPage() {
                   eyebrow={
                     !activeVersion.custom_quote && activeOption && versionOptions.length > 0 && materialHasSurcharges
                       ? `Prices shown for ${activeOption.display_name} ${optionLabelSingular.toLowerCase()}`
-                      : 'Inclusive of VAT'
+                      : activeVersion.currency === 'GBP'
+                        ? 'Inclusive of VAT'
+                        : undefined
                   }
                   title="Pricing"
                   icon={currencyIcon(activeVersion.currency)}
@@ -4099,7 +4101,9 @@ export default function CustomerProofPage() {
                 eyebrow={
                   !activeVersion.custom_quote && activeOption && versionOptions.length > 0 && materialHasSurcharges
                     ? `Prices shown for ${activeOption.display_name} ${optionLabelSingular.toLowerCase()}`
-                    : 'Inclusive of VAT'
+                    : activeVersion.currency === 'GBP'
+                      ? 'Inclusive of VAT'
+                      : undefined
                 }
                 title="Pricing"
                 icon={currencyIcon(activeVersion.currency)}

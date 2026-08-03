@@ -280,6 +280,30 @@ const GRAPHS: Record<string, any> = {
     // and the page skips the images fetch entirely for a version-less graph.
     [],
   ),
+  // EUR sibling of cp-basic (no QR). Exists for the VAT-claim spec: GBP
+  // prices are VAT-inclusive, EUR/USD are VAT-free (business rule), so a
+  // non-GBP proof must render NO VAT claim anywhere.
+  'cp-eur': {
+    ...graph(
+      {
+        customer_name: 'Lena Vogel',
+        company: 'Vogel Studio',
+        status: 'in_progress',
+        approved_at: null,
+        abandoned_at: null,
+        disclaimer_acknowledged_at: null,
+      },
+      [
+        version({
+          id: 'cp-eur-v1',
+          proof_id: 'cp-eur',
+          currency: 'EUR',
+          names: ['Lena Vogel'],
+        }),
+      ],
+    ),
+    price_tiers: PRICE_TIERS.map((t) => ({ ...t, id: `${t.id}-eur`, currency: 'EUR' })),
+  },
 }
 
 const IMAGES: Record<string, any[]> = {
@@ -310,6 +334,9 @@ const IMAGES: Record<string, any[]> = {
     img({ id: 'cp-earlier-v2-back', proof_version_id: 'cp-earlier-v2', associated_name: 'Noor Haddad', side: 'back', signed_url: art('#0f3d3e', 'v2 back') }),
   ],
   'cp-abandoned': [],
+  'cp-eur': [
+    img({ id: 'cp-eur-front', proof_version_id: 'cp-eur-v1', associated_name: 'Lena Vogel', side: 'front', signed_url: art('#4a1d6e', 'Lena front') }),
+  ],
 }
 
 // public_settings payload for cp- page loads. disclaimer_text non-empty is
