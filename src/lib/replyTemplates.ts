@@ -283,6 +283,15 @@ export const DEFAULT_BODIES: Record<string, string> = {
     `Hi {first_name},\n\nJust picking up on the proof of your cards{? company} for {company}{/?}. If you're happy with it, you can approve it on the page in a few seconds — and if you'd like anything changed (layout, wording, colours), just reply and we'll sort it:\n\n{url}\n\nIf it's the price giving you pause, tell us — there's often a more affordable route with a different material or quantity.`,
   nudge_viewed_not_actioned_final:
     `Hi {first_name},\n\nThis is our last reminder about your card proof{? company} for {company}{/?} — we don't want to be a pest. Your proof stays saved, so you can come back to it whenever suits:\n\n{url}\n\nIf you've decided not to go ahead, no hard feelings — a quick reply telling us why (price, timing, direction) genuinely helps us do better.`,
+  // Return-tone reminder 1 (migration 000380, seeded there): used instead of
+  // nudge_viewed_not_actioned when the customer has come back to their proof
+  // on 2+ separate days without deciding — stuck, not hot. Obstacle-removal
+  // wording, no closing pressure, and NEVER any reference to visits or views
+  // (tracking is only ever disclosed in the negative). The sender's link
+  // auto-opens the "Not ready to approve?" panel. Reminders 2+ fall back to
+  // the standard _2/_final bodies.
+  nudge_viewed_not_actioned_return:
+    `Hi {first_name},\n\nNo rush on your card proof{? company} for {company}{/?} — it's saved and waiting whenever you're ready.\n\nIf anything's giving you pause — the price, a detail you'd like changed, or a question — just reply, or use the "Not ready to approve?" option on your proof page and we'll happily adjust:\n\n{url}`,
   // Bundle reminders (migration 000317): ONE reminder for a whole set of cards,
   // pointing at the bundle review link ({url}). Pluralised; no {version_number}.
   nudge_bundle:

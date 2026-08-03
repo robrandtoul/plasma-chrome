@@ -323,15 +323,6 @@ export const ADMIN_DESTINATIONS: AdminDestination[] = [
     description: 'Settings › defaults for new versions.',
   },
   {
-    id: 'settings-hot-leads',
-    label: 'Hot leads panel',
-    path: '/admin/settings#dashboard',
-    group: 'System',
-    icon: 'settings',
-    keywords: ['hot leads', 'hot leads to chase', 'dashboard panel', 'dashboard settings'],
-    description: 'Settings › show or hide the dashboard hot-leads card.',
-  },
-  {
     id: 'settings-push',
     label: 'Push notifications',
     path: '/admin/settings#notifications',

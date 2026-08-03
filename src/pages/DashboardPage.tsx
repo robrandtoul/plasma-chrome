@@ -18,7 +18,6 @@ import { getOrderingEnabled } from '../lib/orderingEnabled'
 import { orderTotal, type OrderAmounts } from '../lib/orderDisplay'
 import { formatPrice } from '../lib/currency'
 import { getExchangeRates, currencyToGbp, type ExchangeRates } from '../lib/exchangeRates'
-import { getHotLeadsPanelEnabled } from '../lib/hotLeadsPanelEnabled'
 import type { ProofStatus } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import {
@@ -32,7 +31,6 @@ import { tagHelp } from '../lib/tagHelp'
 import { ResolvePopover } from '../components/ResolvePopover'
 import { NudgeOutboxPanel } from '../components/NudgeOutboxPanel'
 import CollapsibleSidebarPanel from '../components/CollapsibleSidebarPanel'
-import HotLeadsCard from '../components/HotLeadsCard'
 import AnnouncementsBanner, { PostAnnouncementButton } from '../components/AnnouncementsBanner'
 import SharedDesignerAvatar from '../components/DesignerAvatar'
 import TeamChatPanel from '../components/TeamChatPanel'
@@ -2899,7 +2897,7 @@ function readDashboardSnapshot(searchTerm: string): DashboardSnapshot | null {
 // normal page inside the app chrome rather than the dashboard body.
 export default function DashboardPage({ activityView = false }: { activityView?: boolean }) {
   const navigate = useNavigate()
-  const { session, role } = useAuth()
+  const { session } = useAuth()
   const userId = session?.user.id ?? null
   const [projects, setProjects]           = useState<DashboardProject[]>([])
   // Server-computed tile counts (migration 000202). Counted across every
@@ -2919,10 +2917,6 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   // it as a refetch trigger — the composer lives in the hero action cluster
   // now, so it can't hand the new row straight to the banner beside it.
   const [announcementsRefresh, setAnnouncementsRefresh] = useState(0)
-  // Admin switch for the "Hot leads to chase" card (migration 000280). Starts
-  // true — the panel ships shown — so the card doesn't flicker out on first
-  // paint before the settings read resolves. An admin turning it off hides it.
-  const [hotLeadsOn, setHotLeadsOn]       = useState(true)
   const [orderCounts, setOrderCounts]     = useState<{ awaitingPayment: number; toOrder: number; invoiceProblem: number; paid30d: number; awaitingPaymentMoney?: BucketMoney; paid30dMoney?: BucketMoney } | null>(null)
   // current_version_id → thumbnail renditions (thumb / preview / full).
   // Populated in loadDashboard after the projects fetch via the
@@ -3206,18 +3200,6 @@ export default function DashboardPage({ activityView = false }: { activityView?:
           paid30dMoney: sumOrderMoney(w.data, w.count, rates),
         })
       })
-    })()
-    return () => { cancelled = true }
-  }, [])
-
-  // Hot-leads panel switch: read the admin toggle once on mount. Independent of
-  // the proof load so it never blocks the list. Defaults on; an admin hiding it
-  // flips this off (HotLeadsCard still fails quiet on no leads / RPC error).
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      const on = await getHotLeadsPanelEnabled()
-      if (!cancelled) setHotLeadsOn(on)
     })()
     return () => { cancelled = true }
   }, [])
@@ -4329,12 +4311,6 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                 </div>
               </div>
             </section>
-
-            {/* Hot leads to chase — the daily prompt. Full width under the
-                tiles so it's the first actionable thing on the page, on every
-                viewport. Admin-only "Open in Analytics" deep-link (the page is
-                admin-gated); fails quiet if the RPC isn't available. */}
-            {hotLeadsOn && <HotLeadsCard isAdmin={role === 'admin'} currentUserId={userId} />}
 
             {/* 2-column grid for the rest of the page: list card on the
                 left, Latest activity sidebar on the right. Lives below

@@ -77,6 +77,22 @@ function currencyIcon(currency: Currency | null | undefined): LucideIcon {
   }
 }
 
+// Open the "Not ready to approve?" panel and scroll it into view —
+// shared by the welcome-back strip's button and the ?ask=1 deep link.
+// The collapsed panel's root IS its toggle button (same id), so
+// clicking it opens the reasons; already-open states are a div and
+// just get the scroll. Safe no-op when the panel isn't mounted.
+function openDeclineFeedbackPanel() {
+  const el = document.getElementById('decline-feedback')
+  if (el instanceof HTMLButtonElement) el.click()
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  requestAnimationFrame(() => {
+    document
+      .getElementById('decline-feedback')
+      ?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' })
+  })
+}
+
 export default function CustomerProofPage() {
   const { id } = useParams<{ id: string }>()
   // Team-sharing focus param (migration 000304). A share link carries
@@ -111,6 +127,14 @@ export default function CustomerProofPage() {
     ? fromParamRaw
     : null
   const isReminderVisit = fromTag !== null && fromTag.startsWith('reminder')
+
+  // Deep link straight to the "Not ready to approve?" panel: one
+  // reminder template variant appends &ask=1 to the proof URL (see
+  // send-nudges). Only the literal '1' counts — anything else is
+  // ignored. Presentation only: the URL is never rewritten and
+  // nothing is persisted; the open+scroll effect lives below with
+  // the ?for= scroll.
+  const isAskVisit = searchParams.get('ask') === '1'
 
   const [proof, setProof] = useState<PublicProof | null>(null)
   const [versions, setVersions] = useState<PublicProofVersion[]>([])
@@ -373,6 +397,24 @@ export default function CustomerProofPage() {
     focusScrolledRef.current = true
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
+  })
+
+  // One-time open + scroll for ?ask=1 (reminder deep link). Same
+  // probe-each-render idiom as the ?for= scroll above: the decline
+  // panel only mounts after the async proof data loads AND its render
+  // gate holds (current version, proof not approved, approvals
+  // enabled), so waiting for the anchor to actually exist covers every
+  // no-op case silently — approved / abandoned / gated-off proofs
+  // never grow the anchor and nothing fires. Independent of the
+  // ?from=reminder-N welcome-back strip, which both params usually
+  // ride in on together.
+  const askOpenedRef = useRef(false)
+  useEffect(() => {
+    if (askOpenedRef.current) return
+    if (!isAskVisit) return
+    if (!document.getElementById('decline-feedback')) return
+    askOpenedRef.current = true
+    openDeclineFeedbackPanel()
   })
 
   // Element that had focus when the panel opened — restored on close
@@ -2780,18 +2822,7 @@ export default function CustomerProofPage() {
             {activeVersion?.is_current && activeVersion.approvals_enabled && (
               <button
                 type="button"
-                onClick={() => {
-                  // The collapsed panel's root IS its toggle button (same
-                  // id), so clicking it opens the reasons; already-open
-                  // states are a div and just get the scroll.
-                  const el = document.getElementById('decline-feedback')
-                  if (el instanceof HTMLButtonElement) el.click()
-                  requestAnimationFrame(() => {
-                    document
-                      .getElementById('decline-feedback')
-                      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                  })
-                }}
+                onClick={openDeclineFeedbackPanel}
                 className="text-sm font-medium text-ink underline underline-offset-4 hover:opacity-80"
               >
                 Something holding you up? Tell us

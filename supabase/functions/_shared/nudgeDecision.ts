@@ -97,6 +97,16 @@ export interface CandidateFacts {
    */
   currency: string | null
   /**
+   * True when the current version has non-bot views on 2+ distinct
+   * Europe/London calendar days (migration 000380) — the customer keeps
+   * coming back without deciding: stuck, not hot. Read ONLY by template
+   * selection (prefersReturnTone), which swaps the viewed_not_actioned
+   * wording for the obstacle-removal body — it changes which words go out,
+   * never whether or when, so decideForProof ignores it entirely. False for
+   * pre-000380 candidate rows (the sender defaults a missing column).
+   */
+  returnViews: boolean
+  /**
    * The proof set (bundle) this card belongs to, IFF the sender has determined
    * the bundle is chaseable as a unit (bundleChaseable) — the trigger to
    * collapse the bundle's due cards into ONE reminder (migration 000317).
@@ -277,9 +287,11 @@ export function isLondonMondayMorning(instant: Date): boolean {
 // threshold), update Branch B in lockstep — otherwise a proof the automation
 // can't actually send may be wrongly hidden from the human pile.
 // Deliberately NOT mirrored in Branch B: the USD morning deferral (the proof
-// still sends the same day, on the afternoon run) and the progressive
+// still sends the same day, on the afternoon run), the progressive
 // cooldown stretch (changes WHEN, never WHETHER — a proof waiting out a
-// cooldown is exactly the "automation will handle it" case).
+// cooldown is exactly the "automation will handle it" case), and the
+// returner template tone (returnViews picks the WORDS a reminder uses,
+// never whether or when one sends — see prefersReturnTone).
 export function decideForProof(
   facts: CandidateFacts,
   ledger: LedgerRow[],
@@ -436,6 +448,70 @@ export function nudgeTemplateIds(
     ids.push(`${baseId}_${nudgeNumber}`, `${baseId}_2`)
   }
   ids.push(baseId)
+  return [...new Set(ids)]
+}
+
+// ── Return-tone template preference (migration 000380) ───────────────────────
+//
+// A viewed_not_actioned customer who has come back to their proof on 2+
+// separate days approves at 34% vs 50% — stuck, not hot, usually on price —
+// so their reminder swaps the standard chase copy for an obstacle-removal
+// body. Template selection ONLY: same schedule, same caps, same cooldowns
+// (the LOCKSTEP comment above decideForProof names this as deliberately not
+// mirrored in Branch B).
+
+/** The one rule whose reminders soften for a returning customer. */
+export const RETURN_TONE_RULE_CODE = 'viewed_not_actioned'
+
+/**
+ * Should this reminder prefer the return-tone (_return) template family?
+ * viewed_not_actioned only, and only when the candidate fact says the
+ * customer came back on 2+ separate days. Tolerates undefined/null so a
+ * sender deployed ahead of migration 000380 (no return_views column yet)
+ * reads false — standard copy, exactly the pre-feature behaviour.
+ */
+export function prefersReturnTone(
+  ruleCode: string,
+  returnViews: boolean | null | undefined,
+): boolean {
+  return ruleCode === RETURN_TONE_RULE_CODE && returnViews === true
+}
+
+/** `nudge_x` → `nudge_x_return`; `nudge_x_2` → `nudge_x_return_2`. */
+function returnToneId(baseId: string, id: string): string {
+  return `${baseId}_return${id.slice(baseId.length)}`
+}
+
+/**
+ * True iff `id` is a return-tone variant in `baseId`'s chain. The sender's
+ * switch for the `&ask=1` link suffix: only the return-toned body invites
+ * the customer to say what's in the way, so only its link auto-opens the
+ * "Not ready to approve?" panel.
+ */
+export function isReturnToneTemplateId(baseId: string, id: string): boolean {
+  return id === `${baseId}_return` || id.startsWith(`${baseId}_return_`)
+}
+
+/**
+ * nudgeTemplateIds with the return-tone preference folded in: at EACH chain
+ * position the `_return` variant is tried first, then the standard id — so
+ * a position with no seeded return body falls back to that position's
+ * standard copy (the compiled defaults always resolve the standard id, so
+ * resolution never walks past a position and the return BASE body can never
+ * repeat as reminder 2). Today only the base return variant is seeded, so
+ * reminders 2+ intentionally use the standard _2/_final bodies. With the
+ * preference off the chain is identical to nudgeTemplateIds.
+ */
+export function nudgeTemplateIdsFor(
+  baseId: string,
+  nudgeNumber: number,
+  maxNudges: number,
+  preferReturnTone: boolean,
+): string[] {
+  const standard = nudgeTemplateIds(baseId, nudgeNumber, maxNudges)
+  if (!preferReturnTone) return standard
+  const ids: string[] = []
+  for (const id of standard) ids.push(returnToneId(baseId, id), id)
   return [...new Set(ids)]
 }
 

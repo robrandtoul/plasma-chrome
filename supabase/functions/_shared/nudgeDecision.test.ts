@@ -15,12 +15,15 @@ import {
   decideForProof,
   groupSendables,
   isLondonMondayMorning,
+  isReturnToneTemplateId,
   isWithinSendWindow,
   isWorkingDay,
   londonDate,
   londonHour,
   nudgeNumberFor,
   nudgeTemplateIds,
+  nudgeTemplateIdsFor,
+  prefersReturnTone,
   simulateDryLedger,
   workingDaysBetween,
   type BundleConfig,
@@ -83,6 +86,7 @@ function facts(overrides: Partial<CandidateFacts> = {}): CandidateFacts {
     autoNudgeDisabled: false,
     hasFollowUpTag: false,
     currency: 'GBP',
+    returnViews: false,
   }
   const merged = { ...base, ...overrides }
   // sent_never_viewed anchors on its send evidence, so a test that moves
@@ -455,6 +459,78 @@ eq('reminder 4 of 4 prefers _final', nudgeTemplateIds('nudge_x', 4, 4).join(',')
 // past max → _final wins, matching "this is the last one we may send").
 eq('number past a lowered cap still resolves to _final', nudgeTemplateIds('nudge_x', 3, 2).join(','), 'nudge_x_final,nudge_x_3,nudge_x_2,nudge_x')
 
+// ── Return-tone template preference (migration 000380) ───────────────────────
+//
+// Template selection ONLY: prefersReturnTone feeds nudgeTemplateIdsFor, and
+// decideForProof never reads returnViews — same schedule, different words.
+
+eq('vna returner prefers the return tone', prefersReturnTone('viewed_not_actioned', true), true)
+eq('single-visit vna customer stays on standard copy', prefersReturnTone('viewed_not_actioned', false), false)
+eq('other rules never switch tone', prefersReturnTone('sent_never_viewed', true), false)
+// Deploy-order safety: a sender running against a pre-000380 database sees
+// no return_views column at all — undefined/null must read as false.
+eq('missing fact reads as standard copy (undefined)', prefersReturnTone('viewed_not_actioned', undefined), false)
+eq('missing fact reads as standard copy (null)', prefersReturnTone('viewed_not_actioned', null), false)
+
+eq('return chain: reminder 1 tries the return id first',
+  nudgeTemplateIdsFor('nudge_viewed_not_actioned', 1, 3, true).join(','),
+  'nudge_viewed_not_actioned_return,nudge_viewed_not_actioned')
+eq('preference off → chain identical to nudgeTemplateIds',
+  nudgeTemplateIdsFor('nudge_viewed_not_actioned', 2, 3, false).join(','),
+  nudgeTemplateIds('nudge_viewed_not_actioned', 2, 3).join(','))
+// Per-position interleave: each position's return variant is tried before
+// that position's standard id, so a missing return body falls back to the
+// SAME position's standard copy, never to the return base (which would
+// repeat reminder 1's email verbatim).
+eq('return chain: reminder 2 interleaves per position',
+  nudgeTemplateIdsFor('nudge_x', 2, 3, true).join(','),
+  'nudge_x_return_2,nudge_x_2,nudge_x_return,nudge_x')
+eq('return chain: final reminder interleaves per position',
+  nudgeTemplateIdsFor('nudge_x', 3, 3, true).join(','),
+  'nudge_x_return_final,nudge_x_final,nudge_x_return_3,nudge_x_3,nudge_x_return_2,nudge_x_2,nudge_x_return,nudge_x')
+
+// decideForProof must be COMPLETELY blind to returnViews — the fact picks
+// words, never whether or when a reminder sends. Byte-identical decisions
+// with the flag on and off, across a clean send and a capped drop, so a
+// future edit that threads returnViews into the decision fails loudly here.
+{
+  const vna = (returnViews: boolean) =>
+    facts({ ruleCode: 'viewed_not_actioned', anchorAt: '2026-06-03T10:00:00Z', returnViews })
+  const capped = [
+    row({ ruleCode: 'viewed_not_actioned', createdAt: '2026-05-28T08:30:00Z' }),
+    row({ ruleCode: 'viewed_not_actioned', createdAt: '2026-06-01T08:30:00Z' }),
+  ]
+  for (const [label, ledger] of [['clean send', []], ['capped drop', capped]] as const) {
+    eq(`decideForProof blind to returnViews (${label})`,
+      JSON.stringify(decideForProof(vna(true), ledger as LedgerRow[], CFG, NOW)),
+      JSON.stringify(decideForProof(vna(false), ledger as LedgerRow[], CFG, NOW)))
+  }
+}
+
+// isReturnToneTemplateId — the sender's "&ask=1" switch (keyed on the
+// RESOLVED template so a fallback to standard copy keeps a plain link).
+eq('base return id is return-toned', isReturnToneTemplateId('nudge_x', 'nudge_x_return'), true)
+eq('positioned return id is return-toned', isReturnToneTemplateId('nudge_x', 'nudge_x_return_2'), true)
+eq('standard base id is not return-toned', isReturnToneTemplateId('nudge_x', 'nudge_x'), false)
+eq('standard sequence id is not return-toned', isReturnToneTemplateId('nudge_x', 'nudge_x_2'), false)
+
+// Resolution against the SHIPPED defaults: only the base return body exists,
+// so a returner's reminder 1 gets the return tone and reminders 2/final fall
+// back to the standard sequence bodies (deliberate — one softened first
+// touch, then the normal close-out).
+{
+  const resolve = (n: number, max: number): string => {
+    for (const id of nudgeTemplateIdsFor('nudge_viewed_not_actioned', n, max, true)) {
+      const body = NUDGE_DEFAULT_BODIES[id]
+      if (body && body.trim() !== '') return id
+    }
+    return 'none'
+  }
+  eq('returner reminder 1 resolves to the return body', resolve(1, 3), 'nudge_viewed_not_actioned_return')
+  eq('returner reminder 2 falls back to standard _2', resolve(2, 3), 'nudge_viewed_not_actioned_2')
+  eq('returner final reminder falls back to standard _final', resolve(3, 3), 'nudge_viewed_not_actioned_final')
+}
+
 // ── Sibling grouping ─────────────────────────────────────────────────────────
 
 {
@@ -647,9 +723,15 @@ for (const id of [
   'nudge_sent_never_viewed_final',
   'nudge_viewed_not_actioned_2',
   'nudge_viewed_not_actioned_final',
+  'nudge_viewed_not_actioned_return',
 ]) {
   eq(`sequence template ${id} is clean`, templateProblem(NUDGE_DEFAULT_BODIES[id], GOOD_CTX), null)
 }
+// House rule pinned on the return-tone body: tracking is only ever disclosed
+// in the negative, so the copy must never mention visits, views, opens or
+// tracking — the very facts that selected it.
+check('return-tone body never mentions visits/views/tracking',
+  !/\b(view|visit|open|track|came back|returned)/i.test(NUDGE_DEFAULT_BODIES.nudge_viewed_not_actioned_return))
 check('typo token is caught pre-render', templateProblem('Hi {first_name}, link: {ur1}', GOOD_CTX) !== null)
 check('unbalanced conditional is caught', templateProblem('Hi {? company}for {company}', GOOD_CTX) !== null)
 check('empty url is caught', templateProblem('Hi {first_name} {url}', { ...GOOD_CTX, url: '' }) !== null)

@@ -58,10 +58,12 @@ import {
   EW_BANK_HOLIDAYS_FALLBACK,
   groupSendables,
   isLondonMondayMorning,
+  isReturnToneTemplateId,
   isWithinSendWindow,
   londonDate,
   nudgeNumberFor,
-  nudgeTemplateIds,
+  nudgeTemplateIdsFor,
+  prefersReturnTone,
   simulateDryLedger,
   type AutomationRuleConfig,
   type CandidateFacts,
@@ -199,6 +201,8 @@ interface CandidateRow {
   auto_nudge_disabled: boolean
   has_followup_tag: boolean
   currency: string | null
+  // Optional: absent on a pre-000380 candidate function (deploy-order safety).
+  return_views?: boolean | null
 }
 
 type Candidate = CandidateFacts & { row: CandidateRow }
@@ -226,6 +230,10 @@ function toFacts(row: CandidateRow): Candidate {
     // afternoon-deferral simply doesn't fire (old behaviour). Order-safe
     // whichever of the migration / this deploy lands first.
     currency: row.currency ?? null,
+    // Pre-000380 candidate rows have no return_views column → false → the
+    // returner template tone simply doesn't fire (standard copy). Same
+    // order-safety pattern as currency above.
+    returnViews: row.return_views === true,
     // Tagged below, after decideForProof, for cards in a sent bundle with ≥2
     // outstanding cards (migration 000317). Null means "chase per-card".
     bundleId: null,
@@ -634,11 +642,15 @@ async function run(admin: Admin): Promise<Response> {
 
     // ── Template bodies (DB rows, falling back to the seeded defaults) ──────
     // One fetch of every nudge_* row; the body for each send is then resolved
-    // per reminder position via nudgeTemplateIds — base body for reminder 1,
-    // `_2` for the middle of the sequence, `_final` (the "we'll stop nudging
-    // you" close) for the last allowed reminder — so a customer never
+    // per reminder position via nudgeTemplateIdsFor — base body for reminder
+    // 1, `_2` for the middle of the sequence, `_final` (the "we'll stop
+    // nudging you" close) for the last allowed reminder — so a customer never
     // receives the same reminder twice. A missing/blanked row falls through
     // the chain; worst case is the base body, the pre-sequence behaviour.
+    // A viewed_not_actioned returner (facts.returnViews, migration 000380)
+    // prefers the `_return` variant at each position — obstacle-removal
+    // wording on the same schedule; only the base return body is seeded, so
+    // reminders 2+ fall back to the standard sequence.
     const dbBodies = new Map<string, string>()
     {
       const { data: tplRows } = await admin
@@ -655,8 +667,9 @@ async function run(admin: Admin): Promise<Response> {
       baseId: string,
       nudgeNumber: number,
       maxNudges: number,
+      preferReturnTone: boolean,
     ): { id: string; body: string } => {
-      for (const id of nudgeTemplateIds(baseId, nudgeNumber, maxNudges)) {
+      for (const id of nudgeTemplateIdsFor(baseId, nudgeNumber, maxNudges, preferReturnTone)) {
         const body = dbBodies.get(id) ?? NUDGE_DEFAULT_BODIES[id]
         if (body && body.trim() !== '') return { id, body }
       }
@@ -736,6 +749,10 @@ async function run(admin: Admin): Promise<Response> {
         contactEmail: string | null
         ruleCode: string // 'sent_never_viewed' | 'viewed_not_actioned' | 'bundle'
         templateBaseId: string
+        // Prefer the `_return` template family (migration 000380): a
+        // viewed_not_actioned returner gets the obstacle-removal wording on
+        // the same schedule. Always false for bundles and other rules.
+        preferReturnTone: boolean
         freshSubject: string
         nudgeNumber: number
         maxNudges: number
@@ -770,7 +787,17 @@ async function run(admin: Admin): Promise<Response> {
           job.templateBaseId,
           job.nudgeNumber,
           job.maxNudges,
+          job.preferReturnTone,
         )
+        // A return-toned reminder invites the customer to say what's in the
+        // way, so its link auto-opens the "Not ready to approve?" panel
+        // (&ask=1 — a card link already carries ?from=reminder-N). Keyed on
+        // the RESOLVED template, never the preference: if the return body
+        // is missing and resolution fell back to standard copy, the link
+        // stays plain. Never for any other template.
+        const link = job.link !== '' && isReturnToneTemplateId(job.templateBaseId, templateId)
+          ? `${job.link}&ask=1`
+          : job.link
         // Visible to the catch below: a claim that exists when an HsError
         // surfaces can be flipped to 'failed' (postStaffReply's HsError means
         // HS definitively rejected the POST — nothing was sent). Only ambiguous
@@ -900,7 +927,7 @@ async function run(admin: Admin): Promise<Response> {
             full_name: job.contactFullName ?? '',
             company: job.companyName,
             version_number: job.versionNumber ?? '',
-            url: job.link,
+            url: link,
             designer_first_name: '',
           }
           // Gate against the TEMPLATE (pre-render): the renderer blanks
@@ -1131,6 +1158,7 @@ async function run(admin: Admin): Promise<Response> {
           contactEmail: c.contactEmail,
           ruleCode: c.ruleCode,
           templateBaseId: rule.templateId,
+          preferReturnTone: prefersReturnTone(c.ruleCode, c.returnViews),
           freshSubject: rule.freshSubject,
           nudgeNumber,
           maxNudges,
@@ -1190,6 +1218,7 @@ async function run(admin: Admin): Promise<Response> {
           contactEmail: bg.rep.contactEmail,
           ruleCode: BUNDLE_RULE_CODE,
           templateBaseId: BUNDLE_TEMPLATE_ID,
+          preferReturnTone: false,
           freshSubject: BUNDLE_FRESH_SUBJECT,
           nudgeNumber,
           maxNudges: BUNDLE_MAX_NUDGES,

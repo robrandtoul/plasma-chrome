@@ -170,6 +170,9 @@ const NUDGE_ORDER = [
   'nudge_sent_never_viewed_2',
   'nudge_sent_never_viewed_final',
   'nudge_viewed_not_actioned',
+  // Return-tone variant (000380): swaps in for reminder 1 when the customer
+  // has been back on 2+ separate days — reads beside the body it varies.
+  'nudge_viewed_not_actioned_return',
   'nudge_viewed_not_actioned_2',
   'nudge_viewed_not_actioned_final',
   // Bundle reminders (000317): one reminder for a whole set of cards.

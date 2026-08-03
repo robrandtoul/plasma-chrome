@@ -92,7 +92,9 @@ test('settings sub-features deep-link into their section', () => {
   assertEqual(topId('push notifications'), 'settings-push')
   assertEqual(topId('help scout'), 'settings-help-scout')
   assertEqual(topId('us tariff'), 'settings-us-tariff')
-  assertEqual(topId('hot leads panel'), 'settings-hot-leads')
+  // 'hot leads' should now resolve to the Analytics page — the dashboard
+  // card is retired but the Analytics hot-leads worklist survives.
+  assertEqual(topId('hot leads'), 'analytics')
 })
 
 // ── AND semantics + no-match ─────────────────────────────────────────────────

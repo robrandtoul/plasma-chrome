@@ -346,13 +346,15 @@ Deno.serve(async (req) => {
     // the reply has already landed in HS (same stance as the
     // last_reply_sent_at write below).
     //
-    // template_id is client-supplied, so it is gated to the four known nudge
+    // template_id is client-supplied, so it is gated to the known nudge
     // ids (free text must not invent rule_codes in the ledger), and the
     // version must actually belong to the proof before the row is keyed to
     // it — the cap maths trusts that pairing.
     const NUDGE_RULES: Record<string, string> = {
       nudge_sent_never_viewed: 'sent_never_viewed',
       nudge_viewed_not_actioned: 'viewed_not_actioned',
+      // Return-tone variant (000380) — same rule, same cap.
+      nudge_viewed_not_actioned_return: 'viewed_not_actioned',
       nudge_approaching_dormant: 'approaching_dormant',
       nudge_stuck_in_progress: 'stuck_in_progress',
     }
