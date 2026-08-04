@@ -19,6 +19,8 @@ import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { getAccessContext, createSalesInvoice, recordInvoicePayment, emailSalesInvoice, ensureInvoiceEmailRecipient } from '../_shared/xero.ts'
 import { buildOrderInvoiceLines, buildGroupInvoiceLines, resolveZeroRatedTaxType, type OrderForInvoice } from '../_shared/invoiceBuild.ts'
 import { isGbpOrderVatFree } from '../_shared/ukVatArea.ts'
+import { backstopHoldDecision, type ShipDest } from '../_shared/shipDestCheck.ts'
+import { logAudit } from '../_shared/audit.ts'
 import { getAccessToken, fetchConversation, postStaffReply, HsError } from '../_shared/helpscout.ts'
 import { renderTemplate, ORDER_CONFIRMATION_DEFAULT_BODY } from '../_shared/replyTemplates.ts'
 
@@ -70,6 +72,77 @@ function extractShipping(session: Record<string, unknown>): {
         }
       : null,
   }
+}
+
+// ── Delivery-postcode backstop (000384) ─────────────────────────────────────
+// The pay page compares the Address Element's value against the destination
+// the order was RATED for and asks the customer which is right before
+// confirmPayment (src/lib/shipDestCheck.ts). That gate is client-side and can
+// be bypassed, so the same comparison re-runs here at the moment the address
+// is persisted. An unexplained mismatch — or a COARSE one (different GB area /
+// US ZIP prefix / country), where a wrong guess costs a reship even when the
+// customer confirmed it — rides the sent → paid flip as a hold (000377), so
+// the order can't reach the shipping queue unchecked. Never the payment: the
+// flip, invoice and confirmation run regardless, and the whole backstop
+// degrades to a console warning if anything about it fails (including the
+// 000384 column not being applied yet).
+type BackstopResult = {
+  // Spread into the sent → paid UPDATE, so the hold is exactly as idempotent
+  // as the flip itself — a Stripe retry matches no row and re-holds nothing.
+  holdPatch: Record<string, unknown>
+  // Written to audit_log (only when the flip actually flipped).
+  meta: Record<string, unknown> | null
+  label: string | null
+}
+
+function evaluateShipDestBackstop(
+  pre: { ship_dest_country?: unknown; ship_dest_postcode?: unknown; ship_dest_ack?: unknown; held_at?: unknown; payment_reference?: unknown },
+  shipAddr: StripeAddr,
+  fallbackLabel: string,
+): BackstopResult {
+  const rated: ShipDest = {
+    country: (pre.ship_dest_country as string | null) ?? '',
+    postcode: (pre.ship_dest_postcode as string | null) ?? '',
+  }
+  const entered: ShipDest = { country: shipAddr.country ?? '', postcode: shipAddr.postal_code ?? '' }
+  const decision = backstopHoldDecision({ rated, entered, ack: pre.ship_dest_ack })
+  if (!decision.mismatch) return { holdPatch: {}, meta: null, label: null }
+  // Don't clobber a hold someone has already placed — its reason stands.
+  const alreadyHeld = pre.held_at != null
+  const holding = decision.hold && !alreadyHeld
+  const meta = {
+    rated,
+    entered: { ...entered, city: shipAddr.city ?? null, line1: shipAddr.line1 ?? null },
+    coarse: decision.coarse,
+    ack_covers_entered: decision.ackCoversEntered,
+    held: holding,
+  }
+  const holdPatch = holding
+    ? {
+        held_at: new Date().toISOString(),
+        // auth.uid() is null for service-role writers, so orders_hold_guard()
+        // keeps this name rather than overwriting it (000377 branch 3). Reads
+        // as "Address check put this on hold …" on the Orders page.
+        held_by_name: 'Address check',
+        hold_reason: shipDestHoldReason(rated, entered, shipAddr.city, decision.ackCoversEntered),
+      }
+    : {}
+  return { holdPatch, meta, label: ((pre.payment_reference as string | null) ?? fallbackLabel) || null }
+}
+
+function shipDestHoldReason(
+  rated: ShipDest,
+  entered: ShipDest,
+  city: string | null | undefined,
+  acked: boolean,
+): string {
+  // A blank postcode only reaches here on a country change, so fall back to
+  // naming the country. hold_reason is CHECK-constrained to 1–500 chars.
+  const enteredPlace = `${entered.postcode || entered.country || 'unknown'}${city ? ` (${city})` : ''}`
+  const ratedPlace = rated.postcode || rated.country || 'unknown'
+  const base = `Delivery postcode check: the card-form address says ${enteredPlace} but shipping was quoted for ${ratedPlace}. Confirm the right address with the customer before this ships.`
+  const suffix = acked ? ' The customer confirmed the card-form address at checkout.' : ''
+  return `${base}${suffix}`.slice(0, 500)
 }
 
 // Constant-time-ish hex compare (avoids leaking match position via early
@@ -244,9 +317,33 @@ Deno.serve(async (req) => {
   }
   if (!orderId) return new Response('ok', { status: 200 })
 
+  // Delivery-postcode backstop: read the rated destination while the row is
+  // still 'sent' (a retry finds it already paid and skips the whole check),
+  // decide, and let any hold ride the flip below. Read failure — including
+  // the ship_dest_ack column not existing yet — just disables the backstop.
+  let backstop: BackstopResult = { holdPatch: {}, meta: null, label: null }
+  if (shipAddr) {
+    try {
+      const { data: pre, error: preErr } = await admin
+        .from('orders')
+        .select('ship_dest_country, ship_dest_postcode, ship_dest_ack, held_at, payment_reference')
+        .eq('id', orderId)
+        .eq('status', 'sent')
+        .maybeSingle()
+      if (preErr) {
+        console.warn('[stripe-webhook] address backstop read failed (000384 not applied yet?):', preErr.message)
+      } else if (pre) {
+        backstop = evaluateShipDestBackstop(pre, shipAddr, reference ?? orderId)
+      }
+    } catch (e) {
+      console.warn('[stripe-webhook] address backstop skipped:', (e as Error).message)
+    }
+  }
+
   // Idempotent: only flip from 'sent' → 'paid'. A Stripe retry (or a
-  // duplicate event) finds the row already paid and updates nothing.
-  const { error } = await admin
+  // duplicate event) finds the row already paid and updates nothing —
+  // including the backstop's hold patch, which only exists on this update.
+  const { data: flippedRows, error } = await admin
     .from('orders')
     .update({
       status: 'paid',
@@ -256,13 +353,30 @@ Deno.serve(async (req) => {
       ship_to_phone: shipPhone,
       ship_to_address: storedAddress,
       updated_at: new Date().toISOString(),
+      ...backstop.holdPatch,
     })
     .eq('id', orderId)
     .eq('status', 'sent')
+    .select('id')
   if (error) {
     console.error('[stripe-webhook] order update failed:', error.message)
     // 500 → Stripe retries, which is what we want on a transient DB error.
     return new Response('update failed', { status: 500 })
+  }
+
+  // Audit the mismatch once, only when THIS delivery performed the flip — a
+  // concurrent duplicate that lost the race matched no row and logs nothing.
+  // Best-effort (logAudit never throws) and never blocks the money side.
+  if (backstop.meta && (flippedRows?.length ?? 0) > 0) {
+    await logAudit(admin, {
+      actorLabel: 'stripe-webhook',
+      action: 'order.ship_dest_mismatch',
+      targetType: 'order',
+      targetId: orderId,
+      targetLabel: backstop.label,
+      metadata: backstop.meta,
+    })
+    console.warn('[stripe-webhook] delivery postcode mismatch', { orderId, ...backstop.meta })
   }
 
   // Best-effort: create the Xero invoice (Step 5b). Per Architecture
@@ -649,11 +763,37 @@ async function handleGroupPaid(
 ): Promise<Response> {
   const nowIso = new Date().toISOString()
 
+  // Delivery-postcode backstop, group flavour: ONE address per group (000309),
+  // so the comparison runs once against the GROUP's rated destination — but
+  // order_groups has no hold columns, so a hold lands on every MEMBER order,
+  // which is where place-order is gated (000377). evaluateShipDestBackstop's
+  // already-held guard reads pre.held_at, which a group row doesn't have —
+  // deliberate: a 'sent' member can't be held through any UI, so there is no
+  // manual hold to preserve on this path. Read failure disables the backstop.
+  let backstop: BackstopResult = { holdPatch: {}, meta: null, label: null }
+  if (evt.shipAddr) {
+    try {
+      const { data: pre, error: preErr } = await admin
+        .from('order_groups')
+        .select('ship_dest_country, ship_dest_postcode, ship_dest_ack, payment_reference')
+        .eq('id', groupId)
+        .eq('status', 'sent')
+        .maybeSingle()
+      if (preErr) {
+        console.warn('[stripe-webhook] group address backstop read failed (000384 not applied yet?):', preErr.message)
+      } else if (pre) {
+        backstop = evaluateShipDestBackstop(pre, evt.shipAddr, evt.reference ?? groupId)
+      }
+    } catch (e) {
+      console.warn('[stripe-webhook] group address backstop skipped:', (e as Error).message)
+    }
+  }
+
   // 1. Flip the group, then its members. Conditional updates keep both
   // idempotent — a duplicate event matches nothing. Member flips also carry
   // the Stripe delivery details so each card's fulfilment surface reads the
   // same address a standalone order would.
-  const { error: groupFlipErr } = await admin
+  const { data: flippedGroupRows, error: groupFlipErr } = await admin
     .from('order_groups')
     .update({
       status: 'paid',
@@ -666,12 +806,13 @@ async function handleGroupPaid(
     })
     .eq('id', groupId)
     .eq('status', 'sent')
+    .select('id')
   if (groupFlipErr) {
     console.error('[stripe-webhook] group update failed:', groupFlipErr.message)
     // 500 → Stripe retries, which is what we want on a transient DB error.
     return new Response('update failed', { status: 500 })
   }
-  const { error: memberFlipErr } = await admin
+  const { data: flippedMemberRows, error: memberFlipErr } = await admin
     .from('orders')
     .update({
       status: 'paid',
@@ -681,12 +822,27 @@ async function handleGroupPaid(
       ship_to_phone: evt.shipPhone,
       ship_to_address: evt.storedAddress,
       updated_at: nowIso,
+      ...backstop.holdPatch,
     })
     .eq('order_group_id', groupId)
     .eq('status', 'sent')
+    .select('id')
   if (memberFlipErr) {
     console.error('[stripe-webhook] group member update failed:', memberFlipErr.message)
     return new Response('update failed', { status: 500 })
+  }
+
+  // Audit the mismatch once, only when THIS delivery flipped the group.
+  if (backstop.meta && (flippedGroupRows?.length ?? 0) > 0) {
+    await logAudit(admin, {
+      actorLabel: 'stripe-webhook',
+      action: 'order.ship_dest_mismatch',
+      targetType: 'order_group',
+      targetId: groupId,
+      targetLabel: backstop.label,
+      metadata: { ...backstop.meta, member_order_ids: (flippedMemberRows ?? []).map((r) => r.id) },
+    })
+    console.warn('[stripe-webhook] group delivery postcode mismatch', { groupId, ...backstop.meta })
   }
 
   // 2. ONE Xero invoice for the whole group (best-effort from here on).

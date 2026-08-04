@@ -26,7 +26,9 @@ import {
   type TrackingProjection,
 } from '../lib/orderTracking'
 import { SHIP_COUNTRIES } from '../lib/shipCountries'
-import { loadStripeJs, type StripeLike, type StripeElementsLike } from '../lib/stripeJs'
+import { loadStripeJs, type StripeLike, type StripeElementsLike, type StripeElementLike, type StripeAddressValue } from '../lib/stripeJs'
+import { resolveAddressGate, countryName, type AddressGateState } from '../lib/payAddressGate'
+import { PayAddressGatePanel } from '../components/PayAddressGatePanel'
 import type { GridImage } from '../components/ImageGrid'
 import type { Currency, CustomerProofGraph } from '../lib/types'
 
@@ -272,12 +274,35 @@ export default function OrderPayPage() {
     // Islands, priced ex-VAT) — drives the caption by the pay button.
     vatFree: boolean
     breakdown: { cards: number; tooling: number; personalisation: number; shipping: number; us_tariff: number; card_discount: number }
+    // The destination this PaymentIntent was RATED for (what startCheckout
+    // sent, or the order's stored fallback — the same resolution the server
+    // applies). The delivery-postcode gate compares the Address Element's
+    // value against this pair before confirmPayment.
+    ratedCountry: string
+    ratedPostcode: string
   } | null>(null)
   // True once the elements are mounted (drives the loading state).
   const [formMounted, setFormMounted] = useState(false)
   // True while confirmPayment is in flight, + any inline confirm error.
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  // Delivery-postcode gate (000384): before confirmPayment we read the
+  // Address Element's value and compare it against the destination the
+  // PaymentIntent was rated for. On a mismatch this holds the blocking
+  // "which is right?" panel; the customer either proceeds explicitly, goes
+  // back to the address, or (band change) requotes.
+  const [addressGate, setAddressGate] = useState<AddressGateState | null>(null)
+  // After a requote: names the place and the previous total so the new figure
+  // doesn't read as a glitch.
+  const [repriceNote, setRepriceNote] = useState<{ prevAmount: number; place: string } | null>(null)
+  // The mounted Address Element (for getValue at Pay time).
+  const addressElRef = useRef<StripeElementLike | null>(null)
+  // Ask-once: the (rated, entered) pair the customer has already answered
+  // for — a card decline afterwards must not re-ask the same question.
+  const addressAckRef = useRef<string | null>(null)
+  // Re-seeds the Address Element after a requote remounts the form, so the
+  // customer's typed address survives the new PaymentIntent.
+  const addressDefaultsRef = useRef<StripeAddressValue | null>(null)
   // VAT invoice (self-serve): once the order is paid, we check Xero for the
   // shareable online-invoice URL — but only surface it once the invoice has
   // reconciled to PAID (Stripe's receipt covers the immediate proof-of-payment).
@@ -330,10 +355,22 @@ export default function OrderPayPage() {
     }
   }
 
-  async function startCheckout() {
+  // destOverride: the delivery-postcode gate's requote path re-rates against
+  // the address the customer actually typed (their state is also synced, but
+  // React state updates land next render — the override is what this call
+  // must use NOW).
+  async function startCheckout(destOverride?: { country: string; postcode: string }) {
     if (!order || !id || !token) return
     setPayError(null)
     setPaying(true)
+    // The destination this intent is rated for — mirror of the server's
+    // request-wins-then-stored resolution, snapshotted onto the checkout
+    // state so the gate compares against exactly what was priced. Free/
+    // manual-shipping orders have no destination form, so this is usually
+    // just the designer's country hint with NO postcode — the gate can then
+    // only catch a country change, a documented limitation (shipDestCheck).
+    const ratedCountry = destOverride?.country ?? (destCountry || (order.ship_dest_country ?? ''))
+    const ratedPostcode = destOverride?.postcode ?? (destPostcode.trim() || (order.ship_dest_postcode ?? ''))
     // Per-person split (combined-total pricing): send each person's quantity
     // so the server sums + validates + prices it. Only for multi-person orders;
     // otherwise omitted and the server uses the single quantity (chosen or
@@ -358,8 +395,8 @@ export default function OrderPayPage() {
             // order's material and persisted onto the order before pricing.
             material_variant_id: order.thickness_open && chosenVariantId ? chosenVariantId : undefined,
             material_option_id: order.finish_open && chosenOptionId ? chosenOptionId : undefined,
-            ship_dest_country: destCountry || undefined,
-            ship_dest_postcode: destPostcode.trim() || undefined,
+            ship_dest_country: ratedCountry || undefined,
+            ship_dest_postcode: ratedPostcode || undefined,
             us_tariff_opted_out: tariffOptedOut,
           },
         },
@@ -392,6 +429,8 @@ export default function OrderPayPage() {
         currency: data.currency,
         vatFree: data.vat_free === true,
         breakdown: data.breakdown ?? { cards: data.amount, tooling: 0, personalisation: 0, shipping: 0, us_tariff: 0, card_discount: 0 },
+        ratedCountry,
+        ratedPostcode,
       })
     } catch {
       setPayError('We couldn’t start checkout. Please reply to the email you received and we’ll help.')
@@ -429,14 +468,17 @@ export default function OrderPayPage() {
         linkAuth.mount('#link-auth')
         // Phone is required: FedEx (and DPD) need a recipient contact number on
         // the shipping paperwork. It lands on payment_intent.shipping.phone and
-        // the webhook persists it as orders.ship_to_phone.
-        elements
-          .create('address', {
-            mode: 'shipping',
-            fields: { phone: 'always' },
-            validation: { phone: { required: 'always' } },
-          })
-          .mount('#address-element')
+        // the webhook persists it as orders.ship_to_phone. Kept in a ref so the
+        // delivery-postcode gate can getValue() it at Pay time; defaultValues
+        // re-seeds a requote's remounted form with the address already typed.
+        const addressEl = elements.create('address', {
+          mode: 'shipping',
+          fields: { phone: 'always' },
+          validation: { phone: { required: 'always' } },
+          ...(addressDefaultsRef.current ? { defaultValues: addressDefaultsRef.current } : {}),
+        })
+        addressElRef.current = addressEl
+        addressEl.mount('#address-element')
         elements.create('payment').mount('#payment-element')
         if (cancelled) return
         setFormMounted(true)
@@ -454,16 +496,50 @@ export default function OrderPayPage() {
       setFormMounted(false)
       stripeRef.current = null
       elementsRef.current = null
+      addressElRef.current = null
     }
   }, [checkout])
 
   // Confirm the payment. On success Stripe redirects to return_url (?paid=1);
   // only an immediate validation/card error returns here, which we surface
   // inline so the customer can fix it without losing the page.
+  //
+  // Before anything irreversible: the delivery-postcode gate. Read the
+  // Address Element's value and compare it against the destination this
+  // intent was rated for; on a mismatch the customer decides which is right
+  // BEFORE the charge — the ORD-F41E36FAE8 bug (Stripe autocomplete resolving
+  // "4 Hughes Lane" to the wrong county) reached the invoice because nothing
+  // ever asked. Reading the element is our own affordance, so any failure of
+  // the gate itself (getValue missing, element gone) never blocks payment —
+  // the webhook backstop still holds an unexplained mismatch server-side.
   async function confirmPay() {
     if (!stripeRef.current || !elementsRef.current || !id || !token) return
     setSubmitting(true)
     setFormError(null)
+    try {
+      const res = await addressElRef.current?.getValue?.()
+      // An incomplete address fails confirmPayment's own validation with
+      // Stripe's message next to the field — better than ours.
+      if (res?.complete && res.value && checkout) {
+        const gate = resolveAddressGate(
+          { country: checkout.ratedCountry, postcode: checkout.ratedPostcode },
+          res.value,
+        )
+        if (gate && addressAckRef.current !== gate.key) {
+          setAddressGate(gate)
+          setSubmitting(false)
+          return
+        }
+      }
+    } catch {
+      // Gate failure = no gate, never a blocked payment.
+    }
+    await proceedWithPayment()
+  }
+
+  async function proceedWithPayment() {
+    if (!stripeRef.current || !elementsRef.current || !id || !token) return
+    setSubmitting(true)
     // Persist the optional VAT / EORI number before handing off to Stripe, so
     // the webhook (Xero invoice) and Stock Control (customs paperwork) have it.
     // Best-effort and independent of payment — a failure here must never block
@@ -487,6 +563,63 @@ export default function OrderPayPage() {
       setFormError(error.message ?? 'Your payment couldn’t be completed. Please check your details and try again.')
       setSubmitting(false)
     }
+  }
+
+  // "Deliver to this address": record the choice (so support and the shipping
+  // paperwork can see the customer was asked — and so the webhook backstop
+  // honours a fine-grained confirmed mismatch instead of holding it), then
+  // proceed. The record is best-effort and AWAITED so it usually wins the
+  // race with the webhook; if it fails, the backstop holds — which fails safe.
+  function gateUseAddress() {
+    const gate = addressGate
+    if (!gate || !id || !token) return
+    addressAckRef.current = gate.key
+    setAddressGate(null)
+    setSubmitting(true)
+    void (async () => {
+      try {
+        const { error: ackErr } = await supabase.rpc('record_order_ship_dest_ack', {
+          p_order_id: id,
+          p_token: token,
+          p_entered_country: gate.entered.country,
+          p_entered_postcode: gate.entered.postcode,
+          p_entered_line1: gate.entered.line1,
+          p_entered_city: gate.entered.city,
+          p_coarse: gate.coarse,
+        })
+        if (ackErr) console.warn('[pay] address ack save failed:', ackErr.message)
+      } catch {
+        // Proceed regardless — see above.
+      }
+      await proceedWithPayment()
+    })()
+  }
+
+  function gateEditAddress() {
+    setAddressGate(null)
+    document.getElementById('address-element')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+
+  // Band change: the quoted total is wrong for the address as typed, so the
+  // only honest continue is a fresh PaymentIntent rated against it. The old
+  // intent is simply abandoned (exactly like "Edit order details"); the
+  // remounted Address Element is re-seeded with the typed address, and the
+  // note above the form explains WHY the figure moved.
+  function gateReprice() {
+    const gate = addressGate
+    if (!gate || !checkout) return
+    addressAckRef.current = null
+    addressDefaultsRef.current = gate.enteredValue
+    setAddressGate(null)
+    setRepriceNote({
+      prevAmount: checkout.amount,
+      place: gate.entered.postcode || countryName(gate.entered.country),
+    })
+    setDestCountry(gate.entered.country)
+    setDestPostcode(gate.entered.postcode)
+    setCheckout(null)
+    setSubmitting(false)
+    void startCheckout({ country: gate.entered.country, postcode: gate.entered.postcode })
   }
 
   // Customer-accent brand ramp while this page is mounted (same trick
@@ -1982,6 +2115,16 @@ export default function OrderPayPage() {
                       <span className="text-sm">Loading secure payment…</span>
                     </div>
                   )}
+                  {repriceNote && (
+                    <div role="status" className="mb-4 rounded-lg border border-line bg-canvas px-3 py-2 text-[13px] leading-relaxed text-ink-soft">
+                      We&rsquo;ve requoted delivery for <strong className="text-ink">{repriceNote.place}</strong> — the
+                      address you entered is in a different delivery region from the one first quoted. Your total is
+                      now <strong className="text-ink">{formatPrice(checkout.amount, checkout.currency)}</strong>
+                      {repriceNote.prevAmount !== checkout.amount
+                        ? ` (was ${formatPrice(repriceNote.prevAmount, checkout.currency)})`
+                        : ''}. Check the details below and pay when you&rsquo;re happy.
+                    </div>
+                  )}
                   <div className="space-y-4">
                     <div>
                       <p className="mb-1.5 text-[12px] font-medium text-ink-mute">Contact</p>
@@ -2010,7 +2153,15 @@ export default function OrderPayPage() {
                   {formError && (
                     <div role="alert" className="mt-3 rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{formError}</div>
                   )}
-                  <button type="button" onClick={() => void confirmPay()} disabled={submitting || !formMounted}
+                  {addressGate && (
+                    <PayAddressGatePanel
+                      gate={addressGate}
+                      onUseAddress={gateUseAddress}
+                      onEditAddress={gateEditAddress}
+                      onReprice={gateReprice}
+                    />
+                  )}
+                  <button type="button" onClick={() => void confirmPay()} disabled={submitting || !formMounted || addressGate != null}
                     className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-ink px-5 py-3 text-sm font-semibold text-on-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
                     {submitting ? 'Processing…' : `Pay ${formatPrice(checkout.amount, checkout.currency)}`}
                   </button>
@@ -2018,7 +2169,7 @@ export default function OrderPayPage() {
                     Secured by Stripe.{checkout.currency === 'GBP' ? (checkout.vatFree ? ' VAT-free.' : ' Includes VAT.') : ''}
                   </p>
                   {(isOpenGrid || thicknessOpen || finishOpen || shippingComputedAtCheckout || tariffApplies) && (
-                    <button type="button" onClick={() => { setCheckout(null); setFormError(null) }}
+                    <button type="button" onClick={() => { setCheckout(null); setFormError(null); setPaying(false); setAddressGate(null); setRepriceNote(null) }}
                       className="mt-3 block w-full text-center text-[12px] text-ink-mute underline hover:text-ink">
                       Edit order details
                     </button>

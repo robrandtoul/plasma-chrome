@@ -17,7 +17,9 @@ import { parsePreviousSpec, chooserGuidance, quantityHint } from '../lib/previou
 import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { quickQuantities } from '../lib/quickQuantities'
 import { SHIP_COUNTRIES } from '../lib/shipCountries'
-import { loadStripeJs, type StripeLike, type StripeElementsLike } from '../lib/stripeJs'
+import { loadStripeJs, type StripeLike, type StripeElementsLike, type StripeElementLike, type StripeAddressValue } from '../lib/stripeJs'
+import { resolveAddressGate, countryName, type AddressGateState } from '../lib/payAddressGate'
+import { PayAddressGatePanel } from '../components/PayAddressGatePanel'
 import type { GridImage } from '../components/ImageGrid'
 import type { Currency, CustomerProofGraph } from '../lib/types'
 
@@ -257,10 +259,23 @@ export default function OrderGroupPayPage() {
     vatFree: boolean
     members: CheckoutMemberLine[]
     breakdown: { goods: number; card_discount: number; shipping: number; us_tariff: number }
+    // The destination this PaymentIntent was RATED for — the delivery-
+    // postcode gate compares the Address Element's value against this pair
+    // before confirmPayment (same as the single pay page).
+    ratedCountry: string
+    ratedPostcode: string
   } | null>(null)
   const [formMounted, setFormMounted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  // Delivery-postcode gate (000384) — mirror of OrderPayPage: the blocking
+  // "which is right?" panel, the requote note, the mounted Address Element,
+  // the ask-once key and the remount re-seed.
+  const [addressGate, setAddressGate] = useState<AddressGateState | null>(null)
+  const [repriceNote, setRepriceNote] = useState<{ prevAmount: number; place: string } | null>(null)
+  const addressElRef = useRef<StripeElementLike | null>(null)
+  const addressAckRef = useRef<string | null>(null)
+  const addressDefaultsRef = useRef<StripeAddressValue | null>(null)
   const [vat, setVat] = useState<{ state: 'loading' | 'ready' | 'pending' | 'unavailable'; url?: string } | null>(null)
   const mountWrapRef = useRef<HTMLDivElement | null>(null)
   const stripeRef = useRef<StripeLike | null>(null)
@@ -540,10 +555,18 @@ export default function OrderGroupPayPage() {
     return () => { cancelled = true }
   }, [group, id, token, justPaid])
 
-  async function startCheckout() {
+  // destOverride: the delivery-postcode gate's requote path (see OrderPayPage).
+  async function startCheckout(destOverride?: { country: string; postcode: string }) {
     if (!group || !id || !token) return
     setPayError(null)
     setPaying(true)
+    // The destination this intent is rated for — the server's request-wins-
+    // then-stored resolution, snapshotted for the gate. A free/manual-
+    // shipping group has no destination form, so this is usually just the
+    // stored hint with no postcode — the gate then only catches a country
+    // change (the documented shipDestCheck limitation, same as OrderPayPage).
+    const ratedCountry = destOverride?.country ?? (destCountry || (group.ship_dest_country ?? ''))
+    const ratedPostcode = destOverride?.postcode ?? (destPostcode.trim() || (group.ship_dest_postcode ?? ''))
     // Per-member picks for open-spec members — same field vocabulary as the
     // single-order body; the server validates + persists each one.
     const memberChoicesPayload = members.filter(memberIsOpen).map((m) => {
@@ -582,8 +605,8 @@ export default function OrderGroupPayPage() {
           token,
           origin: window.location.origin,
           member_choices: memberChoicesPayload.length > 0 ? memberChoicesPayload : undefined,
-          ship_dest_country: destCountry || undefined,
-          ship_dest_postcode: destPostcode.trim() || undefined,
+          ship_dest_country: ratedCountry || undefined,
+          ship_dest_postcode: ratedPostcode || undefined,
           us_tariff_opted_out: tariffOptedOut,
         },
       })
@@ -610,6 +633,8 @@ export default function OrderGroupPayPage() {
         vatFree: data.vat_free === true,
         members: data.members ?? [],
         breakdown: data.breakdown ?? { goods: data.amount, card_discount: 0, shipping: 0, us_tariff: 0 },
+        ratedCountry,
+        ratedPostcode,
       })
     } catch {
       setPayError('We couldn’t start checkout. Please reply to the email you received and we’ll help.')
@@ -642,14 +667,16 @@ export default function OrderGroupPayPage() {
         linkAuth.mount('#link-auth')
         // Phone is required — same as the single pay page: the courier needs a
         // recipient contact number, persisted by the webhook as ship_to_phone
-        // on the group and every member order.
-        elements
-          .create('address', {
-            mode: 'shipping',
-            fields: { phone: 'always' },
-            validation: { phone: { required: 'always' } },
-          })
-          .mount('#address-element')
+        // on the group and every member order. Kept in a ref for the delivery-
+        // postcode gate; defaultValues re-seeds a requote's remounted form.
+        const addressEl = elements.create('address', {
+          mode: 'shipping',
+          fields: { phone: 'always' },
+          validation: { phone: { required: 'always' } },
+          ...(addressDefaultsRef.current ? { defaultValues: addressDefaultsRef.current } : {}),
+        })
+        addressElRef.current = addressEl
+        addressEl.mount('#address-element')
         elements.create('payment').mount('#payment-element')
         if (cancelled) return
         setFormMounted(true)
@@ -667,13 +694,41 @@ export default function OrderGroupPayPage() {
       setFormMounted(false)
       stripeRef.current = null
       elementsRef.current = null
+      addressElRef.current = null
     }
   }, [checkout])
 
+  // Confirm the payment — with the delivery-postcode gate first, exactly as
+  // on the single pay page: read the Address Element's value, compare it
+  // against the destination this intent was rated for, and on a mismatch let
+  // the customer decide which is right BEFORE the charge. Gate failure is
+  // never a blocked payment; the webhook backstop still covers the server side.
   async function confirmPay() {
     if (!stripeRef.current || !elementsRef.current || !id || !token) return
     setSubmitting(true)
     setFormError(null)
+    try {
+      const res = await addressElRef.current?.getValue?.()
+      if (res?.complete && res.value && checkout) {
+        const gate = resolveAddressGate(
+          { country: checkout.ratedCountry, postcode: checkout.ratedPostcode },
+          res.value,
+        )
+        if (gate && addressAckRef.current !== gate.key) {
+          setAddressGate(gate)
+          setSubmitting(false)
+          return
+        }
+      }
+    } catch {
+      // Gate failure = no gate, never a blocked payment.
+    }
+    await proceedWithPayment()
+  }
+
+  async function proceedWithPayment() {
+    if (!stripeRef.current || !elementsRef.current || !id || !token) return
+    setSubmitting(true)
     // Persist the optional VAT / EORI number (once for the whole group — one
     // recipient) before handing off to Stripe, so the webhook (Xero invoice) and
     // Stock Control (customs paperwork) have it. Best-effort; never blocks the
@@ -694,6 +749,60 @@ export default function OrderGroupPayPage() {
       setFormError(error.message ?? 'Your payment couldn’t be completed. Please check your details and try again.')
       setSubmitting(false)
     }
+  }
+
+  // "Deliver to this address" — record the group-level ack (copied onto every
+  // member order for the per-order shipping paperwork), then proceed. Awaited
+  // but best-effort: a failure means the webhook backstop holds, which fails
+  // safe. Mirror of OrderPayPage.gateUseAddress.
+  function gateUseAddress() {
+    const gate = addressGate
+    if (!gate || !id || !token) return
+    addressAckRef.current = gate.key
+    setAddressGate(null)
+    setSubmitting(true)
+    void (async () => {
+      try {
+        const { error: ackErr } = await supabase.rpc('record_order_group_ship_dest_ack', {
+          p_group_id: id,
+          p_token: token,
+          p_entered_country: gate.entered.country,
+          p_entered_postcode: gate.entered.postcode,
+          p_entered_line1: gate.entered.line1,
+          p_entered_city: gate.entered.city,
+          p_coarse: gate.coarse,
+        })
+        if (ackErr) console.warn('[group pay] address ack save failed:', ackErr.message)
+      } catch {
+        // Proceed regardless — see above.
+      }
+      await proceedWithPayment()
+    })()
+  }
+
+  function gateEditAddress() {
+    setAddressGate(null)
+    document.getElementById('address-element')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+
+  // Band change → fresh PaymentIntent rated for the address as typed, with
+  // the typed address re-seeded into the remounted form. Mirror of
+  // OrderPayPage.gateReprice.
+  function gateReprice() {
+    const gate = addressGate
+    if (!gate || !checkout) return
+    addressAckRef.current = null
+    addressDefaultsRef.current = gate.enteredValue
+    setAddressGate(null)
+    setRepriceNote({
+      prevAmount: checkout.amount,
+      place: gate.entered.postcode || countryName(gate.entered.country),
+    })
+    setDestCountry(gate.entered.country)
+    setDestPostcode(gate.entered.postcode)
+    setCheckout(null)
+    setSubmitting(false)
+    void startCheckout({ country: gate.entered.country, postcode: gate.entered.postcode })
   }
 
   function renderVatInvoice() {
@@ -1580,6 +1689,16 @@ export default function OrderGroupPayPage() {
                     <span className="text-sm">Loading secure payment…</span>
                   </div>
                 )}
+                {repriceNote && (
+                  <div role="status" className="mb-4 rounded-lg border border-line bg-canvas px-3 py-2 text-[13px] leading-relaxed text-ink-soft">
+                    We&rsquo;ve requoted delivery for <strong className="text-ink">{repriceNote.place}</strong> — the
+                    address you entered is in a different delivery region from the one first quoted. Your total is
+                    now <strong className="text-ink">{formatPrice(checkout.amount, checkout.currency)}</strong>
+                    {repriceNote.prevAmount !== checkout.amount
+                      ? ` (was ${formatPrice(repriceNote.prevAmount, checkout.currency)})`
+                      : ''}. Check the details below and pay when you&rsquo;re happy.
+                  </div>
+                )}
                 <div className="space-y-4">
                   <div>
                     <p className="mb-1.5 text-[12px] font-medium text-ink-mute">Contact</p>
@@ -1608,10 +1727,18 @@ export default function OrderGroupPayPage() {
                 {formError && (
                   <div role="alert" className="mt-3 rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{formError}</div>
                 )}
+                {addressGate && (
+                  <PayAddressGatePanel
+                    gate={addressGate}
+                    onUseAddress={gateUseAddress}
+                    onEditAddress={gateEditAddress}
+                    onReprice={gateReprice}
+                  />
+                )}
                 <button
                   type="button"
                   onClick={() => void confirmPay()}
-                  disabled={submitting || !formMounted}
+                  disabled={submitting || !formMounted || addressGate != null}
                   className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-ink px-5 py-3 text-sm font-semibold text-on-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {submitting ? 'Processing…' : `Pay ${formatPrice(checkout.amount, checkout.currency)}`}
@@ -1622,7 +1749,7 @@ export default function OrderGroupPayPage() {
                 {(openMembers.length > 0 || shippingComputedAtCheckout || tariffApplies) && (
                   <button
                     type="button"
-                    onClick={() => { setCheckout(null); setFormError(null); setPaying(false) }}
+                    onClick={() => { setCheckout(null); setFormError(null); setPaying(false); setAddressGate(null); setRepriceNote(null) }}
                     className="mt-3 block w-full text-center text-[12px] text-ink-mute underline hover:text-ink"
                   >
                     {openMembers.length > 0 ? 'Edit your choices' : 'Edit delivery details'}

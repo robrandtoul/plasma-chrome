@@ -31,12 +31,32 @@ export function loadStripeJs(): Promise<((key: string) => StripeLike) | null> {
   })
 }
 
+// The Address Element's value shape — what getValue() resolves with, and what
+// `defaultValues` accepts when creating the element (so a captured value can
+// re-seed a remounted form after a reprice).
+export interface StripeAddressValue {
+  name?: string
+  address?: {
+    line1?: string
+    line2?: string
+    city?: string
+    state?: string
+    postal_code?: string
+    country?: string
+  }
+  phone?: string
+}
+
 export interface StripeElementLike {
   mount: (selector: string) => void
   unmount?: () => void
   // Link / address elements emit a 'change' event carrying the entered value.
   // We listen on the Link element to capture the buyer's email.
   on?: (event: string, handler: (e: { value?: { email?: string } }) => void) => void
+  // Address element only: read the current value + completeness on demand
+  // (the real Stripe.js API). The delivery-postcode gate calls this at Pay
+  // time; optional so the other element types keep the same shape.
+  getValue?: () => Promise<{ complete?: boolean; value?: StripeAddressValue }>
 }
 export interface StripeElementsLike {
   create: (type: string, options?: Record<string, unknown>) => StripeElementLike
