@@ -19,6 +19,7 @@
     "check:briefing-seed": "tsx scripts/briefing-seed.ts --check",
     "test:quote": "tsx src/lib/quote/interpolation.test.ts && tsx src/lib/quote/calculate.test.ts",
     "test:order-pricing": "tsx supabase/functions/_shared/orderPricing.test.ts",
+    "test:invoice-build": "tsx supabase/functions/_shared/invoiceBuild.test.ts",
     "test:open-spec": "tsx src/lib/openSpecTiers.test.ts",
     "test:previous-spec": "tsx src/lib/previousSpec.test.ts",
     "test:vat-area": "tsx supabase/functions/_shared/ukVatArea.test.ts",

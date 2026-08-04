@@ -175,11 +175,18 @@ export async function buildOrderGoodsLines(
   let productItemCode: string | null = null
 
   if (order.custom_quote_total != null) {
-    // Custom quote: one product line for the agreed figure. A prototype is a
+    // Custom quote: one product line for the agreed figure, naming the card
+    // count when the order carries one (the order builder locks a quantity on
+    // every agreed-price order now; older rows may have none). The count stays
+    // out of the Qty column — Xero derives a per-unit price from Qty, and an
+    // agreed lump sum has no honest per-unit figure. A prototype is a
     // custom quote whose figure is the flat per-family fee; it kept its variant
     // so the resolved item code is correct — label it as the material it
     // samples rather than the generic "Order <ref>".
-    let description = `Order ${reference}`
+    const qty = order.quantity != null ? Number(order.quantity) : null
+    let description = qty != null
+      ? `Order ${reference} — ${qty.toLocaleString('en-GB')} card${qty === 1 ? '' : 's'}`
+      : `Order ${reference}`
     if (order.order_kind === 'prototype') {
       const variantSuffix = variantName && variantName !== materialName ? ` ${variantName}` : ''
       const optionSuffix = optionName ? ` — ${optionName}` : ''
