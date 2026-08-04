@@ -52,6 +52,34 @@ interface SupplierOpt {
   is_international: boolean
   default_shipping_days: number | null
 }
+// "Base cards supplied under another order's batch" (combined supplier
+// batches, migrations 000382/000383): the resolved source as place-order
+// echoes it — everything the summary card renders comes from the server, so
+// what's shown is what the hand-off used.
+interface BlanksSourceInfo {
+  order_id: string
+  reference: string | null
+  stock_order_number: string | null
+  label: string | null
+  supplier_name: string | null
+  batch_quantity: number
+  source_quantity: number
+  spare_after_both: number
+}
+// A pickable sibling order (same material, already placed) for the disclosure
+// on the supplier route. Fetched directly — designers can read orders — and
+// tolerantly: on a pre-migration database the select 42703s and the whole
+// feature simply stays hidden.
+interface BlanksCandidate {
+  id: string
+  reference: string | null
+  stock_order_number: string | null
+  label: string | null
+  supplier_name: string | null
+  quantity: number
+  supplier_overs: number
+  fulfilled_at: string | null
+}
 interface PreviewResponse {
   ok: boolean
   error?: string
@@ -81,6 +109,15 @@ interface PreviewResponse {
   // not on hold; ABSENT = an older deployed function that doesn't know about
   // holds yet, which is not the same thing — see loadPreview.
   hold?: OrderHoldRow | null
+  // Blanks from another order (000382/000383). ABSENT = feature unavailable
+  // (older function or pre-migration DB); null = available, none chosen;
+  // an object = this order's blanks ride that order's batch, and the preview
+  // above is the IN-HOUSE hand-off (route flips server-side).
+  blanks_source?: BlanksSourceInfo | null
+  // Preview-only: the stored/requested source can't be used (gone stale, not
+  // placed, wrong material…). The preview falls back to the supplier route
+  // and this says why; confirm fails closed on it server-side.
+  blanks_source_invalid?: string
 }
 
 // The artwork-check edge function's response envelope; the report shape +
@@ -249,6 +286,21 @@ export default function OrderReviewPage() {
   // after it, carrying the pre-write answer — which on a take-off would put the
   // band back and block Confirm over a hold that no longer exists.
   const holdWriteSeq = useRef(0)
+  // Blanks from another order (combined supplier batches). Until the reviewer
+  // makes a choice this visit (`touched`), the field is OMITTED from every
+  // place-order call so a value stamped by a previous visit keeps working; a
+  // touch always sends the explicit id-or-null. Kept in a ref too, so
+  // loadPreview reads the value at call time without threading a 4th argument
+  // through every call site.
+  const [blanksChoice, setBlanksChoice] = useState<{ touched: boolean; id: string | null }>({ touched: false, id: null })
+  const blanksChoiceRef = useRef(blanksChoice)
+  blanksChoiceRef.current = blanksChoice
+  // null = not loaded / unavailable (pre-migration DB) → the disclosure hides.
+  const [blanksCandidates, setBlanksCandidates] = useState<BlanksCandidate[] | null>(null)
+  const [blanksOpen, setBlanksOpen] = useState(false)
+  // The order's own material id — the candidates query needs it (blanks must
+  // be the same material). Read in the mount effect alongside proof_id.
+  const [orderMaterialIdState, setOrderMaterialIdState] = useState<string | null>(null)
 
   const loadPreview = useCallback(async (chosenSupplierId?: string | null, noteArg?: string, oversArg?: number) => {
     if (!id) return
@@ -256,8 +308,11 @@ export default function OrderReviewPage() {
     setPreviewBusy(true)
     const seq = holdWriteSeq.current
     try {
+      // The blanks choice rides every preview once touched (explicit id or
+      // null); untouched sends nothing so the server's stored value applies.
+      const blanks = blanksChoiceRef.current
       const { data, error: fnErr } = await supabase.functions.invoke<PreviewResponse>('place-order', {
-        body: { order_id: id, mode: 'preview', ...(chosenSupplierId ? { supplier_id: chosenSupplierId } : {}), ...(noteArg ? { note: noteArg } : {}), ...(oversArg ? { supplier_overs: oversArg } : {}) },
+        body: { order_id: id, mode: 'preview', ...(chosenSupplierId ? { supplier_id: chosenSupplierId } : {}), ...(noteArg ? { note: noteArg } : {}), ...(oversArg ? { supplier_overs: oversArg } : {}), ...(blanks.touched ? { blanks_source_order_id: blanks.id } : {}) },
       })
       if (fnErr || !data?.ok) {
         const body = data ?? await readFnErrorBody(fnErr)
@@ -316,6 +371,7 @@ export default function OrderReviewPage() {
         if (!cancelled) {
           const o = order as { status?: string; fulfilled_at?: string | null } | null
           setRevisionReplace(o?.status === 'revision' && !!o?.fulfilled_at)
+          setOrderMaterialIdState(orderMaterialId)
           // Hold state comes from the preview payload only (see the select
           // above) — setting it from this row would overwrite the server's
           // answer with an undefined.
@@ -539,6 +595,67 @@ export default function OrderReviewPage() {
     }
   }
 
+  // Load the pickable blanks sources: sibling orders in the SAME material,
+  // already placed (the batch must exist), recent, not themselves riding
+  // another order's batch, not prototypes. Direct read (designers can read
+  // orders); the select names the 000382 column, so on a pre-migration
+  // database it fails and the feature stays hidden — by design, this page must
+  // keep working either side of the migration.
+  const blanksActive = !!preview?.blanks_source
+  useEffect(() => {
+    if (!id || !orderMaterialIdState) return
+    if (!(preview?.route === 'supplier' || blanksActive)) return
+    if (blanksCandidates !== null) return // one fetch per visit is enough
+    let cancelled = false
+    void (async () => {
+      try {
+        const cutoff = new Date(Date.now() - 90 * 86400000).toISOString()
+        const { data, error: err } = await supabase
+          .from('orders')
+          .select('id, payment_reference, stock_order_number, project_name, supplier_name, quantity, supplier_overs, fulfilled_at, order_kind, blanks_source_order_id')
+          .eq('material_id', orderMaterialIdState)
+          .eq('status', 'fulfilled')
+          .neq('id', id)
+          .gte('fulfilled_at', cutoff)
+          .order('fulfilled_at', { ascending: false })
+          .limit(8)
+        if (err || cancelled) return
+        type Row = { id: string; payment_reference: string | null; stock_order_number: string | null; project_name: string | null; supplier_name: string | null; quantity: number | null; supplier_overs: number | null; fulfilled_at: string | null; order_kind: string | null; blanks_source_order_id: string | null }
+        setBlanksCandidates(
+          ((data ?? []) as Row[])
+            .filter((r) => r.blanks_source_order_id == null && (r.order_kind ?? 'production') !== 'prototype')
+            .map((r) => ({
+              id: r.id,
+              reference: r.payment_reference,
+              stock_order_number: r.stock_order_number,
+              label: r.project_name,
+              supplier_name: r.supplier_name,
+              quantity: Math.max(0, Number(r.quantity) || 0),
+              supplier_overs: Math.max(0, Number(r.supplier_overs) || 0),
+              fulfilled_at: r.fulfilled_at,
+            })),
+        )
+      } catch {
+        /* pre-migration DB or transient failure — the disclosure stays hidden */
+      }
+    })()
+    return () => { cancelled = true }
+  }, [id, orderMaterialIdState, preview?.route, blanksActive, blanksCandidates])
+
+  // Pick a blanks source (or null to clear back to a normal supplier order).
+  // Any switch disarms + reseeds the message: the whole hand-off changes shape
+  // (supplier email ↔ production note), so nothing typed against the old shape
+  // may survive into the new one.
+  function chooseBlanks(sourceId: string | null) {
+    const next = { touched: true, id: sourceId }
+    setBlanksChoice(next)
+    blanksChoiceRef.current = next // sync — loadPreview reads the ref right now
+    setArmed(false)
+    setConfirmError(null)
+    setEditedMessage(null)
+    void loadPreview(supplierId, note, overs)
+  }
+
   async function onSupplierChange(newId: string) {
     setSupplierId(newId)
     setArmed(false) // changing supplier disarms — re-confirm the new recipient
@@ -611,10 +728,11 @@ export default function OrderReviewPage() {
     setConfirming(true)
     setConfirmError(null)
     try {
+      const blanks = blanksChoiceRef.current
       const { data, error: fnErr } = await supabase.functions.invoke<{ ok: boolean; error?: string; code?: string; placed?: boolean }>('place-order', {
         // When the message has been edited it's sent verbatim (custom_message) and
         // the separate note is folded in there, so don't send both.
-        body: { order_id: id, mode: 'confirm', ...(supplierId ? { supplier_id: supplierId } : {}), ...(overs > 0 ? { supplier_overs: overs } : {}), ...(editedMessage !== null ? { custom_message: editedMessage } : (note ? { note } : {})), ...(revisionReplace ? { old_job_cancelled: oldJobCancelled } : {}) },
+        body: { order_id: id, mode: 'confirm', ...(supplierId ? { supplier_id: supplierId } : {}), ...(overs > 0 ? { supplier_overs: overs } : {}), ...(editedMessage !== null ? { custom_message: editedMessage } : (note ? { note } : {})), ...(blanks.touched ? { blanks_source_order_id: blanks.id } : {}), ...(revisionReplace ? { old_job_cancelled: oldJobCancelled } : {}) },
       })
       // On a non-2xx (which is how place-order returns sent_not_recorded AND its
       // other failures) supabase-js gives data:null + the body on error.context.
@@ -702,6 +820,13 @@ export default function OrderReviewPage() {
   // the shared ArtworkCheckReportView (also used by the Orders-page report modal).
   const artworkReport = artworkCheck.report
   const showArtworkCard = artworkCheck.live && (artworkCheck.status === 'running' || artworkReport != null)
+
+  // Blanks-from-another-order derivations (combined supplier batches).
+  const blanksInfo = preview?.blanks_source ?? null
+  const blanksInvalidMsg = preview?.blanks_source_invalid ?? null
+  const fmtNum = (n: number) => n.toLocaleString('en-GB')
+  const candidateDate = (iso: string | null) =>
+    iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : null
 
   // The editable hand-off message — identical control for both routes (only the
   // heading above it differs). Mirrors the generated preview until edited, then
@@ -934,6 +1059,62 @@ export default function OrderReviewPage() {
                           : 'For hybrid foiling orders — extra blank cards so in-house foiling has spares. Leave at 0 when nothing is foiled in-house.'}
                       </span>
                     </label>
+                    {/* The stored / requested blanks source can't be used — the
+                        preview has fallen back to a normal supplier order and
+                        this says why. Confirm fails closed on it server-side,
+                        so this can never slip through silently. */}
+                    {blanksInvalidMsg && (
+                      <p className="mt-3 rounded-lg bg-low-soft px-3 py-2 text-[12px] text-ink ring-1 ring-low">
+                        <span className="font-medium">Blanks from another order: </span>{blanksInvalidMsg}
+                      </p>
+                    )}
+                    {/* Blanks already covered by a sibling order's batch
+                        (combined supplier batches). Only offered when there is
+                        a placed same-material order to point at; picking one
+                        re-previews as an IN-HOUSE hand-off — no supplier
+                        email — with a provenance line for the workshop. */}
+                    {(blanksCandidates?.length ?? 0) > 0 && (
+                      <div className="mt-3 rounded-lg border border-line-soft bg-canvas/60 p-3">
+                        <button
+                          type="button"
+                          onClick={() => setBlanksOpen((o) => !o)}
+                          className="flex w-full items-center justify-between gap-2 text-left text-[13px] font-medium text-ink"
+                        >
+                          <span>Base cards already covered by another order?</span>
+                          <span aria-hidden className="text-ink-mute">{blanksOpen ? '▾' : '▸'}</span>
+                        </button>
+                        {blanksOpen && (
+                          <>
+                            <p className="mt-1.5 text-[12px] text-ink-mute">
+                              If this job’s blanks are being made as part of another order’s supplier batch
+                              (one combined batch via its Spoilage overs), pick that order — no supplier
+                              email is sent for this one, and the workshop job says where its blanks come from.
+                            </p>
+                            <div className="mt-2 space-y-1.5">
+                              {(blanksCandidates ?? []).map((c) => (
+                                <button
+                                  key={c.id}
+                                  type="button"
+                                  disabled={previewBusy}
+                                  onClick={() => chooseBlanks(c.id)}
+                                  className="block w-full rounded-lg border border-line bg-surface px-3 py-2 text-left text-[13px] text-ink hover:border-[var(--c-brand)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)] disabled:opacity-50"
+                                >
+                                  <span className="font-medium">
+                                    {c.stock_order_number ? `Order ${c.stock_order_number}` : (c.reference ?? 'Order')}
+                                  </span>
+                                  {c.label ? <span className="text-ink-soft"> · {c.label}</span> : null}
+                                  <span className="mt-0.5 block text-[12px] text-ink-mute">
+                                    {fmtNum(c.quantity)}{c.supplier_overs > 0 ? ` + ${fmtNum(c.supplier_overs)} overs = ${fmtNum(c.quantity + c.supplier_overs)} blanks` : ' blanks'}
+                                    {c.supplier_name ? ` from ${c.supplier_name}` : ''}
+                                    {candidateDate(c.fulfilled_at) ? ` · placed ${candidateDate(c.fulfilled_at)}` : ''}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
                     <p className="mt-3 text-[12px] text-ink-mute">Subject</p>
                     <p className="text-sm font-medium text-ink">{preview.subject}</p>
                     <p className="mt-3 text-[12px] text-ink-mute">Message</p>
@@ -964,6 +1145,43 @@ export default function OrderReviewPage() {
                 ) : (
                   <>
                     <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Production note</h2>
+                    {/* This order's blanks ride a sibling order's supplier
+                        batch: say so up top, with the arithmetic, and give the
+                        way back. The provenance line is already IN the note
+                        below — this card is the summary a reviewer scans. */}
+                    {blanksInfo && (
+                      <div className="mt-3 rounded-lg bg-[var(--c-in-stock-soft)]/50 px-3.5 py-3 text-[13px] text-ink ring-1 ring-[var(--c-in-stock)]/40">
+                        <p className="font-medium">
+                          Blanks from order {blanksInfo.stock_order_number ?? blanksInfo.reference ?? '—'}
+                          {blanksInfo.label ? ` (${blanksInfo.label})` : ''}
+                        </p>
+                        <p className="mt-1 text-ink-soft">
+                          {fmtNum(blanksInfo.batch_quantity)} blanks were ordered
+                          {blanksInfo.supplier_name ? ` from ${blanksInfo.supplier_name}` : ''} with that order —
+                          this job’s {fmtNum(s.quantity)} come out of the same batch, so <span className="font-medium text-ink">no supplier email is sent</span> for
+                          this order. The workshop note below says where the blanks come from.
+                        </p>
+                        {blanksInfo.spare_after_both >= 0 ? (
+                          <p className="mt-1 text-ink-soft">
+                            After both orders’ cards ({fmtNum(blanksInfo.source_quantity)} + {fmtNum(s.quantity)}), {fmtNum(blanksInfo.spare_after_both)} spare for finishing spoilage.
+                          </p>
+                        ) : (
+                          <p className="mt-1.5 rounded-lg bg-low-soft px-2.5 py-1.5 text-[12px] text-ink ring-1 ring-low">
+                            <span className="font-medium">That batch is {fmtNum(-blanksInfo.spare_after_both)} short</span> of
+                            the two orders’ quantities ({fmtNum(blanksInfo.source_quantity)} + {fmtNum(s.quantity)} &gt; {fmtNum(blanksInfo.batch_quantity)}) — check with the
+                            supplier before placing.
+                          </p>
+                        )}
+                        <button
+                          type="button"
+                          disabled={previewBusy}
+                          onClick={() => chooseBlanks(null)}
+                          className="mt-2 text-[12px] font-medium text-brand hover:underline disabled:opacity-50"
+                        >
+                          Order its own blanks from the supplier instead
+                        </button>
+                      </div>
+                    )}
                     <p className="mt-3 text-[12px] text-ink-mute">Help Scout subject will be set to</p>
                     <p className="text-sm font-medium text-ink">{preview.subject}</p>
                     <p className="mt-3 text-[12px] text-ink-mute">Note posted to the customer’s thread</p>

@@ -34,6 +34,7 @@
     "test:wizard": "tsx src/components/ProofShapeWizard.test.ts",
     "test:image-match": "tsx src/lib/matchImageToName.test.ts",
     "test:handoff-contract": "tsx supabase/functions/_shared/orderHandoff.test.ts",
+    "test:blanks": "tsx supabase/functions/_shared/blanksSource.test.ts",
     "test:inhouse-note": "tsx supabase/functions/_shared/inhouseNoteTemplate.test.ts",
     "test:stranded": "tsx src/lib/strandedApprovals.test.ts",
     "test:selection-loss": "tsx src/lib/selectionShapeLoss.test.ts",

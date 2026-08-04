@@ -259,5 +259,57 @@ test('supplier golden payload (prototype carbon fibre with overs)', () => {
   })
 })
 
+console.log('blanks_source (combined supplier batches, 000383)')
+test('absent blanksSource emits NO blanks_source key (old payloads byte-identical)', () => {
+  assertEqual('blanks_source' in buildHandoffPayload(baseInput()), false)
+  assertEqual('blanks_source' in buildHandoffPayload({ ...baseInput(), blanksSource: null }), false)
+})
+test('blanks in-house golden payload (foiling job on a sibling order’s batch)', () => {
+  const p = buildHandoffPayload({
+    pvOrderId: '11111111-1111-1111-1111-111111111111',
+    placedBy: '22222222-2222-2222-2222-222222222222',
+    stockOrderNumber: '403958',
+    route: 'in_house',
+    customerName: 'Apex Dental & Implant Centre',
+    projectName: 'Apex Dental & Implant Centre',
+    helpscoutConversationId: '3350000000',
+    qty: 1000,
+    supplierQty: 1000,
+    supplierOvers: 0,
+    isPrototype: false,
+    material: {
+      pvMaterialId: '77777777-7777-7777-7777-777777777777',
+      code: 'paper_standard',
+      display: 'Standard Paper',
+      cardLine: 'Standard Paper',
+      letterpress: null,
+    },
+    supplier: null,
+    dateRequired: '2026-08-07',
+    inks: { front: 'Gold foil, White foil', back: null },
+    packaging: 'Domestic',
+    split: [],
+    dropboxFolderUrl: 'https://www.dropbox.com/scl/fo/apex/h?rlkey=z&dl=0',
+    note: 'Base cards: no separate supplier order — this job’s 1,000 blanks come from the 2,200-card batch ordered from Solopress under order 403957 (Thornton Dental & Implant Centre). Do not order more blanks.',
+    blanksSource: {
+      orderId: '88888888-8888-8888-8888-888888888888',
+      stockOrderNumber: '403957',
+      reference: 'ORD-ACFEE77DD5',
+      batchQuantity: 2200,
+    },
+  })
+  assertEqual(p.blanks_source, {
+    pv_order_id: '88888888-8888-8888-8888-888888888888',
+    stock_order_number: '403957',
+    reference: 'ORD-ACFEE77DD5',
+    batch_quantity: 2200,
+  })
+  // The blanks key must never change the in-house invariants around it.
+  assertEqual(p.route, 'in_house')
+  assertEqual(p.supplier, null)
+  assertEqual(p.supplier_qty, 1000)
+  assertEqual(p.supplier_overs, 0)
+})
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)

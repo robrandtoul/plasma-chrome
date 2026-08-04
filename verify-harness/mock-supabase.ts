@@ -48,6 +48,7 @@ const THUMB_SHAPE_COLOURS = ['#1f2937', '#7c2d12', '#1e3a5f', '#3f6212']
 const steel = { code: 'metal_steel', display_name: 'Stainless Steel', production_route: 'in_house', lead_time_max_days: 5, outsourced_supplier_ids: [] as string[] }
 const letterpress = { code: 'paper_letterpress', display_name: 'Letterpress', production_route: 'supplier', lead_time_max_days: 7, outsourced_supplier_ids: ['s1'] }
 const satin = { code: 'plastic_satin', display_name: 'Satin Plastic', production_route: 'in_house', lead_time_max_days: 4, outsourced_supplier_ids: [] as string[] }
+const paper = { code: 'paper_standard', display_name: 'Standard Paper', production_route: 'supplier', lead_time_max_days: 4, outsourced_supplier_ids: ['s2'] }
 
 function contact(company: string | null, name: string) {
   return { full_name: name, companies: company ? { name: company } : null }
@@ -376,6 +377,44 @@ const ORDERS: FixtureOrder[] = [
   // a five-figure quantity: the widest a row gets in real data, which is what
   // used to break the layout on a phone.
   order({ id: 'o13', status: 'fulfilled', quantity: 10000, payment_reference: 'ORD-A7A33935C2', paid_at: daysAgo(9), fulfilled_at: daysAgo(7), handoff_at: daysAgo(7), production_note_posted_at: daysAgo(7), stock_order_number: '403914', artwork_check_verdict: 'flagged', artwork_checked_at: daysAgo(7), artwork_check: ARTWORK_REPORT_FLAGGED, proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Elite Credentials International', 'Bertram Gilfoyle') } }),
+  // Combined-supplier-batches pair (?path=/orders/o-blanks/place). o-blanks is
+  // the Apex-style paid foiling order whose blanks ride o-thornton's batch;
+  // o-thornton is the placed sibling carrying 1,000 + 1,200 overs from
+  // Solopress (the blanks-source candidate + the active summary card).
+  order({
+    id: 'o-blanks',
+    status: 'paid',
+    paid_at: daysAgo(4),
+    material_id: 'm-paper',
+    material_variant_id: 'v-paper-foil',
+    material_variants: { display_name: 'With Foiling', materials: paper },
+    quantity: 1000,
+    xero_invoice_id: 'xi-8',
+    date_required: daysAhead(3).slice(0, 10),
+    dropbox_folder_url: 'https://www.dropbox.com/scl/fo/abc/order-403958',
+    stock_order_number: '403958',
+    project_name: 'Apex Dental & Implant Centre',
+    proofs: { helpscout_last_reply_at: daysAgo(4), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-17', contacts: contact('Apex Dental & Implant Centre', 'Sarah Chen') },
+  }),
+  order({
+    id: 'o-thornton',
+    status: 'fulfilled',
+    paid_at: daysAgo(4),
+    fulfilled_at: daysAgo(0.3),
+    handoff_at: daysAgo(0.3),
+    supplier_email_sent_at: daysAgo(0.3),
+    material_id: 'm-paper',
+    material_variant_id: 'v-paper-foil',
+    material_variants: { display_name: 'With Foiling', materials: paper },
+    quantity: 1000,
+    supplier_overs: 1200,
+    supplier_name: 'Solopress',
+    xero_invoice_id: 'xi-9',
+    date_required: daysAhead(3).slice(0, 10),
+    stock_order_number: '403957',
+    project_name: 'Thornton Dental & Implant Centre',
+    proofs: { helpscout_last_reply_at: daysAgo(4), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-18', contacts: contact('Thornton Dental & Implant Centre', 'Priya Patel') },
+  }),
 ].map((o, i) => ({ ...o, proof_id: `p-${o.id}` }))
 
 // ?busy=1 — a busy month for the dashboard rig: ~105 extra paid production
@@ -827,6 +866,11 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
     // always looked like it had a live pay link — which silently hid any UI
     // that only appears on an order-free project.
     if (filters['eq:proof_id']) rows = rows.filter((r) => r.proof_id === filters['eq:proof_id'])
+    // OrderReviewPage's blanks-source candidates query (same-material placed
+    // siblings): material scope + self-exclusion + recency window.
+    if (filters['eq:material_id']) rows = rows.filter((r) => r.material_id === filters['eq:material_id'])
+    if (filters['neq:id']) rows = rows.filter((r) => r.id !== filters['neq:id'])
+    if (filters['gte:fulfilled_at']) rows = rows.filter((r) => r.fulfilled_at != null && r.fulfilled_at >= filters['gte:fulfilled_at'])
   } else if (table === 'public_dashboard_projects') {
     // ProofDetailPage reads one row by proof_id for its status pill + the
     // change-request strip's visibility gate. An id containing 'changes'
@@ -1254,6 +1298,103 @@ export const supabase: any = {
         }
       }
       if (name === 'place-order') {
+        // ?path=/orders/o-blanks/place — the combined-supplier-batches rig.
+        // An ABSENT blanks field plays back the stored choice (o-thornton), so
+        // the page loads straight into the ACTIVE blanks state; the undo
+        // button sends an explicit null and lands on the supplier route with
+        // the picker disclosure (candidates come from the orders fixtures).
+        {
+          const body = (opts?.body ?? {}) as { order_id?: string; blanks_source_order_id?: string | null }
+          if (body.order_id === 'o-blanks') {
+            const chosen = 'blanks_source_order_id' in body ? body.blanks_source_order_id : 'o-thornton'
+            const apexSummary = {
+              customer: 'Apex Dental & Implant Centre',
+              material: 'Standard Paper',
+              variant: 'With Foiling',
+              finish: null,
+              inkFront: 'Gold foil, White foil',
+              inkBack: null,
+              quantity: 1000,
+              supplierQuantity: 1000,
+              supplierOvers: 0,
+              split: [],
+              packaging: 'Domestic',
+              dateRequired: '07 Aug 2026',
+              dropboxFolderUrl: 'https://www.dropbox.com/scl/fo/abc/order-403958',
+            }
+            if (chosen) {
+              return {
+                data: {
+                  ok: true,
+                  route: 'in_house',
+                  subject: 'Order 403958 - Apex Dental & Implant Centre',
+                  note_lines: [
+                    'Qty: 1000',
+                    'Card: Standard Paper',
+                    'Date required: 07 Aug 2026',
+                    'Ink on front: Gold foil, White foil',
+                    'Packaging: Domestic',
+                    'Artwork: https://www.dropbox.com/scl/fo/abc/order-403958',
+                    '',
+                    'Base cards: no separate supplier order — this job’s 1,000 blanks come from the 2,200-card batch ordered from Solopress under order 403957 (Thornton Dental & Implant Centre). Do not order more blanks.',
+                  ],
+                  summary: { ...apexSummary, route: 'in_house' },
+                  helpscout_linked: true,
+                  artwork_plan: { attach: ['Apex_Front_FOIL.pdf', 'Apex_Back_FOIL.pdf'], skipped: [] },
+                  blanks_source: {
+                    order_id: 'o-thornton',
+                    reference: 'ORD-O-THORNTON',
+                    stock_order_number: '403957',
+                    label: 'Thornton Dental & Implant Centre',
+                    supplier_name: 'Solopress',
+                    batch_quantity: 2200,
+                    source_quantity: 1000,
+                    spare_after_both: 200,
+                  },
+                  handoff_validation: {
+                    ok: true,
+                    problems: [],
+                    warnings: [
+                      { code: 'material_line_skipped', message: '"Standard Paper" isn’t a Stock Control material — the job will go in without a material line (fine for supplier-blank finishing; map it in Admin → Catalogue data → Stock materials to change that).' },
+                    ],
+                  },
+                },
+                error: null,
+              }
+            }
+            const solopress = { id: 's2', name: 'Solopress', email: 'orders@solopress.example', is_international: false, default_shipping_days: null }
+            return {
+              data: {
+                ok: true,
+                route: 'supplier',
+                subject: 'Order 403958 - Apex Dental & Implant Centre',
+                email_lines: [
+                  'Hi,',
+                  '',
+                  'Please produce the following order for Apex Dental & Implant Centre:',
+                  '',
+                  'Qty: 1000',
+                  'Material: Standard cards',
+                  'Type: Standard Paper',
+                  'Finish: With Foiling',
+                  'Must ship by: 05 Aug 2026',
+                  '',
+                  'Artwork: https://www.dropbox.com/scl/fo/abc/order-403958',
+                  '',
+                  'Many thanks.',
+                ],
+                supplier: solopress,
+                suppliers: [solopress],
+                ship_by: '05 Aug 2026',
+                summary: { ...apexSummary, route: 'supplier' },
+                helpscout_linked: true,
+                artwork_plan: { attach: [], skipped: [] },
+                blanks_source: null,
+              },
+              error: null,
+            }
+          }
+        }
         // OrderReviewPage preview (?path=/orders/o1/place). In-house route
         // with the Stock Control hand-off checks populated (a problem + a
         // warning) so the non-blocking amber card can be verified visually.

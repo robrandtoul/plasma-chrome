@@ -29,6 +29,13 @@ import { getDropboxAccessToken, listSharedLinkEntries, downloadSharedLinkFile } 
 import { buildOrderSpecSnapshot, type OrderSpecSnapshot } from '../_shared/orderSpecSnapshot.ts'
 import { buildHandoffPayload } from '../_shared/orderHandoff.ts'
 import { renderTemplate } from '../_shared/replyTemplates.ts'
+import {
+  blanksBatchQuantity,
+  blanksSourceProblem,
+  blanksSpareAfterBoth,
+  composeBlanksProvenance,
+  type BlanksSourceOrder,
+} from '../_shared/blanksSource.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -475,6 +482,15 @@ Deno.serve(async (req) => {
   // finishing target — is unchanged. Ignored on the in-house route. Clamped to a
   // sane non-negative integer so a stray value can't distort the order.
   const supplierOvers = Math.min(1_000_000, Math.max(0, Math.floor(Number(body.supplier_overs) || 0)))
+  // "Base cards supplied under another order's batch" (migration 000382): the
+  // sibling order this one takes its blanks from. Tri-state, and the fallback
+  // matters: a string sets it, an explicit null clears it, ABSENT falls back to
+  // the value stamped on the order — which is what keeps a message retry (or
+  // any call that doesn't resend the choice) on the in-house path instead of
+  // quietly reverting to a supplier email nobody asked for.
+  const blanksRaw = 'blanks_source_order_id' in body ? body.blanks_source_order_id : undefined
+  const blanksBodyId: string | null | undefined =
+    typeof blanksRaw === 'string' && blanksRaw.trim() ? blanksRaw.trim() : blanksRaw === null ? null : undefined
   if (!orderId) return json({ ok: false, error: 'order_id is required' }, 400)
   // Present-but-blank edited message = the reviewer cleared it; that's an error,
   // not a request to send the composed text they can no longer see.
@@ -655,7 +671,54 @@ Deno.serve(async (req) => {
     if (m) mat = m as VersionRow['materials']
   }
   if (!mat) return json({ ok: false, error: 'This order has no single material (mixed / variant round) — place it manually.' }, 400)
-  const route = mat.production_route === 'supplier' ? 'supplier' : 'in_house'
+  let route = mat.production_route === 'supplier' ? 'supplier' : 'in_house'
+
+  // ── Blanks supplied under another order's batch (migrations 000382/000383) ─
+  // A supplier-route order can point at a sibling order whose supplier batch
+  // (its quantity + spoilage overs) already covers this order's base cards —
+  // the combined-batch price break. It then hands off IN-HOUSE (the finishing
+  // job, with a provenance line naming the batch) and NO supplier email is
+  // sent. The stored column is read in its own tolerant query (the
+  // loadOrderHold idiom) so this function stays deployable before the
+  // migration; while the column is missing the feature simply doesn't exist.
+  let blanksAvailable = false
+  let blanksStored: string | null = null
+  {
+    const { data, error } = await admin.from('orders').select('blanks_source_order_id').eq('id', orderId).maybeSingle()
+    if (!error) {
+      blanksAvailable = true
+      blanksStored = (data as { blanks_source_order_id: string | null } | null)?.blanks_source_order_id ?? null
+    }
+  }
+  const blanksRequested = blanksBodyId !== undefined ? blanksBodyId : blanksStored
+  let blanksSrc: BlanksSourceOrder | null = null
+  let blanksInvalid: string | null = null
+  if (blanksRequested) {
+    if (!blanksAvailable) {
+      blanksInvalid = 'Combined supplier batches aren’t available yet (database migration pending).'
+    } else if (route !== 'supplier') {
+      blanksInvalid = 'This order’s material is made in-house, so it has no supplier batch to share.'
+    } else {
+      const { data: srcRow } = await admin
+        .from('orders')
+        .select('id, payment_reference, stock_order_number, project_name, supplier_name, quantity, supplier_overs, status, material_id, order_kind, blanks_source_order_id')
+        .eq('id', blanksRequested)
+        .maybeSingle()
+      const src = (srcRow as BlanksSourceOrder | null) ?? null
+      const problem = blanksSourceProblem(src, { orderId, materialId: orderMaterialId ?? pv.material_id })
+      if (problem) blanksInvalid = problem
+      else blanksSrc = src
+    }
+    // Confirm fails CLOSED on an unusable source: silently falling back to the
+    // supplier route would email the supplier a duplicate batch — the exact
+    // thing the designer chose this option to avoid. Preview stays soft (the
+    // page shows the reason and the picker, and the designer clears or fixes
+    // the choice); a stored-but-stale value must never brick the preview.
+    if (blanksInvalid && mode === 'confirm') {
+      return json({ ok: false, code: 'blanks_source_invalid', error: `${blanksInvalid} Pick a different blanks source, or clear the choice to order from the supplier.` }, 400)
+    }
+    if (blanksSrc) route = 'in_house'
+  }
 
   // Variant (thickness / finish) + chosen finish option.
   let variantName: string | null = null
@@ -694,6 +757,28 @@ Deno.serve(async (req) => {
     qty = Number(order.quantity ?? 0)
   }
   if (!Number.isFinite(qty) || qty <= 0) return json({ ok: false, error: 'This order has no fixed quantity to place.' }, 400)
+
+  // Blanks provenance uses the SAME effective quantity as the hand-off (the
+  // split sum when a per-person split exists), so the note, the job card and
+  // the spare-blanks arithmetic all describe the quantity actually produced.
+  const blanksProvenance = blanksSrc ? composeBlanksProvenance(blanksSrc, qty) : null
+  const blanksResponse = blanksAvailable
+    ? {
+        blanks_source: blanksSrc
+          ? {
+              order_id: blanksSrc.id,
+              reference: blanksSrc.payment_reference,
+              stock_order_number: blanksSrc.stock_order_number,
+              label: blanksSrc.project_name,
+              supplier_name: blanksSrc.supplier_name,
+              batch_quantity: blanksBatchQuantity(blanksSrc),
+              source_quantity: Math.max(0, Math.floor(Number(blanksSrc.quantity) || 0)),
+              spare_after_both: blanksSpareAfterBoth(blanksSrc, qty),
+            }
+          : null,
+        ...(blanksInvalid ? { blanks_source_invalid: blanksInvalid } : {}),
+      }
+    : {}
 
   // A prototype is a flat-fee sample run (up to three exact copies of the
   // approved design), not a production run — flag it loudly on the hand-off so
@@ -759,9 +844,33 @@ Deno.serve(async (req) => {
     prototype: isPrototype,
   }
 
+  // Stamp the blanks choice onto the order at confirm time, BEFORE anything is
+  // written or sent: it is what the fallback above reads on a retry, so a
+  // reload between a failed hand-off and the retry can't quietly change the
+  // route back to a supplier email. Best-effort (the payload's blanks_source
+  // block is the durable record inside the placement transaction); never on a
+  // message retry, whose choice is already settled.
+  if (mode === 'confirm' && !isMessageRetryCandidate && blanksAvailable) {
+    const target = blanksSrc ? blanksSrc.id : null
+    if (target !== blanksStored) {
+      await admin
+        .from('orders')
+        .update({ blanks_source_order_id: target })
+        .eq('id', orderId)
+        .then(({ error }) => {
+          if (error) console.error('blanks_source stamp failed:', error.message)
+        })
+    }
+  }
+
   // ── IN-HOUSE ──────────────────────────────────────────────────────────────
   if (route === 'in_house') {
     const card = buildCardLine(mat.code, pv.material_display, pv.material_options, front, core, back, (order.stock_colour as string | null) ?? null)
+    // On a blanks-source placement the provenance line leads the note: it is
+    // the one sentence the workshop must read (where the blanks come from, and
+    // that no supplier order exists for this job). The designer's own note
+    // follows it.
+    const inhouseNote = [blanksProvenance, note].filter(Boolean).join('\n')
     // The workshop note is now an ordinary human message rendered from an
     // admin-editable template (Phase 3). Stock Control no longer reads it — the
     // job was written directly by the RPC above, and its importer recognises
@@ -778,9 +887,10 @@ Deno.serve(async (req) => {
       per_person: splitLines.join('\n'),
       artwork_link: (order.dropbox_folder_url as string | null) ?? '',
       // Skipped when the reviewer has taken the message over (they type the
-      // note inline instead). Sanitised only in the modes where the old parser
-      // still reads this note — see sanitiseInhouseNote.
-      note: (note && !customMessage) ? (handoffMode === 'live' ? note : sanitiseInhouseNote(note)) : '',
+      // note inline instead — they saw the provenance in the seeded text).
+      // Sanitised only in the modes where the old parser still reads this
+      // note — see sanitiseInhouseNote.
+      note: (inhouseNote && !customMessage) ? (handoffMode === 'live' ? inhouseNote : sanitiseInhouseNote(inhouseNote)) : '',
       customer: customerName,
       order_number: String(order.stock_order_number).trim(),
     }
@@ -817,7 +927,18 @@ Deno.serve(async (req) => {
       packaging,
       split: split.map((p: { name: unknown; quantity: unknown }) => ({ name: String(p.name).trim(), qty: Number(p.quantity) })),
       dropboxFolderUrl: (order.dropbox_folder_url as string | null) ?? null,
-      note: note || null,
+      // The provenance ALWAYS reaches the job card, even when the reviewer
+      // rewrote the human message — the payload note is what create_order_handoff
+      // folds into the Stock Control job's notes.
+      note: inhouseNote || null,
+      blanksSource: blanksSrc
+        ? {
+            orderId: blanksSrc.id,
+            stockOrderNumber: blanksSrc.stock_order_number,
+            reference: blanksSrc.payment_reference,
+            batchQuantity: blanksBatchQuantity(blanksSrc),
+          }
+        : null,
     })
 
     // Plan the artwork attachments from the Dropbox folder (best-effort: a
@@ -843,7 +964,7 @@ Deno.serve(async (req) => {
       // the review page renders its whole body behind a successful preview, so
       // failing here would replace the page with a bare error and leave the
       // reader no way to read the hold, let alone take it off.
-      return json({ ok: true, route, subject, note_lines: lines, summary, helpscout_linked: !!conversationId, artwork_plan: artworkPlan, hold: hold.kind === 'held' ? hold.hold : null, ...(handoffValidation ? { handoff_validation: handoffValidation } : {}) })
+      return json({ ok: true, route, subject, note_lines: lines, summary, helpscout_linked: !!conversationId, artwork_plan: artworkPlan, hold: hold.kind === 'held' ? hold.hold : null, ...blanksResponse, ...(handoffValidation ? { handoff_validation: handoffValidation } : {}) })
     }
 
     // confirm
@@ -885,7 +1006,13 @@ Deno.serve(async (req) => {
       // early return. Carries the re-place attestation, which markPlaced used to
       // record and which is the only trail behind a duplicate-job decision.
       if (!wrote.wroteNothing) {
-        await auditPlaced(admin, orderId, callerId, { route, subject, sc_order_id: wrote.scOrderId, ...(isReplace ? { old_job_cancelled: oldJobCancelled } : {}) })
+        await auditPlaced(admin, orderId, callerId, {
+          route,
+          subject,
+          sc_order_id: wrote.scOrderId,
+          ...(blanksSrc ? { blanks_source_order_id: blanksSrc.id, blanks_source_stock_number: blanksSrc.stock_order_number } : {}),
+          ...(isReplace ? { old_job_cancelled: oldJobCancelled } : {}),
+        })
       }
     }
 
@@ -922,7 +1049,12 @@ Deno.serve(async (req) => {
       return json({ ok: true, route, placed: true })
     }
 
-    const placed = await markPlaced(admin, orderId, callerId, orderSpecSnapshot, { route, subject, ...(isReplace ? { old_job_cancelled: oldJobCancelled } : {}) })
+    const placed = await markPlaced(admin, orderId, callerId, orderSpecSnapshot, {
+      route,
+      subject,
+      ...(blanksSrc ? { blanks_source_order_id: blanksSrc.id, blanks_source_stock_number: blanksSrc.stock_order_number } : {}),
+      ...(isReplace ? { old_job_cancelled: oldJobCancelled } : {}),
+    })
     if (!placed.ok) {
       // The note WAS posted to Help Scout, but the status flip failed. Surface a
       // distinct error so the UI does NOT offer a plain retry (which would re-post
@@ -1124,6 +1256,7 @@ Deno.serve(async (req) => {
       // in-house preview return). An 'unknown' read shows as null here rather
       // than blocking the page; confirm is where it fails closed.
       hold: hold.kind === 'held' ? hold.hold : null,
+      ...blanksResponse,
       ...(handoffValidation ? { handoff_validation: handoffValidation } : {}),
     })
   }
@@ -1337,7 +1470,7 @@ async function markPlaced(
   orderId: string,
   callerId: string,
   snapshot: OrderSpecSnapshot,
-  detail: { route: string; subject: string; supplier_id?: string; supplier_name?: string; supplier_helpscout_conversation_id?: string | null; supplier_overs?: number; old_job_cancelled?: boolean },
+  detail: { route: string; subject: string; supplier_id?: string; supplier_name?: string; supplier_helpscout_conversation_id?: string | null; supplier_overs?: number; old_job_cancelled?: boolean; blanks_source_order_id?: string; blanks_source_stock_number?: string | null },
 ): Promise<{ ok: boolean; error?: string }> {
   const nowIso = new Date().toISOString()
   // Conditional on status in (paid, revision) so a stale/concurrent re-entry

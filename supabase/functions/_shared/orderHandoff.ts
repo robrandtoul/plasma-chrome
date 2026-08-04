@@ -53,6 +53,19 @@ export interface HandoffPayloadInput {
   split: HandoffSplitEntry[]
   dropboxFolderUrl: string | null
   note: string | null
+  /** "Base cards supplied under another order's batch" (migration 000383):
+   *  set on an in-house hand-off whose blanks ride a sibling order's supplier
+   *  batch. Presence tells create_order_handoff to tolerate an unmapped
+   *  material (the job is created without a material line — supplier blanks
+   *  aren't sheet stock to allocate); the fields are the durable record on
+   *  handoff_payload. Emitted only when set, so pre-existing payloads are
+   *  byte-identical. */
+  blanksSource?: {
+    orderId: string
+    stockOrderNumber: string | null
+    reference: string | null
+    batchQuantity: number
+  } | null
 }
 
 export function buildHandoffPayload(i: HandoffPayloadInput): Record<string, unknown> {
@@ -101,5 +114,15 @@ export function buildHandoffPayload(i: HandoffPayloadInput): Record<string, unkn
     split: i.split.map((s) => ({ name: s.name, qty: s.qty })),
     artwork: { dropbox_url: i.dropboxFolderUrl },
     note: i.note,
+    ...(i.blanksSource
+      ? {
+          blanks_source: {
+            pv_order_id: i.blanksSource.orderId,
+            stock_order_number: i.blanksSource.stockOrderNumber,
+            reference: i.blanksSource.reference,
+            batch_quantity: i.blanksSource.batchQuantity,
+          },
+        }
+      : {}),
   }
 }

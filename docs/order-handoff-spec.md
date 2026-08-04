@@ -143,7 +143,13 @@ fields (bundle ids, reprint links, future spec items) are new keys — no format
   "packaging": "Domestic",
   "split": [ { "name": "Joe Bloggs", "qty": 50 }, { "name": "Jane Doe", "qty": 50 } ],
   "artwork": { "dropbox_url": "https://…" },  // manifest only in v1 — files still travel on the note (§3.5)
-  "note": "free text from the designer"
+  "note": "free text from the designer",
+  "blanks_source": {                       // 000382/000383, OPTIONAL — emitted only on a combined-batch
+    "pv_order_id": "<proofs.orders.id>",   // in-house hand-off whose base cards ride a sibling order's
+    "stock_order_number": "403957",        // supplier batch. Presence flips the RPC's in-house material
+    "reference": "ORD-ACFEE77DD5",         // rules from problems to a `material_line_skipped` warning and
+    "batch_quantity": 2200                 // allows a LINELESS job (supplier blanks aren't sheet stock);
+  }                                        // the provenance sentence itself rides `note`.
 }
 ```
 
