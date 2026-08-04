@@ -1307,6 +1307,12 @@ export const supabase: any = {
           const body = (opts?.body ?? {}) as { order_id?: string; blanks_source_order_id?: string | null }
           if (body.order_id === 'o-blanks') {
             const chosen = 'blanks_source_order_id' in body ? body.blanks_source_order_id : 'o-thornton'
+            // &blanksShort=1 — same rig, but the Thornton batch was ordered
+            // with fewer overs (1,000 + 800 = 1,800), so it CANNOT cover both
+            // orders' 1,000s: spare_after_both goes negative and the summary
+            // card's amber "short" warning renders. URL-flag idiom like
+            // ?busy=1 — extra params ride through the harness untouched.
+            const blanksBatchQty = new URLSearchParams(window.location.search).get('blanksShort') === '1' ? 1800 : 2200
             const apexSummary = {
               customer: 'Apex Dental & Implant Centre',
               material: 'Standard Paper',
@@ -1336,7 +1342,7 @@ export const supabase: any = {
                     'Packaging: Domestic',
                     'Artwork: https://www.dropbox.com/scl/fo/abc/order-403958',
                     '',
-                    'Base cards: no separate supplier order — this job’s 1,000 blanks come from the 2,200-card batch ordered from Solopress under order 403957 (Thornton Dental & Implant Centre). Do not order more blanks.',
+                    `Base cards: no separate supplier order — this job’s 1,000 blanks come from the ${blanksBatchQty.toLocaleString('en-GB')}-card batch ordered from Solopress under order 403957 (Thornton Dental & Implant Centre). Do not order more blanks.`,
                   ],
                   summary: { ...apexSummary, route: 'in_house' },
                   helpscout_linked: true,
@@ -1347,9 +1353,11 @@ export const supabase: any = {
                     stock_order_number: '403957',
                     label: 'Thornton Dental & Implant Centre',
                     supplier_name: 'Solopress',
-                    batch_quantity: 2200,
+                    batch_quantity: blanksBatchQty,
                     source_quantity: 1000,
-                    spare_after_both: 200,
+                    // Batch minus both orders' cards (1,000 + 1,000): +200
+                    // healthy, −200 under the short flag.
+                    spare_after_both: blanksBatchQty - 2000,
                   },
                   handoff_validation: {
                     ok: true,
