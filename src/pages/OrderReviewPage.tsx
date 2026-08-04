@@ -1165,6 +1165,20 @@ export default function OrderReviewPage() {
                           <p className="mt-1 text-ink-soft">
                             After both orders’ cards ({fmtNum(blanksInfo.source_quantity)} + {fmtNum(s.quantity)}), {fmtNum(blanksInfo.spare_after_both)} spare for finishing spoilage.
                           </p>
+                        ) : blanksInfo.batch_quantity <= blanksInfo.source_quantity ? (
+                          // The trap that happened on the first live use (Apex/
+                          // Thornton, 4 Aug 2026): the source was placed with NO
+                          // spoilage overs, so its batch covers only itself and
+                          // there is nothing for this order to ride. Name the
+                          // remedy, not just the arithmetic.
+                          <p className="mt-1.5 rounded-lg bg-low-soft px-2.5 py-1.5 text-[12px] text-ink ring-1 ring-low">
+                            <span className="font-medium">
+                              That order was placed with no spoilage overs — its batch only covers its
+                              own {fmtNum(blanksInfo.source_quantity)} cards, with nothing for this order’s {fmtNum(s.quantity)}.
+                            </span>{' '}
+                            Ask {blanksInfo.supplier_name ?? 'the supplier'} to increase that batch (reply on its
+                            supplier thread) before relying on it, or go back to ordering this job’s own blanks.
+                          </p>
                         ) : (
                           <p className="mt-1.5 rounded-lg bg-low-soft px-2.5 py-1.5 text-[12px] text-ink ring-1 ring-low">
                             <span className="font-medium">That batch is {fmtNum(-blanksInfo.spare_after_both)} short</span> of

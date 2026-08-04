@@ -128,6 +128,10 @@ interface OrderRow {
   // job already sitting in Stock Control.
   supplier_id: string | null
   supplier_overs: number | null
+  // Blanks ride a sibling order's supplier batch (000382): the hand-off is the
+  // WORKSHOP NOTE and no supplier email ever sends, whatever the material's
+  // route says — handoffState must judge these by the note.
+  blanks_source_order_id: string | null
   // Artwork sanity check (000336): the latest run's verdict + stamp — the chip
   // on To-order / Recently-ordered cards. The full report jsonb is fetched
   // lazily when the chip is clicked, never in the list select.
@@ -193,7 +197,7 @@ const SELECT = `
   card_discount_type, card_discount_value, amount_card_discount, payment_method, order_kind,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, revised_at,
   held_at, hold_reason, held_by_name, hold_artwork_flag,
-  handoff_at, handoff_error, production_note_posted_at, supplier_email_sent_at, supplier_id, supplier_overs,
+  handoff_at, handoff_error, production_note_posted_at, supplier_email_sent_at, supplier_id, supplier_overs, blanks_source_order_id,
   artwork_check_verdict, artwork_checked_at,
   date_required, dropbox_folder_url, stock_order_number, project_name, stock_colour, person_quantities,
   ship_to_name, ship_to_email, ship_to_phone, ship_to_address, customs_tax_id, ship_dest_country, proof_id,
@@ -290,7 +294,12 @@ function handoffState(o: OrderRow): HandoffState {
     if (!reason || reason.toLowerCase().startsWith('shadow:')) return { kind: 'none' }
     return { kind: 'failed', reason }
   }
-  const route = routeOf(o)
+  let route = routeOf(o)
+  // A blanks-source order (000382) is a supplier-MATERIAL order that
+  // deliberately sends no supplier email — its blanks ride a sibling order's
+  // batch and its message is the workshop note. Judged by the material alone it
+  // would read "supplier email wasn't sent" forever (live: Apex 403960).
+  if (route === 'supplier' && o.blanks_source_order_id) route = 'in_house'
   if (route === 'supplier') return o.supplier_email_sent_at ? { kind: 'done' } : { kind: 'unsent', what: 'email' }
   if (route === 'in_house') return o.production_note_posted_at ? { kind: 'done' } : { kind: 'unsent', what: 'note' }
   // Route unknown (custom quote — no priced material on the order). Only claim

@@ -396,6 +396,29 @@ const ORDERS: FixtureOrder[] = [
     project_name: 'Apex Dental & Implant Centre',
     proofs: { helpscout_last_reply_at: daysAgo(4), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-17', contacts: contact('Apex Dental & Implant Centre', 'Sarah Chen') },
   }),
+  // A PLACED blanks-source order: job written, workshop note sent, supplier
+  // email deliberately never sent. Must sit quietly in Recently ordered — the
+  // regression this guards is handoffState reading it as "supplier email
+  // wasn't sent" forever (live: Apex 403960, 4 Aug 2026).
+  order({
+    id: 'o-blanks-placed',
+    status: 'fulfilled',
+    paid_at: daysAgo(4),
+    fulfilled_at: daysAgo(0.1),
+    handoff_at: daysAgo(0.1),
+    production_note_posted_at: daysAgo(0.1),
+    supplier_email_sent_at: null,
+    blanks_source_order_id: 'o-thornton',
+    material_id: 'm-paper',
+    material_variant_id: 'v-paper-foil',
+    material_variants: { display_name: 'With Foiling', materials: paper },
+    quantity: 1000,
+    xero_invoice_id: 'xi-10',
+    date_required: daysAhead(6).slice(0, 10),
+    stock_order_number: '403960',
+    project_name: 'Apex Dental & Implant Centre (placed)',
+    proofs: { helpscout_last_reply_at: daysAgo(4), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-19', contacts: contact('Apex Dental & Implant Centre', 'Sarah Chen') },
+  }),
   order({
     id: 'o-thornton',
     status: 'fulfilled',
