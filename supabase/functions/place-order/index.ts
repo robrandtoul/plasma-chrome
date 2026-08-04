@@ -480,8 +480,10 @@ Deno.serve(async (req) => {
   // manually on the review screen (no automatic default). Pads the supplier
   // `Qty:` line; the customer's quantity — their invoice AND the in-house
   // finishing target — is unchanged. Ignored on the in-house route. Clamped to a
-  // sane non-negative integer so a stray value can't distort the order.
-  const supplierOvers = Math.min(1_000_000, Math.max(0, Math.floor(Number(body.supplier_overs) || 0)))
+  // sane non-negative integer so a stray value can't distort the order. This is
+  // only what the REQUEST asked for — a message retry overrides it with the
+  // order's stored value once the order is loaded (see supplierOvers below).
+  const supplierOversRequested = Math.min(1_000_000, Math.max(0, Math.floor(Number(body.supplier_overs) || 0)))
   // "Base cards supplied under another order's batch" (migration 000382): the
   // sibling order this one takes its blanks from. Tri-state, and the fallback
   // matters: a string sets it, an explicit null clears it, ABSENT falls back to
@@ -501,7 +503,7 @@ Deno.serve(async (req) => {
   // ── Load order + proof + current version ──────────────────────────────────
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, status, quantity, person_quantities, has_personalisation, custom_quote_total, order_kind, date_required, stock_order_number, project_name, stock_colour, proof_id, ship_dest_country, ship_to_address, material_id, material_variant_id, material_option_id, dropbox_folder_url, payment_reference, currency, fulfilled_at, handoff_at, production_note_posted_at, supplier_email_sent_at, supplier_helpscout_conversation_id')
+    .select('id, status, quantity, person_quantities, has_personalisation, custom_quote_total, order_kind, date_required, stock_order_number, project_name, stock_colour, proof_id, ship_dest_country, ship_to_address, material_id, material_variant_id, material_option_id, dropbox_folder_url, payment_reference, currency, fulfilled_at, handoff_at, production_note_posted_at, supplier_email_sent_at, supplier_helpscout_conversation_id, supplier_overs')
     .eq('id', orderId)
     .maybeSingle()
   if (orderErr) return json({ ok: false, error: `Order lookup failed: ${orderErr.message}` }, 500)
@@ -531,6 +533,19 @@ Deno.serve(async (req) => {
     order.status === 'fulfilled' &&
     !!order.handoff_at &&
     (!order.production_note_posted_at || !order.supplier_email_sent_at)
+  // A message retry re-sends the message for a job that already EXISTS: the
+  // placement wrote the Stock Control job and stamped orders.supplier_overs,
+  // and the RPC's idempotency guard means this call re-writes neither. So on a
+  // retry the overs come from the ORDER, never the fresh request body — the
+  // Orders page replays the stored value, but the review page re-sends
+  // whatever its field happens to hold (0 unless re-typed), and any other
+  // number would re-derive a supplier `Qty:` line that matches no record (the
+  // retry twin of the Thornton 403957 message-edit incident). Applies to
+  // preview too, so a retry's review screen shows the Qty that will be sent.
+  // Same clamp as the body parse, purely defensively (the column CHECKs >= 0).
+  const supplierOvers = isMessageRetryCandidate
+    ? Math.min(1_000_000, Math.max(0, Math.floor(Number(order.supplier_overs) || 0)))
+    : supplierOversRequested
   if (order.status !== 'paid' && order.status !== 'revision' && !isMessageRetryCandidate) {
     return json({ ok: false, error: `Order is ${order.status}, not paid — it can't be placed.` }, 409)
   }

@@ -9,6 +9,7 @@ import ArtworkCheckReportView, { InlineSpinner, artworkCheckAuditFields, type Ar
 import HoldOrderDialog from '../components/HoldOrderDialog'
 import { mergeInvestigation, requestInvestigation } from '../lib/useProofCheck'
 import { scopeToOrderedFinish, finishScopeIsUncertain, type FinishScopeOutcome } from '../lib/approvedArtworkFinish'
+import { extractQtyLineValue } from '../lib/handoffQty'
 import {
   HOLD_COPY,
   HOLD_REASON_MAX,
@@ -768,6 +769,21 @@ export default function OrderReviewPage() {
   const machineHint = isSupplier
     ? 'The supplier reads this — the order details are already in Stock Control, so the wording is yours.'
     : 'The workshop reads this — the job is already in Stock Control, so the wording is yours.'
+  // The Qty line in the message is only words — the real quantity lives on the
+  // order and in Stock Control. The one edit that is almost certainly a
+  // mistake is rewriting that number instead of using the Spoilage overs field
+  // (Thornton 403957, 2026-08-04: the email said 2,200 while every record said
+  // 1,000), so when an edited message's Qty disagrees with the preview's
+  // supplier quantity, warn — never block, since the wording is deliberately
+  // free. Only a dirty message is checked (the generated text can't disagree
+  // with its own summary), an unreadable Qty line stays silent (null is
+  // "couldn't read it", not evidence), and an older deployed place-order whose
+  // summary has no supplierQuantity quietly stands the check down.
+  const realQty = s?.supplierQuantity
+  const messageQty = messageDirty && realQty != null ? extractQtyLineValue(messageValue) : null
+  const qtyMismatch = messageQty != null && realQty != null && messageQty !== realQty
+    ? { messageQty, realQty }
+    : null
   // Hand-off preconditions the page already knows about — disable Confirm when
   // it provably can't succeed, rather than letting the doomed round-trip run.
   const noSuppliers = isSupplier && (preview?.suppliers ?? []).length === 0
@@ -850,6 +866,17 @@ export default function OrderReviewPage() {
       {messageEmpty && (
         <div className="mt-2 rounded-lg bg-low-soft px-3 py-2 text-[12px] text-low ring-1 ring-low">
           This message is empty — type something or reset it.
+        </div>
+      )}
+      {/* The edited Qty disagrees with the order (the Thornton 403957 shape).
+          Advisory only — Confirm is never gated on it. role="status" so the
+          notice is announced when it appears mid-edit. */}
+      {qtyMismatch && (
+        <div role="status" className="mt-2 rounded-lg bg-low-soft px-3 py-2 text-[12px] text-ink ring-1 ring-low">
+          <span className="font-medium">This message says Qty: {fmtNum(qtyMismatch.messageQty)}, but the order is {fmtNum(qtyMismatch.realQty)}.</span>{' '}
+          {isSupplier
+            ? 'The message is only words — use the Spoilage overs field to change the quantity the supplier makes, or the supplier and the records will disagree.'
+            : 'The message is only words — the workshop job and the records will still say the real quantity.'}
         </div>
       )}
     </>
