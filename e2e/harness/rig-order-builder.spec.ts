@@ -209,10 +209,14 @@ test.describe('order builder — custom-quote proof (?state=custom-proof)', () =
     await expect(page.locator('#order-variant')).toBeVisible()
     await expect(page.locator('#order-variant').locator('option')).toHaveCount(4)
 
-    // The quantity mode choice survives — an agreed price can still let the
-    // customer pick how many.
-    await expect(page.getByRole('button', { name: /^customer chooses$/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /^lock a quantity$/i })).toBeVisible()
+    // The quantity is LOCKED on an agreed price: the pay page's quantity
+    // chooser is disabled whenever custom_quote_total is set, so "Customer
+    // chooses" would ship an order with no quantity recorded or shown
+    // anywhere — the mode snaps to locked, the open pill is disabled, and
+    // the quantity input is already revealed.
+    await expect(page.getByRole('button', { name: /^customer chooses$/i })).toBeDisabled()
+    await expect(page.getByRole('button', { name: /^lock a quantity$/i })).toBeEnabled()
+    await expect(page.getByPlaceholder('e.g. 250')).toBeVisible()
 
     expect(errors).toEqual([])
   })

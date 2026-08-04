@@ -207,6 +207,15 @@ export default function OrderBuilderModal({
   // state from the prop keeps the two impossible to desync.
   const isCustomQuote = versionIsCustomQuote || pricingBasis === 'custom'
 
+  // An agreed price needs a locked quantity: the pay page's quantity chooser
+  // is disabled whenever custom_quote_total is set (a fixed total can't be
+  // re-priced by the customer's pick), so leaving the mode on "Customer
+  // chooses" would send an order with no quantity recorded or shown anywhere
+  // — not on the pay page, not on the invoice, not for production.
+  useEffect(() => {
+    if (isCustomQuote) setQuantityMode('locked')
+  }, [isCustomQuote])
+
   // Order type: a normal production order, or the flat-fee prototyping service
   // (up to three exact copies of the approved design). Prototype is modelled
   // as a custom-quote order whose total is the per-family fee, keeping the
@@ -846,7 +855,9 @@ export default function OrderBuilderModal({
         }
         const entries = personNames.map((n) => ({ name: n, quantity: parseInt(personQty[n] ?? '', 10) }))
         if (entries.some((e) => !Number.isInteger(e.quantity) || e.quantity <= 0)) {
-          setError('Enter a quantity (greater than zero) for each person, or let the customer choose.')
+          setError(isCustomQuote
+            ? 'Enter a quantity (greater than zero) for each person — the agreed price needs the quantities it covers.'
+            : 'Enter a quantity (greater than zero) for each person, or let the customer choose.')
           return
         }
         personQuantitiesPayload = entries
@@ -854,7 +865,9 @@ export default function OrderBuilderModal({
       } else {
         const q = Number(quantity)
         if (!Number.isInteger(q) || q <= 0) {
-          setError('Enter a whole quantity greater than zero, or let the customer choose.')
+          setError(isCustomQuote
+            ? 'Enter a whole quantity greater than zero — the agreed price needs the quantity it covers.'
+            : 'Enter a whole quantity greater than zero, or let the customer choose.')
           return
         }
         quantityValue = q
@@ -1861,16 +1874,26 @@ export default function OrderBuilderModal({
             {/* Quantity — production orders only; a prototype uses the copies
                 picker above. */}
             {!isPrototype && (
-            <Field label="Quantity" asLabel={false} hint="Let the customer choose on the pay-page, or lock a specific quantity now.">
+            <Field
+              label="Quantity"
+              asLabel={false}
+              hint={isCustomQuote
+                ? 'The agreed price covers a set quantity — enter it so the customer sees what they’re paying for.'
+                : 'Let the customer choose on the pay-page, or lock a specific quantity now.'}
+            >
               <div className="flex flex-wrap gap-2">
                 {([['open', 'Customer chooses'], ['locked', 'Lock a quantity']] as const).map(([mode, label]) => {
-                  const blocked = paymentMethod === 'offline' && mode === 'open'
+                  const blocked = (paymentMethod === 'offline' || isCustomQuote) && mode === 'open'
                   return (
                     <button
                       key={mode}
                       type="button"
                       disabled={blocked}
-                      title={blocked ? 'Offline orders need a set quantity' : undefined}
+                      title={blocked
+                        ? (isCustomQuote
+                          ? 'An agreed price can’t be re-priced at checkout — enter the quantity it covers'
+                          : 'Offline orders need a set quantity')
+                        : undefined}
                       onClick={() => { setQuantityMode(mode); setDirty(true) }}
                       className={[
                         'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
