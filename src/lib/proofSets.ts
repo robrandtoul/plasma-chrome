@@ -18,6 +18,7 @@
 import { supabase } from './supabase'
 import { logAudit } from './audit'
 import { customerProofPath } from './customerProofUrl'
+import type { CheckpointMember, CheckpointVersion } from './bundleCheckpoint'
 
 export type SetCurrency = 'GBP' | 'EUR' | 'USD'
 
@@ -126,6 +127,42 @@ export async function markSetReviewLinkSent(setId: string): Promise<void> {
     targetId: setId,
     metadata: { source: 'version_reply' },
   })
+}
+
+// Member snapshot for the post-save bundle checkpoint (bundleCheckpoint.ts):
+// every member proof with its current version's announce state. Null on ANY
+// failure — the caller falls back to the plain send panel, exactly the
+// resolveCustomerReviewLink posture: a broken lookup must never block a send.
+export async function fetchBundleCheckpointMembers(setId: string): Promise<CheckpointMember[] | null> {
+  try {
+    const { data: proofRows, error: proofsErr } = await supabase
+      .from('proofs')
+      .select('id, status, set_discarded_at, created_at')
+      .eq('proof_set_id', setId)
+      .order('created_at', { ascending: true })
+    if (proofsErr) return null
+    const rows = proofRows ?? []
+    if (rows.length === 0) return []
+
+    const { data: versions, error: vErr } = await supabase
+      .from('proof_versions')
+      .select('id, proof_id, version_number, material_display, names, last_reply_sent_at')
+      .in('proof_id', rows.map((p) => p.id))
+      .eq('is_current', true)
+    if (vErr) return null
+    const byProof = new Map(
+      ((versions ?? []) as Array<CheckpointVersion & { proof_id: string }>).map((v) => [v.proof_id, v]),
+    )
+    return rows.map((p) => ({
+      proof_id: p.id as string,
+      status: p.status as string,
+      set_discarded_at: p.set_discarded_at as string | null,
+      current_version: byProof.get(p.id) ?? null,
+    }))
+  } catch (err) {
+    console.warn('[proofSets] bundle checkpoint lookup failed, falling back to the send panel', err)
+    return null
+  }
 }
 
 // 48 hex chars from the browser CSPRNG — same bearer-token posture as

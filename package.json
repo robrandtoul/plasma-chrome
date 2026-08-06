@@ -58,6 +58,7 @@
     "test:annotations": "tsx src/lib/proofAnnotationGeometry.test.ts",
     "test:approval-carry": "tsx src/lib/approvalCarry.test.ts",
     "test:abandon-notice": "tsx src/lib/abandonNotice.test.ts",
+    "test:bundle-checkpoint": "tsx src/lib/bundleCheckpoint.test.ts",
     "test:order-tracking": "tsx src/lib/orderTracking.test.ts",
     "test:order-holds": "tsx src/lib/orderHolds.test.ts",
     "test:order-timeline": "tsx src/lib/orderTimeline.test.ts",

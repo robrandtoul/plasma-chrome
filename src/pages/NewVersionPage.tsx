@@ -32,7 +32,9 @@ import { rostersAreDisjoint } from '../lib/strandedApprovals'
 import { selectionShapeLoss } from '../lib/selectionShapeLoss'
 import { resolveCurrency, type CurrencySuggestion } from '../lib/currencyResolver'
 import { fetchConversationContext } from '../lib/conversationContext'
-import { createSetFromProof, markSetReviewLinkSent, resolveCustomerReviewLink, type CustomerReviewLink } from '../lib/proofSets'
+import { createSetFromProof, fetchBundleCheckpointMembers, markSetReviewLinkSent, resolveCustomerReviewLink, type CustomerReviewLink } from '../lib/proofSets'
+import { buildBundleCheckpoint, type BundleCheckpointModel } from '../lib/bundleCheckpoint'
+import BundleCheckpoint from '../components/BundleCheckpoint'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { LAYER_COLOUR_MATERIAL_CODES } from '../lib/letterpress'
 import {
@@ -301,6 +303,44 @@ export default function NewVersionPage() {
       cancelled = true
     }
   }, [savedVersion, proofId])
+  // Bundle checkpoint state. When the saved proof is a bundle member with
+  // other live cards, the post-save flow shows a per-card checklist steering
+  // toward ONE bundle send instead of the per-card panel — the fix for a
+  // revision round producing an email per card, the first arriving while
+  // sibling cards were still un-revised (see lib/bundleCheckpoint.ts). The
+  // members fetch chains off the customerLink resolution during the preview
+  // gate; a null model (lookup failed, bundle of one, or the saved version
+  // isn't an unannounced current version) falls back to the plain panel.
+  const [bundleCheckpoint, setBundleCheckpoint] = useState<BundleCheckpointModel | null>(null)
+  const [bundleCheckpointReady, setBundleCheckpointReady] = useState(false)
+  // The designer chose "Send a message about just this card instead" — the
+  // checkpoint hands over to the ordinary MessageSendPanel.
+  const [bundleCheckpointBypassed, setBundleCheckpointBypassed] = useState(false)
+  useEffect(() => {
+    if (!savedVersion || !customerLink || !proofId) return
+    if (customerLink.kind !== 'bundle') {
+      setBundleCheckpointReady(true)
+      return
+    }
+    let cancelled = false
+    void fetchBundleCheckpointMembers(customerLink.setId).then((members) => {
+      if (cancelled) return
+      setBundleCheckpoint(
+        members
+          ? buildBundleCheckpoint({
+              members,
+              savedProofId: proofId,
+              savedVersionId: savedVersion.id,
+              setSentAt: customerLink.setSentAt,
+            })
+          : null,
+      )
+      setBundleCheckpointReady(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [savedVersion, customerLink, proofId])
   // Preview gate state. After save the designer first sees
   // VersionPreviewGate (an iframe of the customer page with a
   // banner of action buttons); only after clicking "Looks good"
@@ -5186,9 +5226,35 @@ export default function NewVersionPage() {
         )}
 
         {savedVersion && previewApproved && (() => {
-          // Post-save MessageSendPanel branch. Replaces the form
-          // until the designer either sends a reply or skips. Both
-          // paths navigate to the project detail page.
+          // Post-save branch. For a bundle member with other live cards the
+          // BundleCheckpoint renders first (steering a revision round toward
+          // ONE bundle send); otherwise — or after the designer explicitly
+          // chooses the per-card send — the MessageSendPanel takes over.
+          const bundleSetId = customerLink?.kind === 'bundle' ? customerLink.setId : null
+          if (bundleSetId && !bundleCheckpointBypassed) {
+            if (!bundleCheckpointReady) {
+              // The members fetch chains off the link resolution and runs
+              // during the preview gate, so this placeholder is rare and
+              // sub-second. Never render the panel meanwhile — its big Send
+              // button is exactly what the checkpoint exists to demote.
+              return (
+                <div className="rounded-2xl bg-surface p-8 text-center shadow-sm ring-1 ring-line">
+                  <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-line border-t-ink" />
+                  <p className="mt-3 text-sm text-ink-soft">Checking the bundle…</p>
+                </div>
+              )
+            }
+            if (bundleCheckpoint) {
+              return (
+                <BundleCheckpoint
+                  model={bundleCheckpoint}
+                  setId={bundleSetId}
+                  customerLabel={proofCompany || proofName || 'the customer'}
+                  onSendJustThisCard={() => setBundleCheckpointBypassed(true)}
+                />
+              )
+            }
+          }
           const tplId: 'first_proof' | 'revision' =
             savedVersion.number === 1 ? 'first_proof' : 'revision'
           const customerUrl =
@@ -5204,6 +5270,11 @@ export default function NewVersionPage() {
             // Design" in the signoff so the empty value is fine.
             designer_first_name: '',
           }
+          // When the checkpoint was shown (and bypassed), both panel exits
+          // land on the bundle workspace — it tracks the round's remaining
+          // cards. Bundles that never showed a checkpoint (single live card,
+          // failed lookup) keep the original project-page navigation.
+          const panelExit = bundleSetId && bundleCheckpoint ? `/bundles/${bundleSetId}` : `/proofs/${proofId}`
           return (
             <MessageSendPanel
               proofId={proofId!}
@@ -5212,14 +5283,15 @@ export default function NewVersionPage() {
               templateId={tplId}
               context={messageContext}
               hasHelpScoutConversation={!!proofHelpScoutConversationId}
+              skipLabel={bundleSetId && bundleCheckpoint ? 'Skip — back to the bundle' : undefined}
               onSent={() => {
                 // The reply that just went out carried the bundle review
                 // link, so record the bundle as sent (no-op if it already
                 // was — the helper guards on sent_at IS NULL).
                 if (customerLink?.kind === 'bundle') void markSetReviewLinkSent(customerLink.setId)
-                navigate(`/proofs/${proofId}`)
+                navigate(panelExit)
               }}
-              onSkip={() => navigate(`/proofs/${proofId}`)}
+              onSkip={() => navigate(panelExit)}
             />
           )
         })()}

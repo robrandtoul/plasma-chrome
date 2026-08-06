@@ -22,7 +22,7 @@
 // post-send drops go through the customer's set-aside or an abandon.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Check,
   Copy,
@@ -93,6 +93,7 @@ const DISCARD_REASON_LABELS: Record<string, string> = {
 export default function SetWorkspacePage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { session } = useAuth()
 
   const [loading, setLoading] = useState(true)
@@ -226,6 +227,30 @@ export default function SetWorkspacePage() {
     void load()
   }, [load])
 
+  // ?send=1 — the post-save bundle checkpoint's "send one update for the
+  // whole bundle" action lands here with the send modal already open, so
+  // the designer arrives mid-flow instead of having to find the button
+  // again. One-shot: the param is stripped immediately (replace, so Back
+  // behaves) and a ref stops re-runs. It never fights a blocker — when the
+  // modal can't open, the workspace just shows itself with the blocker
+  // line visible as usual. The effect body only acts once, so reading the
+  // derived render-scope values (sendBlocker etc.) via closure is safe.
+  const autoSendHandled = useRef(false)
+  useEffect(() => {
+    if (loading || autoSendHandled.current) return
+    if (searchParams.get('send') == null) return
+    autoSendHandled.current = true
+    const next = new URLSearchParams(searchParams)
+    next.delete('send')
+    setSearchParams(next, { replace: true })
+    if (sendBlocker == null && (isSent ? unannounced.length > 0 : activeMembers.length > 0)) {
+      void openSendModal()
+    }
+    // Deliberately narrow deps: everything else is read once inside the
+    // ref-guarded body on the post-load run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, searchParams])
+
   const contact = set?.contacts ?? null
   const companyName = contact?.companies?.name ?? null
   const customerLabel = companyName || contact?.full_name || 'Customer'
@@ -242,6 +267,19 @@ export default function SetWorkspacePage() {
     () => (isSent ? activeMembers.filter((m) => !m.currentVersion?.last_reply_sent_at) : []),
     [isSent, activeMembers],
   )
+
+  // Whether this update round contains REVISED cards (the customer has seen
+  // an earlier version) rather than brand-new additions — drives the update
+  // template + copy: "we've updated the designs" vs "we've added another
+  // card". version_number > 1 is a proxy (an attached pre-existing project
+  // can arrive at v2 without the customer ever seeing v1), but the message
+  // is composed in an editable box, so a rare mislabel is correctable at a
+  // glance before sending.
+  const updateHasRevision = useMemo(
+    () => unannounced.some((m) => (m.currentVersion?.version_number ?? 1) > 1),
+    [unannounced],
+  )
+  const updateTemplateId = updateHasRevision ? 'bundle_revision_link' : 'bundle_update_link'
 
   const reviewUrl = set ? `${window.location.origin}${setReviewPath(set.id, set.token)}` : ''
 
@@ -261,11 +299,13 @@ export default function SetWorkspacePage() {
             : null
 
   // Pre-send: composes the first review-link message (set_review_link).
-  // Post-send: composes the "we've added a card" update (bundle_update_link)
-  // — same {url}, the customer keeps the one link.
+  // Post-send: composes the update — "we've updated the designs"
+  // (bundle_revision_link) when the round contains revised cards, "we've
+  // added a card" (bundle_update_link) for pure additions — same {url}, the
+  // customer keeps the one link.
   async function openSendModal() {
     if (!set || !contact) return
-    const templateId = set.sent_at ? 'bundle_update_link' : 'set_review_link'
+    const templateId = set.sent_at ? updateTemplateId : 'set_review_link'
     // Prefer the admin-edited body when one exists (Admin → Templates);
     // fall back to the compiled default so the modal works even before the
     // seed row lands.
@@ -320,7 +360,7 @@ export default function SetWorkspacePage() {
               proof_id: anchor.id,
               version_id: anchor.currentVersion.id,
               body: sendBody,
-              template_id: isUpdate ? 'bundle_update_link' : 'set_review_link',
+              template_id: isUpdate ? updateTemplateId : 'set_review_link',
             },
           },
         )
@@ -694,8 +734,11 @@ export default function SetWorkspacePage() {
                           )}
                           {isSent && !discarded && !m.currentVersion?.last_reply_sent_at && (
                             <p className="mt-1 text-xs text-amber-700">
-                              Added after the bundle was sent — the customer hasn’t been told yet.
-                              {m.currentVersion ? ' Send an update above.' : ' Build the card, then send an update.'}
+                              {!m.currentVersion
+                                ? 'Added after the bundle was sent — build the card, then send an update.'
+                                : m.currentVersion.version_number > 1
+                                  ? 'Updated since the last send — the customer hasn’t seen the new version yet. Send an update above.'
+                                  : 'Added after the bundle was sent — the customer hasn’t been told yet. Send an update above.'}
                             </p>
                           )}
                         </div>
@@ -781,7 +824,9 @@ export default function SetWorkspacePage() {
           </h2>
           <p className="mt-1 text-sm text-ink-soft">
             {set?.sent_at
-              ? `Tells the customer ${unannounced.length === 1 ? 'a card has' : `${unannounced.length} cards have`} been added to their review page — same link as before.`
+              ? updateHasRevision
+                ? `Tells the customer ${unannounced.length === 1 ? 'a card on their review page has been updated' : `${unannounced.length} cards on their review page have been updated`} — same link as before.`
+                : `Tells the customer ${unannounced.length === 1 ? 'a card has' : `${unannounced.length} cards have`} been added to their review page — same link as before.`
               : `Posts one review link on the Help Scout conversation, covering all ${activeMembers.length === 1 ? 'the card' : `${activeMembers.length} cards`}. Cards added later need an update sent from here.`}
           </p>
           <textarea

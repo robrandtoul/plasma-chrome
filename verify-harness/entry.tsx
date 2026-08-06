@@ -49,6 +49,8 @@ import { ProofAnnotationEditor } from '../src/components/ProofAnnotationEditor'
 import Modal from '../src/components/Modal'
 import ContactNameNudge from '../src/components/ContactNameNudge'
 import AbandonProjectDialog from '../src/components/AbandonProjectDialog'
+import BundleCheckpoint from '../src/components/BundleCheckpoint'
+import { buildBundleCheckpoint, type CheckpointMember, type CheckpointVersion } from '../src/lib/bundleCheckpoint'
 import EditCustomerDialog from '../src/components/EditCustomerDialog'
 import ApprovedOrderStatus from '../src/components/ApprovedOrderStatus'
 import OrderBuilderModal from '../src/components/OrderBuilderModal'
@@ -638,6 +640,76 @@ function AbandonDialogRig() {
   )
 }
 
+// ?path=/bundle-checkpoint — the post-save bundle checkpoint (the "one email
+// per revision round" routing fix). Pass ?state=midround|ready|unsent
+// (default midround):
+//   midround — the Experience Auto Group shape mid-round: this card just
+//              revised, one sibling revised earlier, one still holding only
+//              what the customer has seen, one unbuilt shell. Primary must
+//              steer back to the bundle.
+//   ready    — every card carries unannounced changes: primary flips to the
+//              single bundle send (plus a ghost back-to-bundle).
+//   unsent   — a draft bundle mid-build (two shells remain).
+// The model goes through the real buildBundleCheckpoint, so the rig
+// exercises classification as well as markup.
+function BundleCheckpointRig() {
+  const state = new URLSearchParams(window.location.search).get('state') ?? 'midround'
+  const SENT = '2026-07-01T09:00:00Z'
+  const v = (
+    id: string,
+    n: number,
+    sent: string | null,
+    mat: string,
+    names: string[] = [],
+  ): CheckpointVersion => ({ id, version_number: n, material_display: mat, names, last_reply_sent_at: sent })
+  const m = (proofId: string, cv: CheckpointVersion | null): CheckpointMember => ({
+    proof_id: proofId,
+    status: 'in_progress',
+    set_discarded_at: null,
+    current_version: cv,
+  })
+  const members: CheckpointMember[] =
+    state === 'ready'
+      ? [
+          m('p1', v('v1b', 2, null, 'Stainless Steel', ['James Milner'])),
+          m('p2', v('v2b', 2, null, 'Carbon Fibre', ['Andy Robertson'])),
+          m('p3', v('v3b', 3, null, 'Letterpress')),
+        ]
+      : state === 'unsent'
+        ? [m('p1', v('v1a', 1, null, 'Stainless Steel', ['James Milner'])), m('p2', null), m('p3', null)]
+        : [
+            m('p1', v('v1b', 2, null, 'Stainless Steel', ['James Milner'])),
+            m('p2', v('v2b', 2, null, 'Carbon Fibre', ['Andy Robertson'])),
+            m('p3', v('v3a', 1, SENT, 'Letterpress')),
+            m('p4', null),
+          ]
+  const model = buildBundleCheckpoint({
+    members,
+    savedProofId: 'p1',
+    savedVersionId: state === 'unsent' ? 'v1a' : 'v1b',
+    setSentAt: state === 'unsent' ? null : SENT,
+  })
+  return (
+    <MemoryRouter>
+      <div className="min-h-screen bg-canvas p-6">
+        <div className="mx-auto max-w-2xl">
+          {model ? (
+            <BundleCheckpoint
+              model={model}
+              setId="set-1"
+              customerLabel="Experience Auto Group"
+              onSendJustThisCard={() => {}}
+            />
+          ) : (
+            <p className="text-sm text-rose-700">builder returned null — the rig fixture is wrong</p>
+          )}
+          <p className="p-6 text-xs text-ink-mute">state={state} — try ?state=ready, ?state=unsent.</p>
+        </div>
+      </div>
+    </MemoryRouter>
+  )
+}
+
 // ?path=/edit-customer-dialog — the pencil-on-the-proof-header dialog
 // (company + contact correction at the point of need). Pass
 // ?state=nocompany for a contact with no company (the company field is
@@ -906,6 +978,8 @@ const tree = requestedPath === '/order-builder' ? (
   <ApprovedOrderStatusRig />
 ) : requestedPath === '/abandon-dialog' ? (
   <AbandonDialogRig />
+) : requestedPath === '/bundle-checkpoint' ? (
+  <BundleCheckpointRig />
 ) : requestedPath === '/edit-customer-dialog' ? (
   <EditCustomerDialogRig />
 ) : requestedPath === '/contact-name-nudge' ? (

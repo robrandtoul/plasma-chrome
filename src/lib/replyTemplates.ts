@@ -245,6 +245,14 @@ export const DEFAULT_BODIES: Record<string, string> = {
   // review link: the customer keeps the one link.
   bundle_update_link:
     `Hi {first_name},\n\nWe've added another card to your review page{? company} for {company}{/?} — same link as before, with the new design ready to look over alongside the others:\n\n{url}`,
+  // Bundle revision — sent from the bundle workspace when the cards awaiting
+  // an update send include REVISED ones (a revision round), not just
+  // additions (seeded in 000386). The workspace picks this over
+  // bundle_update_link whenever any unannounced card is past v1; the
+  // post-save bundle checkpoint routes a whole revision round into ONE of
+  // these instead of an email per card. Same {url}: the one link.
+  bundle_revision_link:
+    `Hi {first_name},\n\nWe've updated the designs on your review page{? company} for {company}{/?} — same link as before, with the latest versions ready to look over:\n\n{url}`,
   // Post-action confirmations
   proof_approval_confirmation:
     `Thanks for approving {version_label}. We'll be in touch shortly about next steps.`,

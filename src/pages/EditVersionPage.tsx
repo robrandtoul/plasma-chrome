@@ -34,7 +34,9 @@ import VersionPreviewGate from '../components/VersionPreviewGate'
 import MessageSendPanel from '../components/MessageSendPanel'
 import { firstName } from '../lib/firstName'
 import { customerProofPath } from '../lib/customerProofUrl'
-import { markSetReviewLinkSent, resolveCustomerReviewLink, type CustomerReviewLink } from '../lib/proofSets'
+import { fetchBundleCheckpointMembers, markSetReviewLinkSent, resolveCustomerReviewLink, type CustomerReviewLink } from '../lib/proofSets'
+import { buildBundleCheckpoint, type BundleCheckpointModel } from '../lib/bundleCheckpoint'
+import BundleCheckpoint from '../components/BundleCheckpoint'
 
 // Materials whose physical edge construction exposes the three-
 // layer Colorplan stack (un-gilded letterpress) and therefore want
@@ -121,6 +123,41 @@ export default function EditVersionPage() {
       cancelled = true
     }
   }, [savedVersionForPreview, proofId])
+  // Bundle checkpoint state — mirrors NewVersionPage. Note the builder
+  // itself decides whether an EDIT belongs in the bundle-round flow: editing
+  // an already-ANNOUNCED current version (or a non-current one) returns a
+  // null model, because the workspace's update send wouldn't announce that
+  // card — the per-card panel is the honest way to tell the customer about
+  // an edit. Only an edit of a still-unannounced current version (saved,
+  // skipped, then touched up mid-round) joins the checkpoint flow.
+  const [bundleCheckpoint, setBundleCheckpoint] = useState<BundleCheckpointModel | null>(null)
+  const [bundleCheckpointReady, setBundleCheckpointReady] = useState(false)
+  const [bundleCheckpointBypassed, setBundleCheckpointBypassed] = useState(false)
+  useEffect(() => {
+    if (!savedVersionForPreview || !customerLink || !proofId || !versionId) return
+    if (customerLink.kind !== 'bundle') {
+      setBundleCheckpointReady(true)
+      return
+    }
+    let cancelled = false
+    void fetchBundleCheckpointMembers(customerLink.setId).then((members) => {
+      if (cancelled) return
+      setBundleCheckpoint(
+        members
+          ? buildBundleCheckpoint({
+              members,
+              savedProofId: proofId,
+              savedVersionId: versionId,
+              setSentAt: customerLink.setSentAt,
+            })
+          : null,
+      )
+      setBundleCheckpointReady(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [savedVersionForPreview, customerLink, proofId, versionId])
   // ── Variant rounds (build-plan step 5.5) ────────────────────────────────
   // EditVersionPage doesn't yet support editing variant-round versions.
   // When a variant-round version is loaded, the form renders an alert
@@ -1849,12 +1886,17 @@ export default function EditVersionPage() {
     )
   }
 
-  // Post-preview MessageSendPanel branch. Lifted into EditVersion
-  // so an edit can notify the customer the same way a new version
-  // does. Template id mirrors NewVersionPage: v1 is the first-
-  // proof intro, anything later is a revision. onSent / onSkip
-  // both land on the project detail page, same as before.
+  // Post-preview branch. Lifted into EditVersion so an edit can
+  // notify the customer the same way a new version does. A bundle
+  // member mid-round gets the BundleCheckpoint first (the builder
+  // returns null for edits of announced or non-current versions,
+  // which keep the plain panel — see the state block above);
+  // otherwise the MessageSendPanel renders as before. Template id
+  // mirrors NewVersionPage: v1 is the first-proof intro, anything
+  // later is a revision.
   if (savedVersionForPreview && previewApproved && proofId && versionId) {
+    const bundleSetId = customerLink?.kind === 'bundle' ? customerLink.setId : null
+    const showCheckpoint = bundleSetId != null && !bundleCheckpointBypassed
     const tplId: 'first_proof' | 'revision' =
       versionNumber === 1 ? 'first_proof' : 'revision'
     const customerUrl =
@@ -1870,6 +1912,9 @@ export default function EditVersionPage() {
       // (the templates carry none), so the empty value is fine.
       designer_first_name: '',
     }
+    // When the checkpoint was shown (and bypassed), the panel exits land on
+    // the bundle workspace, which tracks the round's remaining cards.
+    const panelExit = bundleSetId && bundleCheckpoint ? `/bundles/${bundleSetId}` : `/proofs/${proofId}`
     return (
       <DesignerChrome active="proofs">
       <div className="min-h-dvh bg-canvas">
@@ -1880,21 +1925,36 @@ export default function EditVersionPage() {
           </h1>
           {proofCompany && <p className="mt-1 text-sm text-ink-dim">{proofCompany}</p>}
         </div>
-        <MessageSendPanel
-          proofId={proofId}
-          versionId={versionId}
-          versionNumber={versionNumber}
-          templateId={tplId}
-          context={messageContext}
-          hasHelpScoutConversation={!!proofHelpScoutConversationId}
-          onSent={() => {
-            // The reply that just went out carried the bundle review link,
-            // so record the bundle as sent (no-op if it already was).
-            if (customerLink?.kind === 'bundle') void markSetReviewLinkSent(customerLink.setId)
-            navigate(`/proofs/${proofId}`)
-          }}
-          onSkip={() => navigate(`/proofs/${proofId}`)}
-        />
+        {showCheckpoint && !bundleCheckpointReady ? (
+          <div className="rounded-2xl bg-surface p-8 text-center shadow-sm ring-1 ring-line">
+            <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-line border-t-ink" />
+            <p className="mt-3 text-sm text-ink-soft">Checking the bundle…</p>
+          </div>
+        ) : showCheckpoint && bundleCheckpoint ? (
+          <BundleCheckpoint
+            model={bundleCheckpoint}
+            setId={bundleSetId}
+            customerLabel={proofCompany || proofName || 'the customer'}
+            onSendJustThisCard={() => setBundleCheckpointBypassed(true)}
+          />
+        ) : (
+          <MessageSendPanel
+            proofId={proofId}
+            versionId={versionId}
+            versionNumber={versionNumber}
+            templateId={tplId}
+            context={messageContext}
+            hasHelpScoutConversation={!!proofHelpScoutConversationId}
+            skipLabel={bundleSetId && bundleCheckpoint ? 'Skip — back to the bundle' : undefined}
+            onSent={() => {
+              // The reply that just went out carried the bundle review link,
+              // so record the bundle as sent (no-op if it already was).
+              if (customerLink?.kind === 'bundle') void markSetReviewLinkSent(customerLink.setId)
+              navigate(panelExit)
+            }}
+            onSkip={() => navigate(panelExit)}
+          />
+        )}
       </div>
       </div>
       </DesignerChrome>
