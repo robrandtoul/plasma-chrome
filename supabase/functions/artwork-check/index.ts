@@ -67,6 +67,7 @@ import {
   type VersionImageRowLite,
   type VersionRowLite,
 } from '../_shared/artworkCheck/investigate.ts'
+import { ACK_REASONS, ackKey, ackTargetExists, parseAckTarget } from '../_shared/artworkCheck/acks.ts'
 import { callStructured } from '../_shared/artworkCheck/anthropic.ts'
 import { threadToText } from '../_shared/artworkCheck/threadText.ts'
 import {
@@ -299,7 +300,7 @@ Deno.serve(async (req) => {
   async function ledgerRun(report: ArtworkCheckReport): Promise<void> {
     try {
       const errored = report.verdict === 'error'
-      const { error: insErr } = await admin.from('artwork_check_runs').insert({
+      const row = {
         check_kind: order ? 'order' : 'proof',
         order_id: order ? order.id : null,
         proof_version_id: order ? null : versionTarget!.id,
@@ -319,10 +320,40 @@ Deno.serve(async (req) => {
         duration_ms: Date.now() - runStartedAt,
         error: report.error ?? null,
         ran_at: report.checked_at,
-      })
-      if (insErr) console.error('[artwork-check] ledger insert failed:', insErr.message)
+      }
+      // The full report rides on the row (000385) so a re-run's overwrite of
+      // the live slot never erases what a superseded run actually said.
+      const { error: insErr } = await admin.from('artwork_check_runs').insert({ ...row, report })
+      if (insErr) {
+        // Almost certainly a pre-000385 database (no `report` column): a lost
+        // report column must not cost the run its ledger row — analytics
+        // counts every run, so retry the legacy shape before giving up.
+        console.error('[artwork-check] ledger insert failed, retrying without report:', insErr.message)
+        const { error: retryErr } = await admin.from('artwork_check_runs').insert(row)
+        if (retryErr) console.error('[artwork-check] ledger insert retry failed:', retryErr.message)
+      }
     } catch (e) {
       console.error('[artwork-check] ledger insert threw:', e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  // Mirror a mutated report (a tick landing, a tick undone, an investigation
+  // cached) onto its run-ledger row (000385), matched on order/version +
+  // ran_at = the report's checked_at — unique per run. This is what makes the
+  // ledger row the report's FINAL state rather than its at-birth state, so
+  // when a re-run replaces the live slot the superseded report keeps the
+  // ticks it had. Best-effort: a miss (pre-000385 database, or a run older
+  // than the ledger) is logged and costs only history — the live slot stays
+  // authoritative and the designer's action has already succeeded.
+  async function mirrorReportToLedger(updated: ArtworkCheckReport): Promise<void> {
+    try {
+      const q = order
+        ? admin.from('artwork_check_runs').update({ report: updated }).eq('order_id', order.id)
+        : admin.from('artwork_check_runs').update({ report: updated }).eq('proof_version_id', versionTarget!.id)
+      const { error: mirrorErr } = await q.eq('ran_at', updated.checked_at)
+      if (mirrorErr) console.error('[artwork-check] ledger mirror failed:', mirrorErr.message)
+    } catch (e) {
+      console.error('[artwork-check] ledger mirror threw:', e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -556,12 +587,84 @@ Deno.serve(async (req) => {
         investigations: { ...((report as { investigations?: Record<string, Investigation> }).investigations ?? {}), [key]: investigation },
       }
       const persisted = await persistReportPatch({ artwork_check: updated })
+      await mirrorReportToLedger(updated as ArtworkCheckReport)
       return json({ ok: true, ...respBase, key, investigation, persisted })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error('[artwork-check] investigation failed:', msg)
       return json({ ok: false, error: `The investigation couldn't run: ${msg.slice(0, 300)}` }, 502)
     }
+  }
+
+  // ── Advisory tick-off ("Mark as addressed", per acks.ts) ──────────────────
+  // Writes ONE ack entry onto the stored report (or removes one, for undo).
+  // Same lifecycle as an investigation — cached on the report, wiped by any
+  // re-run — but stricter about identity: the tick must land on exactly the
+  // item the designer read, so the client sends the report's checked_at as a
+  // concurrency token and matching is exact, never resolveReportFlag's
+  // tolerant kind. A mismatch hands back the stored report as stale_report
+  // (the shape the clients already handle for investigations).
+  const ackReq = body.acknowledge as Record<string, unknown> | undefined
+  if (ackReq) {
+    // A tick is a human judgement with a name on it — no service-role acks.
+    if (!userId) return json({ ok: false, error: 'Only a signed-in designer can tick off advisories.' }, 403)
+    const report = existingReport
+    if (!report) return json({ ok: false, error: 'Run the check first — there is no report to update.' }, 400)
+    if (report.verdict === 'error') return json({ ok: false, error: 'An errored run has no advisories to tick off — re-run the check.' }, 400)
+
+    const staleResponse = (current: ArtworkCheckReport) =>
+      json({
+        ok: false,
+        ...respBase,
+        code: 'stale_report',
+        error: 'This check has been re-run since the page loaded — the report below is the current one. Tick items off there.',
+        report: current,
+      }, 409)
+
+    const target = parseAckTarget(ackReq)
+    if (!target) return json({ ok: false, error: 'Malformed acknowledgement target.' }, 400)
+    // The token: the tick was made against THIS run's report, or not at all.
+    if (String(ackReq.checked_at ?? '') !== report.checked_at) return staleResponse(report)
+    if (!ackTargetExists(report, target)) return staleResponse(report)
+
+    const key = ackKey(target)
+    const undo = ackReq.undo === true
+    const acknowledgements = { ...(report.acknowledgements ?? {}) }
+    if (undo) {
+      delete acknowledgements[key]
+    } else {
+      const reason = ACK_REASONS.find((r) => r === ackReq.reason)
+      if (!reason) return json({ ok: false, error: 'A reason is required to mark an advisory as addressed.' }, 400)
+      const { data: prof } = await admin.from('profiles').select('full_name').eq('id', userId).maybeSingle()
+      const by = ((prof as { full_name?: string | null } | null)?.full_name ?? '').trim() || 'Designer'
+      acknowledgements[key] = { reason, by, by_id: userId, at: new Date().toISOString() }
+    }
+    const updated: ArtworkCheckReport = { ...report, acknowledgements }
+
+    // Conditional on the stored report still being the one the tick was made
+    // against, so a re-run finishing in this exact moment can't be clobbered
+    // with report-plus-tick (the reverse race — the re-run storing after us —
+    // wipes the tick wholesale, which is the intended reset).
+    const q = order
+      ? admin.from('orders').update({ artwork_check: updated }).eq('id', order.id)
+      : admin.from('proof_versions').update({ artwork_check: updated }).eq('id', versionTarget!.id)
+    const { data: updRows, error: updErr } = await q
+      .filter('artwork_check->>checked_at', 'eq', report.checked_at)
+      .select('id')
+    if (updErr) return json({ ok: false, error: `Couldn’t save the tick: ${updErr.message}` }, 500)
+    if (!Array.isArray(updRows) || updRows.length === 0) {
+      const { data: freshRow } = order
+        ? await admin.from('orders').select('artwork_check').eq('id', order.id).maybeSingle()
+        : await admin.from('proof_versions').select('artwork_check').eq('id', versionTarget!.id).maybeSingle()
+      const fresh = (freshRow as { artwork_check: ArtworkCheckReport | null } | null)?.artwork_check ?? null
+      if (fresh) return staleResponse(fresh)
+      return json({ ok: false, error: 'The stored report changed underneath this tick — reload and try again.' }, 409)
+    }
+    await mirrorReportToLedger(updated)
+    // `acknowledged: true` is the deploy-skew sentinel: a pre-ack function
+    // falls through to the cached-report path instead, and the client treats
+    // a response without this field as "the service needs its update".
+    return json({ ok: true, ...respBase, acknowledged: true, report: updated })
   }
 
   // A run already in flight wins, even over a cached report and even for a

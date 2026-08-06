@@ -58,6 +58,7 @@ import { formatPrice } from '../lib/currency'
 import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill, PanelShell, tokens } from '../design'
 import { ChevronRight, ChevronLeft, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle, Send, Eye, Flag, MessageSquare, Clock, Activity, Package, HelpCircle, ThumbsDown, ScanSearch, Repeat } from 'lucide-react'
 import ArtworkCheckReportView, { InlineSpinner, artworkVerdict, type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
+import { artworkDisplayVerdict } from '../lib/artworkAcks'
 import { useProofCheck } from '../lib/useProofCheck'
 import {
   computeViewedState,
@@ -800,6 +801,10 @@ export default function ProofDetailPage() {
     investigatingKey: pcInvestigatingKey,
     investigationError: pcInvestigationError,
     staleNotice: pcStaleNotice,
+    acknowledge: acknowledgeProofFlag,
+    unacknowledge: unacknowledgeProofFlag,
+    acknowledgingKey: pcAcknowledgingKey,
+    acknowledgeError: pcAcknowledgeError,
   } = useProofCheck(
     pcCurrentVersion?.id ?? null,
     (pcCurrentVersion?.artwork_check ?? null) as ArtworkCheckReport | null,
@@ -4322,19 +4327,18 @@ export default function ProofDetailPage() {
             (Rob, 2026-07-24). Error keeps the amber wash (no table inside). */}
         {proofCheckEnabled && currentVersion && (
           <section
-            className={`rounded-[14px] px-4 py-4 ring-1 ${
-              proofCheck.status === 'running'
-                ? 'bg-canvas/60 ring-line'
-                : proofCheck.report
-                  ? proofCheck.report.verdict === 'clear'
-                    ? 'bg-[var(--c-in-stock-soft)]/50 ring-[var(--c-in-stock)]/40'
-                    : proofCheck.report.verdict === 'defect'
-                      ? 'bg-surface ring-[var(--c-out)]/50'
-                      : proofCheck.report.verdict === 'flagged'
-                        ? 'bg-surface ring-[var(--c-low)]/60'
-                        : 'bg-low-soft ring-low'
-                  : 'bg-surface ring-line'
-            }`}
+            className={`rounded-[14px] px-4 py-4 ring-1 ${(() => {
+              if (proofCheck.status === 'running') return 'bg-canvas/60 ring-line'
+              if (!proofCheck.report) return 'bg-surface ring-line'
+              // Display verdict, not stored verdict: a report whose every
+              // advisory is ticked wears the green wash (the headline wording
+              // keeps it apart from a machine all-clear).
+              const dv = artworkDisplayVerdict(proofCheck.report)
+              if (dv === 'clear' || dv === 'addressed') return 'bg-[var(--c-in-stock-soft)]/50 ring-[var(--c-in-stock)]/40'
+              if (dv === 'defect') return 'bg-surface ring-[var(--c-out)]/50'
+              if (dv === 'flagged') return 'bg-surface ring-[var(--c-low)]/60'
+              return 'bg-low-soft ring-low'
+            })()}`}
           >
             {proofCheck.status === 'running' ? (
               <p className="flex items-center gap-2 font-medium text-ink">
@@ -4358,6 +4362,11 @@ export default function ProofDetailPage() {
                 onInvestigate={(flag) => void investigateProofFlag(flag)}
                 investigatingKey={pcInvestigatingKey}
                 investigationError={pcInvestigationError}
+                onAcknowledge={(target, reason) => void acknowledgeProofFlag(target, reason)}
+                onUnacknowledge={(target) => void unacknowledgeProofFlag(target)}
+                acknowledgingKey={pcAcknowledgingKey}
+                acknowledgeError={pcAcknowledgeError}
+                history={{ versionId: currentVersion.id }}
               />
             ) : (
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -4538,9 +4547,14 @@ export default function ProofDetailPage() {
                         {v.artwork_check_verdict && (() => {
                           const rowReport = (v.artwork_check ?? null) as ArtworkCheckReport | null
                           const verdictInfo = rowReport ? artworkVerdict(rowReport, 'Proof check') : null
-                          const pillStyle = v.artwork_check_verdict === 'clear'
+                          // Pill colour follows the DISPLAY verdict when the
+                          // report is in hand (an all-addressed report reads
+                          // green); the stored-column fallback covers rows
+                          // whose jsonb didn't load.
+                          const displayV = rowReport ? artworkDisplayVerdict(rowReport) : v.artwork_check_verdict
+                          const pillStyle = displayV === 'clear' || displayV === 'addressed'
                             ? { color: 'var(--c-in-stock)', backgroundColor: 'var(--c-in-stock-soft)' }
-                            : v.artwork_check_verdict === 'defect'
+                            : displayV === 'defect'
                               ? { color: 'var(--c-out)', backgroundColor: 'var(--c-out-soft)' }
                               : { color: 'var(--c-low)', backgroundColor: 'var(--c-low-soft)' }
                           return (
@@ -4975,6 +4989,7 @@ export default function ProofDetailPage() {
               <ArtworkCheckReportView
                 report={versionReportModal.artwork_check as ArtworkCheckReport}
                 heading="Proof check"
+                history={{ versionId: versionReportModal.id }}
               />
             ) : (
               <p className="text-sm text-ink-mute">The stored report for this version couldn’t be read.</p>

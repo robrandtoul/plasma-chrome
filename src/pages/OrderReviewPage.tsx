@@ -7,7 +7,8 @@ import Modal from '../components/Modal'
 import { logAudit } from '../lib/audit'
 import ArtworkCheckReportView, { InlineSpinner, artworkCheckAuditFields, type ArtworkCheckReport, type ArtworkFlagRef } from '../components/ArtworkCheckReportView'
 import HoldOrderDialog from '../components/HoldOrderDialog'
-import { mergeInvestigation, requestInvestigation } from '../lib/useProofCheck'
+import { mergeInvestigation, requestAcknowledge, requestInvestigation } from '../lib/useProofCheck'
+import { ackKey, artworkDisplayVerdict, type AckReason, type AckTarget } from '../lib/artworkAcks'
 import { scopeToOrderedFinish, finishScopeIsUncertain, type FinishScopeOutcome } from '../lib/approvedArtworkFinish'
 import { extractQtyLineValue } from '../lib/handoffQty'
 import {
@@ -593,6 +594,39 @@ export default function OrderReviewPage() {
       }
     } finally {
       setInvestigatingKey(null)
+    }
+  }
+
+  // Per-advisory "Mark as addressed" tick (see ArtworkCheckReportView) —
+  // server writes it onto the stored report; the returned report replaces the
+  // local one. A stale answer (the check was re-run underneath) swaps in the
+  // stored report exactly like investigate does.
+  const [acknowledgingKey, setAcknowledgingKey] = useState<string | null>(null)
+  const [acknowledgeError, setAcknowledgeError] = useState<{ key: string; message: string } | null>(null)
+
+  async function setFlagAcknowledged(target: AckTarget, reason: AckReason | null, undo: boolean) {
+    const report = artworkCheck.report
+    if (!id || !report) return
+    const key = ackKey(target)
+    setAcknowledgingKey(key)
+    setAcknowledgeError(null)
+    try {
+      const out = await requestAcknowledge(
+        { order_id: id },
+        { target, ...(undo ? { undo: true } : { reason: reason ?? undefined }), checkedAt: report.checked_at },
+      )
+      if (out.report) {
+        const fresh = out.report
+        setArtworkCheck((prev) => ({ ...prev, status: 'done', report: fresh }))
+      } else if (out.staleReport) {
+        const fresh = out.staleReport
+        setArtworkCheck((prev) => ({ ...prev, status: 'done', report: fresh }))
+        setStaleNotice(out.message ?? 'This check has been re-run — the items below are the current ones.')
+      } else {
+        setAcknowledgeError({ key, message: out.message ?? 'Couldn’t save that — try again.' })
+      }
+    } finally {
+      setAcknowledgingKey(null)
     }
   }
 
@@ -1318,17 +1352,17 @@ export default function OrderReviewPage() {
                 every row look flagged), amber wash for error only. */}
             {showArtworkCard && (
               <div
-                className={`mt-4 rounded-lg px-3.5 py-3 ring-1 ${
-                  artworkCheck.status === 'running' || !artworkReport
-                    ? 'bg-canvas/60 ring-line'
-                    : artworkReport.verdict === 'clear'
-                      ? 'bg-[var(--c-in-stock-soft)]/50 ring-[var(--c-in-stock)]/40'
-                      : artworkReport.verdict === 'defect'
-                        ? 'bg-surface ring-[var(--c-out)]/50'
-                        : artworkReport.verdict === 'flagged'
-                          ? 'bg-surface ring-[var(--c-low)]/60'
-                          : 'bg-low-soft ring-low'
-                }`}
+                className={`mt-4 rounded-lg px-3.5 py-3 ring-1 ${(() => {
+                  if (artworkCheck.status === 'running' || !artworkReport) return 'bg-canvas/60 ring-line'
+                  // Display verdict, not stored verdict: an all-addressed
+                  // report wears the green wash (the headline wording keeps
+                  // it apart from a machine all-clear).
+                  const dv = artworkDisplayVerdict(artworkReport)
+                  if (dv === 'clear' || dv === 'addressed') return 'bg-[var(--c-in-stock-soft)]/50 ring-[var(--c-in-stock)]/40'
+                  if (dv === 'defect') return 'bg-surface ring-[var(--c-out)]/50'
+                  if (dv === 'flagged') return 'bg-surface ring-[var(--c-low)]/60'
+                  return 'bg-low-soft ring-low'
+                })()}`}
               >
                 {artworkCheck.status === 'running' ? (
                   <p className="flex items-center gap-2 font-medium text-ink">
@@ -1351,6 +1385,11 @@ export default function OrderReviewPage() {
                     onInvestigate={(flag) => void investigateFlag(flag)}
                     investigatingKey={investigatingKey}
                     investigationError={investigationError}
+                    onAcknowledge={(target, reason) => void setFlagAcknowledged(target, reason, false)}
+                    onUnacknowledge={(target) => void setFlagAcknowledged(target, null, true)}
+                    acknowledgingKey={acknowledgingKey}
+                    acknowledgeError={acknowledgeError}
+                    history={{ orderId: id }}
                     // Not offered while the order is already held: a second
                     // hold would overwrite a colleague's reason with this
                     // flag's, and the band above already says what to do next.

@@ -16,7 +16,8 @@ import { downloadBlob } from '../lib/downloadFile'
 import { signThumbnails, type ThumbInfo } from '../lib/thumbnails'
 import type { Currency } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
-import { mergeInvestigation, requestInvestigation } from '../lib/useProofCheck'
+import { mergeInvestigation, requestAcknowledge, requestInvestigation } from '../lib/useProofCheck'
+import { ackKey, type AckReason, type AckTarget } from '../lib/artworkAcks'
 import { holdState, holdBlockReason, repliedLine, HOLD_COPY } from '../lib/orderHolds'
 import OrderBuilderModal from '../components/OrderBuilderModal'
 import GroupOrdersModal, { type GroupCandidate } from '../components/GroupOrdersModal'
@@ -878,6 +879,35 @@ export default function OrdersPage() {
       setInvestigationError({ key, message: out.message ?? 'The investigation couldn’t run — try again.' })
     }
     setInvestigatingKey(null)
+  }
+
+  // Per-advisory "Mark as addressed" tick from the archive modal — same
+  // adjudication the review page offers, so a designer working the queue
+  // doesn't have to reopen the Place-order screen just to tick a flag off.
+  const [acknowledgingKey, setAcknowledgingKey] = useState<string | null>(null)
+  const [acknowledgeError, setAcknowledgeError] = useState<{ key: string; message: string } | null>(null)
+
+  async function acknowledgeFromModal(orderId: string, target: AckTarget, reason: AckReason | null, undo: boolean) {
+    const report = artworkReportModal?.report
+    if (!report) return
+    const key = ackKey(target)
+    setAcknowledgingKey(key)
+    setAcknowledgeError(null)
+    const out = await requestAcknowledge(
+      { order_id: orderId },
+      { target, ...(undo ? { undo: true } : { reason: reason ?? undefined }), checkedAt: report.checked_at },
+    )
+    if (out.report) {
+      const fresh = out.report
+      setArtworkReportModal((m) => m && { ...m, report: fresh })
+    } else if (out.staleReport) {
+      const fresh = out.staleReport
+      setArtworkReportModal((m) => m && { ...m, report: fresh })
+      setStaleNotice(out.message ?? 'This check has been re-run — the items below are the current ones.')
+    } else {
+      setAcknowledgeError({ key, message: out.message ?? 'Couldn’t save that — try again.' })
+    }
+    setAcknowledgingKey(null)
   }
   // The awaiting-payment order being recorded as paid offline (bank transfer),
   // or null when the modal is closed.
@@ -2770,6 +2800,11 @@ export default function OrdersPage() {
                   onInvestigate={(flag) => void investigateFlag(artworkReportModal.orderId, flag)}
                   investigatingKey={investigatingKey}
                   investigationError={investigationError}
+                  onAcknowledge={(target, reason) => void acknowledgeFromModal(artworkReportModal.orderId, target, reason, false)}
+                  onUnacknowledge={(target) => void acknowledgeFromModal(artworkReportModal.orderId, target, null, true)}
+                  acknowledgingKey={acknowledgingKey}
+                  acknowledgeError={acknowledgeError}
+                  history={{ orderId: artworkReportModal.orderId }}
                 />
               ) : (
                 <p className="text-sm text-ink-mute">No stored report for this order yet — open its Place order screen to run one.</p>

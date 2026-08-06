@@ -154,6 +154,12 @@ export interface ArtworkCheckReport extends ModelReport {
   // field) — see investigate.ts. Deliberately discarded by a force re-run of
   // the main check (new report, new flags).
   investigations?: Record<string, import('./investigate.ts').Investigation>
+  // Per-advisory "Mark as addressed" ticks, keyed ackKey(target) — see
+  // acks.ts. Same lifecycle as investigations: a re-run wipes them (new
+  // report, new judgement). The stored `verdict` is NEVER rewritten by a tick
+  // — it stays the machine's own answer (the 000357/000358 analytics depend
+  // on that); "all addressed" is derived at render time.
+  acknowledgements?: Record<string, import('./acks.ts').AckEntry>
   // The deterministic checks this run performed, pass or fail. Absent on
   // reports stored before this shipped — the UI shows nothing rather than
   // claiming an old run was checked or wasn't.

@@ -3,7 +3,18 @@
 // report modal (the in-app archive). Renders its own verdict headline (icon +
 // text, with an optional right-side action like Re-run) so both surfaces stay
 // identical and can't drift.
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { supabase } from '../lib/supabase'
+import {
+  ACK_REASONS,
+  ACK_REASON_LABELS,
+  ackKey,
+  ackProgress,
+  hasFixedAcks,
+  type AckEntry,
+  type AckReason,
+  type AckTarget,
+} from '../lib/artworkAcks'
 
 export interface ArtworkFinding {
   field: string
@@ -60,6 +71,12 @@ export interface ArtworkCheckReport {
   checked_at: string
   error?: string
   investigations?: Record<string, ArtworkInvestigation>
+  // Per-advisory "Mark as addressed" ticks (src/lib/artworkAcks.ts) — same
+  // lifecycle as investigations: keyed per item on THIS report, wiped by any
+  // re-run. The stored verdict is never rewritten by a tick; the "all
+  // addressed" green is derived at render time and worded apart from the
+  // machine's own "all clear".
+  acknowledgements?: Record<string, AckEntry>
   // Absent on reports stored before this shipped — those render no "Checks
   // run" group at all, rather than implying the run did or didn't do it.
   checks?: ArtworkCheckSummary[]
@@ -111,23 +128,33 @@ export function artworkFlagCount(report: ArtworkCheckReport): number {
 // The run ledger (000357) makes the sequence reconstructable, but only this
 // says what was on screen under their cursor.
 export function artworkCheckAuditFields(report: ArtworkCheckReport | null): Record<string, unknown> {
-  if (!report) return { check_ran: false, check_verdict: null, check_flags: 0, check_defects: 0 }
+  if (!report) return { check_ran: false, check_verdict: null, check_flags: 0, check_defects: 0, check_flags_addressed: 0 }
   return {
     check_ran: true,
     check_verdict: report.verdict,
     // Both are 0 on an errored report (it carries no cards or corrections).
     check_flags: artworkFlagCount(report),
     check_defects: artworkDefectCount(report),
+    // How many of those the designer had ticked off when they acted — the
+    // verdict alone can't distinguish "acted on a flagged report" from
+    // "acted after working every flag".
+    check_flags_addressed: ackProgress(report).addressed,
   }
 }
 
-export function artworkCheckedAtLabel(report: ArtworkCheckReport): string {
-  return new Date(report.checked_at).toLocaleString('en-GB', {
+// One short timestamp format for the whole report — the footer's "Checked …"
+// and each tick's "· Donna, 05 Aug, 14:02" read alike.
+function shortWhen(iso: string): string {
+  return new Date(iso).toLocaleString('en-GB', {
     day: '2-digit',
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+export function artworkCheckedAtLabel(report: ArtworkCheckReport): string {
+  return shortWhen(report.checked_at)
 }
 
 // The verdict icon + headline text, shared so the review card and the archive
@@ -136,11 +163,29 @@ export function artworkCheckedAtLabel(report: ArtworkCheckReport): string {
 // "Proof check".
 export function artworkVerdict(report: ArtworkCheckReport, heading = 'Artwork check'): { icon: string; text: string } {
   if (report.verdict === 'clear') return { icon: '✅', text: `${heading} — all clear` }
-  if (report.verdict === 'defect') {
-    const n = artworkDefectCount(report)
-    return { icon: '❌', text: `${heading} — ${n} item${n === 1 ? ' looks' : 's look'} wrong` }
-  }
-  if (report.verdict === 'flagged') {
+  if (report.verdict === 'defect' || report.verdict === 'flagged') {
+    const prog = ackProgress(report)
+    // Every advisory ticked by hand goes green — but NEVER as "all clear",
+    // which is the machine's own verdict and this isn't it. The wording is
+    // the only thing keeping the two greens apart; don't converge them.
+    if (prog.total > 0 && prog.open === 0) {
+      return {
+        icon: '✅',
+        text: `${heading} — ${prog.total === 1 ? 'the advisory' : `all ${prog.total} advisories`} addressed`,
+      }
+    }
+    // Mid-worklist the headline counts down what's LEFT, and the icon tracks
+    // the severity of what's left — ticking the only defect drops ❌ to ⚠️.
+    if (prog.addressed > 0) {
+      return {
+        icon: prog.openDefects > 0 ? '❌' : '⚠️',
+        text: `${heading} — ${prog.open} of ${prog.total} still to check`,
+      }
+    }
+    if (report.verdict === 'defect') {
+      const n = artworkDefectCount(report)
+      return { icon: '❌', text: `${heading} — ${n} item${n === 1 ? ' looks' : 's look'} wrong` }
+    }
     const n = artworkFlagCount(report)
     return { icon: '⚠️', text: `${heading} — ${n} thing${n === 1 ? '' : 's'} to check` }
   }
@@ -176,6 +221,11 @@ export default function ArtworkCheckReportView({
   investigatingKey,
   investigationError,
   onHoldFromFlag,
+  onAcknowledge,
+  onUnacknowledge,
+  acknowledgingKey,
+  acknowledgeError,
+  history,
 }: {
   report: ArtworkCheckReport
   // Names the check in the headline — defaults to "Artwork check" (the
@@ -204,14 +254,126 @@ export default function ArtworkCheckReportView({
   // proof check leave it out, so nothing renders there: an archived report has
   // no order left to hold, and a proof hasn't been paid for yet.
   onHoldFromFlag?: (flag: ArtworkFlagRef) => void
+  // When provided, each advisory offers "Mark as addressed" — the per-item
+  // tick with a reason (fixed / intentional / misread), attributed to whoever
+  // ticked it, plus Undo. One tick per advisory, deliberately: a single
+  // clear-the-lot button is exactly the thing that gets pressed unread, and
+  // per-item is what makes the worklist a worklist. Read-only archives leave
+  // these out — stored ticks still render there, they just can't be changed.
+  onAcknowledge?: (target: AckTarget, reason: AckReason) => void
+  onUnacknowledge?: (target: AckTarget) => void
+  acknowledgingKey?: string | null
+  acknowledgeError?: { key: string; message: string } | null
+  // When provided, a "Previous runs" disclosure renders under the footer,
+  // backed by the 000385 run ledger: every earlier run for this order/version,
+  // each opening its full stored report read-only (ticks included — the ledger
+  // row holds each report's final state). Hidden entirely when the ledger has
+  // no earlier rows or the database predates 000385.
+  history?: { orderId?: string; versionId?: string }
 }) {
-  // Defect-grade flags first — the red items are what the reviewer must see.
+  // Which advisory's reason picker is open (one at a time; ackKey-keyed).
+  const [reasonPickerKey, setReasonPickerKey] = useState<string | null>(null)
+  const acks = report.acknowledgements ?? {}
+  // Open items first (defect-grade leading — the red items are what the
+  // reviewer must see), addressed items sink to the bottom of their list so
+  // the worklist reads top-down.
   const flags = report.cards.flatMap((c) =>
-    c.findings.filter((f) => f.status === 'flag').map((f) => ({ card: c.label, ...f })))
-    .sort((a, b) => (a.severity === 'defect' ? 0 : 1) - (b.severity === 'defect' ? 0 : 1))
-  const correctionsOpen = report.corrections.filter((c) => !c.resolved)
+    c.findings.filter((f) => f.status === 'flag').map((f) => {
+      const target: AckTarget = { kind: 'finding', card: c.label, field: f.field, printed: f.printed }
+      const key = ackKey(target)
+      return { card: c.label, ...f, target, key, ack: acks[key] as AckEntry | undefined }
+    }))
+    .sort((a, b) =>
+      (a.ack ? 1 : 0) - (b.ack ? 1 : 0) ||
+      (a.severity === 'defect' ? 0 : 1) - (b.severity === 'defect' ? 0 : 1))
+  const correctionItems = report.corrections
+    .filter((c) => !c.resolved)
+    .map((c) => {
+      const target: AckTarget = { kind: 'correction', quote: c.quote }
+      const key = ackKey(target)
+      return { ...c, target, key, ack: acks[key] as AckEntry | undefined }
+    })
+    .sort((a, b) => (a.ack ? 1 : 0) - (b.ack ? 1 : 0))
   const fieldsChecked = report.cards.reduce((s, c) => s + c.findings.length, 0)
   const { icon, text } = artworkVerdict(report, heading)
+  const prog = ackProgress(report)
+  const allAddressed = prog.total > 0 && prog.open === 0
+
+  // The three tick pieces one advisory carries — shared by the flag blocks
+  // and the correction blocks so the two can't drift. `button` joins the
+  // item's action row; `picker` and `status` render as their own rows.
+  type AckItem = { target: AckTarget; key: string; ack: AckEntry | undefined }
+  function ackStatusLine(item: AckItem) {
+    if (!item.ack) return null
+    const busy = acknowledgingKey === item.key
+    return (
+      <p className="mt-1.5 text-[13px]">
+        <span className="font-medium text-in-stock">✓ Addressed — {ACK_REASON_LABELS[item.ack.reason]}</span>
+        <span className="text-ink-mute"> · {item.ack.by}, {shortWhen(item.ack.at)}</span>
+        {onUnacknowledge && (
+          <button
+            type="button"
+            onClick={() => onUnacknowledge(item.target)}
+            disabled={!!acknowledgingKey}
+            className="ml-3 text-[12px] font-medium text-ink-mute hover:underline disabled:opacity-50"
+          >
+            {busy && <InlineSpinner className="mr-1 h-3 w-3" />}
+            Undo
+          </button>
+        )}
+      </p>
+    )
+  }
+  function ackButton(item: AckItem) {
+    if (!onAcknowledge || item.ack || reasonPickerKey === item.key) return null
+    const busy = acknowledgingKey === item.key
+    return (
+      <button
+        type="button"
+        onClick={() => setReasonPickerKey(item.key)}
+        disabled={!!acknowledgingKey}
+        className="text-[13px] font-medium text-brand hover:underline disabled:opacity-50"
+      >
+        {busy && <InlineSpinner className="mr-1.5 h-3 w-3" />}
+        {busy ? 'Saving…' : 'Mark as addressed'}
+      </button>
+    )
+  }
+  function ackPicker(item: AckItem) {
+    if (!onAcknowledge || item.ack || reasonPickerKey !== item.key) return null
+    // Picking the reason IS the tick — the reason is what makes the record
+    // worth anything (and, in aggregate, what tunes the check's allow-list).
+    return (
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+        <span className="text-[12px] text-ink-mute">Addressed how?</span>
+        {ACK_REASONS.map((r) => (
+          <button
+            key={r}
+            type="button"
+            onClick={() => {
+              setReasonPickerKey(null)
+              onAcknowledge(item.target, r)
+            }}
+            disabled={!!acknowledgingKey}
+            className="rounded-full px-2.5 py-1 text-[12px] font-medium text-ink ring-1 ring-line hover:bg-canvas disabled:opacity-50"
+          >
+            {ACK_REASON_LABELS[r]}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => setReasonPickerKey(null)}
+          className="text-[12px] text-ink-mute hover:underline"
+        >
+          Cancel
+        </button>
+      </div>
+    )
+  }
+  function ackErrorLine(item: AckItem) {
+    if (acknowledgeError?.key !== item.key) return null
+    return <p className="mt-1 text-[13px] text-out">{acknowledgeError.message}</p>
+  }
 
   return (
     <div className="text-[14px] leading-relaxed text-ink">
@@ -252,16 +414,26 @@ export default function ArtworkCheckReportView({
                   {c.findings.map((f, j) => {
                     const isFlag = f.status === 'flag'
                     const isDefect = isFlag && f.severity === 'defect'
+                    // A ticked flag row drops its warning tint and shows a GREY
+                    // tick — deliberately not the machine-match green, so a
+                    // human judgement never reads as a machine verification.
+                    const rowAck = isFlag
+                      ? acks[ackKey({ kind: 'finding', card: c.label, field: f.field, printed: f.printed })]
+                      : undefined
                     return (
                       <div
                         key={j}
                         className={`grid grid-cols-[minmax(72px,0.9fr)_1.3fr_1.3fr] gap-x-3 px-2.5 py-1.5 text-[13px] ${
                           j > 0 ? 'border-t border-line-soft' : ''
-                        } ${isDefect ? 'bg-out-soft/40' : isFlag ? 'bg-[var(--c-low-soft)]/40' : ''}`}
+                        } ${rowAck ? '' : isDefect ? 'bg-out-soft/40' : isFlag ? 'bg-[var(--c-low-soft)]/40' : ''}`}
                       >
                         <span className="break-words font-medium text-ink">
-                          <span aria-hidden="true" className={`mr-1 ${f.status === 'match' ? 'text-in-stock' : ''}`}>
-                            {isFlag ? (isDefect ? '❌' : '⚠️') : f.status === 'match' ? '✓' : '—'}
+                          <span
+                            aria-hidden="true"
+                            title={rowAck ? 'Marked as addressed' : undefined}
+                            className={`mr-1 ${f.status === 'match' ? 'text-in-stock' : rowAck ? 'text-ink-mute' : ''}`}
+                          >
+                            {isFlag ? (rowAck ? '✓' : isDefect ? '❌' : '⚠️') : f.status === 'match' ? '✓' : '—'}
                           </span>
                           {f.field.replace(/_/g, ' ')}
                         </span>
@@ -282,20 +454,26 @@ export default function ArtworkCheckReportView({
       {flags.length > 0 && (
         <ul className="mt-3 space-y-2.5">
           {flags.map((f, i) => {
-            const key = investigationKey(f.card, f.field)
-            const inv = report.investigations?.[key]
-            const busy = investigatingKey === key
-            const invError = investigationError?.key === key ? investigationError.message : null
+            const invKey = investigationKey(f.card, f.field)
+            const inv = report.investigations?.[invKey]
+            const busy = investigatingKey === invKey
+            const invError = investigationError?.key === invKey ? investigationError.message : null
             const defect = f.severity === 'defect'
+            // Addressed items calm down — green rule, muted heading — but the
+            // finding itself stays readable: the tick records a judgement, it
+            // doesn't erase the evidence the judgement was about.
+            const done = !!f.ack
             return (
               <li
                 key={i}
                 className={`break-words rounded-lg border-l-[3px] py-2 pl-3 pr-2 ${
-                  defect ? 'border-out bg-out-soft/40' : 'border-low bg-[var(--c-low-soft)]/40'
+                  done
+                    ? 'border-[var(--c-in-stock)]/60 bg-canvas/50'
+                    : defect ? 'border-out bg-out-soft/40' : 'border-low bg-[var(--c-low-soft)]/40'
                 }`}
               >
-                <p className="font-semibold">
-                  <span className="mr-1">{defect ? '❌' : '⚠️'}</span>
+                <p className={`font-semibold ${done ? 'text-ink-soft' : ''}`}>
+                  <span aria-hidden="true" className={`mr-1 ${done ? 'text-in-stock' : ''}`}>{done ? '✓' : defect ? '❌' : '⚠️'}</span>
                   {f.card} · {f.field.replace(/_/g, ' ')}
                 </p>
                 <p className="mt-1 text-ink-soft">
@@ -303,6 +481,7 @@ export default function ArtworkCheckReportView({
                   {f.supplied && <> vs supplied <span className="font-mono text-[12.5px]">“{f.supplied}”</span></>}
                 </p>
                 {f.note && <p className="mt-1 text-ink-soft">{f.note}</p>}
+                {ackStatusLine(f)}
                 {inv && (
                   <div className="mt-2 rounded-lg border border-line-soft bg-canvas/70 px-3 py-2">
                     <p className="text-[13px] font-semibold text-ink">History: {FAULT_LABELS[inv.fault]}</p>
@@ -323,13 +502,16 @@ export default function ArtworkCheckReportView({
                     )}
                   </div>
                 )}
-                {/* The two things a reviewer can do with a flag: understand it,
-                    or stop the order while they ask. Investigate drops away once
-                    its history is on screen (it has answered itself); holding
-                    stays offered either way, because reading the history is
-                    often exactly what makes someone decide to ask. */}
-                {(onInvestigate && !inv) || onHoldFromFlag ? (
+                {/* The things a reviewer can do with an open flag: tick it off,
+                    understand it, or stop the order while they ask. Investigate
+                    drops away once its history is on screen (it has answered
+                    itself); holding stays offered either way, because reading
+                    the history is often exactly what makes someone decide to
+                    ask. An addressed flag hides the row — it's done; Undo
+                    brings the controls back. */}
+                {!done && ((onInvestigate && !inv) || onHoldFromFlag || onAcknowledge) ? (
                   <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                    {ackButton(f)}
                     {onInvestigate && !inv && (
                       <button
                         type="button"
@@ -366,6 +548,8 @@ export default function ArtworkCheckReportView({
                     )}
                   </div>
                 ) : null}
+                {!done && ackPicker(f)}
+                {ackErrorLine(f)}
                 {invError && <p className="mt-1 text-[13px] text-out">{invError}</p>}
               </li>
             )
@@ -373,23 +557,30 @@ export default function ArtworkCheckReportView({
         </ul>
       )}
 
-      {correctionsOpen.length > 0 && (
+      {correctionItems.length > 0 && (
         <ul className="mt-3 space-y-2.5">
-          {correctionsOpen.map((c, i) => {
+          {correctionItems.map((c, i) => {
             const defect = c.severity === 'defect'
+            const done = !!c.ack
             return (
               <li
                 key={i}
                 className={`break-words rounded-lg border-l-[3px] py-2 pl-3 pr-2 ${
-                  defect ? 'border-out bg-out-soft/40' : 'border-low bg-[var(--c-low-soft)]/40'
+                  done
+                    ? 'border-[var(--c-in-stock)]/60 bg-canvas/50'
+                    : defect ? 'border-out bg-out-soft/40' : 'border-low bg-[var(--c-low-soft)]/40'
                 }`}
               >
-                <p className="font-semibold">
-                  <span className="mr-1">{defect ? '❌' : '⚠️'}</span>
+                <p className={`font-semibold ${done ? 'text-ink-soft' : ''}`}>
+                  <span aria-hidden="true" className={`mr-1 ${done ? 'text-in-stock' : ''}`}>{done ? '✓' : defect ? '❌' : '⚠️'}</span>
                   Customer correction not picked up
                 </p>
                 <p className="mt-1 text-ink-soft">“{c.quote}”</p>
                 {c.note && <p className="mt-1 text-ink-soft">{c.note}</p>}
+                {ackStatusLine(c)}
+                {!done && onAcknowledge && <div className="mt-1.5">{ackButton(c)}</div>}
+                {!done && ackPicker(c)}
+                {ackErrorLine(c)}
               </li>
             )
           })}
@@ -466,13 +657,143 @@ export default function ArtworkCheckReportView({
 
       <p className="mt-4 border-t border-line-soft pt-2.5 text-[12px] text-ink-mute">
         {report.verdict !== 'error' && fieldsChecked > 0 && `${fieldsChecked} field${fieldsChecked === 1 ? '' : 's'} compared. `}
-        {report.verdict === 'defect' &&
+        {/* Once every advisory is ticked, the "resolve before placing" lines
+            stand down — but the footer still says what the ticks are: a
+            human's sign-off layered ON the check, not the check changing its
+            mind. */}
+        {allAddressed &&
+          `${prog.total === 1 ? 'The advisory has' : `All ${prog.total} advisories have`} been marked addressed by hand — the check’s own findings above are unchanged. `}
+        {!allAddressed && report.verdict === 'defect' &&
           (artworkDefectCount(report) === 1
             ? 'The ❌ item looks wrong outright — resolve it before placing. Everything here stays advisory. '
             : 'The ❌ items look wrong outright — resolve them before placing. Everything here stays advisory. ')}
-        {report.verdict === 'flagged' && 'Flags are advisory — review them, then place the order when you’re satisfied. '}
+        {!allAddressed && report.verdict === 'flagged' && 'Flags are advisory — review them, then place the order when you’re satisfied. '}
+        {/* "Fixed" means the artwork changed under this report — the honest
+            close-out of a fix is the re-run that confirms it. Only nudged on
+            interactive surfaces (archives have no Re-run to offer). */}
+        {onAcknowledge && hasFixedAcks(report) &&
+          'Items marked “Fixed in the artwork” changed what was checked — re-run the check to confirm the fix. '}
         Checked {artworkCheckedAtLabel(report)}.
       </p>
+
+      {history && (
+        <PreviousRunsSection history={history} currentCheckedAt={report.checked_at} heading={heading ?? 'Artwork check'} />
+      )}
+    </div>
+  )
+}
+
+// ── Previous runs (migration 000385) ─────────────────────────────────────────
+// The run ledger keeps each superseded report's FINAL state (the artwork-check
+// function mirrors ticks and investigations onto the run's row), so "what did
+// the check say before the fix, and who dismissed what" stays answerable after
+// a re-run overwrites the live slot. Renders nothing when there are no earlier
+// runs — and degrades to nothing on a pre-000385 database, where selecting the
+// `report` column errors (the blanks-candidates idiom: an unmigrated DB just
+// hides the feature).
+interface HistoryRunRow {
+  id: string
+  ran_at: string
+  verdict: string
+  flag_count: number
+  defect_count: number
+  error: string | null
+  report: ArtworkCheckReport | null
+}
+
+function PreviousRunsSection({
+  history,
+  currentCheckedAt,
+  heading,
+}: {
+  history: { orderId?: string; versionId?: string }
+  currentCheckedAt: string
+  heading: string
+}) {
+  const [rows, setRows] = useState<HistoryRunRow[]>([])
+  const [expanded, setExpanded] = useState(false)
+  const [openId, setOpenId] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setRows([])
+    setExpanded(false)
+    setOpenId(null)
+    const id = history.orderId ?? history.versionId
+    if (!id) return
+    void supabase
+      .from('artwork_check_runs')
+      .select('id, ran_at, verdict, flag_count, defect_count, error, report')
+      .eq(history.orderId ? 'order_id' : 'proof_version_id', id)
+      .order('ran_at', { ascending: false })
+      .limit(25)
+      .then(({ data, error }) => {
+        if (cancelled || error || !Array.isArray(data)) return
+        // The newest row IS the report on screen — filtered by timestamp value
+        // (parsed, not string-compared: PostgREST serialises +00:00 where the
+        // report's checked_at says Z).
+        const current = Date.parse(currentCheckedAt)
+        setRows((data as HistoryRunRow[]).filter((r) => Date.parse(r.ran_at) !== current))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [history.orderId, history.versionId, currentCheckedAt])
+
+  if (rows.length === 0) return null
+
+  return (
+    <div className="mt-3 border-t border-line-soft pt-2.5">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="text-[12px] font-medium text-ink-mute hover:text-ink hover:underline"
+      >
+        {expanded ? 'Hide previous runs' : `Previous runs (${rows.length})`}
+      </button>
+      {expanded && (
+        <ul className="mt-2 space-y-1.5">
+          {rows.map((r) => {
+            const open = openId === r.id
+            const icon = r.verdict === 'clear' ? '✅' : r.verdict === 'defect' ? '❌' : '⚠️'
+            const summary =
+              r.verdict === 'error'
+                ? 'couldn’t run'
+                : r.verdict === 'clear'
+                  ? 'all clear'
+                  : `${r.flag_count} advisor${r.flag_count === 1 ? 'y' : 'ies'}${r.defect_count > 0 ? ` (${r.defect_count} ❌)` : ''}`
+            return (
+              <li key={r.id} className="text-[13px]">
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <span aria-hidden="true">{icon}</span>
+                  <span className="text-ink-soft">{shortWhen(r.ran_at)}</span>
+                  <span className="text-ink-mute">{summary}</span>
+                  {r.report ? (
+                    <button
+                      type="button"
+                      onClick={() => setOpenId(open ? null : r.id)}
+                      className="text-[12px] font-medium text-brand hover:underline"
+                    >
+                      {open ? 'Hide' : 'View'}
+                    </button>
+                  ) : (
+                    // Runs recorded before 000385 kept only their numbers.
+                    <span className="text-[12px] italic text-ink-mute">report not kept</span>
+                  )}
+                </div>
+                {open && r.report && (
+                  // Read-only by construction: no handlers, so its ticks
+                  // render frozen; and no history prop, so nesting stops at
+                  // one level.
+                  <div className="mt-2 rounded-lg border border-line-soft bg-canvas/50 px-3 py-2.5">
+                    <ArtworkCheckReportView report={r.report} heading={heading} />
+                  </div>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      )}
     </div>
   )
 }

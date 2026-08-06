@@ -206,6 +206,23 @@ interface SpendBucket {
   cache_write_tokens: number
 }
 
+// Advisory tick-off feedback (migration 000385 + PR #637). Windowed by each
+// tick's own timestamp, not the run's — ticking an old report today is
+// today's feedback. "incorrect" ("the check misread it") is the load-bearing
+// category: it's the over-flagging signal that tunes the check's rules.
+interface CheckAckReasonCounts {
+  fixed: number
+  intentional: number
+  incorrect: number
+}
+interface CheckAckStats {
+  ticked_total: number
+  reports_with_ticks: number
+  by_reason: CheckAckReasonCounts
+  misread_by_field: { field: string; count: number }[]
+  recent_misread: { at: string; kind: 'order' | 'proof'; field: string; printed: string; supplied: string; card: string }[]
+}
+
 interface ArtworkCheckStats {
   days: number
   since: string
@@ -216,6 +233,8 @@ interface ArtworkCheckStats {
   by_person: CheckPersonRow[]
   weekly: CheckWeekRow[]
   daily?: CheckDayRow[]
+  // Absent until 000385 is applied — the panel hides itself.
+  acks?: CheckAckStats
   // `from` is the effective start: the later of the window edge and the first
   // pre-send check ever run, so versions that predate the feature don't sit in
   // the denominator making uptake look worse than it is.
@@ -1312,6 +1331,8 @@ function ArtworkChecksSection({
 
       <CheckSpendPanel spend={spend} fxRates={fxRates} />
 
+      <AdvisoryFeedbackPanel acks={stats.acks} />
+
       <p className="text-xs text-ink-mute">
         {t.orders_checked} order{t.orders_checked === 1 ? '' : 's'} and {t.versions_checked} proof version
         {t.versions_checked === 1 ? '' : 's'} were checked in this window.
@@ -1319,6 +1340,97 @@ function ArtworkChecksSection({
         earlier reports survive, but who ran them was never stored.
       </p>
     </div>
+  )
+}
+
+// The advisory tick-off feedback (migration 000385 + PR #637) — what happens
+// to the advisories the check raises. Each "Mark as addressed" tick records a
+// reason, and the reason mix is the check's tuning loop: "the check misread
+// it" clustering on a field is an over-flagging pattern for the don't-over-
+// flag rules; "fixed in the artwork" is the check earning its keep. Renders
+// nothing until 000385 is applied (the RPC payload simply lacks the key).
+const ACK_REASON_META: { key: keyof CheckAckReasonCounts; label: string; colour: string }[] = [
+  { key: 'fixed', label: 'Fixed in the artwork', colour: 'var(--c-in-stock)' },
+  { key: 'intentional', label: 'Intentional — confirmed', colour: 'var(--c-brand)' },
+  { key: 'incorrect', label: 'The check misread it', colour: 'var(--c-low)' },
+]
+
+function AdvisoryFeedbackPanel({ acks }: { acks: CheckAckStats | undefined }) {
+  if (!acks) return null
+  const total = acks.ticked_total ?? 0
+  const byReason = acks.by_reason ?? { fixed: 0, intentional: 0, incorrect: 0 }
+  const misreadFields = acks.misread_by_field ?? []
+  const recent = acks.recent_misread ?? []
+
+  return (
+    <PanelShell title="Advisory feedback" eyebrow="The tuning loop" icon={ShieldCheck} accent="var(--c-low)">
+      {total === 0 ? (
+        <p className="text-sm text-ink-mute">
+          No advisories have been ticked off in this window. When designers mark advisories as addressed on a report,
+          the reasons they pick land here — and “the check misread it” is the signal that tunes the check.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          <p className="text-sm text-ink-soft">
+            <span className="font-semibold text-ink">
+              {total} advisor{total === 1 ? 'y' : 'ies'} ticked off
+            </span>{' '}
+            across {acks.reports_with_ticks} report{acks.reports_with_ticks === 1 ? '' : 's'}. “The check misread it”
+            is the tuning signal — a class of advisory that keeps landing there is a candidate for the check’s
+            don’t-over-flag rules.
+          </p>
+
+          <div>
+            <div className="flex h-2.5 overflow-hidden rounded-full ring-1 ring-line-soft" aria-hidden="true">
+              {ACK_REASON_META.map((m) =>
+                byReason[m.key] > 0 ? (
+                  <div key={m.key} style={{ width: `${(byReason[m.key] / total) * 100}%`, backgroundColor: m.colour }} />
+                ) : null,
+              )}
+            </div>
+            <div className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-3">
+              {ACK_REASON_META.map((m) => (
+                <div key={m.key} className="flex items-baseline gap-2 text-sm">
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: m.colour }} aria-hidden="true" />
+                  <span className="font-semibold tabular-nums text-ink">{byReason[m.key]}</span>
+                  <span className="text-ink-mute">{m.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {misreadFields.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-ink-dim">Misread most often</p>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {misreadFields.map((f) => (
+                  <span key={f.field} className="rounded-full bg-canvas px-2.5 py-1 text-xs text-ink ring-1 ring-line-soft">
+                    {f.field.replace(/_/g, ' ')} <span className="font-semibold tabular-nums">{f.count}</span>
+                  </span>
+                ))}
+              </div>
+              {recent.length > 0 && (
+                <ul className="mt-2.5 space-y-1 text-xs text-ink-soft">
+                  {recent.slice(0, 6).map((r, i) => (
+                    <li key={i} className="break-words">
+                      <span className="text-ink-mute">{fmtDate(r.at)}</span>{' '}
+                      <span className="font-medium text-ink">{r.field.replace(/_/g, ' ')}</span> — flagged{' '}
+                      <span className="font-mono">“{r.printed}”</span>
+                      {r.supplied && (
+                        <>
+                          {' '}vs <span className="font-mono">“{r.supplied}”</span>
+                        </>
+                      )}
+                      , ticked as misread
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </PanelShell>
   )
 }
 

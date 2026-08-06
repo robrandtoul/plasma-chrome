@@ -153,6 +153,10 @@ const ARTWORK_REPORT_FLAGGED = {
   reference_gaps: ['details for Jo Bloggs supplied as attachment details.xlsx (not read)'],
   checked_at: '2026-07-21T10:30:00Z',
 }
+// Ticks the mock's acknowledge branch has accepted this page load (see the
+// artwork-check invoke handler below).
+const artworkAckStore: Record<string, { reason: string; by: string; by_id: string; at: string }> = {}
+
 const ARTWORK_REPORT_CLEAR = {
   ...ARTWORK_REPORT_FLAGGED,
   verdict: 'clear',
@@ -1227,6 +1231,22 @@ export const supabase: any = {
             }
           }),
           proof_adoption: { from: daysAgo(4), versions_created: 49, versions_checked: 14 },
+          // Advisory tick-off feedback (000385) — enough shape to render the
+          // reason-mix bar, the misread chips and the recent list.
+          acks: {
+            ticked_total: 11,
+            reports_with_ticks: 6,
+            by_reason: { fixed: 5, intentional: 3, incorrect: 3 },
+            misread_by_field: [
+              { field: 'qr', count: 2 },
+              { field: 'website', count: 1 },
+            ],
+            recent_misread: [
+              { at: daysAgo(1), kind: 'proof', field: 'qr', printed: 'https://qcrd.uk/7k2nq8x', supplied: '', card: 'Derrick Smith — front/back' },
+              { at: daysAgo(2), kind: 'order', field: 'website', printed: 'plak8.co', supplied: 'plak8.com', card: 'Shared front' },
+              { at: daysAgo(3), kind: 'order', field: 'qr', printed: 'https://qcrd.uk/9m1xy2a', supplied: '', card: 'Jo Bloggs — front' },
+            ],
+          },
           // Per-(gate, model) spend buckets, copied from the live figures on
           // 2026-07-27 so the cost panel shows realistic money. Includes an
           // unpriced '(unrecorded)' bucket to exercise the excluded-runs note.
@@ -1471,6 +1491,26 @@ export const supabase: any = {
         }
       }
       if (name === 'artwork-check') {
+        // Advisory tick-off ("Mark as addressed"): ticks accumulate for this
+        // page load — the module-level store below resets on reload like all
+        // fixture state — so the whole worklist flow (tick, tick, all-
+        // addressed headline, undo) can be exercised, not just one click.
+        // Mirrors the real function's response shape incl. the
+        // `acknowledged: true` deploy-skew sentinel the client requires.
+        if (opts?.body?.acknowledge) {
+          const a = opts.body.acknowledge as { kind?: string; card?: string; field?: string; printed?: string; quote?: string; reason?: string; undo?: boolean }
+          const key = a.kind === 'correction' ? `c:${a.quote}` : `f:${a.card}::${a.field}::${a.printed}`
+          if (a.undo) delete artworkAckStore[key]
+          else artworkAckStore[key] = { reason: a.reason ?? 'fixed', by: 'Avery Fixture', by_id: 'designer-1', at: '2026-08-05T12:00:00Z' }
+          return {
+            data: {
+              ok: true,
+              acknowledged: true,
+              report: { ...ARTWORK_REPORT_FLAGGED, acknowledgements: { ...artworkAckStore } },
+            },
+            error: null,
+          }
+        }
         // Per-flag investigation (the designer-triggered history walk): a
         // canned timeline + fault lean so the button → spinner → timeline
         // flow can be verified in both surfaces.

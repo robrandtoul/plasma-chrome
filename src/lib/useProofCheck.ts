@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react'
 import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from './supabase'
 import type { ArtworkCheckReport } from '../components/ArtworkCheckReportView'
+import { ackKey, type AckReason, type AckTarget } from './artworkAcks'
 
 // Invoke artwork-check and surface the REAL failure. supabase-js parks a
 // non-2xx response behind `error.context` (data stays null), so a caller that
@@ -85,6 +86,46 @@ export async function requestInvestigation(
   return { message: errMsg ?? data?.error ?? 'The investigation couldn’t run — try again.' }
 }
 
+// One interpretation of an acknowledge ("Mark as addressed") response for
+// every surface that offers the tick. Three outcomes, mirroring investigate:
+// the updated report; a stale report to swap in (the check was re-run under
+// the page, or the stored report isn't the one on screen); or a message.
+export interface AcknowledgeOutcome {
+  report?: ArtworkCheckReport
+  staleReport?: ArtworkCheckReport
+  message?: string
+}
+
+export async function requestAcknowledge(
+  target: Record<string, unknown>,
+  args: { target: AckTarget; reason?: AckReason; undo?: boolean; checkedAt: string },
+): Promise<AcknowledgeOutcome> {
+  const { data, errMsg, errBody } = await invokeArtworkCheck<{
+    ok: boolean
+    acknowledged?: boolean
+    report?: ArtworkCheckReport
+    error?: string
+  }>({
+    ...target,
+    acknowledge: {
+      ...args.target,
+      checked_at: args.checkedAt,
+      ...(args.undo ? { undo: true } : { reason: args.reason }),
+    },
+  })
+  if (data?.ok && data.acknowledged && data.report) return { report: data.report }
+  if (errBody?.code === 'stale_report' && errBody.report) {
+    return { staleReport: errBody.report, message: errMsg ?? undefined }
+  }
+  // ok:true without the `acknowledged` sentinel = a pre-ack deploy of the
+  // function answered with its cached-report path. Say so rather than
+  // pretending the tick stuck.
+  if (data?.ok && !data.acknowledged) {
+    return { message: 'That didn’t save — the check service needs its latest update first. Try again shortly.' }
+  }
+  return { message: errMsg ?? data?.error ?? 'Couldn’t save that — try again.' }
+}
+
 // Merge a returned walk into a report under both the server's key and the one
 // the open page rendered from, so the timeline appears immediately AND is
 // still found once the page reloads the stored report.
@@ -115,6 +156,8 @@ export function useProofCheck(
   const [runError, setRunError] = useState<string | null>(null)
   const [investigatingKey, setInvestigatingKey] = useState<string | null>(null)
   const [investigationError, setInvestigationError] = useState<{ key: string; message: string } | null>(null)
+  const [acknowledgingKey, setAcknowledgingKey] = useState<string | null>(null)
+  const [acknowledgeError, setAcknowledgeError] = useState<{ key: string; message: string } | null>(null)
   // Shown above the report when it had to be swapped for the stored one — a
   // per-flag error would vanish with the flag it was keyed to.
   const [staleNotice, setStaleNotice] = useState<string | null>(null)
@@ -196,5 +239,49 @@ export function useProofCheck(
     }
   }
 
-  return { enabled, check, run, investigate, runError, investigatingKey, investigationError, staleNotice }
+  // Tick an advisory off (or untick it) on the stored report. The server is
+  // the writer — the returned report replaces the local one, so a colleague's
+  // ticks arrive with it. Sends the report's checked_at as the token: a tick
+  // must land on exactly the report the designer read, or come back as
+  // stale_report with the one actually stored.
+  async function setAcknowledged(target: AckTarget, reason: AckReason | null, undo: boolean) {
+    const report = check.report
+    if (!versionId || !report) return
+    const key = ackKey(target)
+    setAcknowledgingKey(key)
+    setAcknowledgeError(null)
+    try {
+      const out = await requestAcknowledge(
+        { proof_version_id: versionId },
+        { target, ...(undo ? { undo: true } : { reason: reason ?? undefined }), checkedAt: report.checked_at },
+      )
+      if (out.report) {
+        setCheck({ status: 'done', report: out.report })
+      } else if (out.staleReport) {
+        setCheck({ status: 'done', report: out.staleReport })
+        setStaleNotice(out.message ?? 'This check has been re-run — the items below are the current ones.')
+      } else {
+        setAcknowledgeError({ key, message: out.message ?? 'Couldn’t save that — try again.' })
+      }
+    } finally {
+      setAcknowledgingKey(null)
+    }
+  }
+  const acknowledge = (target: AckTarget, reason: AckReason) => setAcknowledged(target, reason, false)
+  const unacknowledge = (target: AckTarget) => setAcknowledged(target, null, true)
+
+  return {
+    enabled,
+    check,
+    run,
+    investigate,
+    runError,
+    investigatingKey,
+    investigationError,
+    staleNotice,
+    acknowledge,
+    unacknowledge,
+    acknowledgingKey,
+    acknowledgeError,
+  }
 }

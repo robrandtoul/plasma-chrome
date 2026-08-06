@@ -517,6 +517,11 @@ export default function VersionPreviewGate({
               onInvestigate={(flag) => void proofCheck.investigate(flag)}
               investigatingKey={proofCheck.investigatingKey}
               investigationError={proofCheck.investigationError}
+              onAcknowledge={(target, reason) => void proofCheck.acknowledge(target, reason)}
+              onUnacknowledge={(target) => void proofCheck.unacknowledge(target)}
+              acknowledgingKey={proofCheck.acknowledgingKey}
+              acknowledgeError={proofCheck.acknowledgeError}
+              history={{ versionId }}
             />
           </div>
           <div className="mt-1 flex shrink-0 justify-end border-t border-line-soft px-5 py-3">

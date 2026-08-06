@@ -902,3 +902,133 @@ deduped-sibling trap and partial coverage. Harness rig
 `?path=/artwork-report-cutthrough` now shows three panels (red / amber / **green —
 measured and held on**) with strings verbatim from `summariseCutThrough`;
 `?path=/artwork-report` carries the `not_applicable` state.
+
+## 2026-08-05 — per-advisory tick-off ("Mark as addressed"), both check kinds
+
+**The ask.** Designers get a real lift from the green tick, and a flagged report
+offered no path to it: the machine re-flags an intentional deviation on every run,
+so amber was a permanent state — which is how people learn to stop reading
+warnings. One designer asked to check advisories off as she works so the report
+tracks what's been dealt with and ends green.
+
+**What was added.** Each advisory (a `flag` finding, or an unresolved customer
+correction) carries its own **Mark as addressed** control with a three-option
+reason picker — *Fixed in the artwork* / *Intentional — confirmed correct* / *The
+check misread it* — plus Undo. Ticks are attributed (name + time, denormalised at
+tick time) and rendered on the item; ticked items calm down (green rule, warning
+tint dropped, grey ✓ in the field table) and sink below open ones so the list
+reads as a worklist. The headline counts down (*"1 of 3 still to check"*, ❌
+tracking the severity of what's LEFT) and, at zero, goes green as **"all N
+advisories addressed"**.
+
+**The two greens rule (the design's one load-bearing decision).** A human-cleared
+report goes green but NEVER says "all clear" — that is the machine's own verdict
+and this isn't it. Same principle as the reference-gaps panel (unverified must
+never look verified): human-verified must never look machine-verified. The grey ✓
+in the field table (vs the machine-match green ✓) is the same rule at row level.
+The stored `verdict` column is never rewritten by a tick — the 000357/000358
+analytics depend on it staying the machine's answer — so 'addressed' exists only
+as a render-time display verdict (`artworkDisplayVerdict`).
+
+**Reasons are the record.** Picking the reason IS the tick — a bare tick would
+gut the audit value, and in aggregate the reason mix is exactly the allow-list
+tuning signal the shadow-review step needs ("misread" dismissals = candidate
+allow-list rules). One tick per advisory, deliberately no clear-the-lot button:
+a single button is the thing that gets pressed unread. "Fixed" ticks add a footer
+nudge to re-run, because a fix changes the pixels the stored report was measured
+against and the honest close-out is the machine confirming it.
+
+**Storage & lifecycle.** `acknowledgements: Record<ackKey, {reason, by, by_id,
+at}>` INSIDE the stored report jsonb — the investigations idiom exactly: keyed
+per item, wiped by any re-run (new report, new judgement). Keys
+(`f:card::field::printed` / `c:quote`) are exact-match only — deliberately NOT
+`resolveReportFlag`'s tolerant cross-run matching, because a tick asserts a
+judgement about one specific finding on one specific report. The client sends the
+report's `checked_at` as a concurrency token; the server verifies it against the
+stored report AND makes the UPDATE conditional on `artwork_check->>checked_at`,
+so a re-run finishing in the same moment can't be clobbered with
+report-plus-tick. A mismatch returns `stale_report` + the stored report (the
+shape the clients already handle for investigations). No service-role ticks —
+a tick is a human judgement with a name on it.
+
+**Where.** All four report surfaces: ProofDetailPage's proof-check panel, the
+VersionPreviewGate modal, OrderReviewPage's review card, and the OrdersPage
+archive modal (a designer working the queue shouldn't have to reopen Place order
+to tick a flag off). The per-version report archive on ProofDetailPage and the
+superseded-version modal render ticks read-only. The Orders-page LIST chip still
+shows the machine verdict — the list select deliberately never fetches the report
+jsonb (a documented performance choice), so an all-addressed order's chip stays
+amber until opened; acceptable, revisit if it confuses.
+
+**Files.** Twins `supabase/functions/_shared/artworkCheck/acks.ts` +
+`src/lib/artworkAcks.ts` (parity-tested, `pnpm test:artwork-acks`); the
+`acknowledge` branch in `artwork-check/index.ts` (alongside `investigate`);
+rendering in `ArtworkCheckReportView.tsx`; `requestAcknowledge` + hook wiring in
+`useProofCheck.ts`. `artworkCheckAuditFields` gains `check_flags_addressed` so
+the preview-gate/review-exit audit rows say how much of the report was worked
+when the designer acted. E2E: `e2e/harness/rig-artwork-acks.spec.ts` (the mock
+accumulates ticks per page load so the full worklist flow runs).
+
+**Deploy order.** Function first (safe: the ack branch is inert until called).
+A frontend deployed AHEAD of the function is non-destructive but no-ops the
+tick: the old function answers the acknowledge body via its cached-report path,
+which the client detects by the missing `acknowledged: true` sentinel and
+surfaces as "the check service needs its latest update" rather than pretending
+the tick stuck.
+
+## 2026-08-06 — report history + the tick-feedback loop (migration 000385)
+
+**The gap.** Both check slots hold one report and every re-run overwrites it
+wholesale, so a superseded report's findings, its §2026-08-05 ticks and its
+investigations were simply gone — "what did the check say before the fix?" and
+"who dismissed that advisory, and why?" were unanswerable one re-run later, and
+the tick-reason data (the feature's own tuning signal) was perishable.
+
+**Persistence.** `artwork_check_runs.report jsonb`: the function writes the full
+report onto the run's ledger row at finish, and the tick + investigation
+branches **mirror** their updates onto that row — matched on order/version +
+`ran_at = the report's checked_at`, which is unique per run — so the ledger row
+always holds the report's FINAL state when a re-run replaces the live slot.
+Best-effort throughout: the ledger insert retries WITHOUT the report column on a
+pre-000385 database (a lost column must never cost the run its ledger row —
+analytics counts every run), and a mirror miss is logged, never surfaced. The
+live slot stays authoritative for open pages; either deploy order loses nothing.
+
+**Reading it.** Every report card grows a **"Previous runs"** disclosure listing
+the target's earlier runs (date, verdict, advisory counts) with a View that
+expands that run's full stored report inline — read-only by construction (no
+handlers, so its ticks render frozen; no history prop, so nesting stops at one
+level). Runs recorded before 000385 kept only their numbers and list as "report
+not kept". Reads ride the ledger's existing `authenticated` SELECT — designers
+already read these same reports off the live slots, so no new exposure; anon has
+nothing. On a pre-000385 database the select errors and the section hides (the
+blanks-candidates idiom).
+
+**The loop's dashboard.** `analytics_artwork_check` gains an `acks` key and
+Admin → Analytics → Artwork checks gains the **"Advisory feedback"** panel:
+tick totals + the three-reason mix, **windowed by each tick's own timestamp**
+(a designer working an old report today is today's feedback — deliberately not
+the run window), plus misread-by-field chips and the most recent misread
+examples. Findings are matched to their ticks by RECOMPUTING each finding's ack
+key in SQL — never by splitting keys apart, because card labels and printed
+values are free text that may contain the `::` delimiter. The acks SQL was
+validated read-only against live with synthetic rows before the migration was
+authored; the function body was re-emitted from the LIVE `pg_get_functiondef`
+(2026-08-06) per the 000363 rule.
+
+**What this makes true.** The §2026-08-05 tick trail is now permanent (a
+superseded report keeps the ticks it had), "previous reports" is a designer
+affordance rather than a database question, and the reason mix — "the check
+misread it" clustering on a field — is a glanceable tuning worklist for
+prompts.ts's don't-over-flag rules instead of archaeology. Deferred, in the
+AI-draft pipeline's image: auto-mining misread clusters into PROPOSED rule
+changes for admin approval.
+
+**Rollout.** Migration 000385 **applied to live via MCP 2026-08-06** and
+verified (column present, `acks` key returns, existing keys + grants intact).
+⚠ The `artwork-check` redeploy is pending — the 17-file bundle is too large
+for an MCP deploy call, so it needs the CLI:
+`supabase functions deploy artwork-check --project-ref bjvinrzbdrwebylkmbwy`.
+Order-safe either way: until the deploy, ticks show the client's "service
+needs its latest update" guard, the ledger keeps its legacy rows, and the two
+new frontend surfaces stay empty rather than wrong.
