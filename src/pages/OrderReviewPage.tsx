@@ -11,6 +11,7 @@ import { mergeInvestigation, requestAcknowledge, requestInvestigation } from '..
 import { ackKey, artworkDisplayVerdict, type AckReason, type AckTarget } from '../lib/artworkAcks'
 import { scopeToOrderedFinish, finishScopeIsUncertain, type FinishScopeOutcome } from '../lib/approvedArtworkFinish'
 import { extractQtyLineValue } from '../lib/handoffQty'
+import { handoffBlockReason, handoffProblemHint, visibleHandoffProblems } from '../lib/handoffChecks'
 import {
   HOLD_COPY,
   HOLD_REASON_MAX,
@@ -98,14 +99,22 @@ interface PreviewResponse {
   // note, or to the supplier email) vs skipped (too big / not artwork).
   artwork_plan?: { attach: string[]; skipped: { name: string; reason: string }[] }
   // Optional Stock Control direct hand-off validation (order-handoff spec
-  // §3.3 / §6 Phase 1). Absent or null while the feature is off — the common
-  // case — in which case nothing renders. When present with any problems or
-  // warnings, they show as a NON-BLOCKING amber card: shadow mode surfaces
-  // mapping/setup gaps early without gating Confirm.
+  // §3.3 / §6 Phase 1). Absent or null while the feature is off — in which case
+  // nothing renders.
+  //
+  // `blocking` says whether a PROBLEM here will actually stop the placement: it
+  // does once the mode is live, because confirm re-runs the same RPC for real
+  // and fails with these same messages. Warnings stay advisory either way. See
+  // src/lib/handoffChecks.ts for why the two are now rendered apart.
+  //
+  // ABSENT `blocking` means an older deployed place-order, not "doesn't block"
+  // — the settings pre-read below covers that case, exactly as it does for the
+  // artwork check's mode.
   handoff_validation?: {
     ok: boolean
     problems: { code: string; message: string }[]
     warnings: { code: string; message: string }[]
+    blocking?: boolean
   } | null
   // The hold, as place-order read it server-side (migration 000377). null =
   // not on hold; ABSENT = an older deployed function that doesn't know about
@@ -270,6 +279,10 @@ export default function OrderReviewPage() {
     required: boolean
     report: ArtworkCheckReport | null
   }>({ status: 'hidden', live: false, required: false, report: null })
+  // Fallback for the preview's `blocking` flag — see the settings pre-read
+  // below. Starts false so the page never claims a check blocks until
+  // something has said so; the preview's own answer wins when it carries one.
+  const [handoffModeLive, setHandoffModeLive] = useState(false)
   // "On hold, waiting on the customer" (migration 000377). Read off the order
   // row with everything else, so there is never a moment where the page has
   // rendered and Confirm is live but the hold hasn't loaded yet. The rules all
@@ -525,15 +538,23 @@ export default function OrderReviewPage() {
     // sign anything is happening on the first, uncached run. Pre-read the mode
     // so the "Checking…" card + spinner appear immediately; the run's own
     // response stays authoritative and corrects this if it disagrees.
+    //
+    // `direct_handoff_mode` rides the same query for the same reason: the
+    // preview's own `blocking` flag is authoritative, but it only exists on a
+    // place-order deployed with it. Without this fallback a frontend shipped
+    // ahead of the function would go on telling reviewers that a problem which
+    // WILL fail their confirm doesn't block. One round trip, both modes.
     void supabase
       .from('settings')
-      .select('artwork_check_mode')
+      .select('artwork_check_mode, direct_handoff_mode')
       .eq('id', 1)
       .maybeSingle()
       .then(({ data }) => {
-        if ((data as { artwork_check_mode?: string | null } | null)?.artwork_check_mode === 'live') {
+        const row = data as { artwork_check_mode?: string | null; direct_handoff_mode?: string | null } | null
+        if (row?.artwork_check_mode === 'live') {
           setArtworkCheck((prev) => (prev.status === 'done' ? prev : { ...prev, live: true }))
         }
+        if (row?.direct_handoff_mode === 'live') setHandoffModeLive(true)
       })
     void runArtworkCheck(false, 'auto')
   }, [runArtworkCheck])
@@ -835,6 +856,17 @@ export default function OrderReviewPage() {
   // while the feature is off/shadow. place-order re-checks it server-side.
   const artworkRunNeeded = artworkCheck.required && artworkCheck.report == null
   const holdInfo = holdState(hold, replyCtx)
+  // Stock Control hand-off checks. A PROBLEM stops the placement once the
+  // direct hand-off is live — confirm re-runs the same RPC for real and fails
+  // with these same messages — so it belongs in the block chain rather than in
+  // an advisory box. Warnings never block. See src/lib/handoffChecks.ts.
+  const handoffProblems = visibleHandoffProblems(preview?.handoff_validation?.problems ?? [])
+  const handoffWarnings = preview?.handoff_validation?.warnings ?? []
+  // Server's answer wins; the settings pre-read covers an older deployed
+  // place-order that doesn't send one.
+  const handoffBlocking = preview?.handoff_validation?.blocking ?? handoffModeLive
+  const handoffBlocked = handoffBlocking && handoffProblems.length > 0
+  const showHandoffChecks = handoffProblems.length > 0 || handoffWarnings.length > 0
   // The hold clause goes FIRST. Every other reason here is something the
   // reviewer can fix on this page in the next minute; a hold is a colleague
   // waiting on an answer from the customer, and it outranks all of them.
@@ -857,14 +889,15 @@ export default function OrderReviewPage() {
           ? 'This proof has no linked Help Scout conversation, so the production note can’t be posted.'
           : artworkRunNeeded
             ? 'Run the artwork check before placing this order.'
-            : null
+            // Last in the chain deliberately. Everything above is either not
+            // fixable here at all (the hold) or fixable on this page in the
+            // next minute; a hand-off problem generally means a trip somewhere
+            // else, so it shouldn't mask a reason the reviewer could clear
+            // without leaving. The box below lists them all meanwhile.
+            : handoffBlocked
+              ? handoffBlockReason(handoffProblems)
+              : null
   const canConfirm = !blockReason
-
-  // Stock Control hand-off checks (shadow mode) — informational only.
-  // Deliberately NOT part of blockReason: a failed check never gates Confirm.
-  const handoffProblems = preview?.handoff_validation?.problems ?? []
-  const handoffWarnings = preview?.handoff_validation?.warnings ?? []
-  const showHandoffChecks = handoffProblems.length > 0 || handoffWarnings.length > 0
 
   // Artwork check card derivations; the headline + body rendering both live in
   // the shared ArtworkCheckReportView (also used by the Orders-page report modal).
@@ -877,6 +910,21 @@ export default function OrderReviewPage() {
   const fmtNum = (n: number) => n.toLocaleString('en-GB')
   const candidateDate = (iso: string | null) =>
     iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : null
+
+  // Advisory hand-off findings — the job goes in, with the compromise each one
+  // names. Its own card when problems are blocking, so the amber "this is fine"
+  // reading survives sitting next to a rose "this will fail".
+  const handoffWarningsBox = (
+    <div className="mt-4 rounded-lg bg-low-soft px-3 py-3 text-[13px] text-ink ring-1 ring-low">
+      <p className="font-medium">Stock Control hand-off notes</p>
+      <ul className="mt-1 list-disc space-y-0.5 pl-4 text-ink-soft">
+        {handoffWarnings.map((w, i) => (
+          <li key={`${w.code}-${i}`} className="break-words">{w.message}</li>
+        ))}
+      </ul>
+      <p className="mt-1.5 text-[12px] text-ink-soft">These don’t block placing the order.</p>
+    </div>
+  )
 
   // The editable hand-off message — identical control for both routes (only the
   // heading above it differs). Mirrors the generated preview until edited, then
@@ -1315,29 +1363,65 @@ export default function OrderReviewPage() {
             </div>
 
             {/* Stock Control hand-off checks — the direct-import validation run
-                alongside the preview (shadow mode). Amber and NON-blocking:
-                problems (stronger) and warnings are surfaced so mapping/setup
-                gaps get fixed, but Confirm is never gated on them. Absent from
-                the response entirely while the feature is off. */}
+                alongside the preview. Once the direct hand-off is live the two
+                severities are different things and must not share a box: a
+                PROBLEM is what create_order_handoff refuses, so confirming will
+                fail with that exact sentence, while a WARNING is advisory.
+                Order 403976 showed a blocking problem under "these checks don't
+                block placing the order" and the designer went looking for the
+                fault in the message. Absent from the response while the feature
+                is off. */}
             {showHandoffChecks && (
-              <div className="mt-4 rounded-lg bg-low-soft px-3 py-3 text-[13px] text-ink ring-1 ring-low">
-                <p className="font-medium">Stock Control hand-off checks</p>
-                {handoffProblems.length > 0 && (
+              handoffBlocked ? (
+                <>
+                  <div className="mt-4 rounded-lg bg-out-soft px-3 py-3 text-[13px] text-out ring-1 ring-out">
+                    <p className="font-medium">Stock Control can’t accept this order yet</p>
+                    <ul className="mt-1 list-disc space-y-1 pl-4">
+                      {handoffProblems.map((p, i) => {
+                        const hint = handoffProblemHint(p.code)
+                        return (
+                          <li key={`${p.code}-${i}`} className="break-words">
+                            <span className="font-medium">{p.message}</span>
+                            {hint && <span className="mt-0.5 block text-[12px]">{hint}</span>}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                    {/* The line that would have saved 403976 an afternoon: the
+                        hand-off reads the order and the proof, never the
+                        message, so editing the message can't clear any of it. */}
+                    <p className="mt-1.5 text-[12px]">
+                      Placing the order will fail until these are fixed. They’re read from the order and the proof — editing the message above won’t clear them.
+                    </p>
+                  </div>
+                  {handoffWarnings.length > 0 && handoffWarningsBox}
+                </>
+              ) : handoffProblems.length > 0 ? (
+                // Shadow mode: the legacy path still places the order, so a
+                // problem genuinely doesn't block yet and this stays the single
+                // advisory card it has always been.
+                <div className="mt-4 rounded-lg bg-low-soft px-3 py-3 text-[13px] text-ink ring-1 ring-low">
+                  <p className="font-medium">Stock Control hand-off checks</p>
                   <ul className="mt-1 list-disc space-y-0.5 pl-4">
                     {handoffProblems.map((p, i) => (
                       <li key={`${p.code}-${i}`} className="break-words font-medium">{p.message}</li>
                     ))}
                   </ul>
-                )}
-                {handoffWarnings.length > 0 && (
-                  <ul className="mt-1 list-disc space-y-0.5 pl-4 text-ink-soft">
-                    {handoffWarnings.map((w, i) => (
-                      <li key={`${w.code}-${i}`} className="break-words">{w.message}</li>
-                    ))}
-                  </ul>
-                )}
-                <p className="mt-1.5 text-[12px] text-ink-soft">These checks don’t block placing the order.</p>
-              </div>
+                  {handoffWarnings.length > 0 && (
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4 text-ink-soft">
+                      {handoffWarnings.map((w, i) => (
+                        <li key={`${w.code}-${i}`} className="break-words">{w.message}</li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="mt-1.5 text-[12px] text-ink-soft">These checks don’t block placing the order.</p>
+                </div>
+              ) : (
+                // Nothing but advisory findings — true in either mode, so the
+                // same card serves both. (The common live case: a blanks-source
+                // job whose material line is skipped.)
+                handoffWarningsBox
+              )
             )}
 
             {/* Artwork sanity check (docs/artwork-check-spec.md) — the

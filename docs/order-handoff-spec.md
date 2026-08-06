@@ -223,6 +223,28 @@ An RPC **failure** at step 1 stamps `proofs.orders.handoff_error` (cleared on th
 the Orders page can render "Import failed — Retry" from persisted state rather than a toast the
 designer may have dismissed.
 
+**The review page must show a problem for what it is** (added 2026-08-06, after order 403976). The
+preview runs the same RPC with `p_validate_only`, so a **problem** at preview is the same problem
+that will fail step 1 at confirm, with the same message — while a **warning** is advisory and the
+job still goes in. They shared one amber card footed "These checks don't block placing the order",
+copy written for shadow mode and untrue for problems from cutover onwards: 403976 (gilded
+letterpress, no layer colours) showed the blocking sentence under that footer, and the designer
+tried to clear it by editing the hand-off message, which the RPC never reads. Now a problem gates
+Confirm through the page's own block chain (last clause — everything above it is fixable without
+leaving the page), carries the refusal on the disabled button's tooltip, and renders in its own
+card; warnings keep the amber advisory card and its footer. `handoff_validation.blocking` on the
+preview response says which mode the page is in, with `settings.direct_handoff_mode` read directly
+as the fallback for a frontend deployed ahead of the function. Rules + copy:
+`src/lib/handoffChecks.ts` (`pnpm test:handoff-checks`); rig `?path=/orders/o1/place`, with
+`sessionStorage.setItem('handoffShadow','1')` for the shadow rendering.
+
+⚠ Gap this surfaced, unfixed: the version form only offers the Front/Core/Back pickers for
+**un-gilded** letterpress (`LAYER_COLOUR_MATERIAL_CODES`, since gilding hides the layered edge),
+while the RPC requires the trio for **both** letterpress codes — so a gilded in-house order cannot
+satisfy `letterpress_colours_missing` from the UI at all, which is why 403976 needed a direct data
+update. The hint on that problem says so rather than sending the designer to a section that doesn't
+render.
+
 A send failure after the RPC commits is the one genuinely new failure mode, and **both** routes get
 the same treatment in the same PR as go-live: an Orders-page "Needs action" row keyed on the null
 flag, with a single-purpose retry (double-send-proofed by the flag). The in-house retry re-runs the

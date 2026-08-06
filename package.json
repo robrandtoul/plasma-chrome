@@ -64,6 +64,7 @@
     "test:order-timeline": "tsx src/lib/orderTimeline.test.ts",
     "test:order-log": "tsx src/lib/orderLog.test.ts",
     "test:handoff-qty": "tsx src/lib/handoffQty.test.ts",
+    "test:handoff-checks": "tsx src/lib/handoffChecks.test.ts",
     "test:quick-quantities": "tsx src/lib/quickQuantities.test.ts",
     "test:audit-filters": "tsx src/pages/admin/auditFilters.test.ts",
     "test:dashboard-grouping": "tsx src/lib/dashboardGrouping.test.ts",

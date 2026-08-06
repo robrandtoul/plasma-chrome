@@ -10,10 +10,17 @@
 //      confirming against stale or empty facts (wrong customer, wrong
 //      quantity, wrong date) is exactly the class of mistake the page exists
 //      to prevent.
-//   2. the Stock Control hand-off checks becoming BLOCKING. They are shadow
-//      mode by design: surfaced so mapping gaps get fixed, but never gating
-//      Confirm — a regression that disables the button on a validation
-//      problem strands a paid order behind an advisory.
+//   2. the Stock Control hand-off checks losing the problem/warning
+//      distinction. A PROBLEM is what create_order_handoff refuses, so once
+//      the direct hand-off is live the same RPC fails the confirm with that
+//      exact sentence; a WARNING is advisory and the job still goes in. They
+//      shared one amber box reading "these checks don't block placing the
+//      order" until order 403976 (gilded letterpress, missing layer colours)
+//      hit a Confirm that failed with the sentence sitting under that footer,
+//      and the designer went hunting for the fault in the message. A
+//      regression either way is expensive: a warning that blocks strands a
+//      paid order behind an advisory, and a problem that doesn't announce
+//      itself sends the next designer down the same dead end.
 //   3. the artwork-check card losing its field-by-field table or its flag
 //      detail — the verdict headline alone doesn't tell a reviewer WHAT to
 //      look at, and the side-by-side comparison is second only to the verdict
@@ -28,7 +35,9 @@
 //
 // The mock resolves the check instantly, so the running state is reached via
 // the harness's own sessionStorage 'artworkHang' switch (see mock-supabase),
-// which hangs the report invoke and leaves the spinner up.
+// which hangs the report invoke and leaves the spinner up. A second switch,
+// 'handoffShadow', flips the preview's hand-off validation back to shadow mode
+// (nothing blocks) — the state the old copy was written for.
 //
 // ⚠ Assert STRUCTURE, never wording — the values asserted below are fixture
 // DATA (names, quantities, dates, messages from the invoke fixture), which
@@ -75,7 +84,10 @@ test.describe('place-order review (o1, in-house)', () => {
 
     // The hand-off is shown verbatim: the subject line and the message box
     // seeded from the preview's note_lines — what's shown is what goes out.
-    await expect(main.getByText(/403999/)).toBeVisible()
+    // The full subject, not a bare /403999/: the order number also appears in
+    // the "already has a live job numbered 403999" hand-off warning, and a
+    // locator that matches both proves neither.
+    await expect(main.getByText('Order 403999 - Acme Ltd')).toBeVisible()
     await expect(main.locator('textarea').first()).toHaveValue(/Qty: 500/)
 
     // In-house route: no supplier picker anywhere (the supplier route renders
@@ -88,19 +100,52 @@ test.describe('place-order review (o1, in-house)', () => {
     expect(errors).toEqual([])
   })
 
-  test('the hand-off validation lists the problem and the warning without blocking Confirm', async ({ page }) => {
+  test('a hand-off problem blocks Confirm and the button says why', async ({ page }) => {
     // Both fixture findings render, each as its own list item.
     await expect(
       page.getByRole('listitem').filter({ hasText: /no Stock Control mapping/ }),
     ).toHaveCount(1)
     await expect(
-      page.getByRole('listitem').filter({ hasText: /don.t add up/ }),
+      page.getByRole('listitem').filter({ hasText: /already has a live job/ }),
     ).toHaveCount(1)
 
-    // Non-blocking by design: shadow-mode checks surface gaps, they never
-    // gate. Confirm must stay live with a problem on screen.
-    await expect(page.getByRole('button', { name: /confirm/i })).toBeEnabled()
+    // The problem gates Confirm — placing it would fail on the same message
+    // server-side — and the disabled button carries the reason, so a reviewer
+    // hovering a dead button isn't left guessing.
+    const confirm = page.getByRole('button', { name: /confirm/i })
+    await expect(confirm).toBeDisabled()
+    await expect(confirm).toHaveAttribute('title', /no Stock Control mapping/)
+
+    // Leaving is never blocked.
     await expect(page.getByRole('button', { name: /cancel/i })).toBeEnabled()
+  })
+
+  test('the warning is advisory and says so, apart from the blocking problem', async ({ page }) => {
+    // Two cards, not one: the advisory finding keeps its own "doesn't block"
+    // footer, and that footer must not sit under the blocking problem.
+    const advisory = page.locator('div').filter({ hasText: /already has a live job/ }).last()
+    await expect(advisory).toContainText(/don.t block placing the order/i)
+
+    const blocking = page.locator('div').filter({ hasText: /no Stock Control mapping/ }).last()
+    await expect(blocking).not.toContainText(/don.t block placing the order/i)
+    // …and it states the consequence instead.
+    await expect(blocking).toContainText(/will fail/i)
+  })
+
+  test('in shadow mode nothing blocks and the advisory copy stands', async ({ page }) => {
+    // 'handoffShadow' flips the fixture's validation back to non-blocking —
+    // the legacy path still places the order, so the same findings are
+    // advisory. Scoping the new copy to live mode is the whole point: a
+    // regression that hard-codes "blocking" would strand shadow-mode orders.
+    await page.evaluate(() => sessionStorage.setItem('handoffShadow', '1'))
+    await page.reload()
+    await expect(page.getByText(/acme ltd/i).first()).toBeVisible()
+
+    await expect(
+      page.getByRole('listitem').filter({ hasText: /no Stock Control mapping/ }),
+    ).toHaveCount(1)
+    await expect(page.getByText(/don.t block placing the order/i)).toBeVisible()
+    await expect(page.getByRole('button', { name: /confirm/i })).toBeEnabled()
   })
 
   test('the artwork-check card renders the flagged report: table, flag detail, correction', async ({ page }) => {

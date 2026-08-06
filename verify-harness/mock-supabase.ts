@@ -1448,7 +1448,18 @@ export const supabase: any = {
         }
         // OrderReviewPage preview (?path=/orders/o1/place). In-house route
         // with the Stock Control hand-off checks populated (a problem + a
-        // warning) so the non-blocking amber card can be verified visually.
+        // warning) so both cards can be verified visually: the rose "can't
+        // accept this order yet" for the problem and the amber advisory note
+        // for the warning.
+        //
+        // `blocking` mirrors settings.direct_handoff_mode = 'live' (what the
+        // real DB carries today): confirm re-runs the same RPC for real and
+        // fails with the problem's own message. To see the SHADOW rendering —
+        // one amber card, "these checks don't block placing the order", Confirm
+        // live — run sessionStorage.setItem('handoffShadow','1') then reload.
+        // Off by default; harness-only, never ships.
+        const handoffBlocking =
+          typeof sessionStorage === 'undefined' || sessionStorage.getItem('handoffShadow') !== '1'
         return {
           data: {
             ok: true,
@@ -1479,11 +1490,12 @@ export const supabase: any = {
             artwork_plan: { attach: ['Approved_Front.pdf', 'Approved_Back.pdf'], skipped: [] },
             handoff_validation: {
               ok: false,
+              blocking: handoffBlocking,
               problems: [
-                { code: 'unmapped_material', message: 'Stainless Steel has no Stock Control mapping — set it on Admin → Catalogue data → Stock materials.' },
+                { code: 'material_unmapped', message: 'Stainless Steel has no Stock Control mapping — set it on Admin → Catalogue data → Stock materials.' },
               ],
               warnings: [
-                { code: 'split_qty_mismatch', message: 'Per-person quantities (450) don’t add up to the order quantity (500).' },
+                { code: 'number_in_use', message: 'Stock Control already has a live job numbered 403999 (Acme Ltd) — the hand-off will attach to it rather than create a duplicate.' },
               ],
             },
           },

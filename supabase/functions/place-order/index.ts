@@ -1784,6 +1784,16 @@ interface HandoffValidation {
   ok: boolean
   problems: { code: string; message: string }[]
   warnings: { code: string; message: string }[]
+  // Whether a PROBLEM here will actually stop the placement, which is only true
+  // once the mode is live: confirm then runs the same RPC for real and fails
+  // with these same messages (see executeHandoff). In shadow the legacy path
+  // still places the order and nothing here blocks.
+  //
+  // The review page needs this to tell the truth about its own Confirm button —
+  // it spent the shadow window saying "these checks don't block placing the
+  // order", which stopped being true at cutover and cost order 403976 a
+  // confused afternoon. Warnings are advisory in both modes.
+  blocking: boolean
   resolution?: Record<string, unknown>
 }
 
@@ -1796,7 +1806,7 @@ async function runHandoffValidation(pub: SupabaseClient, mode: HandoffMode, payl
     const { data, error } = await pub.rpc('create_order_handoff', { p_payload: payload, p_validate_only: true })
     if (error || !data) return null
     const d = data as { ok?: boolean; problems?: { code: string; message: string }[]; warnings?: { code: string; message: string }[]; resolution?: Record<string, unknown> }
-    return { ok: d.ok === true, problems: d.problems ?? [], warnings: d.warnings ?? [], resolution: d.resolution }
+    return { ok: d.ok === true, problems: d.problems ?? [], warnings: d.warnings ?? [], blocking: mode === 'live', resolution: d.resolution }
   } catch {
     return null
   }
