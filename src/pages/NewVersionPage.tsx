@@ -1750,6 +1750,41 @@ export default function NewVersionPage() {
   // so window-level drops do not double-fire). CarryCard's per-card
   // drop similarly stays out of this path. So this batch handler
   // only fires for drops outside any per-cell zone.
+  // Which sides a given identity actually has a slot on, under the
+  // current shape. Empty list = the identity has no slot at all (a
+  // shared identity in a non-shared shape, or a named identity in a
+  // membership-single one). Mirrors the cell builder's slotTuples and
+  // slotTuplesForValidation.
+  //
+  // Single source of truth for three callers that MUST agree: the drop
+  // resolver, the side flip, and the flip affordance's gate. The cell
+  // builder silently skips a fresh entry whose (identity, side) isn't a
+  // real slot, while `imagesAllocated` still counts it — so any
+  // disagreement here surfaces as an invisible image jamming Save with
+  // a blocker the designer can neither see nor act on.
+  function availableSidesForIdentity(identity: string | null): Array<'front' | 'back'> {
+    const isMembershipSingle = cardType === 'membership' && names.length === 0
+    if (sidedness === 'one-sided') {
+      // One-sided: every identity that has any slot has front.
+      if (isMembershipSingle) return identity == null ? ['front'] : []
+      return identity == null ? [] : (names.includes(identity) ? ['front'] : [])
+    }
+    // Two-sided.
+    if (isMembershipSingle) {
+      return identity == null ? ['front', 'back'] : []
+    }
+    if (effectiveShared) {
+      // Shared front collapses to a single shared identity; back stays
+      // per-identity. `effectiveShared` matches the slot universe rule
+      // (shared collapses to per-name when names.length === 1), so this
+      // never suggests a SHARED slot the cell builder won't render.
+      return identity == null ? ['front'] : (names.includes(identity) ? ['back'] : [])
+    }
+    // Two-sided + not shared (or shared collapsing for the 1-name
+    // case): per-identity on both sides.
+    return identity == null ? [] : (names.includes(identity) ? ['front', 'back'] : [])
+  }
+
   function addFilesBatch(files: File[]) {
     setFileError('')
     setFileNote('')
@@ -1837,34 +1872,6 @@ export default function NewVersionPage() {
     // identity has both sides available, so it cannot produce an
     // invalid slot.
     const isMembershipSingle = cardType === 'membership' && names.length === 0
-
-    // Returns the valid sides for a given identity in the current
-    // shape. Empty list = identity has no slots at all (e.g. a
-    // shared identity in a non-shared shape, or a named identity
-    // in a membership-single shape). Mirrors the cell builder's
-    // slotTuples logic.
-    function availableSidesForIdentity(identity: string | null): Array<'front' | 'back'> {
-      if (sidedness === 'one-sided') {
-        // One-sided: every identity that has any slot has front.
-        if (isMembershipSingle) return identity == null ? ['front'] : []
-        return identity == null ? [] : (names.includes(identity) ? ['front'] : [])
-      }
-      // Two-sided.
-      if (isMembershipSingle) {
-        return identity == null ? ['front', 'back'] : []
-      }
-      if (effectiveShared) {
-        // Shared front collapses to a single shared identity;
-        // back stays per-identity. `effectiveShared` matches the
-        // slot universe rule (shared collapses to per-name when
-        // names.length === 1), so this resolver doesn't suggest a
-        // SHARED slot the cell builder won't render.
-        return identity == null ? ['front'] : (names.includes(identity) ? ['back'] : [])
-      }
-      // Two-sided + not shared (or shared collapsing for the 1-name
-      // case): per-identity on both sides.
-      return identity == null ? [] : (names.includes(identity) ? ['front', 'back'] : [])
-    }
 
     // Per-batch alternator for hintless files where the chosen
     // identity has both sides available. Resets per drop so two
@@ -2358,22 +2365,48 @@ export default function NewVersionPage() {
     lastRemovedRef.current = null
   }
 
-  // Single-click side flip on a FreshImageCard. Toggles entry.side
-  // between front and back; the cell builder regroups by
-  // (identity, side) on next render, so the card visually moves to
-  // its new slot without any extra plumbing. Only meaningful on
-  // two-sided projects; the FreshImageCard hides the affordance on
-  // one-sided so this should not be reachable in that mode, but
-  // the flip is harmless if it is.
+  // Where a FreshImageCard's "Move to {side}" would actually land, or
+  // null when the move has no honest destination (in which case the
+  // affordance doesn't render).
+  //
+  // The identity has to travel with the side. On a two-sided SHARED
+  // project every identity owns exactly ONE side — shared owns front,
+  // each name owns back — so flipping side alone strands the entry on
+  // a coordinate that isn't a slot: the grid stops rendering the card
+  // (it only draws real slots) while `imagesAllocated` keeps counting
+  // it, which jams Save on "Assign every image to a recipient" naming
+  // an image the designer can no longer see. That is how a correct-
+  // looking form became unsaveable.
+  //
+  // So: keep the identity when it owns the target side (two-sided
+  // non-shared, where both sides are per-name — unchanged behaviour).
+  // Otherwise re-stamp onto the target side's owner, but only when
+  // there is exactly one — "this named back is really the shared
+  // front" is unambiguous, "this shared front is really a back"
+  // isn't (whose?), so that direction is simply not offered.
+  function flipTargetFor(entry: ImageEntry): { identity: string | null; side: 'front' | 'back' } | null {
+    if (sidedness !== 'two-sided') return null
+    const target: 'front' | 'back' = (entry.side ?? 'front') === 'front' ? 'back' : 'front'
+    const identity = entry.associated_name
+    if (availableSidesForIdentity(identity).includes(target)) return { identity, side: target }
+    const owners = [null, ...names].filter((id) => availableSidesForIdentity(id).includes(target))
+    return owners.length === 1 ? { identity: owners[0], side: target } : null
+  }
+
+  // Single-click side flip on a FreshImageCard. The cell builder
+  // regroups by (identity, side) on next render, so the card visually
+  // moves to its new slot without any extra plumbing. A no-op when the
+  // move has no valid destination — the card hides the button in that
+  // case, so this is belt-and-braces.
   function flipFreshSide(localId: string) {
     setImagesByOption((prev) => {
       const out: Record<string, ImageEntry[]> = {}
       for (const [key, list] of Object.entries(prev)) {
-        out[key] = list.map((e) =>
-          e.localId === localId
-            ? { ...e, side: (e.side ?? 'front') === 'front' ? 'back' : 'front' }
-            : e,
-        )
+        out[key] = list.map((e) => {
+          if (e.localId !== localId) return e
+          const target = flipTargetFor(e)
+          return target ? { ...e, side: target.side, associated_name: target.identity } : e
+        })
       }
       return out
     })
@@ -4721,11 +4754,24 @@ export default function NewVersionPage() {
   const validSlotKeysForImages = new Set(
     slotTuplesForValidation.map((t) => `${t.identity ?? '__shared__'}|${t.side}`),
   )
-  const everyImageInValidSlot = Object.values(imagesByOption).every((list) =>
-    list.every((e) =>
-      validSlotKeysForImages.has(`${e.associated_name ?? '__shared__'}|${e.side ?? 'front'}`),
-    ),
-  )
+  // The offending entries, not just a boolean. The cell builder renders
+  // slots, so an entry that sits outside every slot is invisible in the
+  // grid — meaning this blocker, on its own, pointed at something the
+  // designer could neither find nor fix. The list is normally empty
+  // (every shape change re-slots or drops these, and the side flip can
+  // no longer strand one); it exists so a stray entry stays
+  // recoverable instead of making the form terminally unsaveable.
+  // Spans every option key, exactly as the blocker does, so the two
+  // can't disagree about what's wrong.
+  const unplacedImages: ImageEntry[] = []
+  for (const list of Object.values(imagesByOption)) {
+    for (const e of list) {
+      if (!validSlotKeysForImages.has(`${e.associated_name ?? '__shared__'}|${e.side ?? 'front'}`)) {
+        unplacedImages.push(e)
+      }
+    }
+  }
+  const everyImageInValidSlot = unplacedImages.length === 0
 
   // Names required in Business mode — every Business project has
   // at least one per-name dimension (one-sided: all sides per-
@@ -6893,7 +6939,7 @@ export default function NewVersionPage() {
                       entry={cell.entry}
                       nameLabel={showLabel ? slotName : undefined}
                       sideLabel={sideBadge ? cell.side : null}
-                      twoSided={sidedness === 'two-sided'}
+                      flipTo={flipTargetFor(cell.entry)?.side ?? null}
                       onRemove={() => removeImage(cell.entry.localId)}
                       onFlipSide={() => flipFreshSide(cell.entry.localId)}
                     />
@@ -6943,6 +6989,40 @@ export default function NewVersionPage() {
                 </>
               )
             })()}
+
+            {/* Images with no slot in the current shape. They can't
+                appear in the grid above (it renders slots), but they
+                still block Save via `imagesAllocated` — so without
+                this they'd be an unfixable blocker naming an image
+                nobody can see. Normally empty. */}
+            {unplacedImages.length > 0 && (
+              <div className="mt-4 rounded-lg bg-rose-50 px-3 py-2 ring-1 ring-rose-200">
+                <p className="text-sm font-medium text-rose-700">
+                  {unplacedImages.length === 1
+                    ? '1 image has nowhere to sit'
+                    : `${unplacedImages.length} images have nowhere to sit`}
+                </p>
+                <p className="mt-1 text-xs text-rose-700">
+                  The layout changed after {unplacedImages.length === 1 ? 'it was' : 'they were'} added, so {unplacedImages.length === 1 ? 'it no longer belongs' : 'they no longer belong'} to any card above. Remove {unplacedImages.length === 1 ? 'it' : 'them'}, then drop {unplacedImages.length === 1 ? 'it' : 'them'} into the right slot if still needed.
+                </p>
+                <ul className="mt-2 space-y-1">
+                  {unplacedImages.map((e) => (
+                    <li key={e.localId} className="flex items-center justify-between gap-3">
+                      <span className="truncate text-xs text-rose-700" title={e.file.name}>
+                        {e.file.name}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeImage(e.localId)}
+                        className="shrink-0 text-xs font-medium text-rose-700 underline underline-offset-2"
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {/* Notice if v1 had images on option codes v2 doesn't
                 offer, those carry options simply won't appear in
@@ -7694,27 +7774,24 @@ function FreshImageCard({
   entry,
   nameLabel,
   sideLabel,
-  twoSided,
+  flipTo,
   onRemove,
   onFlipSide,
 }: {
   entry: ImageEntry
   nameLabel: string | null | undefined
   sideLabel: 'front' | 'back' | null
-  // Drives whether the Move-to-{other-side} affordance renders. On
-  // one-sided projects every fresh entry is front by definition, so
-  // there is nothing to flip to.
-  twoSided: boolean
+  // The side the Move affordance would send this card to, or null to
+  // hide it. Null on one-sided projects (every entry is front by
+  // definition, nothing to flip to) and whenever the move has no
+  // single honest destination — see flipTargetFor. Offering a move
+  // with nowhere to land is what stranded cards out of the grid.
+  flipTo: 'front' | 'back' | null
   onRemove: () => void
-  // Single-click toggle of entry.side. The cell builder regroups
-  // the card to its new slot on the next render.
+  // Single-click move to `flipTo`. The cell builder regroups the card
+  // to its new slot on the next render.
   onFlipSide: () => void
 }) {
-  // Effective side for the flip-button copy. Pulls from entry rather
-  // than sideLabel because sideLabel is null on one-sided projects
-  // (the badge is suppressed) but entry.side is still meaningful.
-  const currentSide: 'front' | 'back' = entry.side ?? 'front'
-  const flipTargetLabel = currentSide === 'front' ? 'back' : 'front'
   return (
     <div className="rounded-xl bg-canvas p-2.5 ring-1 ring-line transition-all">
       {(nameLabel !== undefined || sideLabel != null) && (
@@ -7749,14 +7826,14 @@ function FreshImageCard({
         {entry.file.name}
       </p>
       <div className="mt-2.5 flex items-center justify-between gap-2">
-        {twoSided ? (
+        {flipTo != null ? (
           <button
             type="button"
             onClick={onFlipSide}
             className="shrink-0 text-xs font-medium text-ink-mute underline-offset-2 hover:text-ink hover:underline"
-            aria-label={`Move to ${flipTargetLabel}`}
+            aria-label={`Move to ${flipTo}`}
           >
-            Move to {flipTargetLabel}
+            Move to {flipTo}
           </button>
         ) : (
           <span aria-hidden="true" />
