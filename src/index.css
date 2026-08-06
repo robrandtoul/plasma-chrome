@@ -220,6 +220,36 @@ body {
   overflow-x: clip;
 }
 
+/*
+  Keep the designer header from covering whatever was just scrolled to.
+
+  Every designer page sits under a `sticky top-0` header, so anything moved
+  into view PROGRAMMATICALLY — jumpToOrder scrolling to an order card, an
+  in-page anchor, a browser's find-on-page, a focus jump — can be parked
+  underneath it and read as "the scroll went nowhere". scroll-padding-top on
+  the scrollport reserves that strip for every such scroll at once, which is
+  the container-level form of the `scroll-mt-*` two pages already apply to
+  individual elements (CustomerProofPage's ringed pin, AdminSettingsPage's
+  sections).
+
+  It only bit once the dashboard's right rail grew taller than a short project
+  list, which is what made the page scrollable far enough to push a row all the
+  way up under the header. That is a fixture-scale accident, but the exposure is
+  real on any short page, and it will only spread as rail panels are added.
+
+  Scoped via :has(#app-scroll) — that id exists only inside DesignerChrome — so
+  customer pages are untouched and can't double up with their own scroll-mt.
+  4.5rem clears the header in both its full and condensed states with a little
+  air. Declared twice because the scrollport differs by breakpoint: the window
+  scrolls on desktop, #app-scroll scrolls on mobile (see the iOS PWA frame).
+*/
+html:has(#app-scroll) {
+  scroll-padding-top: 4.5rem;
+}
+#app-scroll {
+  scroll-padding-top: 4.5rem;
+}
+
 @keyframes reveal-row {
   from { opacity: 0; }
   to   { opacity: 1; }

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { DesignerChrome, PanelShell, Pill, ButtonInk, ButtonGhost, Textarea } from '../design'
 import { useAuth } from '../lib/auth'
@@ -818,6 +818,8 @@ export default function OrdersPage() {
   }, [userId])
   const [loading, setLoading] = useState(true)
   const [orders, setOrders] = useState<OrderRow[]>([])
+  // ?order=<id> — jump to one order on arrival (see the effect further down).
+  const [searchParams, setSearchParams] = useSearchParams()
   // True when the 300-row fetch ceiling was hit, so the page can say so rather
   // than silently dropping older orders (the full history lives in the log).
   const [capped, setCapped] = useState(false)
@@ -1409,6 +1411,37 @@ export default function OrdersPage() {
     }, 80)
     window.setTimeout(() => setFlashOrderId((v) => (v === orderId ? null : v)), 2600)
   }
+
+  // Arrive from elsewhere pointing at one order: /orders?order=<id>. Used by the
+  // dashboard's Awaiting-payment rail panel, and named to match /orders/log,
+  // which already spells a selected order this way.
+  //
+  // The jump is the whole point rather than a nicety: the awaiting-payment rows
+  // live in the Waiting section, which is COLLAPSED by default, so landing on
+  // /orders alone shows the visitor a page their order isn't visibly on.
+  // jumpToOrder opens the right section, scrolls, and rings the card.
+  //
+  // The param is stripped immediately (replace, so Back doesn't return to it)
+  // for the same reason the bundle workspace strips its ?send=1: a refresh, or
+  // a Back into this page an hour later, must not re-run a one-shot gesture.
+  const jumpedToParam = useRef<string | null>(null)
+  useEffect(() => {
+    const id = searchParams.get('order')
+    if (!id || loading) return
+    if (jumpedToParam.current === id) return
+    jumpedToParam.current = id
+    // Absent from the loaded window — paid since, cancelled, or older than the
+    // 300-row cap. Say nothing and drop the param; the page is still useful.
+    const target = orders.find((o) => o.id === id)
+    if (target) {
+      if (isPlaceable(target) || isAwaitingReapproval(target)) jumpToOrder(id, 'to_order')
+      else if (target.status === 'sent') jumpToOrder(id, 'awaiting')
+      else jumpToPlacedOrder(id)
+    }
+    const next = new URLSearchParams(searchParams)
+    next.delete('order')
+    setSearchParams(next, { replace: true })
+  }, [loading, orders, searchParams, setSearchParams])
 
   // Persist a single order field (the date / Dropbox folder edits), merging into
   // local state so the gate + UI reflect it immediately. Returns whether the

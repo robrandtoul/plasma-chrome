@@ -1112,7 +1112,10 @@ const tree = requestedPath === '/order-builder' ? (
     </Routes>
   </MemoryRouter>
 ) : (
-  <MemoryRouter initialEntries={['/orders']}>
+  // The default. extraQuery carries ?order=<id> through, so the dashboard rail's
+  // Awaiting-payment deep link (which opens the collapsed Waiting section and
+  // rings the card) can be exercised as ?path=/orders&order=o2.
+  <MemoryRouter initialEntries={[`/orders${extraQuery}`]}>
     <Routes>
       <Route path="/orders" element={<OrdersPage />} />
       <Route path="*" element={<Elsewhere />} />

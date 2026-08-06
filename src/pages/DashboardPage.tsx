@@ -30,6 +30,7 @@ import { attentionReason } from '../lib/needsAttention'
 import { tagHelp } from '../lib/tagHelp'
 import { ResolvePopover } from '../components/ResolvePopover'
 import { NudgeOutboxPanel } from '../components/NudgeOutboxPanel'
+import AwaitingPaymentPanel from '../components/AwaitingPaymentPanel'
 import CollapsibleSidebarPanel from '../components/CollapsibleSidebarPanel'
 import AnnouncementsBanner, { PostAnnouncementButton } from '../components/AnnouncementsBanner'
 import SharedDesignerAvatar from '../components/DesignerAvatar'
@@ -4531,6 +4532,16 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                     run many pages and a static panel hovering over
                     nothing related is more distracting than useful. */}
                 <LatestActivityPanel events={latestEvents} navigate={navigate} />
+                {/* Live pay links and whether the customer has opened them.
+                    Sits directly under Latest activity because it answers the
+                    question that feed keeps raising — someone opened their pay
+                    link, so who else has one outstanding? Owns its own small
+                    orders / order_groups queries (it must NOT read the projects
+                    array: an order can outlive its proof's stay in the
+                    dashboard working set, and a client-side join would render
+                    those rows unlabelled). Hidden entirely when ordering is
+                    off, like the order stat tiles. */}
+                {orderingOn && <AwaitingPaymentPanel />}
                 {/* Follow-up automation Outbox (Phase 1). Owns its own small
                     nudge_runs / proof_nudges queries; the projects array is
                     only passed for client-side contact/company labels. */}
