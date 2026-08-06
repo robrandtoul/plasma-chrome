@@ -533,7 +533,7 @@ export default function NewVersionPage() {
   // Letterpress layer colours (migrations 000133 + 000135). Catalogue
   // is loaded once on mount; the three pickers (front/core/back) only
   // render when the selected material is in LAYER_COLOUR_MATERIAL_CODES
-  // (today: paper_letterpress). All three null = no selection;
+  // (both letterpress codes). All three null = no selection;
   // each is required individually when the pickers are visible,
   // ignored on save otherwise. They share a single catalogue —
   // front/core/back is purely a per-version slot, the choices are
@@ -5884,11 +5884,16 @@ export default function NewVersionPage() {
               </div>
             )}
 
-            {/* Paper layers — only renders for un-gilded letterpress
-                (paper_letterpress). Gilded letterpress hides the
-                layered edge behind the gilded edge so no pickers
-                are needed. The catalogue is admin-managed at
-                /admin/core-colours; all three pickers see only
+            {/* Paper layers — renders for BOTH letterpress codes.
+                Gilded letterpress is the same three bonded Colorplan
+                layers; the gilding only covers the edge. The trio is
+                the paper stock the Stock Control job allocates
+                against, so a gilded order needs it just as much as a
+                plain one — leaving it unasked is what stranded order
+                403976 at Confirm. The customer-facing cross-section
+                stays un-gilded-only, gated separately in
+                src/lib/letterpress.ts. The catalogue is admin-managed
+                at /admin/core-colours; all three pickers see only
                 active rows (RLS filters at the DB) and pull from
                 the same shared list. All three required when
                 visible. Grouped under one "Paper layers" heading

@@ -32,6 +32,10 @@
 //   cp-multi     two recipients, one already approved — the one-of-two shape.
 //   cp-earlier   two versions; the older one selectable (earlier-version ack).
 //   cp-abandoned abandoned proof (quiet closed screen + contact form).
+//   cp-letterpress / cp-gilded  a matched pair differing ONLY in material
+//                code, both carrying the same layer-colour trio — the
+//                layered-construction gate (un-gilded shows it, gilded
+//                doesn't). See src/lib/letterpress.ts.
 //   any other cp-… id resolves to a null graph = the page's not-found state.
 //
 // proof-action submissions are recorded on window.__cpProofActions so specs
@@ -279,6 +283,63 @@ const GRAPHS: Record<string, any> = {
     // No versions: the AbandonedScreen renders from the proof header alone,
     // and the page skips the images fetch entirely for a version-less graph.
     [],
+  ),
+  // The two letterpress states exist as a PAIR, for the layered-construction
+  // gate (src/lib/letterpress.ts). Both carry the identical colour trio —
+  // the only difference is the material code — because that is precisely the
+  // distinction the page has to make. Un-gilded shows the cross-section;
+  // gilded captures the same colours for production (the trio is the paper
+  // stock the Stock Control job allocates against) but must NOT show the
+  // panel, since the gilding covers the edge being illustrated.
+  'cp-letterpress': graph(
+    {
+      customer_name: 'Iris Bell',
+      company: 'Bell Press',
+      status: 'in_progress',
+      approved_at: null,
+      abandoned_at: null,
+      disclaimer_acknowledged_at: null,
+    },
+    [
+      version({
+        id: 'cp-letterpress-v1',
+        proof_id: 'cp-letterpress',
+        names: ['Iris Bell'],
+        material_code: 'paper_letterpress',
+        material_display: 'Letterpress',
+        front_colour_name: 'Natural',
+        front_colour_hex: '#f4efe4',
+        core_colour_name: 'Ebony',
+        core_colour_hex: '#1b1b1b',
+        back_colour_name: 'Natural',
+        back_colour_hex: '#f4efe4',
+      }),
+    ],
+  ),
+  'cp-gilded': graph(
+    {
+      customer_name: 'Otto Vance',
+      company: 'Vance & Hall',
+      status: 'in_progress',
+      approved_at: null,
+      abandoned_at: null,
+      disclaimer_acknowledged_at: null,
+    },
+    [
+      version({
+        id: 'cp-gilded-v1',
+        proof_id: 'cp-gilded',
+        names: ['Otto Vance'],
+        material_code: 'paper_letterpress_gilded',
+        material_display: 'Letterpress with gilding',
+        front_colour_name: 'Natural',
+        front_colour_hex: '#f4efe4',
+        core_colour_name: 'Ebony',
+        core_colour_hex: '#1b1b1b',
+        back_colour_name: 'Natural',
+        back_colour_hex: '#f4efe4',
+      }),
+    ],
   ),
   // EUR sibling of cp-basic (no QR). Exists for the VAT-claim spec: GBP
   // prices are VAT-inclusive, EUR/USD are VAT-free (business rule), so a

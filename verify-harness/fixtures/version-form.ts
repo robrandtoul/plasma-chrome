@@ -86,6 +86,37 @@ const MATERIALS = [
     archived_at: null,
     supports_personalisation: false,
   },
+  // The two letterpress codes, present as a PAIR so the Paper layers
+  // section can be checked on both. Both must show the three pickers:
+  // gilded letterpress is the same three bonded Colorplan layers, and
+  // that trio is the paper stock the Stock Control job allocates
+  // against. Gilded showing no pickers is what stranded order 403976
+  // at Confirm on `letterpress_colours_missing`. (The customer-facing
+  // cross-section stays un-gilded-only — a separate gate, exercised by
+  // the cp-letterpress / cp-gilded pair.) requires_ink_names mirrors
+  // live: letterpress is one of the materials that asks for ink names.
+  {
+    id: 'vf-mat-lp',
+    code: 'paper_letterpress',
+    display_name: 'Letterpress',
+    requires_ink_names: true,
+    option_label: null,
+    display_quantities: null,
+    multi_variant: false,
+    archived_at: null,
+    supports_personalisation: false,
+  },
+  {
+    id: 'vf-mat-lp-gilded',
+    code: 'paper_letterpress_gilded',
+    display_name: 'Letterpress with gilding',
+    requires_ink_names: true,
+    option_label: null,
+    display_quantities: null,
+    multi_variant: false,
+    archived_at: null,
+    supports_personalisation: false,
+  },
 ]
 
 const MATERIAL_VARIANTS = [
@@ -93,6 +124,9 @@ const MATERIAL_VARIANTS = [
   { id: 'vf-var-500', material_id: 'vf-mat-steel', display_name: '500 micron', variant_type: 'thickness', sort_order: 2, ink_count: null },
   { id: 'vf-var-800', material_id: 'vf-mat-steel', display_name: '800 micron', variant_type: 'thickness', sort_order: 3, ink_count: null },
   { id: 'vf-var-wood', material_id: 'vf-mat-wood', display_name: 'Standard', variant_type: 'default', sort_order: 1, ink_count: null },
+  // ink_count drives how many ink-name fields the form asks for.
+  { id: 'vf-var-lp', material_id: 'vf-mat-lp', display_name: '1 colour', variant_type: 'ink_count', sort_order: 1, ink_count: 1 },
+  { id: 'vf-var-lp-gilded', material_id: 'vf-mat-lp-gilded', display_name: '1 colour', variant_type: 'ink_count', sort_order: 1, ink_count: 1 },
 ]
 
 // Every variant priced in every currency the form can pick, so the
@@ -293,7 +327,19 @@ export function versionFormQuery(state: HookQueryState): { data: any; error: nul
   }
 
   if (table === 'letterpress_core_colours') {
-    return { data: [], error: null }
+    // The shared Colorplan catalogue behind all three layer pickers
+    // (front/core/back draw from one list — the slot is per-version, the
+    // choices are not). One "(default …)" name is deliberate: it's the
+    // shape that used to break the hand-off's Card line parser, and it's
+    // in 14 of the 16 live combos, so the common case is the one on show.
+    return {
+      data: [
+        { id: 'vf-col-natural', name: 'Natural', hex_value: '#f4efe4', is_active: true, sort_order: 1 },
+        { id: 'vf-col-ebony', name: 'Ebony (default black)', hex_value: '#1b1b1b', is_active: true, sort_order: 2 },
+        { id: 'vf-col-bright', name: 'Bright White', hex_value: '#fdfdfb', is_active: true, sort_order: 3 },
+      ],
+      error: null,
+    }
   }
 
   if (table === 'personalisation_pricing') {

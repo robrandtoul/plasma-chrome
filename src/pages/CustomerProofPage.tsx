@@ -29,6 +29,7 @@ import {
   thicknessIntroForMaterial,
   thicknessSetForMaterial,
 } from '../lib/metalThicknessNotes'
+import { showsLayeredConstruction } from '../lib/letterpress'
 import { QrCodePanel, qrRowsForSlot } from '../components/QrCodePanel'
 import { BUNDLE_PARAM, BUNDLE_TOKEN_PARAM } from '../lib/customerProofUrl'
 import { setReviewPath } from '../lib/proofSets'
@@ -4020,10 +4021,15 @@ export default function CustomerProofPage() {
           )}
 
           {/* Letterpress construction guide (migration 000135).
-              Renders only when all three layer fields populate, so
-              non-letterpress and gilded versions naturally drop the
-              entire panel. */}
-          {activeVersion.front_colour_name && activeVersion.core_colour_name && activeVersion.back_colour_name && (
+              Gated on the material code AND on all three layer fields
+              populating. The code check is load-bearing: gilded
+              letterpress captures the same trio for production (it's
+              the paper stock the Stock Control job allocates against)
+              but hides the layered edge behind the gilding, so it must
+              not render here. Until 2026-08-06 the data check alone
+              held gilded out, because gilded versions could never
+              store colours — see src/lib/letterpress.ts. */}
+          {showsLayeredConstruction(activeVersion.material_code) && activeVersion.front_colour_name && activeVersion.core_colour_name && activeVersion.back_colour_name && (
             <PanelShell
               eyebrow="About this material"
               title="Construction"

@@ -40,6 +40,7 @@
     "test:inhouse-note": "tsx supabase/functions/_shared/inhouseNoteTemplate.test.ts",
     "test:stranded": "tsx src/lib/strandedApprovals.test.ts",
     "test:selection-loss": "tsx src/lib/selectionShapeLoss.test.ts",
+    "test:letterpress": "tsx src/lib/letterpress.test.ts",
     "test:preview-review": "tsx src/lib/previewReview.test.ts",
     "backtest": "tsx scripts/run-backtest.ts",
     "test:ai-drafts": "tsx supabase/functions/_shared/aiDrafts/guardrails.test.ts",
