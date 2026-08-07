@@ -28,6 +28,7 @@ import type { Currency, LetterpressCoreColour, ProofNameApproval } from '../lib/
 import { usePersonalisationPricing } from '../lib/quote/usePersonalisationPricing'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { computeQrArtworkChangedSlots, isQrSlotFlagged, resolveQrEffectiveKeep } from '../lib/qrCarryForward'
+import { needsRecipientChoice } from '../lib/qrRecipients'
 import { rostersAreDisjoint } from '../lib/strandedApprovals'
 import { selectionShapeLoss } from '../lib/selectionShapeLoss'
 import { resolveCurrency, type CurrencySuggestion } from '../lib/currencyResolver'
@@ -4846,6 +4847,11 @@ export default function NewVersionPage() {
     // Every uploaded image must be assigned to a valid slot — no card
     // silently left as "shared" when there are named recipients.
     imagesAllocated:(isVariantRound || isSetCollectionShape) ? true : everyImageInValidSlot,
+    // The same demand, for QR codes. Only bites on codes added in
+    // this session on a 2+ recipient version; see lib/qrRecipients.
+    // Short-circuits on the shapes that hide the QR section outright,
+    // so a blocker can never outlive the control that answers it.
+    qrRecipients:   (isVariantRound || isSetCollectionShape) ? true : !needsRecipientChoice(qrEntries, names),
     pricingDisplay: isPerDirectionRound ? true : pricingDisplay !== null,
     material:       isPerDirectionRound ? true : !!selectedMaterialId,
     variant:        isPerDirectionRound ? true : (!variantRequired || selectedVariantIds.length > 0),
@@ -7295,6 +7301,7 @@ function missingFieldItems(
   if (!validations.names) items.push('Add at least one name')
   if (!validations.images) items.push('Add at least one image')
   if (!validations.imagesAllocated) items.push('Assign every image to a recipient (none left as “shared”)')
+  if (!validations.qrRecipients) items.push('Choose who each new QR code is for')
   if (!validations.variantsCount) items.push('Add two or more variant directions')
   if (!validations.variantsLabels) items.push('Name each variant direction')
   if (!validations.variantsImages) items.push('Add at least one image per variant direction')

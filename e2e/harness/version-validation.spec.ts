@@ -160,3 +160,89 @@ test.describe('save gating on a continuation (vf-open)', () => {
     await expect(summary.locator('ul > li')).toHaveCount(0)
   })
 })
+
+// ── Who is each QR code for? ────────────────────────────────────────────
+//
+// A QR row with no recipient means "shared": the same code prints on every
+// card. A hand-dropped code used to default to exactly that, silently, and
+// it reached a customer — TKO Marketing's v2 carried one personal LinkedIn
+// code per director, all three left shared, so the proof page showed all
+// three under all three names and each director approved with a note saying
+// which was actually theirs.
+//
+// The failures these catch:
+//   * a fresh QR that arrives already reading "All recipients" is an answer
+//     nobody gave, and the whole defect ships again;
+//   * a blocker that survives a real choice (or a picker that can't be
+//     satisfied) makes the form unsaveable, which is worse than the bug;
+//   * "All recipients (shared)" must stay a ONE-CLICK valid answer — one
+//     company website on everybody's card is the ordinary case, and a rule
+//     that fought it would be turned off within a week.
+//
+// vf-open is a two-recipient continuation, so the picker is live on it.
+test.describe('QR recipient gate (vf-open)', () => {
+  // Real QR pixels: the form decodes the file client-side and rejects
+  // anything it can't read, so a placeholder image would never become an
+  // entry. Declared as image/jpeg to satisfy the input's accept filter —
+  // the decoder sniffs the actual bytes, so the PNG payload is fine.
+  async function qrFile(text: string, name: string) {
+    const QRCode = (await import('qrcode')).default
+    return { name, mimeType: 'image/jpeg', buffer: await QRCode.toBuffer(text, { width: 320, margin: 2 }) }
+  }
+
+  const qrSection = (page: Page) =>
+    page.locator('section').filter({ has: page.getByRole('heading', { name: /^qr codes$/i }) })
+  const appliesTo = (page: Page) => qrSection(page).locator('select')
+
+  test('a dropped QR blocks Save until somebody says who it is for', async ({ page }) => {
+    await page.goto('/verify-harness/index.html?path=/proofs/vf-open/versions/new')
+    // The fixture starts valid — so any blocking below is this rule's doing.
+    await expect(submit(page)).toBeEnabled()
+
+    await qrSection(page)
+      .locator('input[type="file"]')
+      .setInputFiles(await qrFile('https://example.test/asha', 'qr-asha.jpg'))
+
+    // The picker arrives with NO selection — the placeholder is the point.
+    await expect(appliesTo(page)).toHaveCount(1)
+    await expect(appliesTo(page)).toHaveValue('')
+    await expect(appliesTo(page)).toHaveAttribute('aria-invalid', 'true')
+
+    // And the door is shut, with the reason printed beside the button.
+    await expect(submit(page)).toBeDisabled()
+    await expect(blockerLine(page)).toBeVisible()
+
+    // Naming an owner clears it live, with no save attempt in between.
+    await appliesTo(page).selectOption('Asha Rao')
+    await expect(appliesTo(page)).not.toHaveAttribute('aria-invalid', 'true')
+    await expect(submit(page)).toBeEnabled()
+    await expect(blockerLine(page)).toHaveCount(0)
+  })
+
+  test('"All recipients" is a valid answer, and the set-level advisory never blocks', async ({ page }) => {
+    await page.goto('/verify-harness/index.html?path=/proofs/vf-open/versions/new')
+    await qrSection(page)
+      .locator('input[type="file"]')
+      .setInputFiles([
+        await qrFile('https://example.test/asha', 'qr-one.jpg'),
+        await qrFile('https://example.test/ben', 'qr-two.jpg'),
+      ])
+    await expect(appliesTo(page)).toHaveCount(2)
+    await expect(submit(page)).toBeDisabled()
+
+    // Two distinct codes, both deliberately shared, on a two-name version:
+    // the shape worth mentioning. Deliberately chosen, so Save opens — the
+    // advisory is a nudge and must never become a second blocker.
+    await appliesTo(page).nth(0).selectOption('__shared__')
+    await appliesTo(page).nth(1).selectOption('__shared__')
+    await expect(submit(page)).toBeEnabled()
+    await expect(blockerLine(page)).toHaveCount(0)
+    await expect(page.getByTestId('qr-shared-warning')).toBeVisible()
+
+    // Give one of them an owner and the shape no longer reads as
+    // one-code-each, so the advisory stands down.
+    await appliesTo(page).nth(0).selectOption('Asha Rao')
+    await expect(page.getByTestId('qr-shared-warning')).toHaveCount(0)
+    await expect(submit(page)).toBeEnabled()
+  })
+})

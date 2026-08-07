@@ -227,11 +227,11 @@ export function awaitingStatusLine(row: AwaitingRow, now: number = Date.now()): 
 
   if (row.offline) {
     // No link exists, so "not opened" would be a fact about nothing.
-    parts.push(row.sentAt ? `Awaiting payment · raised ${relativeTime(row.sentAt)}` : 'Awaiting payment')
+    parts.push(row.sentAt ? `Awaiting payment · raised ${relativeTime(row.sentAt, now)}` : 'Awaiting payment')
   } else if (row.openedAt) {
-    parts.push(`Opened ${relativeTime(row.openedAt)}`)
+    parts.push(`Opened ${relativeTime(row.openedAt, now)}`)
   } else if (row.sentAt) {
-    parts.push(`Not opened · sent ${relativeTime(row.sentAt)}`)
+    parts.push(`Not opened · sent ${relativeTime(row.sentAt, now)}`)
   } else {
     parts.push('Not opened')
   }

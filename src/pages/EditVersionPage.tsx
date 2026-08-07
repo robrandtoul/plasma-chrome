@@ -27,6 +27,7 @@ import {
   type LayoutEditRow,
 } from '../components/LayoutsEditor'
 import { QrCodeUploadSection, type QrEntry } from '../components/QrCodeUploadSection'
+import { needsRecipientChoice } from '../lib/qrRecipients'
 import type { ArtworkSource } from '../lib/qrArtworkScan'
 import type { QrKind } from '../lib/qrCodes'
 import { LAYER_COLOUR_MATERIAL_CODES } from '../lib/letterpress'
@@ -331,6 +332,7 @@ export default function EditVersionPage() {
   const frontColourRef  = useRef<HTMLDivElement>(null)
   const coreColourRef   = useRef<HTMLDivElement>(null)
   const backColourRef   = useRef<HTMLDivElement>(null)
+  const qrSectionRef    = useRef<HTMLDivElement>(null)
   const toastTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Stash for undo-after-Remove. See NewVersionPage for the full
   // mechanic explainer; same shape adjusted for EditImage's
@@ -779,6 +781,14 @@ export default function EditVersionPage() {
     images:      isSetCollection ? true : imagesFinishKeys.every(fk => (editImagesByOption[fk] ?? []).length > 0),
     // Coverage guard: no named recipient left without a card of their own.
     imagesAllocated: everyNameAllocated,
+    // The same demand, for QR codes added in this session on a 2+
+    // recipient version — a code left unassigned prints on every
+    // card. Short-circuits on the shapes that hide the QR section,
+    // so a blocker can never outlive the control that answers it.
+    // See lib/qrRecipients.
+    qrRecipients: isVariantRound || isSetCollection
+      ? true
+      : !needsRecipientChoice(qrEntries, names),
     material:    materialDisplay.trim() !== '',
     inkNames:    !requiresInkNames || (editInkCount > 0 && inkNameValidities.every(Boolean)),
     frontColour: !requiresLayerColours || selectedFrontColourId !== null,
@@ -1458,6 +1468,7 @@ export default function EditVersionPage() {
         { key: 'inkNames',    ref: inkNamesRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'images',      ref: imageSectionRef },
         { key: 'imagesAllocated', ref: imageSectionRef },
+        { key: 'qrRecipients', ref: qrSectionRef as unknown as React.RefObject<HTMLElement | null> },
       ]
       const first = order.find(o => !validations[o.key])
       first?.ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -2471,13 +2482,15 @@ export default function EditVersionPage() {
               rendering on the customer page is deferred to a
               follow-up. Hidden on collections (no per-layout QRs). */}
           {!isVariantRound && !isSetCollection && (
-            <QrCodeUploadSection
-              value={qrEntries}
-              onChange={setQrEntries}
-              names={names.map((n) => n.trim()).filter(Boolean)}
-              disabled={submitting}
-              artwork={qrArtworkSources}
-            />
+            <div ref={qrSectionRef}>
+              <QrCodeUploadSection
+                value={qrEntries}
+                onChange={setQrEntries}
+                names={names.map((n) => n.trim()).filter(Boolean)}
+                disabled={submitting}
+                artwork={qrArtworkSources}
+              />
+            </div>
           )}
 
           {/* Change notes */}

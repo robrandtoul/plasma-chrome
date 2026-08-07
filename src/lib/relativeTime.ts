@@ -21,11 +21,16 @@
 // contexts this is used, and British-English summarising ("half
 // an hour ago") would add weight without adding clarity.
 
-export function relativeTime(iso: string | null | undefined): string {
+// `now` is injectable purely so callers that already take one can
+// thread it through and stay deterministic under test. Every screen
+// leaves it defaulted. Without it, a caller like awaitingStatusLine
+// could accept a `now` for testability and then quietly measure
+// against the real clock anyway — which is exactly what happened, and
+// its unit test drifted by a day the morning after it was written.
+export function relativeTime(iso: string | null | undefined, now: number = Date.now()): string {
   if (!iso) return ''
   const then = new Date(iso).getTime()
   if (!Number.isFinite(then)) return ''
-  const now = Date.now()
   const diffMs = Math.max(0, now - then)
 
   if (diffMs < 60_000) return 'just now'
@@ -51,7 +56,7 @@ export function relativeTime(iso: string | null | undefined): string {
   // current-year values drop the year ("8 May"), older values
   // include it ("8 May 2025") so the reader can disambiguate.
   const then_d = new Date(iso)
-  const includeYear = then_d.getFullYear() !== new Date().getFullYear()
+  const includeYear = then_d.getFullYear() !== new Date(now).getFullYear()
   return then_d.toLocaleDateString('en-GB', {
     day: 'numeric',
     month: 'short',

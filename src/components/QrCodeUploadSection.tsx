@@ -16,9 +16,15 @@
 //
 // Per-recipient assignment uses the same associated_name pattern
 // as the artwork image grid — null = shared (applies to every
-// printed copy), a recipient name = scoped to that card. The
-// dropdown defaults to whatever the parent passes via
-// `defaultRecipient`, falling back to 'shared'.
+// printed copy), a recipient name = scoped to that card.
+//
+// On a version with 2+ recipients that assignment is NOT defaulted:
+// a freshly-added QR starts with no answer and the designer has to
+// give one (see lib/qrRecipients for why, and for the customer this
+// happened to). "All recipients (shared)" stays a one-click answer —
+// the rule only insists it's chosen rather than inherited. Entries
+// carried from an earlier version, and everything on single-
+// recipient versions, are untouched by this.
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { v4 as uuidv4 } from 'uuid'
@@ -37,6 +43,7 @@ import {
 } from '../lib/qrArtworkScan'
 import { lookupCardBySlug, VcardConfigError } from '../lib/vcardClient'
 import { generateVcardQrSvg, parseVcardSlugInput, vcardUrlForSlug } from '../lib/vcardQr'
+import { allSharedQrWarning, recipientChoiceApplies } from '../lib/qrRecipients'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 
 /**
@@ -65,6 +72,20 @@ export interface QrEntry {
   kind: QrKind
   /** Recipient assignment. Null = shared across all printed copies. */
   associatedName: string | null
+  /**
+   * Has a human said who this code is for? False = added in this
+   * session on a multi-recipient version and still waiting for an
+   * answer, which blocks Save. Undefined = never asked (carried
+   * entries, single-recipient versions, anything predating the rule)
+   * and reads as chosen.
+   *
+   * Deliberately separate from associatedName rather than folded into
+   * it as a third value: associatedName means exactly what the
+   * database column means, and an unanswered entry stays null =
+   * shared underneath, so any path that ignores this flag degrades to
+   * the old behaviour rather than to something new.
+   */
+  recipientChosen?: boolean
   /** Original filename for audit, populated from file.name on new entries. */
   originalFilename: string | null
   /**
@@ -196,6 +217,16 @@ export function QrCodeUploadSection({
   const vcardInputId = useId()
   const [dropError, setDropError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
+
+  // Whether "who is this for?" is a live question on this version.
+  // Gates both the picker (below) and the unanswered state — the two
+  // must move together, or Save can be blocked by a control that
+  // isn't on screen.
+  const mustChooseRecipient = recipientChoiceApplies(names)
+
+  // Soft check on the whole set, distinct from the per-entry one
+  // above: null unless the codes add up to "one each, all shared".
+  const sharedQrWarning = useMemo(() => allSharedQrWarning(value, names), [value, names])
 
   // ── Artwork scan ──────────────────────────────────────────────────
   //
@@ -340,6 +371,13 @@ export function QrCodeUploadSection({
         decodedData: find.decodedData,
         kind: find.kind,
         associatedName: inheritedName,
+        // A code read out of a named person's artwork carries its own
+        // evidence of ownership, so that counts as answered. A code
+        // read out of shared artwork — or one whose name no longer
+        // exists on this version — fell back to shared without
+        // anybody deciding, which is the exact shape being guarded
+        // against, so it still needs confirming.
+        recipientChosen: !mustChooseRecipient || inheritedName !== null,
         originalFilename: find.cropFile.name,
       },
     ])
@@ -402,6 +440,7 @@ export function QrCodeUploadSection({
         decodedData: vcardUrlForSlug(slug),
         kind: 'hosted_vcard',
         associatedName: defaultRecipient ?? null,
+        recipientChosen: !mustChooseRecipient,
         originalFilename: file.name,
         vcardSlug: slug,
         vcardCardName: cardName,
@@ -455,6 +494,11 @@ export function QrCodeUploadSection({
           decodedData: decoded.data,
           kind: decoded.kind,
           associatedName: defaultRecipient ?? null,
+          // The hand-dropped path — the one that shipped three
+          // personal codes onto everybody's card. Nothing about a
+          // dropped file says who it belongs to, so on a multi-
+          // recipient version the designer is asked.
+          recipientChosen: !mustChooseRecipient,
           originalFilename: file.name,
         })
       } catch (err) {
@@ -496,6 +540,43 @@ export function QrCodeUploadSection({
       <p className="mb-5 max-w-prose text-sm text-ink-soft">
         Add each QR code that appears on the card so the customer can verify it before approving. Use the customer-supplied path for QRs the customer sent (vCard, URL, wifi, etc.), or the Plasma vCard path when the QR points at a hosted qcrd.uk card.
       </p>
+
+      {/* "One code each, all marked shared" — the shape that reached a
+          customer. A nudge rather than a blocker, because three
+          company links on every card is unusual but legitimate, and
+          because it fires on carried-forward codes the designer may
+          not have touched. See lib/qrRecipients for what it will and
+          won't say. */}
+      {sharedQrWarning && (
+        <div
+          // Stable hook for the regression spec: the copy is expected to
+          // be tuned, the fact that a warning appears is not.
+          data-testid="qr-shared-warning"
+          className="mb-5 flex gap-2.5 rounded-xl border border-low bg-low-soft p-3.5"
+        >
+          {/* Glyph takes --c-low (a fill colour); the body text stays
+              on the normal ink token, because --c-low as TEXT on
+              --c-low-soft is the contrast trap the token file warns
+              about and there's no Tailwind class for --c-low-ink. */}
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+            className="mt-0.5 shrink-0 text-low"
+          >
+            <path
+              d="M12 9v4m0 4h.01M10.3 3.9 2.4 17.5A2 2 0 0 0 4.1 20.5h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <p className="max-w-prose text-[13px] text-ink-soft">{sharedQrWarning}</p>
+        </div>
+      )}
 
       {/* ── Found on the artwork ─────────────────────────────────────
           Codes read straight out of the proof images. Each one is a
@@ -865,7 +946,7 @@ export function QrCodeUploadSection({
                       </button>
                     </div>
                   )}
-                  {names.length > 1 && (
+                  {mustChooseRecipient && (
                     // Only render the dropdown when there are
                     // 2+ recipients. For single-recipient proofs,
                     // shared vs that one recipient resolves to the
@@ -879,16 +960,36 @@ export function QrCodeUploadSection({
                     <label className="mt-3 flex flex-col gap-1 text-[12px] text-ink-soft sm:flex-row sm:items-center sm:gap-2">
                       Applies to
                       <select
-                        value={entry.associatedName ?? SHARED_APPROVAL_KEY}
+                        // An unanswered entry shows an empty
+                        // placeholder rather than pre-selecting
+                        // "All recipients": a dropdown already
+                        // reading "shared" is precisely what let
+                        // three personal codes onto everyone's card,
+                        // because it looks like an answer.
+                        value={
+                          entry.recipientChosen === false
+                            ? ''
+                            : entry.associatedName ?? SHARED_APPROVAL_KEY
+                        }
                         disabled={disabled}
+                        aria-invalid={entry.recipientChosen === false || undefined}
                         onChange={(e) =>
                           updateEntry(entry.id, {
                             associatedName:
                               e.target.value === SHARED_APPROVAL_KEY ? null : e.target.value,
+                            recipientChosen: true,
                           })
                         }
-                        className="select-styled rounded border border-line bg-surface px-2 py-1 text-[13px] text-ink"
+                        className={[
+                          'select-styled rounded border bg-surface px-2 py-1 text-[13px] text-ink',
+                          entry.recipientChosen === false ? 'border-out' : 'border-line',
+                        ].join(' ')}
                       >
+                        {entry.recipientChosen === false && (
+                          <option value="" disabled>
+                            Choose…
+                          </option>
+                        )}
                         <option value={SHARED_APPROVAL_KEY}>All recipients (shared)</option>
                         {names.map((name) => (
                           <option key={name} value={name}>
@@ -896,6 +997,9 @@ export function QrCodeUploadSection({
                           </option>
                         ))}
                       </select>
+                      {entry.recipientChosen === false && (
+                        <span className="text-[12px] font-medium text-out">Required</span>
+                      )}
                     </label>
                   )}
                 </div>

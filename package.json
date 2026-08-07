@@ -74,6 +74,7 @@
     "test:proof-snapshot": "tsx src/lib/proofSnapshot.test.ts",
     "test:proof-timeline": "tsx src/lib/proofTimeline.test.ts",
     "test:qr-carry-forward": "tsx src/lib/qrCarryForward.test.ts",
+    "test:qr-recipients": "tsx src/lib/qrRecipients.test.ts",
     "test:vcard-client": "tsx src/lib/vcardClient.test.ts",
     "test:vcard-qr": "tsx src/lib/vcardQr.test.ts",
     "test": "tsx scripts/run-tests.ts",
