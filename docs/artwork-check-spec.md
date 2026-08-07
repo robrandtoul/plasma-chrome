@@ -1109,11 +1109,18 @@ transparency case, and the decode ceiling.
 than against the notes: deployed **v27** is byte-identical to `main` across all
 16 files, so this deploy carries **only** this change — the §2026-08-06
 report-history work had already shipped despite its entry saying otherwise.
-**✅ DEPLOYED + VERIFIED 2026-08-07.** `artwork-check` **v28**, `verify_jwt`
-true, 17 files all byte-identical to `main`. Re-ran the proof check on
-`455a1334` v12 (the run that had failed twice): **verdict `clear`**, 85s, 12
-proof images + 62 thread messages read, recorded honestly as `source: 'service'`
-/ `ran_by: null` so it doesn't inflate the designer usage figures.
+**✅ DEPLOYED + VERIFIED 2026-08-07.** `artwork-check` **v28** shipped the fix;
+**v29** shipped the corrected 12MP ceiling below. Live is **v29**, `verify_jwt`
+true, 17 files all byte-identical to `main`, `MAX_DECODE_PIXELS = 12_000_000`
+confirmed in the deployed source, and a no-target smoke POST returns the
+function's own `order_id or proof_version_id is required` — so the module
+(including `imageResize.ts`) imports and boots. Re-ran the proof check on
+`455a1334` v12 on v28 (the run that had failed twice): **verdict `clear`**, 85s,
+12 proof images + 62 thread messages read, recorded honestly as
+`source: 'service'` / `ran_by: null` so it doesn't inflate the designer usage
+figures. The v29 ceiling change was deliberately NOT re-verified with a live
+run: 26.1MP sits above both the old and new ceilings, so that proof behaves
+identically and a re-run would cost an Opus pass to learn nothing.
 
 ⚠ **The triggering file is 14864x1755 = 26.1MP, and it was SKIPPED, not
 downscaled** — "too large to process (14864x1755px)", i.e. it fell past the
