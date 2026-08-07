@@ -25,7 +25,9 @@ import {
   readCadence,
   reminderShortLine,
   reminderState,
+  summariseGroupLedger,
   summariseNudgeLedger,
+  type NudgeLedgerRow,
   type ReminderCadence,
   type ReminderStateInput,
   type ReminderSummary,
@@ -60,12 +62,15 @@ function summary(over: Partial<ReminderSummary> = {}): ReminderSummary {
   return { sentCount: 0, lastSentAt: null, highestSentNo: 0, latestOutcome: null, ...over }
 }
 
+function ledgerRow(over: Partial<NudgeLedgerRow> = {}): NudgeLedgerRow {
+  return { order_id: 'o1', order_group_id: null, reminder_no: 1, state: 'sent', outcome: 'sent', created_at: daysAgo(1), ...over }
+}
+
 function input(over: Partial<ReminderStateInput> = {}): ReminderStateInput {
   return {
     sentAt: daysAgo(1),
     expiresAt: daysAhead(13),
     expired: false,
-    inActiveGroup: false,
     summary: summary(),
     cadence: CADENCE,
     grace: { lastReplyAt: null, lastCustomerReplyAt: null, graceDays: 3 },
@@ -129,9 +134,29 @@ test('auto-chase off with nothing sent says so; off after manual sends stays qui
 
 console.log('\nreminderState — branch order is the contract')
 
-test('⚠ a grouped member is never reported as due, however healthy the ledger', () => {
-  const s = reminderState(input({ inActiveGroup: true, sentAt: daysAgo(9) }))
-  assertEquals(s.next.kind, 'grouped', 'the sender skips grouped members entirely')
+test('⚠ a combined payment is chased on the same arithmetic as a single order', () => {
+  // The regression this replaces: between 000309 and 000388 a grouped member
+  // returned a 'grouped' branch meaning "nothing is coming", which was true and
+  // was the bug — combined payments were never chased at all, and every surface
+  // faithfully reported the silence. The caller now passes the GROUP's clock
+  // and ledger, and the answer must be the ordinary schedule.
+  const asOrder = reminderState(input({ sentAt: daysAgo(9) }))
+  const asGroup = reminderState(input({ sentAt: daysAgo(9), chase: 'group' }))
+  assertEquals(asGroup.next, asOrder.next, 'one implementation of the manner, whatever is being chased')
+  assertEquals(asGroup.chase, 'group', 'but it still reports WHICH, so surfaces can word it')
+})
+
+test('a combined payment whose link was never sent reads as waiting, not broken', () => {
+  // send-order-reminders refuses to chase a link nobody has been given
+  // (skipped_no_send_evidence). Sending it clears this by itself, so it is a
+  // pause — telling the designer something is wrong would be a false alarm.
+  const s = reminderState(input({
+    chase: 'group',
+    sentAt: daysAgo(9),
+    summary: summary({ latestOutcome: 'skipped_no_send_evidence' }),
+  }))
+  assertEquals(s.next.kind, 'note', 'the ledger outcome outranks the schedule')
+  if (s.next.kind === 'note') assertEquals(s.next.note.kind, 'pause', 'not a problem — sending the link fixes it')
 })
 
 test('⚠ a live pause outranks the schedule', () => {
@@ -171,9 +196,9 @@ console.log('\nsummariseNudgeLedger')
 
 test('counts only real sends, and reads the cap off the highest stage', () => {
   const s = summariseNudgeLedger([
-    { order_id: 'o1', reminder_no: 1, state: 'sent', outcome: 'sent', created_at: daysAgo(6) },
-    { order_id: 'o1', reminder_no: 2, state: 'skipped', outcome: 'skipped_grace_window', created_at: daysAgo(1) },
-    { order_id: 'o1', reminder_no: 1, state: 'dry_run', outcome: 'would_send', created_at: daysAgo(8) },
+    ledgerRow({ reminder_no: 1, state: 'sent', outcome: 'sent', created_at: daysAgo(6) }),
+    ledgerRow({ reminder_no: 2, state: 'skipped', outcome: 'skipped_grace_window', created_at: daysAgo(1) }),
+    ledgerRow({ reminder_no: 1, state: 'dry_run', outcome: 'would_send', created_at: daysAgo(8) }),
   ])
   assertEquals(s.o1.sentCount, 1, 'dry runs and skips are not sends')
   assertEquals(s.o1.highestSentNo, 1, 'a skipped stage 2 has not been sent')
@@ -183,18 +208,51 @@ test('counts only real sends, and reads the cap off the highest stage', () => {
 
 test('a latest row that succeeded reports no outcome to explain', () => {
   const s = summariseNudgeLedger([
-    { order_id: 'o1', reminder_no: 1, state: 'skipped', outcome: 'skipped_capped', created_at: daysAgo(9) },
-    { order_id: 'o1', reminder_no: 2, state: 'sent', outcome: 'sent', created_at: daysAgo(1) },
+    ledgerRow({ reminder_no: 1, state: 'skipped', outcome: 'skipped_capped', created_at: daysAgo(9) }),
+    ledgerRow({ reminder_no: 2, state: 'sent', outcome: 'sent', created_at: daysAgo(1) }),
   ])
   assertEquals(s.o1.latestOutcome, null, 'a send is not a problem needing a line')
 })
 
 test('orders are kept apart', () => {
   const s = summariseNudgeLedger([
-    { order_id: 'a', reminder_no: 1, state: 'sent', outcome: 'sent', created_at: daysAgo(2) },
-    { order_id: 'b', reminder_no: 2, state: 'sent', outcome: 'sent', created_at: daysAgo(1) },
+    ledgerRow({ order_id: 'a', reminder_no: 1, state: 'sent', outcome: 'sent', created_at: daysAgo(2) }),
+    ledgerRow({ order_id: 'b', reminder_no: 2, state: 'sent', outcome: 'sent', created_at: daysAgo(1) }),
   ])
   assertEquals([s.a.highestSentNo, s.b.highestSentNo], [1, 2], 'no cross-contamination')
+})
+
+console.log('\nthe two ledgers stay apart (000388)')
+
+test('⚠ a combined payment\'s reminders are NOT counted as its representative member\'s', () => {
+  // A group reminder is booked against a real member's order_id as well as the
+  // group's, because order_nudges.order_id is NOT NULL. Rolling that up per
+  // order would tell the designer this one card had been chased three times
+  // when nothing has ever been sent about it on its own.
+  const rows = [
+    ledgerRow({ order_id: 'rep', order_group_id: 'g1', reminder_no: 1, created_at: daysAgo(6) }),
+    ledgerRow({ order_id: 'rep', order_group_id: 'g1', reminder_no: 2, created_at: daysAgo(3) }),
+  ]
+  assertEquals(summariseNudgeLedger(rows).rep, undefined, 'the member has no chase of its own')
+  assertEquals(summariseGroupLedger(rows).g1.highestSentNo, 2, 'the group has had two')
+})
+
+test('a member released back to its own link starts from reminder 1', () => {
+  // Release hands the customer a NEW link they have never been sent, so the
+  // group's spent cap must not carry over and silence it.
+  const rows = [
+    ledgerRow({ order_id: 'rep', order_group_id: 'g1', reminder_no: 3, created_at: daysAgo(6) }),
+    ledgerRow({ order_id: 'rep', order_group_id: null, reminder_no: 1, created_at: daysAgo(1) }),
+  ]
+  assertEquals(summariseNudgeLedger(rows).rep.highestSentNo, 1, 'its own chase is one reminder in, not three')
+})
+
+test('groups are kept apart from each other', () => {
+  const s = summariseGroupLedger([
+    ledgerRow({ order_id: 'a', order_group_id: 'g1', reminder_no: 1, created_at: daysAgo(2) }),
+    ledgerRow({ order_id: 'b', order_group_id: 'g2', reminder_no: 2, created_at: daysAgo(1) }),
+  ])
+  assertEquals([s.g1.highestSentNo, s.g2.highestSentNo], [1, 2], 'no cross-contamination')
 })
 
 console.log('\nreadCadence')
@@ -270,7 +328,7 @@ test('says nothing when there is nothing honest to say', () => {
 
 test('covers every state the decision can return', () => {
   const cases: Array<[Partial<ReminderStateInput>, string]> = [
-    [{ inActiveGroup: true }, 'Combined — no reminders'],
+    [{ chase: 'group', summary: summary({ sentCount: 1, highestSentNo: 1 }), sentAt: daysAgo(9) }, 'Reminder 2 of 3 (combined) · next run'],
     [{ summary: summary({ sentCount: 3, highestSentNo: 3 }) }, 'All 3 reminders sent'],
     [{ cadence: { ...CADENCE, autoEnabled: false } }, 'Reminders off'],
     [{ summary: summary({ latestOutcome: 'skipped_no_conversation' }) }, 'Chase stopped'],

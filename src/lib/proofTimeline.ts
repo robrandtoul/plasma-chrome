@@ -108,6 +108,13 @@ export interface TimelineOrderReminderRow {
   /** 'auto' = the send-order-reminders cron; 'manual' kept for symmetry. */
   source: 'auto' | 'manual'
   created_at: string
+  /**
+   * Set when the reminder was about a whole combined payment (000388). It is
+   * booked against its representative member's order_id too, so it surfaces on
+   * that one proof's timeline — and calling it that proof's own payment
+   * reminder would be wrong, since a grouped card is never chased alone.
+   */
+  order_group_id?: string | null
 }
 
 export interface TimelineSources {
@@ -349,7 +356,7 @@ export function buildTimelineEntries(sources: TimelineSources): TimelineEntry[] 
       type: 'order_reminder_sent',
       at: r.created_at,
       actor: null,
-      verb: `Payment reminder ${r.reminder_no} sent`,
+      verb: `${r.order_group_id ? 'Combined payment reminder' : 'Payment reminder'} ${r.reminder_no} sent`,
       comment: null,
       recipientName: null,
       failedNotification: false,

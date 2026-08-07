@@ -90,6 +90,14 @@ export interface TimelineReminder {
   reminder_no: number | null
   source: string | null
   created_at: string
+  /**
+   * Set when this reminder was about a whole combined payment (000388). Such a
+   * reminder is booked against its representative member's order_id as well as
+   * the group's, so it lands in that ONE member's timeline — and without this
+   * it would read there as a reminder about that card, which nothing ever
+   * sends while the card is grouped.
+   */
+  order_group_id?: string | null
 }
 
 export interface TimelineShipping {
@@ -170,7 +178,8 @@ export function buildOrderTimeline(
   }
 
   for (const r of reminders) {
-    const n = r.reminder_no != null ? `Payment reminder ${r.reminder_no}` : 'Payment reminder'
+    const what = r.order_group_id ? 'Combined payment reminder' : 'Payment reminder'
+    const n = r.reminder_no != null ? `${what} ${r.reminder_no}` : what
     add('reminder_sent', r.created_at, `${n} sent`, r.source === 'auto' ? 'Automatic' : undefined)
   }
 

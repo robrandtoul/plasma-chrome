@@ -1079,12 +1079,20 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
   } else if (table === 'site_settings') {
     rows = [{ needs_attention_rules: { helpscout_reply_grace_days: 3 } }]
   } else if (table === 'order_nudges') {
+    // order_group_id (000388) is what separates the two ledgers. A group-level
+    // reminder is booked against its representative member's order_id as WELL
+    // as the group's, so the g1 row below is deliberately shaped like the real
+    // thing: it carries order_id 'o3' and must not be counted as o3's own.
     rows = [
-      { order_id: 'o1', reminder_no: 1, state: 'sent', outcome: 'sent', created_at: daysAgo(1) },
-      { order_id: 'o2', reminder_no: 1, state: 'sent', outcome: 'sent', created_at: daysAgo(14) },
-      { order_id: 'o2', reminder_no: 2, state: 'sent', outcome: 'sent', created_at: daysAgo(10) },
-      { order_id: 'o2', reminder_no: 3, state: 'sent', outcome: 'sent', created_at: daysAgo(7) },
+      { order_id: 'o1', order_group_id: null, reminder_no: 1, state: 'sent', outcome: 'sent', created_at: daysAgo(1) },
+      { order_id: 'o2', order_group_id: null, reminder_no: 1, state: 'sent', outcome: 'sent', created_at: daysAgo(14) },
+      { order_id: 'o2', order_group_id: null, reminder_no: 2, state: 'sent', outcome: 'sent', created_at: daysAgo(10) },
+      { order_id: 'o2', order_group_id: null, reminder_no: 3, state: 'sent', outcome: 'sent', created_at: daysAgo(7) },
+      { order_id: 'o3', order_group_id: 'g1', reminder_no: 1, state: 'sent', outcome: 'sent', created_at: daysAgo(3) },
     ]
+    // Both surfaces read both ledgers with ONE `in` on order_id and split them
+    // client-side, precisely because a group's representative is always one of
+    // its members and therefore always in this list.
     if (Array.isArray(filters['in:order_id'])) rows = rows.filter((r) => filters['in:order_id'].includes(r.order_id))
   } else if (table === 'order_groups') {
     // sent_at is read by the dashboard's Awaiting-payment panel, which reports a

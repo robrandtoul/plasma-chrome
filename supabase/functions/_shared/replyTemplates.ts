@@ -163,6 +163,11 @@ export const ORDER_CONFIRMATION_DEFAULT_BODY =
 export const ORDER_REMINDER_DEFAULT_BODIES: Record<string, string> = {
   order_reminder_1:
     `Hi {first_name},\n\nJust a reminder that your cards{? company} for {company}{/?} are approved and ready to order whenever you're set. You can choose your quantity and pay securely here:\n\n{order_url}{? order_expiry}\n\nThis order link expires on {order_expiry}.{/?}`,
+  // The combined-payment twin (migration 000388): same four variables, with
+  // {order_url} being the one /order/group/ link that covers every card in the
+  // group and {order_expiry} the group's own expiry.
+  order_reminder_group:
+    `Hi {first_name},\n\nJust a reminder that your card orders{? company} for {company}{/?} are approved and ready whenever you're set. They're on a single payment link, so you can settle them all together here:\n\n{order_url}{? order_expiry}\n\nThis payment link expires on {order_expiry}.{/?}`,
 }
 
 // The order_cancelled / order_revision default bodies (migration 000260) live in

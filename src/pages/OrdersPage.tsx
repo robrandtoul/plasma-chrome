@@ -20,7 +20,7 @@ import { mergeInvestigation, requestAcknowledge, requestInvestigation } from '..
 import { ackKey, type AckReason, type AckTarget } from '../lib/artworkAcks'
 import { holdState, holdBlockReason, repliedLine, HOLD_COPY } from '../lib/orderHolds'
 import {
-  readCadence, reminderState, summariseNudgeLedger,
+  readCadence, reminderState, summariseGroupLedger, summariseNudgeLedger,
   DEFAULT_CADENCE, type NudgeLedgerRow, type ReminderCadence, type ReminderSummary,
 } from '../lib/orderReminders'
 import OrderBuilderModal from '../components/OrderBuilderModal'
@@ -243,6 +243,8 @@ interface OrderGroupRow {
   currency: Currency
   token: string
   payment_reference: string | null
+  /** When the combined link went live — the reminder cadence's clock (000388). */
+  sent_at: string | null
   expires_at: string | null
   pay_link_opened_at: string | null
   xero_invoice_id: string | null
@@ -251,6 +253,54 @@ interface OrderGroupRow {
   // US import-duty choice for a grouped order lives here.
   amount_us_tariff: number | null
   us_tariff_opted_out: boolean | null
+}
+
+/**
+ * A combined payment's automatic chase, decided ONCE per group (000388) and
+ * handed to both its header and its member cards, so the two can never reach
+ * different answers about the same chase from the same ledger.
+ *
+ * Two things it does that a per-order reading would get wrong:
+ *   * the clock is the GROUP's sent_at and expiry — the combined link is the
+ *     one the customer was actually sent, and the members' own links lie
+ *     dormant with their pre-grouping stamps;
+ *   * the grace stamps are the NEWEST across every member's proof, mirroring
+ *     what send-order-reminders measures. One reminder covers the whole group,
+ *     so a recent reply on ANY of the customer's threads pauses it, and reading
+ *     one member's thread would promise a date the sender is holding.
+ */
+function groupChaseState(
+  group: OrderGroupRow,
+  memberOrders: OrderRow[],
+  groupReminders: Record<string, ReminderSummary>,
+  cadence: ReminderCadence,
+): ReturnType<typeof reminderState> {
+  const newest = (pick: (o: OrderRow) => string | null | undefined): string | null => {
+    let best: string | null = null
+    let bestMs = -Infinity
+    for (const o of memberOrders) {
+      const stamp = pick(o)
+      if (!stamp) continue
+      const ms = Date.parse(stamp)
+      if (Number.isNaN(ms) || ms <= bestMs) continue
+      best = stamp
+      bestMs = ms
+    }
+    return best
+  }
+  return reminderState({
+    sentAt: group.sent_at,
+    expiresAt: group.expires_at,
+    expired: group.expires_at != null && new Date(group.expires_at).getTime() < Date.now(),
+    chase: 'group',
+    summary: groupReminders[group.id] ?? null,
+    cadence,
+    grace: {
+      lastReplyAt: newest((o) => o.proofs?.helpscout_last_reply_at),
+      lastCustomerReplyAt: newest((o) => o.proofs?.helpscout_last_customer_reply_at),
+      graceDays: cadence.graceDays,
+    },
+  })
 }
 
 // Can this awaiting-payment order join a combined payment? Mirrors the
@@ -865,6 +915,9 @@ export default function OrdersPage() {
   const navigate = useNavigate()
   // Per-order reminder roll-up (the automated unpaid-order chase, 000238).
   const [reminders, setReminders] = useState<Record<string, ReminderSummary>>({})
+  // Keyed by order_groups.id. A combined payment is chased as one thing, so its
+  // member cards and its banner all read this rather than a per-order roll-up.
+  const [groupReminders, setGroupReminders] = useState<Record<string, ReminderSummary>>({})
   // Chase cadence + on/off, read once from settings. Defaults match the edge fn.
   const [cadence, setCadence] = useState<ReminderCadence>(DEFAULT_CADENCE)
   // Stock Control supplier id → name, for the supplier-route button labels
@@ -1175,7 +1228,7 @@ export default function OrdersPage() {
       if (groupIds.length > 0) {
         void supabase
           .from('order_groups')
-          .select('id, status, currency, token, payment_reference, expires_at, pay_link_opened_at, xero_invoice_id, xero_invoice_error, amount_us_tariff, us_tariff_opted_out')
+          .select('id, status, currency, token, payment_reference, sent_at, expires_at, pay_link_opened_at, xero_invoice_id, xero_invoice_error, amount_us_tariff, us_tariff_opted_out')
           .in('id', groupIds)
           .then(({ data: groupRows }) => {
             if (cancelled || !groupRows) return
@@ -1235,12 +1288,22 @@ export default function OrdersPage() {
       if (sentIds.length > 0) {
         // Pull the full ledger (not just sends) so a skip / failure surfaces
         // on the card rather than the chase just going quiet.
+        // ⚠ order_group_id MUST be selected. A combined payment's reminders are
+        // booked against its representative member's order_id as well as the
+        // group's (000388), so without the column they roll up as that one
+        // card's own chase — one member card claiming reminders that were about
+        // the whole group, and its siblings claiming none.
+        //
+        // One `in` on order_id catches the group rows too: the representative is
+        // always a member, and every member of a live group is a 'sent' order.
         const { data: nudgeData } = await supabase
           .from('order_nudges')
-          .select('order_id, reminder_no, state, outcome, created_at')
+          .select('order_id, order_group_id, reminder_no, state, outcome, created_at')
           .in('order_id', sentIds)
         if (!cancelled && nudgeData) {
-          setReminders(summariseNudgeLedger(nudgeData as NudgeLedgerRow[]))
+          const ledgerRows = nudgeData as NudgeLedgerRow[]
+          setReminders(summariseNudgeLedger(ledgerRows))
+          setGroupReminders(summariseGroupLedger(ledgerRows))
         }
       }
 
@@ -1847,6 +1910,16 @@ export default function OrdersPage() {
   )
   const ungroupedAwaiting = awaitingPayment.filter((o) => !groupedAwaitingIds.has(o.id))
 
+  // The chase to show on a card that belongs to a live combined payment — the
+  // group's, not its own (000388). Members come from the full `orders` list
+  // rather than a section-scoped one, so a card rendered outside its group
+  // block still measures the grace window against every member.
+  const groupChaseFor = (o: OrderRow) => {
+    const g = o.order_group_id ? groups[o.order_group_id] : null
+    if (!g || g.status !== 'sent') return null
+    return groupChaseState(g, orders.filter((m) => m.order_group_id === g.id), groupReminders, cadence)
+  }
+
   // ── Work vs waiting ────────────────────────────────────────────────────────
   // The one question that decides where a row goes: if nobody opens this page
   // today, does something go wrong? An unpaid link is NOT work by default —
@@ -2209,6 +2282,7 @@ export default function OrdersPage() {
                         copied={copiedId === o.id}
                         flash={flashOrderId === o.id}
                         summary={reminders[o.id] ?? null}
+                        groupChase={groupChaseFor(o)}
                         cadence={cadence}
                         group={o.order_group_id ? groups[o.order_group_id] ?? null : null}
                         selectable={selectMode && canJoinGroup(o)}
@@ -2424,6 +2498,7 @@ export default function OrdersPage() {
                       {groupsWaiting.map((g) => {
                         const memberOrders = awaitingPayment.filter((o) => o.order_group_id === g.id)
                         const groupExpired = g.expires_at != null && new Date(g.expires_at).getTime() < Date.now()
+                        const gChase = groupChaseState(g, memberOrders, groupReminders, cadence)
                         return (
                           <div key={g.id} className="mt-3 rounded-2xl border border-[var(--c-brand)]/50 bg-[var(--c-brand)]/[0.05] p-3">
                             <div className="flex flex-col gap-2 px-1 md:flex-row md:items-center md:justify-between">
@@ -2441,7 +2516,35 @@ export default function OrdersPage() {
                                   {g.pay_link_opened_at
                                     ? <span title={formatAbsoluteDateTime(g.pay_link_opened_at)}>pay link opened {relativeTime(g.pay_link_opened_at)}</span>
                                     : 'pay link not opened yet'}
-                                  {' · automatic reminders pause while the orders are grouped.'}
+                                </p>
+                                {/* The chase, stated once for the whole group —
+                                    its members' cards stay quiet, since one
+                                    reminder covers all of them (000388). Before
+                                    that migration this line said reminders
+                                    paused while grouped, which was true and was
+                                    the bug: nothing ever chased a combined
+                                    payment. */}
+                                <p className="mt-0.5 text-[13px] text-ink-mute">
+                                  {gChase.sentCount > 0 && (
+                                    <span className="text-ink-soft">
+                                      {gChase.sentCount} of {cadence.max} reminder{cadence.max === 1 ? '' : 's'} sent
+                                      {gChase.lastSentAt ? ` · last ${formatDate(gChase.lastSentAt)}` : ''}
+                                      {' · '}
+                                    </span>
+                                  )}
+                                  {gChase.next.kind === 'note' ? (
+                                    <span className={gChase.next.note.kind === 'problem' ? 'text-out' : undefined}>
+                                      {gChase.next.note.kind === 'problem' ? '⚠ ' : ''}{gChase.next.note.text}
+                                    </span>
+                                  ) : gChase.next.kind === 'all-sent' ? (
+                                    <>All {cadence.max} reminders sent — no more scheduled.</>
+                                  ) : gChase.next.kind === 'due-now' ? (
+                                    <>Next reminder due on the next working-day run.</>
+                                  ) : gChase.next.kind === 'due-at' ? (
+                                    <>Next reminder due {formatDate(gChase.next.at)}.</>
+                                  ) : gChase.next.kind === 'off' ? (
+                                    <>Automatic reminders are off.</>
+                                  ) : null}
                                 </p>
                               </div>
                               <div className="flex shrink-0 flex-wrap gap-2">
@@ -2470,6 +2573,7 @@ export default function OrdersPage() {
                                     flash={flashOrderId === o.id}
                                     nested
                                     summary={reminders[o.id] ?? null}
+                                    groupChase={gChase}
                                     cadence={cadence}
                                     group={g}
                                     selectable={false}
@@ -2501,6 +2605,7 @@ export default function OrdersPage() {
                               copied={copiedId === o.id}
                               flash={flashOrderId === o.id}
                               summary={reminders[o.id] ?? null}
+                              groupChase={groupChaseFor(o)}
                               cadence={cadence}
                               group={o.order_group_id ? groups[o.order_group_id] ?? null : null}
                               selectable={selectMode && canJoinGroup(o)}
@@ -3680,6 +3785,7 @@ function AwaitingPaymentCard({
   flash,
   nested = false,
   summary,
+  groupChase,
   cadence,
   group,
   selectable,
@@ -3701,12 +3807,18 @@ function AwaitingPaymentCard({
   /** Briefly ring the card after a "Needs action" jump lands on it. */
   flash: boolean
   /** Rendered inside its combined-payment group block. The wrapper carries
-   *  the group identity, expiry, opened status and reminders-pause note, so
-   *  the card drops its own group pill, its dormant per-order link expiry,
-   *  its opened line and the pause sentence — they'd repeat (or contradict)
-   *  the header. */
+   *  the group identity, expiry, opened status and chase progress, so the card
+   *  drops its own group pill, its dormant per-order link expiry, its opened
+   *  line and the chase lines — they'd repeat (or contradict) the header. */
   nested?: boolean
   summary: ReminderSummary | null
+  /**
+   * The combined payment's chase, decided ONCE by the page and handed to both
+   * the group header and its member cards, so the two can't reach different
+   * answers about one chase (000388). Null unless this order is in a live
+   * group.
+   */
+  groupChase: ReturnType<typeof reminderState> | null
   cadence: ReminderCadence
   // The combined-payment group this order belongs to (bundle orders Slice 2),
   // when one exists in the loaded set. While it's active ('sent'), the
@@ -3749,11 +3861,14 @@ function AwaitingPaymentCard({
   // The grace-pause note is resolved HERE rather than at fetch time because its
   // friendly wording needs the proof's reply stamps, which only the card row has
   // to hand. A since-cleared pause resolves to the next-due line instead.
-  const chase = reminderState({
+  //
+  // A member of a live combined payment reports the GROUP's chase, not its own:
+  // its own link isn't payable, so nothing is ever sent about it individually,
+  // and since 000388 the group is chased on the combined link instead.
+  const ownChase = reminderState({
     sentAt: order.sent_at,
     expiresAt: order.expires_at,
     expired,
-    inActiveGroup,
     summary,
     cadence,
     grace: {
@@ -3762,6 +3877,7 @@ function AwaitingPaymentCard({
       graceDays: cadence.graceDays,
     },
   })
+  const chase = inActiveGroup && groupChase ? groupChase : ownChase
   const sentCount = chase.sentCount
 
   return (
@@ -3826,41 +3942,35 @@ function AwaitingPaymentCard({
             </p>
           )}
           {/* Auto-chase progress: how many reminders have gone, what's next,
-              and any problem stopping the chase. A grouped member is skipped
-              by the reminder sender (its own link isn't payable): nested cards
-              say nothing (the group header carries the pause note once);
-              a stray non-nested grouped card keeps the one-line explanation. */}
-          <div className="mt-1 space-y-0.5 text-[13px]">
-            {chase.next.kind === 'grouped' ? (
-              nested ? null : (
-                <span className="block text-ink-mute">
-                  Paid through the combined payment link — automatic reminders pause while it&rsquo;s grouped.
+              and any problem stopping the chase. A nested card says nothing —
+              its chase IS the group's, and the group header states it once for
+              all the members rather than three times over. A grouped card
+              rendered outside its block still reports it, in the combined
+              wording, from the same decision object the header used. */}
+          {nested ? null : (
+            <div className="mt-1 space-y-0.5 text-[13px]">
+              {sentCount > 0 && (
+                <span className="block text-ink-soft">
+                  {sentCount} of {cadence.max} reminder{cadence.max === 1 ? '' : 's'} sent
+                  {chase.chase === 'group' ? ' for the combined payment' : ''}
+                  {chase.lastSentAt ? ` · last ${formatDate(chase.lastSentAt)}` : ''}
                 </span>
-              )
-            ) : (
-              <>
-                {sentCount > 0 && (
-                  <span className="block text-ink-soft">
-                    {sentCount} of {cadence.max} reminder{cadence.max === 1 ? '' : 's'} sent
-                    {chase.lastSentAt ? ` · last ${formatDate(chase.lastSentAt)}` : ''}
-                  </span>
-                )}
-                {chase.next.kind === 'note' ? (
-                  <span className={`block ${chase.next.note.kind === 'problem' ? 'text-out' : 'text-ink-mute'}`}>
-                    {chase.next.note.kind === 'problem' ? '⚠ ' : ''}{chase.next.note.text}
-                  </span>
-                ) : chase.next.kind === 'all-sent' ? (
-                  <span className="block text-ink-mute">All {cadence.max} reminders sent — no more scheduled.</span>
-                ) : chase.next.kind === 'due-now' ? (
-                  <span className="block text-ink-mute">Next reminder due on the next working-day run.</span>
-                ) : chase.next.kind === 'due-at' ? (
-                  <span className="block text-ink-mute">Next reminder due {formatDate(chase.next.at)}.</span>
-                ) : chase.next.kind === 'off' ? (
-                  <span className="block text-ink-mute">Automatic reminders are off.</span>
-                ) : null}
-              </>
-            )}
-          </div>
+              )}
+              {chase.next.kind === 'note' ? (
+                <span className={`block ${chase.next.note.kind === 'problem' ? 'text-out' : 'text-ink-mute'}`}>
+                  {chase.next.note.kind === 'problem' ? '⚠ ' : ''}{chase.next.note.text}
+                </span>
+              ) : chase.next.kind === 'all-sent' ? (
+                <span className="block text-ink-mute">All {cadence.max} reminders sent — no more scheduled.</span>
+              ) : chase.next.kind === 'due-now' ? (
+                <span className="block text-ink-mute">Next reminder due on the next working-day run.</span>
+              ) : chase.next.kind === 'due-at' ? (
+                <span className="block text-ink-mute">Next reminder due {formatDate(chase.next.at)}.</span>
+              ) : chase.next.kind === 'off' ? (
+                <span className="block text-ink-mute">Automatic reminders are off.</span>
+              ) : null}
+            </div>
+          )}
         </div>
         {/* One visible action + the "⋯" menu, in a single row: Release for a
             grouped member (its own link isn't payable — the group's is);

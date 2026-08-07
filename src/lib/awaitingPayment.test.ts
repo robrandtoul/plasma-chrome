@@ -72,7 +72,7 @@ function row(over: Partial<AwaitingRow> = {}): AwaitingRow {
     key: 'k', orderId: 'o1', proofId: 'p1', label: 'MISFIT', orderCount: 1,
     openedAt: null, sentAt: daysAgo(2), expiresAt: daysAhead(12),
     expired: false, held: false, helpRequested: false, offline: false,
-    grouped: false, lastReplyAt: null, lastCustomerReplyAt: null,
+    grouped: false, groupId: null, lastReplyAt: null, lastCustomerReplyAt: null,
     ...over,
   }
 }

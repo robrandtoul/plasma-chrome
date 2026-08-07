@@ -85,9 +85,19 @@ export function readCadence(
   }
 }
 
-/** One raw ledger row, as selected from order_nudges. */
+/**
+ * One raw ledger row, as selected from order_nudges.
+ *
+ * ⚠ `order_group_id` (migration 000388) is what separates the two ledgers, so
+ * every caller must SELECT it. A group-level reminder is booked against its
+ * representative member's order_id as well as its group id, so a select that
+ * omits the column would count the group's reminders as that one member's —
+ * reporting a card as "Reminder 3 of 3, all sent" when nothing was ever sent
+ * about that card on its own.
+ */
 export interface NudgeLedgerRow {
   order_id: string
+  order_group_id: string | null
   reminder_no: number
   state: string
   outcome: string | null
@@ -95,24 +105,39 @@ export interface NudgeLedgerRow {
 }
 
 /**
- * Roll the ledger up per order. Takes the FULL ledger (not just sends) so a
- * skip or failure can surface rather than the chase just going quiet.
+ * Roll the ledger up per order — single-order reminders ONLY (rows carrying no
+ * group id). Takes the FULL ledger (not just sends) so a skip or failure can
+ * surface rather than the chase just going quiet.
  */
 export function summariseNudgeLedger(rows: NudgeLedgerRow[]): Record<string, ReminderSummary> {
-  const byOrder = new Map<string, NudgeLedgerRow[]>()
+  return rollUp(rows.filter((n) => n.order_group_id == null), (n) => n.order_id)
+}
+
+/**
+ * Roll the ledger up per combined payment — group-level reminders only. Keyed
+ * by order_groups.id, so a member card and its group banner can both ask "what
+ * is chasing this?" and get one answer.
+ */
+export function summariseGroupLedger(rows: NudgeLedgerRow[]): Record<string, ReminderSummary> {
+  return rollUp(rows.filter((n) => n.order_group_id != null), (n) => n.order_group_id as string)
+}
+
+function rollUp(rows: NudgeLedgerRow[], key: (row: NudgeLedgerRow) => string): Record<string, ReminderSummary> {
+  const byKey = new Map<string, NudgeLedgerRow[]>()
   for (const n of rows) {
-    const arr = byOrder.get(n.order_id) ?? []
+    const k = key(n)
+    const arr = byKey.get(k) ?? []
     arr.push(n)
-    byOrder.set(n.order_id, arr)
+    byKey.set(k, arr)
   }
   const map: Record<string, ReminderSummary> = {}
-  for (const [orderId, list] of byOrder) {
+  for (const [k, list] of byKey) {
     list.sort((a, b) => (a.created_at < b.created_at ? 1 : -1)) // newest first
     const sentRows = list.filter((r) => r.state === 'sent')
     const latest = list[0]
     const latestOutcome =
       latest && (latest.state === 'failed' || latest.state === 'skipped') ? latest.outcome : null
-    map[orderId] = {
+    map[k] = {
       sentCount: sentRows.length,
       lastSentAt: sentRows.length > 0 ? sentRows[0].created_at : null,
       highestSentNo: sentRows.reduce((m, r) => Math.max(m, r.reminder_no), 0),
@@ -136,6 +161,13 @@ export function classifyReminderOutcome(outcome: string | null, grace?: GraceCon
     return graceNote(grace)
   if (outcome.includes('followup_tag'))
     return { kind: 'pause', text: 'Paused — the “follow up” tag is set on the Help Scout thread.' }
+  // Combined payments only (000388). The link exists but no reply has gone out
+  // on any of the customer's threads since it was created, so as far as we can
+  // tell they've never been sent it — and reminding someone about a link they
+  // haven't had reads as a mistake on our side. A pause, not a problem: sending
+  // the link clears it by itself on the next run.
+  if (outcome.includes('no_send_evidence'))
+    return { kind: 'pause', text: 'Waiting — send the combined link to the customer and reminders start from there.' }
   // Problems — something is stopping the chase that may need a look.
   if (outcome.includes('no_conversation')) return { kind: 'problem', text: 'No Help Scout conversation linked — the reminder can’t send.' }
   if (outcome.includes('recipient_mismatch')) return { kind: 'problem', text: 'Contact email doesn’t match the Help Scout thread — not sent.' }
@@ -184,22 +216,30 @@ export interface ReminderStateInput {
   expiresAt: string | null
   /** The link's window has passed — the chase stops regardless of cadence. */
   expired: boolean
-  /** A member of a live combined payment: the sender skips it (its own link
-   *  isn't payable), so no reminder is coming for this order at all. */
-  inActiveGroup: boolean
   summary: ReminderSummary | null
   cadence: ReminderCadence
   grace: GraceContext
+  /**
+   * What this chase is about (migration 000388). A member of a live combined
+   * payment is chased through its GROUP — one reminder on the combined link,
+   * not one per card — so for those the caller passes the GROUP's clock,
+   * expiry and ledger here with `chase: 'group'`, and the answer describes the
+   * combined payment. Defaults to 'order'.
+   *
+   * The arithmetic is deliberately identical either way: "chased in the same
+   * manner as standalone orders" only stays true if there is one implementation
+   * of the manner.
+   */
+  chase?: 'order' | 'group'
 }
 
 /**
- * What is happening with this order's automatic chase, as one decision.
+ * What is happening with this chase, as one decision.
  *
  * `next` is a discriminated union rather than a string so each surface can word
  * it for its own space. The order of the branches IS the contract — it mirrors
  * what the Orders card has always rendered:
  *
- *   grouped  → nothing is chasing a grouped member, whatever the ledger says
  *   note     → a live pause or a problem outranks the schedule; a chase that is
  *              being held must never be reported as "due Tuesday"
  *   all-sent → the cap is spent
@@ -208,13 +248,19 @@ export interface ReminderStateInput {
  *   off      → auto-chase disabled and nothing ever sent
  *   none     → nothing honest to say (e.g. auto off but reminders were sent by
  *              hand, or the next one would land after the link expires)
+ *
+ * There is deliberately no longer a 'grouped' branch meaning "nothing is coming
+ * for this one". Between 000309 and 000388 that was true and it was the bug:
+ * combined payments were never chased, and the surfaces faithfully reported the
+ * silence instead of anyone noticing it. A grouped member now reports its
+ * group's real chase.
  */
 export function reminderState(input: ReminderStateInput): {
   sentCount: number
   max: number
   lastSentAt: string | null
+  chase: 'order' | 'group'
   next:
-    | { kind: 'grouped' }
     | { kind: 'note'; note: ReminderNote }
     | { kind: 'all-sent' }
     | { kind: 'due-now'; no: number }
@@ -222,12 +268,11 @@ export function reminderState(input: ReminderStateInput): {
     | { kind: 'off' }
     | { kind: 'none' }
 } {
-  const { summary, cadence, grace, expired, expiresAt, sentAt, inActiveGroup } = input
+  const { summary, cadence, grace, expired, expiresAt, sentAt } = input
+  const chase = input.chase ?? 'order'
   const sentCount = summary?.sentCount ?? 0
   const highestNo = summary?.highestSentNo ?? 0
-  const base = { sentCount, max: cadence.max, lastSentAt: summary?.lastSentAt ?? null }
-
-  if (inActiveGroup) return { ...base, next: { kind: 'grouped' } }
+  const base = { sentCount, max: cadence.max, lastSentAt: summary?.lastSentAt ?? null, chase }
 
   const note = classifyReminderOutcome(summary?.latestOutcome ?? null, grace)
   if (note) return { ...base, next: { kind: 'note', note } }
@@ -263,20 +308,22 @@ export function reminderState(input: ReminderStateInput): {
  * rather than growing an empty third.
  */
 export function reminderShortLine(state: ReturnType<typeof reminderState>): string | null {
-  const { next, max } = state
+  const { next, max, chase } = state
+  // A grouped member's row is about one card, but its chase is about the whole
+  // combined payment — so the count has to say which, or "Reminder 2 of 3" on
+  // three sibling cards reads as three separate chases.
+  const what = chase === 'group' ? ' (combined)' : ''
   switch (next.kind) {
-    case 'grouped':
-      return 'Combined — no reminders'
     case 'note':
       // The full sentence goes in a title attribute; a rail row has no space
       // for "Paused — the customer replied on the thread on 4 August."
       return next.note.kind === 'problem' ? 'Chase stopped' : 'Chase paused'
     case 'all-sent':
-      return `All ${max} reminder${max === 1 ? '' : 's'} sent`
+      return `All ${max} reminder${max === 1 ? '' : 's'} sent${what}`
     case 'due-now':
-      return `Reminder ${next.no} of ${max} · next run`
+      return `Reminder ${next.no} of ${max}${what} · next run`
     case 'due-at':
-      return `Reminder ${next.no} of ${max} · ${formatShortDay(next.at)}`
+      return `Reminder ${next.no} of ${max}${what} · ${formatShortDay(next.at)}`
     case 'off':
       return 'Reminders off'
     case 'none':

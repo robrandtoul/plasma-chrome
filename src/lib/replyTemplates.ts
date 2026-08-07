@@ -334,6 +334,11 @@ export const DEFAULT_BODIES: Record<string, string> = {
   // sentence renders only when the order has an expiry date.
   order_reminder_1:
     `Hi {first_name},\n\nJust a reminder that your cards{? company} for {company}{/?} are approved and ready to order whenever you're set. You can choose your quantity and pay securely here:\n\n{order_url}{? order_expiry}\n\nThis order link expires on {order_expiry}.{/?}`,
+  // Combined-payment reminder (migration 000388) — the same repeating chase for
+  // a payment group, whose members' own links aren't payable while it's live.
+  // {order_url} is the one /order/group/ link; {order_expiry} the group's.
+  order_reminder_group:
+    `Hi {first_name},\n\nJust a reminder that your card orders{? company} for {company}{/?} are approved and ready whenever you're set. They're on a single payment link, so you can settle them all together here:\n\n{order_url}{? order_expiry}\n\nThis payment link expires on {order_expiry}.{/?}`,
   // Order-paid confirmation — posted automatically by the Stripe webhook when a
   // payment lands; Help Scout emails it to the customer (migration 000248).
   order_paid_confirmation:

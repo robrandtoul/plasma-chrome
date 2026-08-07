@@ -73,15 +73,35 @@ export interface AwaitingRow {
   /**
    * Part of a live combined payment. Tracked as its own flag rather than read
    * off `orderCount > 1`, because Release can leave a group holding a single
-   * member: still grouped, still skipped by the reminder sender, but no longer
-   * plural. Inferring it from the count would quietly start promising that
-   * order reminders nothing is going to send.
+   * member: still grouped, still one payment, but no longer plural. Inferring
+   * it from the count would report that row's chase against the wrong ledger.
    */
   grouped: boolean
-  /** Reply stamps for the grace-pause wording; null on a grouped row, which
-   *  short-circuits before the note is ever needed. */
+  /** The combined payment this row stands for, for looking its chase up in the
+   *  group ledger (order_nudges.order_group_id, 000388). Null when standalone. */
+  groupId: string | null
+  /**
+   * Reply stamps for the grace-pause wording. On a grouped row these are the
+   * NEWEST across every member's proof — matching what the sender's grace guard
+   * actually measures, since one reminder now covers all of them and a reply
+   * about any card pauses it.
+   */
   lastReplyAt: string | null
   lastCustomerReplyAt: string | null
+}
+
+/** Newest of a set of ISO stamps, or null when they are all absent. */
+function newestStamp(stamps: Array<string | null>): string | null {
+  let best: string | null = null
+  let bestMs = -Infinity
+  for (const s of stamps) {
+    if (!s) continue
+    const ms = Date.parse(s)
+    if (Number.isNaN(ms) || ms <= bestMs) continue
+    best = s
+    bestMs = ms
+  }
+  return best
 }
 
 const DAY_MS = 86_400_000
@@ -149,6 +169,7 @@ export function buildAwaitingRows(
       helpRequested: o.help_requested_at != null,
       offline: isOffline(o),
       grouped: false,
+      groupId: null,
       lastReplyAt: o.helpscout_last_reply_at,
       lastCustomerReplyAt: o.helpscout_last_customer_reply_at,
     })
@@ -178,10 +199,13 @@ export function buildAwaitingRows(
       helpRequested: sorted.some((o) => o.help_requested_at != null),
       offline: sorted.every(isOffline),
       grouped: true,
-      // Unused on a grouped row (the reminder decision short-circuits), and
-      // deliberately not guessed from an arbitrary member.
-      lastReplyAt: null,
-      lastCustomerReplyAt: null,
+      groupId,
+      // Newest across every member, not the row's nominal first order: the
+      // group is chased with ONE reminder, and the sender's grace guard pauses
+      // it on a recent reply to ANY of the customer's threads. Reading one
+      // member would let the panel promise a reminder the sender is holding.
+      lastReplyAt: newestStamp(sorted.map((o) => o.helpscout_last_reply_at)),
+      lastCustomerReplyAt: newestStamp(sorted.map((o) => o.helpscout_last_customer_reply_at)),
     })
   }
 

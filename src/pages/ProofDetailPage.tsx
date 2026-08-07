@@ -1161,7 +1161,7 @@ export default function ProofDetailPage() {
     {
       const { data: orderNudgeRows } = await supabase
         .from('order_nudges')
-        .select('id, reminder_no, source, created_at, orders!inner(proof_id)')
+        .select('id, reminder_no, source, created_at, order_group_id, orders!inner(proof_id)')
         .eq('orders.proof_id', proofId)
         .eq('state', 'sent')
         .order('created_at', { ascending: true })

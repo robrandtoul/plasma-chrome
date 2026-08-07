@@ -31,7 +31,7 @@ If one card needs to move before the others are ready to pay, **Release** it fro
 ## Guard rails built in
 
 - A member order's own pay link **refuses payment** while its group is active, so the same card can't be paid twice.
-- The unpaid-order reminder sender **skips grouped orders** (a member link in a reminder would break the group). Group-level reminders are deferred — noted below.
+- The unpaid-order reminder sender chases the **group**, not its members (migration 000388): one reminder on the combined link, capped and spaced per group by the same admin cadence. A member link in a reminder would break the group, so between this slice and 000388 grouped orders were skipped outright — which meant combined payments were never chased at all.
 - Cancelling a member (order-lifecycle) releases it from the group first; an emptied group cancels itself.
 - The webhook only ever creates **one** invoice per group (gated on `xero_invoice_id`), emails it once, posts one confirmation — a Stripe retry finds the flags set and does nothing.
 
@@ -41,7 +41,7 @@ If one card needs to move before the others are ready to pay, **Release** it fro
 2. **US tariff per parcel** — one group = one customs entry = one $39/£39/€39 line. If a delay-driven split dispatch creates a second customs entry, that extra is absorbed (spec §8). Confirm against how Plasma files.
 3. **Customer-facing name** — everything customer-visible says neutral things like "your order" / "N card orders in this payment"; the durable word ("bundle", "order set", …) is a later copy decision.
 4. **Partial refunds** — cancelling one card from a *paid* group = partial Stripe refund + Xero credit note against that card's lines; needs a defined runbook before go-live (not before build).
-5. **Group payment reminders** — grouped orders are excluded from auto-reminders for now; a group-level reminder needs its own pass.
+5. ~~**Group payment reminders**~~ — shipped in migration 000388: `order_nudges.order_group_id` + a per-group claim gate, chased on the combined link, on the thread the link was sent on.
 
 ## Rollout (in order — the order matters)
 

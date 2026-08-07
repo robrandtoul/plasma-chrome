@@ -24,9 +24,9 @@
 //      payments. It sits inches from a tile counting orders, and a bare "4"
 //      under a tile reading "5" raises the one question this panel must never
 //      raise: what is it not showing me?
-//   5. the chase line is fed per order from that order's own ledger, and stays
-//      silent where no reminder is actually coming — a spent cap, or a combined
-//      payment the sender skips outright.
+//   5. the chase line is fed from the RIGHT ledger — a standalone order's own,
+//      a combined payment's group-level one (000388) — and stays silent where
+//      no reminder is actually coming, such as a spent cap.
 //
 // Desktop only — the rail is `hidden lg:block` and the harness project runs a
 // desktop viewport.
@@ -122,10 +122,27 @@ test.describe('dashboard — awaiting payment panel', () => {
     await expect(panel(page).locator('a[href="/orders?order=o2"]')).not.toContainText(/\d+ of \d+ ·/)
   })
 
-  test('⚠ a combined payment never promises a reminder — the sender skips it', async ({ page }) => {
-    // send-order-reminders excludes grouped members (their own link isn't
-    // payable), so a schedule here would be fiction however healthy the ledger.
-    await expect(panel(page).locator('a[href="/orders?order=o3"]')).not.toContainText(/\d+ of \d+ ·/)
+  test('⚠ a combined payment reports its OWN chase, not a member’s', async ({ page }) => {
+    // Until 000388 this asserted the opposite — that a combined payment never
+    // promises a reminder, because send-order-reminders dropped grouped members
+    // outright. That was accurate and it was the bug: nothing chased a combined
+    // payment at all, and one lapsed unpaid on live having had zero reminders.
+    //
+    // g1 has had one group-level reminder, booked against member o3. The row
+    // must therefore read stage 2 — and reading it off o3's own order_id (the
+    // mistake the two ledgers exist to prevent) gives the same number, so the
+    // 'combined' marker is what proves which ledger answered.
+    const row = panel(page).locator('a[href="/orders?order=o3"]')
+    await expect(row).toContainText(/\b2 of 3\b/)
+    await expect(row).toContainText(/combined/i)
+  })
+
+  test('a member’s own ledger stays empty while it is grouped', async ({ page }) => {
+    // o4 is g1's other member and has no ledger rows of its own. The panel
+    // collapses a group to one row, so o4 has no row — the assertion is that
+    // the group's single row is the only place its chase is reported, rather
+    // than each member claiming the group's reminders separately.
+    await expect(panel(page).locator('a[href="/orders?order=o4"]')).toHaveCount(0)
   })
 
   test('the summary counts payments, so it may legitimately differ from the orders tile', async ({ page }) => {

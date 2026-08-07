@@ -14,7 +14,8 @@ import {
   type AwaitingRow,
 } from '../lib/awaitingPayment'
 import {
-  DEFAULT_CADENCE, readCadence, reminderShortLine, reminderState, summariseNudgeLedger,
+  DEFAULT_CADENCE, readCadence, reminderShortLine, reminderState,
+  summariseGroupLedger, summariseNudgeLedger,
   type NudgeLedgerRow, type ReminderCadence, type ReminderSummary,
 } from '../lib/orderReminders'
 
@@ -81,6 +82,9 @@ export default function AwaitingPaymentPanel() {
   // uses — so the two surfaces can't reach different answers from one ledger.
   const [cadence, setCadence] = useState<ReminderCadence>(DEFAULT_CADENCE)
   const [reminders, setReminders] = useState<Record<string, ReminderSummary>>({})
+  // Keyed by order_groups.id — a grouped row reports its combined payment's
+  // chase, not its representative member's (000388).
+  const [groupReminders, setGroupReminders] = useState<Record<string, ReminderSummary>>({})
   const inFlight = useRef(false)
 
   // ⚠ A failed read must leave good rows on screen. supabase-js returns
@@ -127,15 +131,29 @@ export default function AwaitingPaymentPanel() {
           .eq('id', 1)
           .maybeSingle(),
         supabase.from('site_settings').select('needs_attention_rules').eq('id', 1).maybeSingle(),
+        // ⚠ order_group_id MUST be selected. A combined payment's reminders are
+        // booked against its representative member's order_id as well as the
+        // group's id (000388), so without the column they would be rolled up as
+        // that one card's own chase — a card reading "all 3 reminders sent"
+        // when nothing was ever sent about it individually.
+        //
+        // One `in` on order_id still catches every group row: a group's
+        // representative is by definition one of its members, and every member
+        // of a live group is a status='sent' order, so it is always in this
+        // list. summariseGroupLedger picks the group rows back out.
         orderIds.length > 0
           ? supabase
               .from('order_nudges')
-              .select('order_id, reminder_no, state, outcome, created_at')
+              .select('order_id, order_group_id, reminder_no, state, outcome, created_at')
               .in('order_id', orderIds)
           : Promise.resolve({ data: [] as NudgeLedgerRow[] }),
       ])
       if (s) setCadence(readCadence(s, site))
-      if (ledger.data) setReminders(summariseNudgeLedger(ledger.data as NudgeLedgerRow[]))
+      if (ledger.data) {
+        const ledgerRows = ledger.data as NudgeLedgerRow[]
+        setReminders(summariseNudgeLedger(ledgerRows))
+        setGroupReminders(summariseGroupLedger(ledgerRows))
+      }
     } finally {
       inFlight.current = false
     }
@@ -178,13 +196,16 @@ export default function AwaitingPaymentPanel() {
             const chip = awaitingChip(r)
             const opened = r.openedAt != null
             // When the automatic chase next writes to this customer. Same
-            // decision the Orders card renders at greater length.
+            // decision the Orders card renders at greater length. A grouped row
+            // already carries the GROUP's clock and expiry (buildAwaitingRows
+            // collapses members into one row on the group's stamps), so it only
+            // needs the group's ledger to describe the combined chase.
             const chase = reminderState({
               sentAt: r.sentAt,
               expiresAt: r.expiresAt,
               expired: r.expired,
-              inActiveGroup: r.grouped,
-              summary: reminders[r.orderId] ?? null,
+              chase: r.grouped ? 'group' : 'order',
+              summary: (r.grouped && r.groupId ? groupReminders[r.groupId] : reminders[r.orderId]) ?? null,
               cadence,
               grace: {
                 lastReplyAt: r.lastReplyAt,

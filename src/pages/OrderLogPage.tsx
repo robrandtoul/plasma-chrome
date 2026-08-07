@@ -1109,7 +1109,7 @@ function OrderDetailPanel({
           .maybeSingle(),
         supabase
           .from('order_nudges')
-          .select('reminder_no, source, state, outcome, created_at')
+          .select('reminder_no, source, state, outcome, created_at, order_group_id')
           .in('order_id', [o.id])
           .order('created_at', { ascending: true }),
       ])
