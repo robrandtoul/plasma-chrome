@@ -1109,6 +1109,34 @@ transparency case, and the decode ceiling.
 than against the notes: deployed **v27** is byte-identical to `main` across all
 16 files, so this deploy carries **only** this change — the §2026-08-06
 report-history work had already shipped despite its entry saying otherwise.
-Verify by re-running the check on proof `455a1334`, which fails reproducibly
-today; a success also proves which codec candidate the edge runtime accepted
-(the loader logs the ones it rejects).
+**✅ DEPLOYED + VERIFIED 2026-08-07.** `artwork-check` **v28**, `verify_jwt`
+true, 17 files all byte-identical to `main`. Re-ran the proof check on
+`455a1334` v12 (the run that had failed twice): **verdict `clear`**, 85s, 12
+proof images + 62 thread messages read, recorded honestly as `source: 'service'`
+/ `ran_by: null` so it doesn't inflate the designer usage figures.
+
+⚠ **The triggering file is 14864x1755 = 26.1MP, and it was SKIPPED, not
+downscaled** — "too large to process (14864x1755px)", i.e. it fell past the
+`MAX_DECODE_PIXELS` ceiling. So the run is saved and the report is honest, but
+the goal of actually READING that reference is not yet met for this file, and
+the ceiling wants revisiting with real numbers: **Supabase Edge Functions cap
+at 256MB** (docs, confirmed after the fact). ImageScript's `Image.decode` holds
+**two** copies at peak — the codec's wasm framebuffer and the JS `bitmap` it is
+copied into — so a decode costs ~8 bytes/pixel, not 4. At 24MP that is ~192MB
+transient on top of the ~60MB of proof images and base64 already in flight:
+right on the cliff. Two follow-ups, in order of value:
+(1) **lower** the ceiling to ~16MP so the guard is provably safe rather than
+nominally safe (a `WORKER_RESOURCE_LIMIT` kill produces NO report, strictly
+worse than a named skip — and the check gates order placement);
+(2) **halve the peak** by resampling straight from the codec's framebuffer
+instead of `Image.decode`'s copy, which would make ~26MP affordable and let the
+ceiling rise to cover files like this one. Until (2), print-resolution
+references above the ceiling are named skips.
+
+⚠ **Unrelated find, same session:** the verification POST sat unprocessed in
+`net.http_request_queue` — **pg_net's background worker was stalled** (queue
+held exactly one entry, mine; zero `net._http_response` rows in 15 minutes).
+`select net.worker_restart()` cleared it and the run went through immediately.
+Worth knowing because the 000337 folder-link **auto-run trigger uses the same
+`net.http_post` path**, so while pg_net is wedged the order check silently does
+not auto-run. Unknown how long it had been stalled; no evidence of a backlog.
