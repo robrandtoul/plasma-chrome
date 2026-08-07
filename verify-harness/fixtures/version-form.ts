@@ -220,6 +220,22 @@ const PROOFS: Record<
       'vf-open-v1': [imageRow('vf-img-asha', 'Asha Rao'), imageRow('vf-img-ben', 'Ben Cole')],
     },
   },
+  // A TWO-SIDED set with one image nobody labelled — the live shape from
+  // The Sourdough Company, which reached an approved, ordered proof:
+  // a shared front, a back each, and one recipient's artwork carrying no
+  // side at all. matchImageToName leaves side null whenever the filename
+  // has no front/back token, and the edit form used to store that as-is.
+  'vf-sides': {
+    header: header('vf-contact-sides', 'vf-co-sides', 'Ruth Okafor', 'Sourdough & Co'),
+    inherit: { ...OPEN_V1, id: 'vf-sides-v1', names: ['Asha Rao', 'Ben Cole'] },
+    imagesByVersion: {
+      'vf-sides-v1': [
+        { ...imageRow('vf-img-shared', 'Asha Rao'), associated_name: null, side: 'front', sort_order: 0 },
+        { ...imageRow('vf-img-asha-back', 'Asha Rao'), side: 'back', sort_order: 1 },
+        { ...imageRow('vf-img-ben-unset', 'Ben Cole'), side: null, sort_order: 2 },
+      ],
+    },
+  },
 }
 
 // .from() queries. Return { data, error: null } to claim, null to fall
@@ -264,6 +280,37 @@ export function versionFormQuery(state: HookQueryState): { data: any; error: nul
   if (table === 'proof_versions' && vf(filters['eq:proof_id'])) {
     // The inherit read targets is_current and resolves maybeSingle.
     return { data: PROOFS[filters['eq:proof_id']]?.inherit ?? null, error: null }
+  }
+
+  // The EDIT form loads its version by id, not by proof_id — the one read
+  // these fixtures never claimed, so /versions/:id/edit rendered a blank
+  // canvas for as long as the rig has existed. It joins materials(...),
+  // which the version row itself doesn't carry.
+  if (table === 'proof_versions' && vf(filters['eq:id'])) {
+    const vid = filters['eq:id'] as string
+    const inherit = Object.values(PROOFS).find((p) => p.inherit?.id === vid)?.inherit
+    if (!inherit) return { data: null, error: null }
+    const material = MATERIALS.find((m) => m.id === inherit.material_id) ?? null
+    return {
+      data: {
+        ...inherit,
+        material_display: material?.display_name ?? 'Stainless Steel',
+        change_notes: null,
+        pricing_snapshot: null,
+        shipping_note: '',
+        materials: material
+          ? {
+              code: material.code,
+              display_quantities: null,
+              requires_ink_names: material.requires_ink_names,
+              option_label: material.option_label ?? null,
+              multi_variant: true,
+              supports_personalisation: false,
+            }
+          : null,
+      },
+      error: null,
+    }
   }
 
   if (vf(filters['eq:proof_version_id'])) {

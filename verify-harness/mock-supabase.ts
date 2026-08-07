@@ -927,7 +927,18 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
   } else if (table === 'order_link_notes') {
     rows = [{ proof_id: 'p-a1', note: 'Waiting on metal thickness — chased today.', created_by_name: 'Chris Jackson', created_by_initials: 'CJ', created_by_colour: 'teal', updated_at: daysAgo(0.1) }]
   } else if (table === 'proof_versions') {
-    if (select.includes('materials(display_quantities)')) {
+    // Matched on the EXACT select, not on includes(): several pages read
+    // overlapping column sets from this table, and a loose match here
+    // silently hands one of them the wrong fixture.
+    if (select.replace(/\s/g, '') === 'names,shape,is_variant_round') {
+      // The preview gate's set-consistency read (lib/setConsistency).
+      // Three recipients, matching the images below.
+      rows = [{
+        names: ['William Delamore', 'Lyndon Short', 'James Gunns'],
+        shape: 'recipients',
+        is_variant_round: false,
+      }]
+    } else if (select.includes('materials(display_quantities)')) {
       // ProofDetailPage's versions list — one current v1 for the fixture
       // project above.
       const pid = filters['eq:proof_id'] ?? 'p-a1'
@@ -1007,12 +1018,26 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
       rows = [{ approved_at: daysAgo(1) }]
     }
   } else if (table === 'proof_version_images') {
-    // Two approved files (front + back, shared artwork) so the To-order card's
-    // Approved artwork panel renders a populated list.
-    rows = [
-      { id: 'img-front', image_path: 'proofs/approved-front.pdf', original_filename: 'Approved_Front.pdf', associated_name: null, side: 'front', layout_id: null },
-      { id: 'img-back', image_path: 'proofs/approved-back.pdf', original_filename: 'Approved_Back.pdf', associated_name: null, side: 'back', layout_id: null },
-    ]
+    // Exact select, same reason as proof_versions above.
+    if (select.replace(/\s/g, '') === 'associated_name,side,material_option,is_qr_code') {
+      // The preview gate's set-consistency read. Reproduces the live
+      // shape that prompted the check (The Sourdough Company, approved
+      // and ordered): a shared front, a back each — except one
+      // recipient's artwork carries no side at all.
+      rows = [
+        { associated_name: null, side: 'front', material_option: null, is_qr_code: false },
+        { associated_name: 'Lyndon Short', side: 'back', material_option: null, is_qr_code: false },
+        { associated_name: 'William Delamore', side: 'back', material_option: null, is_qr_code: false },
+        { associated_name: 'James Gunns', side: null, material_option: null, is_qr_code: false },
+      ]
+    } else {
+      // Two approved files (front + back, shared artwork) so the To-order card's
+      // Approved artwork panel renders a populated list.
+      rows = [
+        { id: 'img-front', image_path: 'proofs/approved-front.pdf', original_filename: 'Approved_Front.pdf', associated_name: null, side: 'front', layout_id: null },
+        { id: 'img-back', image_path: 'proofs/approved-back.pdf', original_filename: 'Approved_Back.pdf', associated_name: null, side: 'back', layout_id: null },
+      ]
+    }
   } else if (table === 'proof_events') {
     // The change request the pins below arrived with — same proof_event_id, so
     // the detail page's strip can group them under this comment the way

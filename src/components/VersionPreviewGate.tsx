@@ -66,6 +66,8 @@ import Modal from './Modal'
 import ArtworkCheckReportView, { InlineSpinner, artworkCheckAuditFields, artworkVerdict } from './ArtworkCheckReportView'
 import { useProofCheck } from '../lib/useProofCheck'
 import { useCalloutsEnabled } from '../lib/useCalloutsEnabled'
+import { reviewSet, type SetFinding } from '../lib/setConsistency'
+import { supabase } from '../lib/supabase'
 import { ProofAnnotationEditor } from './ProofAnnotationEditor'
 import { useAuth } from '../lib/auth'
 import {
@@ -137,6 +139,59 @@ export default function VersionPreviewGate({
   // Always force=true: on the edit flow a stored report predates the edit.
   const proofCheck = useProofCheck(versionId, null)
   const [reportOpen, setReportOpen] = useState(false)
+
+  // "Does this set hang together?" — a structural read of the saved
+  // artwork rows (see lib/setConsistency for the three live proofs
+  // that prompted it). Deliberately reads the DB rather than taking
+  // the form's state as a prop: by this point the rows are written,
+  // and one query serves both the new- and edit-version flows without
+  // either page having to assemble the shape.
+  //
+  // Advisory, like the proof check beside it — it never touches the
+  // confirm button. And it fails silent: a set-review that errored
+  // must not stand between a finished proof and the customer.
+  const [setFindings, setSetFindings] = useState<SetFinding[]>([])
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const { data: version, error: vErr } = await supabase
+        .from('proof_versions')
+        .select('names, shape, is_variant_round')
+        .eq('id', versionId)
+        .maybeSingle()
+      if (vErr || !version) return
+      const { data: images, error: iErr } = await supabase
+        .from('proof_version_images')
+        .select('associated_name, side, material_option, is_qr_code')
+        .eq('proof_version_id', versionId)
+      if (iErr || !images) return
+      if (cancelled) return
+      setSetFindings(
+        reviewSet({
+          names: (version.names as string[] | null) ?? [],
+          shape: version.shape as string | null,
+          isVariantRound: !!version.is_variant_round,
+          images: (images as Array<{
+            associated_name: string | null
+            side: 'front' | 'back' | null
+            material_option: string | null
+            is_qr_code: boolean | null
+          }>)
+            // QR rows are their own slot model (their recipient is
+            // checked in the version form) and carry no side.
+            .filter((i) => !i.is_qr_code)
+            .map((i) => ({
+              associatedName: i.associated_name,
+              side: i.side,
+              materialOption: i.material_option,
+            })),
+        }),
+      )
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [versionId])
 
   // Notes for the customer (migration 000347), offered HERE because this is
   // where the designer already is: the flow runs save -> review the preview ->
@@ -461,6 +516,33 @@ export default function VersionPreviewGate({
             Go back and edit
           </button>
         </div>
+
+        {/* Does this set hang together? Sits under the checklist because
+            it is about the proof, not about the reviewing — and it is
+            the last thing read before the confirm button.
+
+            Amber, not rose: none of these are certainly wrong. A set
+            really can have one person on a different card. The band
+            states what it noticed and leaves the judgement where it
+            belongs. */}
+        {setFindings.length > 0 && (
+          <div
+            data-testid="set-consistency-notice"
+            className="mx-auto mt-2.5 flex max-w-6xl gap-2.5 rounded-lg border border-low bg-low-soft px-3 py-2.5"
+          >
+            <ScanSearch size={15} className="mt-0.5 shrink-0 text-low" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-ink">Worth a look before you send</p>
+              <ul className="mt-0.5 space-y-0.5">
+                {setFindings.map((f) => (
+                  <li key={f.kind + f.message} className="text-xs text-ink-soft">
+                    {f.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* The iframe carries the actual customer page. flex-1 makes

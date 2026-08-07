@@ -777,10 +777,26 @@ export default function EditVersionPage() {
       ? true
       : trimmedRecipientNames.every((n) => allAllocatedNames.has(n))
 
+  // Front or back? Only worth demanding once the version HAS a back:
+  // on a one-sided card an unlabelled image can only be the front, and
+  // the customer page and the artwork hand-off both already read it
+  // that way, so asking would be friction for no answer. Two-sided is
+  // where it genuinely can't be guessed — and where leaving it blank
+  // shows the customer one card with no Front/Back label while their
+  // colleagues' say both. Scoped to the images this form owns, so
+  // variant rounds (their own model, side always explicit) and
+  // collections short-circuit to true.
+  const allEditImages = Object.values(editImagesByOption).flat()
+  const sideRequired =
+    !isVariantRound && !isSetCollection && allEditImages.some((img) => img.side === 'back')
+  const everySideAnswered = !sideRequired || allEditImages.every((img) => img.side != null)
+
   const validations = {
     images:      isSetCollection ? true : imagesFinishKeys.every(fk => (editImagesByOption[fk] ?? []).length > 0),
     // Coverage guard: no named recipient left without a card of their own.
     imagesAllocated: everyNameAllocated,
+    // On a two-sided version, every image says which side it is.
+    imageSides: everySideAnswered,
     // The same demand, for QR codes added in this session on a 2+
     // recipient version — a code left unassigned prints on every
     // card. Short-circuits on the shapes that hide the QR section,
@@ -1468,6 +1484,7 @@ export default function EditVersionPage() {
         { key: 'inkNames',    ref: inkNamesRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'images',      ref: imageSectionRef },
         { key: 'imagesAllocated', ref: imageSectionRef },
+        { key: 'imageSides',  ref: imageSectionRef },
         { key: 'qrRecipients', ref: qrSectionRef as unknown as React.RefObject<HTMLElement | null> },
       ]
       const first = order.find(o => !validations[o.key])
@@ -2382,13 +2399,34 @@ export default function EditVersionPage() {
                         <option value="">Shared</option>
                         {names.map((n) => <option key={n} value={n}>{n}</option>)}
                       </select>
+                      {/* Side. The blank is a PLACEHOLDER, never a choice:
+                          it renders only while the value is genuinely unset
+                          and is disabled, so a side can be left unanswered
+                          but never selected. It used to read "—" and be
+                          choosable, sitting directly under a recipient
+                          dropdown whose blank ("Shared") is a real, meaningful
+                          value — two identical-looking empties, one a
+                          decision and one a hole. matchImageToName returns a
+                          null side whenever the filename carries no
+                          front/back token, so the hole filled itself on drop
+                          and only the files the designer noticed got tagged;
+                          that is how a two-sided set reached a customer with
+                          one card unlabelled. */}
                       <select
                         value={entry.side ?? ''}
                         onChange={(e) => updateSide(key, (e.target.value || null) as 'front' | 'back' | null)}
-                        className="select-styled mt-1 w-full rounded border border-line px-2 py-1 text-xs focus:border-brand focus:outline-none"
+                        aria-invalid={(entry.side == null && sideRequired) || undefined}
+                        className={[
+                          'select-styled mt-1 w-full rounded border px-2 py-1 text-xs focus:border-brand focus:outline-none',
+                          entry.side == null && sideRequired ? 'border-out' : 'border-line',
+                        ].join(' ')}
                         aria-label="Side"
                       >
-                        <option value="">—</option>
+                        {entry.side == null && (
+                          <option value="" disabled>
+                            {sideRequired ? 'Front or back?' : '—'}
+                          </option>
+                        )}
                         <option value="front">Front</option>
                         <option value="back">Back</option>
                       </select>

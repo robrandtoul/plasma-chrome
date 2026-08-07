@@ -246,3 +246,66 @@ test.describe('QR recipient gate (vf-open)', () => {
     await expect(submit(page)).toBeEnabled()
   })
 })
+
+// ── Which side is this? ─────────────────────────────────────────────────
+//
+// The edit form's per-image controls stack two dropdowns. The top one is
+// the recipient, whose blank reads "Shared" — a real, meaningful value.
+// Directly under it sat Side, whose blank read "—" and meant nothing was
+// recorded. Two identical-looking empties, one a decision and one a hole.
+//
+// The hole filled itself: matchImageToName returns a null side whenever
+// the filename carries no front/back token, so a designer hand-tagged
+// the files they noticed and one slipped through. That is how The
+// Sourdough Company's approved, ordered proof reached its customer with
+// two cards reading FRONT / BACK and the third reading FRONT / nothing.
+//
+// What these catch:
+//   * a blank offered as a CHOICE on a two-sided version is the bug
+//     itself — the state must be un-pickable, only inheritable;
+//   * a Save that goes through with a side unanswered ships the same
+//     proof again;
+//   * and on a ONE-sided version the question must not be asked at all,
+//     because an unlabelled image can only be the front there and both
+//     the customer page and the artwork hand-off already read it so.
+//     A check that nags where there is no answer to get gets ignored.
+test.describe('side is answered before saving (vf-sides)', () => {
+  const sideSelects = (page: Page) => page.locator('select[aria-label="Side"]')
+  // The edit form renders its Cancel + Save pair twice (beside the heading
+  // and again below the image grid), so the shared `submit` helper is
+  // ambiguous here.
+  const save = (page: Page) => page.locator('button[type="submit"]').first()
+
+  test('an unlabelled image on a two-sided set blocks Save, and the blank cannot be chosen', async ({ page }) => {
+    await page.goto('/verify-harness/index.html?path=/proofs/vf-sides/versions/vf-sides-v1/edit')
+    await expect(sideSelects(page)).toHaveCount(3)
+
+    // The one nobody labelled: empty value, and its blank option is
+    // present only to render that state — never selectable.
+    const unset = sideSelects(page).filter({ has: page.locator('option[value=""]') })
+    await expect(unset).toHaveCount(1)
+    await expect(unset).toHaveValue('')
+    await expect(unset).toHaveAttribute('aria-invalid', 'true')
+    await expect(unset.locator('option[value=""]')).toHaveAttribute('disabled', '')
+
+    // The two that ARE labelled offer no blank at all.
+    await expect(sideSelects(page).locator('option[value=""]')).toHaveCount(1)
+
+    // Saving with it outstanding is refused, and the form says so.
+    await save(page).click()
+    await expect(page.getByRole('status')).toBeVisible()
+
+    // Answering it clears the state live.
+    await unset.selectOption('back')
+    await expect(sideSelects(page).locator('option[value=""]')).toHaveCount(0)
+    await expect(sideSelects(page).nth(2)).not.toHaveAttribute('aria-invalid', 'true')
+  })
+
+  test('a one-sided set is never asked, because front is the only answer', async ({ page }) => {
+    // vf-open carries two fronts and no back.
+    await page.goto('/verify-harness/index.html?path=/proofs/vf-open/versions/vf-open-v1/edit')
+    await expect(sideSelects(page)).toHaveCount(2)
+    await expect(sideSelects(page).locator('[aria-invalid="true"]')).toHaveCount(0)
+    await expect(save(page)).toBeEnabled()
+  })
+})
