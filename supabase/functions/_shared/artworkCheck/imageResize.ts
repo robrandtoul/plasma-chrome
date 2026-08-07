@@ -55,14 +55,31 @@ export const MODEL_MAX_LONG_EDGE = 2576
 // The API's hard reject. Never sent above this; asserted in the tests.
 export const API_MAX_DIMENSION = 8000
 
-// Decoding allocates width*height*4 bytes, and transiently twice that (the
-// codec's framebuffer, then the Image bitmap it's copied into). 24MP is ~96MB,
-// so ~192MB at peak, alongside the print files and attachments this function
-// is already holding. Above this we decline to decode: an out-of-memory crash
-// takes down the whole run with no report at all, which is strictly worse than
-// the named skip the caller records. Raise it only with the runtime's memory
-// ceiling in mind.
-export const MAX_DECODE_PIXELS = 24_000_000
+// Above this we decline to decode and the caller records a named skip. An
+// out-of-memory kill (WORKER_RESOURCE_LIMIT) takes down the whole run with NO
+// report at all — strictly worse than a named skip, and this check gates order
+// placement — so the ceiling has to be provably safe, not nominally safe.
+//
+// ⚠ The figure is MEASURED, not reasoned. A first pass counted copies in
+// ImageScript's source, guessed ~8 bytes/pixel and set 24MP; measuring RSS
+// across a real decode showed the true cost is **12-16 bytes per pixel**
+// (Image.decode holds the wasm heap, the `u8.slice()` the codec returns, AND
+// the Image bitmap it copies that into):
+//
+//     6MP -> 95MB      12MP -> 186MB      26MP -> 301MB
+//
+// So the original 24MP ceiling would have blown a **256MB** Edge Function cap
+// (supabase.com/docs/guides/functions/limits) on its own — it was not guarding
+// anything. At ~15 B/px, and leaving room for the runtime plus the print files
+// and proof images already in flight, 12MP (~150-190MB) is the honest limit.
+//
+// Raising it needs the decode itself to get cheaper, not just a bigger number.
+// Going via the codec directly (skipping Image.decode's extra copy) measured
+// 8-12 B/px — a real saving, but only enough for ~12-20MP, so it does NOT
+// rescue the print-resolution references that motivated this (the file that
+// broke the live runs is 26.1MP, ~200MB even that way). Doing the resize
+// OUTSIDE the isolate is the approach that actually scales.
+export const MAX_DECODE_PIXELS = 12_000_000
 
 export interface ImageSize {
   width: number

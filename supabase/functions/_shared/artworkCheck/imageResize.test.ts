@@ -192,6 +192,27 @@ console.log('\nfitting real images')
   putU32(hugeHeader, 20, 20000) // 400MP — far past the ceiling
   check('a 400MP image measures', (readImageSize(hugeHeader)?.width ?? 0) === 20000)
   check('decode ceiling is below it', 20000 * 20000 > MAX_DECODE_PIXELS)
+
+  // The ceiling is a memory budget, not a taste. Measured cost of a decode is
+  // 12-16 bytes/pixel (RSS across a real decode; Image.decode holds the wasm
+  // heap, the codec's returned slice, AND the Image bitmap). Edge Functions cap
+  // at 256MB total, so the decode itself must leave room for the runtime and
+  // for the print files / proof images already in flight. This guards the
+  // number against creeping back up without the arithmetic being redone —
+  // an earlier 24MP would have needed ~360MB and could not have held.
+  const WORST_BYTES_PER_PIXEL = 15
+  const RUNTIME_AND_INFLIGHT_MB = 60
+  const EDGE_FUNCTION_CAP_MB = 256
+  const decodeMb = (MAX_DECODE_PIXELS * WORST_BYTES_PER_PIXEL) / 1024 / 1024
+  check(
+    'decode ceiling fits the 256MB Edge Function cap with headroom',
+    decodeMb + RUNTIME_AND_INFLIGHT_MB < EDGE_FUNCTION_CAP_MB,
+    `${decodeMb.toFixed(0)}MB decode + ${RUNTIME_AND_INFLIGHT_MB}MB in flight >= ${EDGE_FUNCTION_CAP_MB}MB`,
+  )
+  check(
+    'decode ceiling is still worth having (not so low nothing resizes)',
+    MAX_DECODE_PIXELS >= 8_000_000,
+  )
   const hugeFit = await fitImageForModel(hugeHeader, 'image/png')
   check('past the decode ceiling is a named skip, not a crash', hugeFit.ok === false)
   check('and the skip reason names the size', hugeFit.ok === false && hugeFit.reason.includes('20000x20000'))

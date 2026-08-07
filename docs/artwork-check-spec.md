@@ -1120,18 +1120,39 @@ downscaled** — "too large to process (14864x1755px)", i.e. it fell past the
 `MAX_DECODE_PIXELS` ceiling. So the run is saved and the report is honest, but
 the goal of actually READING that reference is not yet met for this file, and
 the ceiling wants revisiting with real numbers: **Supabase Edge Functions cap
-at 256MB** (docs, confirmed after the fact). ImageScript's `Image.decode` holds
-**two** copies at peak — the codec's wasm framebuffer and the JS `bitmap` it is
-copied into — so a decode costs ~8 bytes/pixel, not 4. At 24MP that is ~192MB
-transient on top of the ~60MB of proof images and base64 already in flight:
-right on the cliff. Two follow-ups, in order of value:
-(1) **lower** the ceiling to ~16MP so the guard is provably safe rather than
-nominally safe (a `WORKER_RESOURCE_LIMIT` kill produces NO report, strictly
-worse than a named skip — and the check gates order placement);
-(2) **halve the peak** by resampling straight from the codec's framebuffer
-instead of `Image.decode`'s copy, which would make ~26MP affordable and let the
-ceiling rise to cover files like this one. Until (2), print-resolution
-references above the ceiling are named skips.
+at 256MB** (docs, confirmed after the fact).
+
+**Ceiling corrected to 12MP, from measurement (same session).** The first pass
+counted copies in ImageScript's source, guessed ~8 bytes/pixel and set 24MP.
+Measuring RSS across real decodes says the true cost is **12-16 bytes/pixel** —
+`Image.decode` holds the wasm heap, the `u8.slice()` the PNG codec returns, AND
+the `Image.bitmap` it copies that into:
+
+| pixels | `Image.decode` | via the codec directly |
+| --- | --- | --- |
+| 6MP | 95MB (16.6 B/px) | 72MB (12.6 B/px) |
+| 12MP | 186MB (16.3 B/px) | 141MB (12.3 B/px) |
+| 26MP | **301MB** (12.1 B/px) | 202MB (8.2 B/px) |
+
+So **24MP would have blown the 256MB cap on its own** — the guard was not
+guarding, and this is why the number is now measured rather than reasoned
+(`imageResize.test.ts` pins it against the budget so it can't drift back).
+
+⚠ **The "resample from the codec framebuffer" follow-up was measured and
+DROPPED.** It does save exactly one copy (~4 B/px, as predicted) but that only
+moves the ceiling to ~12-20MP — it does **not** rescue the 26.1MP file that
+motivated it (~202MB, still most of the cap before the runtime and the in-flight
+print files). Buying that would also mean reimplementing the JPEG codec's
+colour-format conversion (grayscale/RGB/CMYK) by hand against package
+internals. Not worth the fragility on a check that gates order placement.
+
+**The route that does work: resize OUTSIDE the isolate.** Supabase Storage
+image transformations handle 26.1MP comfortably — limits are 50MP resolution,
+25MB file, width 1-2500 (this file is 26.1MP / ~300KB), and the cost is ~nil in
+function memory: upload the attachment, download it back with
+`transform: { width: 2500, resize: 'contain' }`, use those bytes, clean up.
+Pricing is $5/1000 origin images over a 100/month quota, so effectively free at
+a handful of oversized attachments a month. Not built.
 
 ⚠ **Unrelated find, same session:** the verification POST sat unprocessed in
 `net.http_request_queue` — **pg_net's background worker was stalled** (queue
