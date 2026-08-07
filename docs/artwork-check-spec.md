@@ -1026,9 +1026,89 @@ changes for admin approval.
 
 **Rollout.** Migration 000385 **applied to live via MCP 2026-08-06** and
 verified (column present, `acks` key returns, existing keys + grants intact).
-⚠ The `artwork-check` redeploy is pending — the 17-file bundle is too large
-for an MCP deploy call, so it needs the CLI:
+The `artwork-check` redeploy needed the CLI rather than an MCP call (the
+bundle is too large for one):
 `supabase functions deploy artwork-check --project-ref bjvinrzbdrwebylkmbwy`.
-Order-safe either way: until the deploy, ticks show the client's "service
-needs its latest update" guard, the ledger keeps its legacy rows, and the two
-new frontend surfaces stay empty rather than wrong.
+Order-safe either way: before the deploy, ticks showed the client's "service
+needs its latest update" guard, the ledger kept its legacy rows, and the two
+new frontend surfaces stayed empty rather than wrong.
+**✅ Deployed — corrected 2026-08-07.** This entry read "redeploy is pending"
+for a day after it had actually shipped. Verified against live rather than
+against the note: deployed **v27** carries `mirrorReportToLedger`, the ledger
+`report` insert and its pre-000385 retry, and all **16 files are byte-identical
+to `main`**. `verify_jwt` remains true.
+
+## 2026-08-07 — oversized images are downscaled, not fatal (no migration)
+
+**The gap.** The Anthropic API hard-rejects any image with a dimension over
+8000px, and it rejects the WHOLE request — so one oversized file took the run
+down with it, including the dozen good proof images already read. It killed the
+proof check on The Experience Auto Group twice, **30 Jul (v10)** and **7 Aug
+(v12)**, both naming `content.30.image`: the second customer attachment,
+`FerrariOfCharlotte_..._Horz_Black (Print).png`, a print-resolution logo off the
+Help Scout thread. Not the artwork — the reference material. Every size gate in
+the check counted **bytes, never pixels** (4MB per proof image, 5MB per
+attachment, pooled budgets), and a flat-colour logo at print resolution is tiny
+in bytes and vast in pixels, so it passed all of them. 2 of 312 recorded runs,
+both this customer, but deterministic: that file is still on the thread, so the
+check failed on this project every time until this landed.
+
+**The fix.** `_shared/artworkCheck/imageResize.ts`. Dimensions are read from the
+file header (PNG/JPEG/GIF/WebP — no decode, so the overwhelmingly common
+in-limit case never loads the codec), and anything over **2576px on the long
+edge** is downscaled to it. That target is the resolution the model actually
+works at: the API downscales larger images to it anyway, so no fidelity is lost,
+and the payload shrinks enough that big images now FIT the byte budgets that
+used to skip them. Dropping oversized files was the cheaper fix and was
+rejected — on that order the logo IS the reference the check most needed to
+read. Applied at all five image ingestion points (proof images, Leg C approved
+images, investigation images, and attachments on both the order and proof legs);
+the QR scan still reads the ORIGINAL full-resolution bytes.
+
+**Three decisions, each measured rather than assumed.** *Area-average
+resampling, not nearest-neighbour* — we only ever downscale, so averaging the
+source pixels each output pixel covers is the correct answer; measured against
+nearest on 1–4px strokes at a 4.7× reduction, aggregate ink density looks fine
+either way (99.8% vs 100%) but nearest's **worst pixel is off by 234/255**, i.e.
+a thin stroke landing between samples vanishes — and small text is most of what
+this check reads. (ImageScript ships nearest-neighbour ONLY, hence resampling
+here and using it purely as a codec.) *Source format is preserved* — re-encoding
+a transparent-background PNG as JPEG was measured returning `rgba(0,0,0,255)`,
+solid black, and the file that broke both runs is a BLACK logo, so flattening it
+would have handed the model a black rectangle and a confidently wrong
+comparison; it also keeps `media_type` correct with no rewiring, and for logo
+art the PNG came out 5× SMALLER than the JPEG anyway. *The codec is proved
+before use* — unlike zxing-wasm (which fetches its wasm over HTTP), ImageScript
+reads its wasm off disk via `node:fs`, and whether the edge runtime materialises
+a package's non-JS assets is not something to assume; that failure lands at
+DECODE time, long after a successful import, so an import-only fallback chain
+would never fire. Each candidate is therefore proved with a 1×1 decode and falls
+through on failure: `npm:imagescript@1.3.0` → the Deno-native build (which
+fetches its wasm over HTTPS) → the bare package for the Node harness.
+
+**Fail-safe throughout.** Unmeasurable bytes pass through EXACTLY as before (the
+path 310 of 312 runs took successfully); oversized-but-unresizable — wrong
+format, past the 24MP decode ceiling, or no working codec — becomes a **named
+skip in the report** rather than a certain 400. The decode ceiling exists
+because an out-of-memory crash takes down the whole run with no report at all,
+which is strictly worse than a named skip. Byte accounting still counts the
+ORIGINAL download, so the shared 24MB pool and the approved-image budget derived
+from it stay no looser than before resizing existed.
+
+**Tests.** `_shared/artworkCheck/imageResize.test.ts` (auto-discovered by
+`pnpm test`) exercises the REAL codec round-trip, not just the pure logic —
+ImageScript is pinned as a devDependency to the same version the `npm:`
+specifier names, so what the harness verifies is what the edge runtime runs.
+Covers the header probes, the target maths (including the invariant that every
+aspect ratio lands under 8000px), the resampler's known answers, the
+transparency case, and the decode ceiling.
+
+**Rollout.** Code-only, no migration. ⚠ Needs the CLI deploy
+(`supabase functions deploy artwork-check --project-ref bjvinrzbdrwebylkmbwy`,
+`verify_jwt` stays **true**). Checked against live before writing this rather
+than against the notes: deployed **v27** is byte-identical to `main` across all
+16 files, so this deploy carries **only** this change — the §2026-08-06
+report-history work had already shipped despite its entry saying otherwise.
+Verify by re-running the check on proof `455a1334`, which fails reproducibly
+today; a success also proves which codec candidate the edge runtime accepted
+(the loader logs the ones it rejects).

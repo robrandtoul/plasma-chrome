@@ -51,6 +51,7 @@ import {
   PROOF_IMAGES_TOTAL_MAX_BYTES,
 } from '../_shared/artworkCheck/approvedProof.ts'
 import { decodeQrsFromImage } from '../_shared/artworkCheck/qrDecode.ts'
+import { fitImageForModel } from '../_shared/artworkCheck/imageResize.ts'
 import {
   buildInvestigationContext,
   INVESTIGATION_FINAL_INSTRUCTION,
@@ -552,7 +553,14 @@ Deno.serve(async (req) => {
         for (const pick of picks) {
           const { data: blob, error: dlErr } = await admin.storage.from('proof-images').download(pick.path)
           if (dlErr || !blob) continue
-          const bytes = new Uint8Array(await blob.arrayBuffer())
+          const raw = new Uint8Array(await blob.arrayBuffer())
+          // Fit for the model first — an oversized version image would 400 the
+          // whole investigation (see imageResize.ts). This path reports no
+          // per-image reasons, so an unfittable one is skipped quietly, exactly
+          // as a failed download already is.
+          const fitted = await fitImageForModel(raw, pick.mediaType)
+          if (!fitted.ok) continue
+          const bytes = fitted.bytes
           if (bytes.length > INVESTIGATION_IMAGE_MAX_BYTES) continue
           if (total + bytes.length > INVESTIGATION_TOTAL_MAX_BYTES) break
           total += bytes.length
@@ -895,13 +903,24 @@ Deno.serve(async (req) => {
               proofCtx.proofImagesSkipped.push({ name: pick.label, reason: 'download failed' })
               continue
             }
-            const bytes = new Uint8Array(await blob.arrayBuffer())
-            for (const qr of await decodeQrsFromImage(bytes)) {
+            const raw = new Uint8Array(await blob.arrayBuffer())
+            // QR scan reads the ORIGINAL pixels — a code decodes better at full
+            // resolution, and the decoder downscales internally anyway.
+            for (const qr of await decodeQrsFromImage(raw)) {
               if (!artworkQrSeen.has(qr.data)) {
                 artworkQrSeen.add(qr.data)
                 proofCtx.artworkDecodedQrs.push(qr.data)
               }
             }
+            // Then fit for the model: over ~8000px on any edge the API rejects
+            // the whole request, so a single huge export would take the run
+            // down with it (see imageResize.ts).
+            const fitted = await fitImageForModel(raw, pick.mediaType)
+            if (!fitted.ok) {
+              proofCtx.proofImagesSkipped.push({ name: pick.label, reason: fitted.reason })
+              continue
+            }
+            const bytes = fitted.bytes
             if (bytes.length > APPROVED_IMAGE_MAX_BYTES) {
               proofCtx.proofImagesSkipped.push({ name: pick.label, reason: 'over the size limit' })
               continue
@@ -942,7 +961,21 @@ Deno.serve(async (req) => {
               proofCtx.attachmentsSkipped.push({ name: meta.filename, reason: 'contents not readable' })
               continue
             }
-            routedAttachments.push(routed)
+            // A print-resolution reference image gets downscaled rather than
+            // dropped: over ~8000px on an edge the API rejects the ENTIRE
+            // request, so one of these takes the whole run down (see
+            // imageResize.ts). Byte accounting deliberately still counts the
+            // original download, keeping the budget no looser than before.
+            let toSend = routed
+            if (routed.kind === 'image') {
+              const fitted = await fitImageForModel(routed.bytes, routed.mediaType)
+              if (!fitted.ok) {
+                proofCtx.attachmentsSkipped.push({ name: meta.filename, reason: fitted.reason })
+                continue
+              }
+              toSend = { ...routed, bytes: fitted.bytes }
+            }
+            routedAttachments.push(toSend)
             proofCtx.attachmentsRead.push({ name: meta.filename, at: attachmentDateLabel(meta.at) })
           } catch {
             proofCtx.attachmentsSkipped.push({ name: meta.filename, reason: 'download failed' })
@@ -1137,7 +1170,20 @@ Deno.serve(async (req) => {
             baseCtx.attachmentsSkipped.push({ name: meta.filename, reason: 'contents not readable' })
             continue
           }
-          routedAttachments.push(routed)
+          // Same fit as the proof leg — see imageResize.ts. attachmentsRawTotal
+          // keeps counting the ORIGINAL download so the shared 24MB pool (and
+          // the approved-image budget derived from it) stays no looser than it
+          // was before resizing existed.
+          let toSend = routed
+          if (routed.kind === 'image') {
+            const fitted = await fitImageForModel(routed.bytes, routed.mediaType)
+            if (!fitted.ok) {
+              baseCtx.attachmentsSkipped.push({ name: meta.filename, reason: fitted.reason })
+              continue
+            }
+            toSend = { ...routed, bytes: fitted.bytes }
+          }
+          routedAttachments.push(toSend)
           attachmentsRawTotal += bytes.length
           baseCtx.attachmentsRead.push({ name: meta.filename, at: attachmentDateLabel(meta.at) })
         } catch {
@@ -1169,15 +1215,23 @@ Deno.serve(async (req) => {
             baseCtx.approvedSkipped.push({ name: pick.label, reason: 'download failed' })
             continue
           }
-          const bytes = new Uint8Array(await blob.arrayBuffer())
+          const raw = new Uint8Array(await blob.arrayBuffer())
           // Scan for QRs before the size gate — a large proof still gets its
-          // code read (the decoder downscales internally).
-          for (const qr of await decodeQrsFromImage(bytes)) {
+          // code read (the decoder downscales internally), and reads better at
+          // full resolution.
+          for (const qr of await decodeQrsFromImage(raw)) {
             if (!artworkQrSeen.has(qr.data)) {
               artworkQrSeen.add(qr.data)
               baseCtx.artworkDecodedQrs.push(qr.data)
             }
           }
+          // Then fit for the model — see imageResize.ts.
+          const fitted = await fitImageForModel(raw, pick.mediaType)
+          if (!fitted.ok) {
+            baseCtx.approvedSkipped.push({ name: pick.label, reason: fitted.reason })
+            continue
+          }
+          const bytes = fitted.bytes
           if (bytes.length > APPROVED_IMAGE_MAX_BYTES) {
             baseCtx.approvedSkipped.push({ name: pick.label, reason: 'over the size limit' })
             continue
