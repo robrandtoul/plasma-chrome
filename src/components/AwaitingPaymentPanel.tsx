@@ -13,6 +13,10 @@ import {
   type AwaitingOrderInput,
   type AwaitingRow,
 } from '../lib/awaitingPayment'
+import {
+  DEFAULT_CADENCE, readCadence, reminderShortLine, reminderState, summariseNudgeLedger,
+  type NudgeLedgerRow, type ReminderCadence, type ReminderSummary,
+} from '../lib/orderReminders'
 
 // Dashboard rail panel: every order with a live pay link, and whether the
 // customer has opened it.
@@ -32,7 +36,7 @@ import {
 const ORDER_SELECT = `
   id, proof_id, order_group_id, sent_at, pay_link_opened_at, expires_at,
   held_at, help_requested_at, payment_method,
-  proofs(contacts(full_name, companies(name)))
+  proofs(helpscout_last_reply_at, helpscout_last_customer_reply_at, contacts(full_name, companies(name)))
 `
 
 interface OrderQueryRow {
@@ -45,7 +49,11 @@ interface OrderQueryRow {
   held_at: string | null
   help_requested_at: string | null
   payment_method: string | null
-  proofs: { contacts: { full_name: string | null; companies: { name: string | null } | null } | null } | null
+  proofs: {
+    helpscout_last_reply_at: string | null
+    helpscout_last_customer_reply_at: string | null
+    contacts: { full_name: string | null; companies: { name: string | null } | null } | null
+  } | null
 }
 
 function toInput(o: OrderQueryRow): AwaitingOrderInput {
@@ -61,11 +69,18 @@ function toInput(o: OrderQueryRow): AwaitingOrderInput {
     payment_method: o.payment_method,
     contact_name: o.proofs?.contacts?.full_name ?? null,
     company_name: o.proofs?.contacts?.companies?.name ?? null,
+    helpscout_last_reply_at: o.proofs?.helpscout_last_reply_at ?? null,
+    helpscout_last_customer_reply_at: o.proofs?.helpscout_last_customer_reply_at ?? null,
   }
 }
 
 export default function AwaitingPaymentPanel() {
   const [rows, setRows] = useState<AwaitingRow[] | null>(null)
+  // The automatic chase, so each row can say when its next reminder goes. Both
+  // are decided by src/lib/orderReminders.ts — the same module the Orders card
+  // uses — so the two surfaces can't reach different answers from one ledger.
+  const [cadence, setCadence] = useState<ReminderCadence>(DEFAULT_CADENCE)
+  const [reminders, setReminders] = useState<Record<string, ReminderSummary>>({})
   const inFlight = useRef(false)
 
   // ⚠ A failed read must leave good rows on screen. supabase-js returns
@@ -97,6 +112,30 @@ export default function AwaitingPaymentPanel() {
       }
 
       setRows(buildAwaitingRows(orders, groups))
+
+      // The chase: admin cadence + the reminder ledger. Fetched after the rows
+      // are already on screen, so a slow or failed read costs the panel its
+      // third line rather than the whole list. Each result is guarded, because
+      // supabase-js hands back `data: null` on error and blindly applying that
+      // would replace a real schedule with "Reminders off" — a confident lie in
+      // the safe-looking direction.
+      const orderIds = orders.map((o) => o.id)
+      const [{ data: s }, { data: site }, ledger] = await Promise.all([
+        supabase
+          .from('settings')
+          .select('order_reminders_max, order_reminder_interval_days, auto_order_reminders_enabled')
+          .eq('id', 1)
+          .maybeSingle(),
+        supabase.from('site_settings').select('needs_attention_rules').eq('id', 1).maybeSingle(),
+        orderIds.length > 0
+          ? supabase
+              .from('order_nudges')
+              .select('order_id, reminder_no, state, outcome, created_at')
+              .in('order_id', orderIds)
+          : Promise.resolve({ data: [] as NudgeLedgerRow[] }),
+      ])
+      if (s) setCadence(readCadence(s, site))
+      if (ledger.data) setReminders(summariseNudgeLedger(ledger.data as NudgeLedgerRow[]))
     } finally {
       inFlight.current = false
     }
@@ -138,6 +177,22 @@ export default function AwaitingPaymentPanel() {
           {rows.map((r) => {
             const chip = awaitingChip(r)
             const opened = r.openedAt != null
+            // When the automatic chase next writes to this customer. Same
+            // decision the Orders card renders at greater length.
+            const chase = reminderState({
+              sentAt: r.sentAt,
+              expiresAt: r.expiresAt,
+              expired: r.expired,
+              inActiveGroup: r.grouped,
+              summary: reminders[r.orderId] ?? null,
+              cadence,
+              grace: {
+                lastReplyAt: r.lastReplyAt,
+                lastCustomerReplyAt: r.lastCustomerReplyAt,
+                graceDays: cadence.graceDays,
+              },
+            })
+            const chaseLine = reminderShortLine(chase)
             return (
               <li key={r.key}>
                 <Link
@@ -180,6 +235,29 @@ export default function AwaitingPaymentPanel() {
                     >
                       {awaitingStatusLine(r)}
                     </span>
+                    {/* The chase, one register quieter than the link's own
+                        state: it answers "and what happens next?", which only
+                        matters once you've read whether they opened it. Absent
+                        entirely when there's nothing honest to say, so a row
+                        never grows an empty third line. A stalled chase is the
+                        one case that earns colour — it's the only state here
+                        needing a human. */}
+                    {chaseLine && (
+                      <span
+                        className={`mt-0.5 block truncate text-[11px] ${
+                          chase.next.kind === 'note' && chase.next.note.kind === 'problem'
+                            ? 'text-out'
+                            : 'text-ink-dim'
+                        }`}
+                        // A rail row has no room for "Paused — the customer
+                        // replied on the thread on 04 Aug 2026. Resumes 07 Aug
+                        // 2026." — but that sentence is the whole answer, so it
+                        // rides on the hover.
+                        title={chase.next.kind === 'note' ? chase.next.note.text : undefined}
+                      >
+                        {chaseLine}
+                      </span>
+                    )}
                   </span>
                 </Link>
               </li>

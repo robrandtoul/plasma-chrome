@@ -24,6 +24,9 @@
 //      payments. It sits inches from a tile counting orders, and a bare "4"
 //      under a tile reading "5" raises the one question this panel must never
 //      raise: what is it not showing me?
+//   5. the chase line is fed per order from that order's own ledger, and stays
+//      silent where no reminder is actually coming — a spent cap, or a combined
+//      payment the sender skips outright.
 //
 // Desktop only — the rail is `hidden lg:block` and the harness project runs a
 // desktop viewport.
@@ -95,6 +98,34 @@ test.describe('dashboard — awaiting payment panel', () => {
     )
     expect(styles[0].filled).toBe(true)
     expect(styles.slice(1).every((s) => !s.filled && s.ringed)).toBe(true)
+  })
+
+  // ── The automatic chase ──────────────────────────────────────────────────
+  // The panel's third line answers "and when does the next reminder go?". The
+  // decision is shared with the Orders card (src/lib/orderReminders.ts), so what
+  // matters here is that the panel FEEDS it correctly — per order, from that
+  // order's own ledger, with the group short-circuit intact.
+  //
+  // These assert the stage NUMBERS rather than the sentence around them: the
+  // numbers are the decision, the prose is free to change.
+
+  test('the next reminder is read per order from that order’s own ledger', async ({ page }) => {
+    // o1 has had one reminder; o11 none. So o1 must be exactly one stage
+    // further on — a global or last-write-wins read of the ledger would give
+    // them the same number.
+    await expect(panel(page).locator('a[href="/orders?order=o1"]')).toContainText(/\b2 of 3\b/)
+    await expect(panel(page).locator('a[href="/orders?order=o11"]')).toContainText(/\b1 of 3\b/)
+  })
+
+  test('a spent cap promises no further reminder', async ({ page }) => {
+    // o2 has all three sent. Offering a fourth would be a promise nothing keeps.
+    await expect(panel(page).locator('a[href="/orders?order=o2"]')).not.toContainText(/\d+ of \d+ ·/)
+  })
+
+  test('⚠ a combined payment never promises a reminder — the sender skips it', async ({ page }) => {
+    // send-order-reminders excludes grouped members (their own link isn't
+    // payable), so a schedule here would be fiction however healthy the ledger.
+    await expect(panel(page).locator('a[href="/orders?order=o3"]')).not.toContainText(/\d+ of \d+ ·/)
   })
 
   test('the summary counts payments, so it may legitimately differ from the orders tile', async ({ page }) => {

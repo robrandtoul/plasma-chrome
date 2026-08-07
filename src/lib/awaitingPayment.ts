@@ -37,6 +37,10 @@ export interface AwaitingOrderInput {
   payment_method: string | null
   contact_name: string | null
   company_name: string | null
+  /** Thread-wide reply stamps (000208). Carried through so the panel can word a
+   *  grace pause on the automatic chase — see src/lib/orderReminders.ts. */
+  helpscout_last_reply_at: string | null
+  helpscout_last_customer_reply_at: string | null
 }
 
 /** A combined payment (proofs.order_groups, 000309) covering 2+ of the above. */
@@ -66,6 +70,18 @@ export interface AwaitingRow {
   helpRequested: boolean
   /** Bank transfer etc. — there is no pay link, so no "opened" to report. */
   offline: boolean
+  /**
+   * Part of a live combined payment. Tracked as its own flag rather than read
+   * off `orderCount > 1`, because Release can leave a group holding a single
+   * member: still grouped, still skipped by the reminder sender, but no longer
+   * plural. Inferring it from the count would quietly start promising that
+   * order reminders nothing is going to send.
+   */
+  grouped: boolean
+  /** Reply stamps for the grace-pause wording; null on a grouped row, which
+   *  short-circuits before the note is ever needed. */
+  lastReplyAt: string | null
+  lastCustomerReplyAt: string | null
 }
 
 const DAY_MS = 86_400_000
@@ -132,6 +148,9 @@ export function buildAwaitingRows(
       held: o.held_at != null,
       helpRequested: o.help_requested_at != null,
       offline: isOffline(o),
+      grouped: false,
+      lastReplyAt: o.helpscout_last_reply_at,
+      lastCustomerReplyAt: o.helpscout_last_customer_reply_at,
     })
   }
 
@@ -158,6 +177,11 @@ export function buildAwaitingRows(
       held: sorted.some((o) => o.held_at != null),
       helpRequested: sorted.some((o) => o.help_requested_at != null),
       offline: sorted.every(isOffline),
+      grouped: true,
+      // Unused on a grouped row (the reminder decision short-circuits), and
+      // deliberately not guessed from an arbitrary member.
+      lastReplyAt: null,
+      lastCustomerReplyAt: null,
     })
   }
 

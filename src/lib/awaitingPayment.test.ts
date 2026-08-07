@@ -61,6 +61,8 @@ function order(over: Partial<AwaitingOrderInput> = {}): AwaitingOrderInput {
     payment_method: 'online',
     contact_name: 'Brad Talbot',
     company_name: 'MISFIT',
+    helpscout_last_reply_at: null,
+    helpscout_last_customer_reply_at: null,
     ...over,
   }
 }
@@ -70,6 +72,7 @@ function row(over: Partial<AwaitingRow> = {}): AwaitingRow {
     key: 'k', orderId: 'o1', proofId: 'p1', label: 'MISFIT', orderCount: 1,
     openedAt: null, sentAt: daysAgo(2), expiresAt: daysAhead(12),
     expired: false, held: false, helpRequested: false, offline: false,
+    grouped: false, lastReplyAt: null, lastCustomerReplyAt: null,
     ...over,
   }
 }
