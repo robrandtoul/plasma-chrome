@@ -174,6 +174,13 @@ export interface DashboardLatestEvent {
   recipient_name: string | null
   helpscout_thread_id: string | null
   proof_id: string
+  // Present on rows that came from dashboard_latest_events (the view selects
+  // `pv.id as proof_version_id`); absent on every synthetic row, which is keyed
+  // to a proof rather than to one of its versions. The live-view path in
+  // dashboardActivityFeed.ts needs it to recognise a repeat view of a version
+  // it already has a row for, so it can move that row's clock instead of adding
+  // a second one.
+  proof_version_id?: string | null
   version_number: number
   contact_name: string | null
   company_name: string | null

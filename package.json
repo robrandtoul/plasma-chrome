@@ -71,6 +71,7 @@
     "test:quick-quantities": "tsx src/lib/quickQuantities.test.ts",
     "test:audit-filters": "tsx src/pages/admin/auditFilters.test.ts",
     "test:dashboard-grouping": "tsx src/lib/dashboardGrouping.test.ts",
+    "test:activity-feed": "tsx src/lib/dashboardActivityFeed.test.ts",
     "test:proof-snapshot": "tsx src/lib/proofSnapshot.test.ts",
     "test:proof-timeline": "tsx src/lib/proofTimeline.test.ts",
     "test:qr-carry-forward": "tsx src/lib/qrCarryForward.test.ts",

@@ -66,6 +66,14 @@ import {
   type NeedsAttentionRule,
   type ProjectSection,
 } from '../lib/dashboardGrouping'
+// Near-live Latest activity: realtime carries page views, a poll carries the
+// other five sources. See the note above ACTIVITY_POLL_MS for the split.
+import {
+  ACTIVITY_FEED_CAP,
+  applyLiveView,
+  type LiveViewRow,
+} from '../lib/dashboardActivityFeed'
+import { useLiveDashboardViews } from '../lib/useLiveDashboardViews'
 // Bundle stitching (proof_sets, 000311) — see dashboardBundles.ts for why a
 // bundle needs showing on the list at all, and which of the two treatments
 // (block / chip) applies where.
@@ -2430,6 +2438,37 @@ function LatestActivityPanel({
   // collapsible fixed-height card.
   fill?: boolean
 }) {
+  // "4 min ago" is computed at render, so a dashboard left open on a desk all
+  // afternoon froze its timestamps even as new rows arrived above them. Re-render
+  // once a minute; the feed's finest unit is the minute, so anything faster only
+  // burns renders.
+  const [, setClockTick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setClockTick((n) => n + 1), 60_000)
+    return () => clearInterval(t)
+  }, [])
+
+  // Briefly tint rows that weren't here a moment ago. Without this the card
+  // updates silently — a row you never saw arrive is indistinguishable from one
+  // that was always there, which is most of the value of making it live in the
+  // first place. Driven by comparing ids rather than by the realtime callback,
+  // so a row the poll brought in is just as visible as one the socket did.
+  const seenIdsRef = useRef<Set<string> | null>(null)
+  const [freshIds, setFreshIds] = useState<ReadonlySet<string>>(new Set())
+  useEffect(() => {
+    const ids = new Set(events.map((e) => e.id))
+    const previous = seenIdsRef.current
+    seenIdsRef.current = ids
+    // The first paint isn't new activity — everything on screen is simply what
+    // was already there. Same for a repaint from the return-trip snapshot.
+    if (previous === null) return
+    const arrived = [...ids].filter((id) => !previous.has(id))
+    if (arrived.length === 0) return
+    setFreshIds(new Set(arrived))
+    const t = setTimeout(() => setFreshIds(new Set()), 6000)
+    return () => clearTimeout(t)
+  }, [events])
+
   const body =
     events.length === 0 ? (
       <p className="px-5 py-8 text-center text-sm text-ink-mute">
@@ -2494,6 +2533,16 @@ function LatestActivityPanel({
                   }
                 }}
                 className="flex cursor-pointer items-start gap-3 px-5 py-4 transition-colors hover:bg-canvas focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]"
+                // Set for six seconds after the row appears, then dropped —
+                // the transition-colors above turns that into a fade rather
+                // than a blink. Inline because it has to beat hover:bg-canvas
+                // while it lasts: a row landing under the cursor should still
+                // read as new.
+                style={
+                  freshIds.has(e.id)
+                    ? { backgroundColor: 'color-mix(in srgb, var(--c-brand) 10%, transparent)' }
+                    : undefined
+                }
               >
                 {/* Event-type icon in a tinted 32x32 square. */}
                 <span
@@ -2889,6 +2938,166 @@ function readDashboardSnapshot(searchTerm: string): DashboardSnapshot | null {
   return snap
 }
 
+// ── Latest-activity feed ─────────────────────────────────────────────────────
+//
+// The card is six sources merged on the client, not a table, so keeping it
+// fresh splits in two:
+//
+//   • Page views arrive over realtime (useLiveDashboardViews). They're the
+//     highest-volume source, the most time-sensitive — "they're reading it
+//     right now" — and the only one already in the supabase_realtime
+//     publication, so they cost no migration.
+//   • The other five are polled. Three of them are timestamp UPDATEs on rows
+//     rather than inserts (Help Scout replies, pay-link opens, pay-link sends),
+//     which realtime can't filter by changed column, and none of their tables
+//     are published.
+//
+// At roughly 40 feed rows a day across the whole company (measured on live), a
+// 45-second poll is indistinguishable from live to somebody reading the card,
+// and it doubles as the backstop that keeps the realtime half a bonus rather
+// than load-bearing: a blocked socket costs seconds of freshness, not rows.
+const ACTIVITY_POLL_MS = 45_000
+
+// The five polled sources, in the shape buildActivityFeed wants them.
+interface ActivitySources {
+  events: DashboardLatestEvent[]
+  payLinkOpens: PayLinkOpenRow[]
+  payLinkSents: PayLinkSentRow[]
+  orderReminders: OrderReminderRow[]
+  feedback: ProofFeedbackFeedRow[]
+}
+
+/**
+ * Fetch everything behind the Latest-activity card. One definition, called from
+ * three places — the full page load, the poll, and a realtime reconnect — so
+ * the card can't mean different things depending on how it was last filled.
+ *
+ * Returns null when the backbone read failed, which the callers treat as "keep
+ * what's on screen".
+ */
+async function fetchActivitySources(): Promise<ActivitySources | null> {
+  const eventsPromise = supabase
+    .from('dashboard_latest_events')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(ACTIVITY_FEED_CAP)
+  // Pay-link opens (000262) — the customer opened a still-payable link.
+  // Synthesised into the feed like the Help Scout reply rows, bounded by the
+  // same feed cap.
+  const payLinkOpensPromise = supabase
+    .from('orders')
+    .select('id, proof_id, pay_link_opened_at')
+    .eq('status', 'sent')
+    .not('pay_link_opened_at', 'is', null)
+    .order('pay_link_opened_at', { ascending: false })
+    .limit(ACTIVITY_FEED_CAP)
+  // Successful pay-link sends (orders.sent_at) — any status, online only
+  // (offline orders send no link; filtered in payLinkSentEvents).
+  const payLinkSentsPromise = supabase
+    .from('orders')
+    .select('id, proof_id, sent_at, payment_method')
+    .not('sent_at', 'is', null)
+    .order('sent_at', { ascending: false })
+    .limit(ACTIVITY_FEED_CAP)
+  // Sent unpaid-order reminders (order_nudges, 000238). Synthesised into the
+  // feed like the pay-link rows; proof_id comes from the embedded parent order.
+  // Only real sends (state = 'sent') — dry-run rows are skipped.
+  const orderRemindersPromise = supabase
+    .from('order_nudges')
+    .select('id, created_at, orders(proof_id)')
+    .eq('state', 'sent')
+    .order('created_at', { ascending: false })
+    .limit(ACTIVITY_FEED_CAP)
+  // Decline feedback (proof_feedback, 000279).
+  const feedbackPromise = supabase
+    .from('proof_feedback')
+    .select('id, proof_id, reason_code, actor_name, created_at')
+    .order('created_at', { ascending: false })
+    .limit(50)
+
+  const [
+    { data: events, error: eventsError },
+    { data: payLinkOpenRows, error: payLinkOpensError },
+    { data: payLinkSentRows, error: payLinkSentsError },
+    { data: orderReminderRows, error: orderRemindersError },
+    { data: feedbackRows, error: feedbackError },
+  ] = await Promise.all([
+    eventsPromise,
+    payLinkOpensPromise,
+    payLinkSentsPromise,
+    orderRemindersPromise,
+    feedbackPromise,
+  ])
+
+  // dashboard_latest_events is the backbone — every page view, approval and
+  // change request. If it failed we know nothing, so say so and let the caller
+  // keep what's already on screen: supabase-js returns data: null on error, and
+  // the idiomatic `?? []` would empty a good card on one bad read, which is the
+  // silent-write trap CLAUDE.md warns about wearing a different hat.
+  if (eventsError) {
+    console.error('[DashboardPage] latest activity failed', eventsError)
+    return null
+  }
+  // A secondary source failing costs only its own rows, for this pass only —
+  // the next poll picks them up. Logged rather than swallowed, so a source
+  // that's failing every time is findable.
+  for (const [label, err] of [
+    ['pay-link opens', payLinkOpensError],
+    ['pay-link sends', payLinkSentsError],
+    ['order reminders', orderRemindersError],
+    ['decline feedback', feedbackError],
+  ] as const) {
+    if (err) console.warn(`[DashboardPage] activity source "${label}" failed`, err)
+  }
+
+  // Flatten the order_nudges → orders embed to a proof_id per reminder. The
+  // PostgREST to-one embed can surface as an object or a single-element array
+  // depending on type inference, so normalise both; rows whose parent order is
+  // gone (null) are dropped.
+  const orderReminders: OrderReminderRow[] = ((orderReminderRows ?? []) as Array<{ id: string; created_at: string | null; orders: { proof_id: string } | { proof_id: string }[] | null }>)
+    .map((r) => {
+      const ord = Array.isArray(r.orders) ? r.orders[0] : r.orders
+      return ord?.proof_id ? { id: r.id, created_at: r.created_at, proof_id: ord.proof_id } : null
+    })
+    .filter((r): r is OrderReminderRow => r !== null)
+
+  return {
+    events: (events ?? []) as DashboardLatestEvent[],
+    payLinkOpens: (payLinkOpenRows ?? []) as PayLinkOpenRow[],
+    payLinkSents: (payLinkSentRows ?? []) as PayLinkSentRow[],
+    orderReminders,
+    feedback: (feedbackRows ?? []) as ProofFeedbackFeedRow[],
+  }
+}
+
+/**
+ * Merge the real customer-activity events with the synthetic rows built from
+ * timestamps that were never stored as events — Help Scout replies, pay-link
+ * opens and sends, order reminders, decline feedback — then sort newest-first
+ * and cap, so the card stays "the latest 20 things that happened" across all
+ * six sources rather than the latest 20 of any one of them.
+ *
+ * The bundle index has to be resolved before this runs: helpscoutReplyEvents
+ * collapses proofs that share a Help Scout conversation, and only that index
+ * can say whether they're one bundle or merely share a thread.
+ */
+function buildActivityFeed(
+  sources: ActivitySources,
+  projects: DashboardProject[],
+  bundleIndex: BundleIndex,
+): DashboardLatestEvent[] {
+  return [
+    ...sources.events,
+    ...helpscoutReplyEvents(projects, bundleIndex.byProof),
+    ...payLinkOpenEvents(sources.payLinkOpens, projects),
+    ...payLinkSentEvents(sources.payLinkSents, projects),
+    ...orderReminderEvents(sources.orderReminders, projects),
+    ...proofFeedbackEvents(sources.feedback, projects),
+  ]
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, ACTIVITY_FEED_CAP)
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 // activityView: render the dashboard's data in "Activity page" mode instead —
@@ -2926,6 +3135,14 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   // uploaded) fall through to the dark-plate placeholder in ProjectRow.
   const [thumbnailUrls, setThumbnailUrls] = useState<Map<string, ThumbInfo>>(new Map())
   const [latestEvents, setLatestEvents]   = useState<DashboardLatestEvent[]>([])
+  // Mirrors of the three pieces the live/polled feed paths need. They run from
+  // a socket callback and an interval, neither of which sits in a render, so
+  // reading state directly would give them whatever was current when the
+  // handler was created — the classic stale-closure bug, and here it would show
+  // as live rows quietly enriched against a projects list from ten minutes ago.
+  const latestEventsRef = useRef<DashboardLatestEvent[]>([])
+  const projectsRef = useRef<DashboardProject[]>([])
+  const bundleIndexRef = useRef<BundleIndex>(EMPTY_BUNDLE_INDEX)
   // Production lead times for the sidebar chart under Latest activity.
   // Sourced from materials (same table the admin Lead times tab edits);
   // empty until loadDashboard resolves.
@@ -3131,6 +3348,71 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [])
 
+  // ── Near-live Latest activity ─────────────────────────────────────────────
+  //
+  // Keep the refs above in step with the state the feed paths read.
+  useEffect(() => { projectsRef.current = projects }, [projects])
+  useEffect(() => { bundleIndexRef.current = bundleIndex }, [bundleIndex])
+  useEffect(() => { latestEventsRef.current = latestEvents }, [latestEvents])
+
+  // Rebuild just the activity card. Deliberately NOT loadDashboard(), which is
+  // eight queries plus an edge-function call that mints fresh signed thumbnail
+  // URLs — running that every 45 seconds would re-download every visible
+  // thumbnail and shift the list under the cursor.
+  const activityRefreshInFlight = useRef(false)
+  async function refreshActivityFeed() {
+    if (activityRefreshInFlight.current) return
+    // Before the first load there are no projects to enrich the synthetic rows
+    // against, so a rebuild now would drop every Help Scout reply and pay-link
+    // row and then put them back a moment later.
+    if (projectsRef.current.length === 0) return
+    activityRefreshInFlight.current = true
+    try {
+      const sources = await fetchActivitySources()
+      if (!sources) return
+      const next = buildActivityFeed(sources, projectsRef.current, bundleIndexRef.current)
+      latestEventsRef.current = next
+      setLatestEvents(next)
+      // Keep the return-trip snapshot in step, so navigating to a proof and
+      // back doesn't repaint an older card than the one just left.
+      if (dashboardSnapshot) dashboardSnapshot.latestEvents = next
+    } finally {
+      activityRefreshInFlight.current = false
+    }
+  }
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      // A hidden tab shouldn't poll: it's invisible work, and the
+      // visibilitychange handler above does a full reload the moment it comes
+      // back anyway.
+      if (document.visibilityState !== 'visible') return
+      if (refetchInFlight.current) return
+      void refreshActivityFeed()
+    }, ACTIVITY_POLL_MS)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Live page views. Everything the handler needs is behind a ref, so the
+  // callback identity doesn't matter and the channel is established once.
+  useLiveDashboardViews({
+    // Wait for the first load: a row arriving before there are projects can't
+    // be enriched, and would spend a refetch discovering that.
+    enabled: projects.length > 0,
+    onView: (row: LiveViewRow) => {
+      const { events, needsRefresh } = applyLiveView(latestEventsRef.current, row, projectsRef.current)
+      // A view we can't name from what's loaded (a superseded version, or a
+      // proof outside the working set) is fetched properly rather than guessed.
+      if (needsRefresh) { void refreshActivityFeed(); return }
+      if (events === latestEventsRef.current) return
+      latestEventsRef.current = events
+      setLatestEvents(events)
+      if (dashboardSnapshot) dashboardSnapshot.latestEvents = events
+    },
+    onReconnect: () => { void refreshActivityFeed() },
+  })
+
   // Fetch + sign the row thumbnails for a list of dashboard projects. Returns a
   // current_version_id → renditions Map (the dashboard rows look up by
   // current_version_id). Delegates to the shared batched signer, which never
@@ -3232,39 +3514,10 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     // The RPC predicates are kept in lockstep with the client-side
     // click-through filters below. See PV-2026W19-015 (awaiting_customer)
     // and PV-2026W20-014 (dormant / approved_this_week) for the history.
-    const eventsPromise = supabase
-      .from('dashboard_latest_events')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(20)
-    // Pay-link opens (000262) — the customer opened a still-payable link.
-    // Synthesised into the feed like the Help Scout reply rows below, bounded by
-    // the same 20-row feed cap.
-    const payLinkOpensPromise = supabase
-      .from('orders')
-      .select('id, proof_id, pay_link_opened_at')
-      .eq('status', 'sent')
-      .not('pay_link_opened_at', 'is', null)
-      .order('pay_link_opened_at', { ascending: false })
-      .limit(20)
-    // Successful pay-link sends (orders.sent_at) — any status, online only
-    // (offline orders send no link; filtered in payLinkSentEvents).
-    const payLinkSentsPromise = supabase
-      .from('orders')
-      .select('id, proof_id, sent_at, payment_method')
-      .not('sent_at', 'is', null)
-      .order('sent_at', { ascending: false })
-      .limit(20)
-    // Sent unpaid-order reminders (order_nudges, 000238). Synthesised into the
-    // feed like the pay-link rows; proof_id comes from the embedded parent
-    // order. Only real sends (state = 'sent') — dry-run rows are skipped, so
-    // nothing shows until auto_order_reminders_enabled is flipped on.
-    const orderRemindersPromise = supabase
-      .from('order_nudges')
-      .select('id, created_at, orders(proof_id)')
-      .eq('state', 'sent')
-      .order('created_at', { ascending: false })
-      .limit(20)
+    // Every source behind the Latest-activity card, in one call — the same one
+    // the poll and the realtime reconnect use, so the card can't come to mean
+    // different things depending on how it was last filled.
+    const activityPromise = fetchActivitySources()
     const pinsPromise = supabase
       .from('proof_pins')
       .select('proof_id, scope, user_id, pinned_at')
@@ -3304,27 +3557,16 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     // projects fetch above.
     const countsPromise = supabase.rpc('dashboard_tile_counts')
 
-    // Decline feedback (proof_feedback, 000279) for the Latest-activity feed.
-    const feedbackPromise = supabase
-      .from('proof_feedback')
-      .select('id, proof_id, reason_code, actor_name, created_at')
-      .order('created_at', { ascending: false })
-      .limit(50)
-
     const [
       { data: projectRows, error: projectsError },
-      { data: events },
+      activitySources,
       { data: pinRows },
       { data: leadTimeRows },
       { data: counts },
-      { data: payLinkOpenRows },
-      { data: payLinkSentRows },
-      { data: orderReminderRows },
-      { data: feedbackRows },
       { count: flaggedCount },
       { data: bundleMemberRows, error: bundleMembersError },
       { data: bundleSetRows, error: bundleSetsError },
-    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise, countsPromise, payLinkOpensPromise, payLinkSentsPromise, orderRemindersPromise, feedbackPromise, flaggedCountPromise, bundleMembersPromise, bundleSetsPromise])
+    ] = await Promise.all([projectsPromise, activityPromise, pinsPromise, leadTimesPromise, countsPromise, flaggedCountPromise, bundleMembersPromise, bundleSetsPromise])
 
     // dashboard_list IS the page. If it failed, say so — the old code
     // destructured `data` only, so an expired JWT, an RLS change or a 500 all
@@ -3345,21 +3587,6 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     if (counts) setTileCounts(counts as TileCounts)
     setFlaggedOpenCount(flaggedCount ?? 0)
 
-    // Merge the real customer-activity events with synthetic rows built from the
-    // proofs' Help Scout reply timestamps (email replies are timestamps on the
-    // proof, not stored events), then sort newest-first and cap at 20 so the feed
-    // stays "the latest 20 things that happened" across both sources.
-    const realEvents = (events ?? []) as DashboardLatestEvent[]
-    // Flatten the order_nudges → orders embed to a proof_id per reminder. The
-    // PostgREST to-one embed can surface as an object or a single-element array
-    // depending on type inference, so normalise both; rows whose parent order
-    // is gone (null) are dropped.
-    const orderReminders: OrderReminderRow[] = ((orderReminderRows ?? []) as Array<{ id: string; created_at: string | null; orders: { proof_id: string } | { proof_id: string }[] | null }>)
-      .map((r) => {
-        const ord = Array.isArray(r.orders) ? r.orders[0] : r.orders
-        return ord?.proof_id ? { id: r.id, created_at: r.created_at, proof_id: ord.proof_id } : null
-      })
-      .filter((r): r is OrderReminderRow => r !== null)
     // Bundle membership. A failed read keeps whatever index is already on
     // screen: supabase-js returns data: null on error, so the idiomatic
     // `?? []` would quietly dissolve every bundle block into loose rows and
@@ -3377,10 +3604,14 @@ export default function DashboardPage({ activityView = false }: { activityView?:
         )
     setBundleIndex(nextBundleIndex)
 
-    const mergedEvents = [...realEvents, ...helpscoutReplyEvents(typedProjects, nextBundleIndex.byProof), ...payLinkOpenEvents((payLinkOpenRows ?? []) as PayLinkOpenRow[], typedProjects), ...payLinkSentEvents((payLinkSentRows ?? []) as PayLinkSentRow[], typedProjects), ...orderReminderEvents(orderReminders, typedProjects), ...proofFeedbackEvents((feedbackRows ?? []) as ProofFeedbackFeedRow[], typedProjects)]
-      .sort((a, b) => b.created_at.localeCompare(a.created_at))
-      .slice(0, 20)
+    // A failed activity read leaves the card exactly as it is rather than
+    // blanking it — fetchActivitySources returns null only when the backbone
+    // query failed, i.e. when we genuinely know nothing new.
+    const mergedEvents = activitySources
+      ? buildActivityFeed(activitySources, typedProjects, nextBundleIndex)
+      : latestEventsRef.current
     setLatestEvents(mergedEvents)
+    latestEventsRef.current = mergedEvents
     setLeadTimes((leadTimeRows ?? []) as LeadTime[])
 
     // ── Per-row thumbnails ──────────────────────────────────────

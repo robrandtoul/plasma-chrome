@@ -380,7 +380,12 @@ const ORDERS: FixtureOrder[] = [
   // Recently ordered — a long company name against a full-length reference and
   // a five-figure quantity: the widest a row gets in real data, which is what
   // used to break the layout on a phone.
-  order({ id: 'o13', status: 'fulfilled', quantity: 10000, payment_reference: 'ORD-A7A33935C2', paid_at: daysAgo(9), fulfilled_at: daysAgo(7), handoff_at: daysAgo(7), production_note_posted_at: daysAgo(7), stock_order_number: '403914', artwork_check_verdict: 'flagged', artwork_checked_at: daysAgo(7), artwork_check: ARTWORK_REPORT_FLAGGED, proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Elite Credentials International', 'Bertram Gilfoyle') } }),
+  // Was a second 'o13' — a straight id collision with the on-hold order above,
+  // not two views of one order. It gave the dashboard's activity feed two rows
+  // keyed `paylink-sent-o13`, and React's reconciler answered that by leaving an
+  // orphaned <li> in the DOM: the card rendered 21 rows from a 20-row state,
+  // which reads exactly like a broken cap. Renumbered to a free id.
+  order({ id: 'o17', status: 'fulfilled', quantity: 10000, payment_reference: 'ORD-A7A33935C2', paid_at: daysAgo(9), fulfilled_at: daysAgo(7), handoff_at: daysAgo(7), production_note_posted_at: daysAgo(7), stock_order_number: '403914', artwork_check_verdict: 'flagged', artwork_checked_at: daysAgo(7), artwork_check: ARTWORK_REPORT_FLAGGED, proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Elite Credentials International', 'Bertram Gilfoyle') } }),
   // Combined-supplier-batches pair (?path=/orders/o-blanks/place). o-blanks is
   // the Apex-style paid foiling order whose blanks ride o-thornton's batch;
   // o-thornton is the placed sibling carrying 1,000 + 1,200 overs from
@@ -1162,6 +1167,40 @@ function makeBuilder(schema: string, table: string): any {
   return proxy
 }
 
+// ── Realtime handler registry ───────────────────────────────────────────────
+//
+// Every postgres_changes handler the page registers, so window.__pvRealtime can
+// deliver a row through the real client code. Handlers are removed again on
+// removeChannel, so a remount (StrictMode's double-mount, HMR) can't leave a
+// stale one behind and deliver the same row twice.
+interface HarnessRealtimeHandler {
+  table?: string
+  event?: string
+  cb: (payload: unknown) => void
+}
+const harnessRealtimeHandlers: HarnessRealtimeHandler[] = []
+
+if (typeof window !== 'undefined') {
+  ;(window as unknown as Record<string, unknown>).__pvRealtime = {
+    /**
+     * Deliver one row to every handler watching `table`, shaped like a real
+     * supabase-js postgres_changes payload. Returns how many handlers took it,
+     * so a spec can assert it was actually wired up rather than pass because
+     * nothing was listening.
+     */
+    emit(table: string, row: Record<string, unknown>, event = 'INSERT'): number {
+      let delivered = 0
+      for (const h of [...harnessRealtimeHandlers]) {
+        if (h.table !== table) continue
+        if (h.event && h.event !== '*' && h.event !== event) continue
+        h.cb({ eventType: event, schema: 'proofs', table, new: row, old: {} })
+        delivered++
+      }
+      return delivered
+    },
+  }
+}
+
 export const supabase: any = {
   from: (table: string) => makeBuilder('proofs', table),
   schema: (schema: string) => ({ from: (table: string) => makeBuilder(schema, table) }),
@@ -1639,21 +1678,44 @@ export const supabase: any = {
     signOut: async () => ({ error: null }),
     onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
   },
-  // Realtime no-op — pages subscribe on mount (live proof views, chat) and
-  // the harness has no socket; a chainable stub keeps those effects inert.
+  // Realtime — the harness has no socket, so this stays inert by default:
+  // subscribe() never reports a status, exactly as before, and nothing arrives
+  // on its own.
+  //
+  // It does now REMEMBER each postgres_changes handler, so a spec can hand a
+  // row to window.__pvRealtime.emit() and watch the page react through its real
+  // code. Without that, the dashboard's live activity feed is the one part of
+  // that page nothing offline can exercise — and "the socket delivered
+  // something and the card did the right thing with it" is the whole point of
+  // the feature.
   channel: (_name: string) => {
+    const mine: HarnessRealtimeHandler[] = []
     const ch: any = {
-      on: () => ch,
+      on: (type: string, cfg: any, cb: (payload: any) => void) => {
+        if (type === 'postgres_changes' && typeof cb === 'function') {
+          const handler: HarnessRealtimeHandler = { table: cfg?.table, event: cfg?.event, cb }
+          mine.push(handler)
+          harnessRealtimeHandlers.push(handler)
+        }
+        return ch
+      },
       subscribe: () => ch,
       unsubscribe: async () => 'ok',
       send: async () => 'ok',
       track: async () => 'ok',
       untrack: async () => 'ok',
       presenceState: () => ({}),
+      __harnessHandlers: mine,
     }
     return ch
   },
-  removeChannel: async () => 'ok',
+  removeChannel: async (ch?: any) => {
+    for (const handler of (ch?.__harnessHandlers ?? []) as HarnessRealtimeHandler[]) {
+      const i = harnessRealtimeHandlers.indexOf(handler)
+      if (i !== -1) harnessRealtimeHandlers.splice(i, 1)
+    }
+    return 'ok'
+  },
   storage: {
     // Return a data-URL "signed URL" so the Approved artwork downloads work in
     // the harness (fetch(dataUrl) → blob) without a real storage backend.
