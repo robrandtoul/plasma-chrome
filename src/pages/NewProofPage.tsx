@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { logAudit } from '../lib/audit'
+import { snoozeProof } from '../lib/snooze'
+import { OUTREACH_SNOOZE_RULES, OUTREACH_SNOOZE_HOURS } from '../lib/reorderDesk'
 import { parseHelpscoutUrl, MIN_OVERRIDE_REASON_LENGTH } from '../lib/helpscout'
 import { titleCase } from '../lib/titleCase'
 // QuoteLink now rendered inside DesignerChrome (PR 35).
@@ -45,6 +47,10 @@ export default function NewProofPage() {
   const [searchParams] = useSearchParams()
   const prefillCompanyId = searchParams.get('companyId')
   const prefillContactId = searchParams.get('contactId')
+  // Set by the Reorder desk's Start action (000389): marks the new project as
+  // re-engagement outreach so chasing is suppressed and outcomes track back
+  // to the register.
+  const prefillProspectId = searchParams.get('reengageProspectId')
 
   // ── Company state ──────────────────────────────────────────────────────────
   const [allCompanies, setAllCompanies] = useState<Company[]>([])
@@ -944,11 +950,30 @@ export default function NewProofPage() {
           helpscout_override_reason:   resolvedOverride,
           internal_notes:              internalNotes.trim() || null,
           created_by:                  session!.user.id,
+          // Reorder-desk outreach: mark origin + switch off auto-chasing at
+          // birth (000389) — the desk's own lifecycle chases instead, and the
+          // standard reminder wording presumes the customer asked for the work.
+          ...(prefillProspectId
+            ? {
+                reengagement_prospect_id: prefillProspectId,
+                auto_nudge_disabled_at: new Date().toISOString(),
+              }
+            : {}),
         })
         .select('id')
         .single()
 
-      if (error) throw new Error(`Failed to create proof: ${error.message}`)
+      if (error) {
+        // The partial unique index on reengagement_prospect_id (000391) makes
+        // a duplicated Start link fail loudly rather than minting a second
+        // outreach proof for the same customer.
+        if (error.code === '23505' && error.message.includes('proofs_reengagement_prospect_unique')) {
+          throw new Error(
+            'An outreach project already exists for this customer — open it from the Reorder desk instead of creating another.',
+          )
+        }
+        throw new Error(`Failed to create proof: ${error.message}`)
+      }
       void logAudit({
         action: 'proof.created',
         targetType: 'proof',
@@ -956,6 +981,37 @@ export default function NewProofPage() {
         targetLabel: selectedContact?.full_name ?? newContactName.trim(),
         metadata: { contact_id: contactId, company_id: companyId },
       })
+      // Reorder-desk outreach (000389): snooze the chase-rule FLAGS too —
+      // auto_nudge_disabled_at stops the sender, but a never-opened outreach
+      // proof would otherwise clutter Needs attention within days. Engaged
+      // customers re-enter normal attention automatically (the 000222 trigger
+      // expires chase snoozes on approve / request_changes). Then point the
+      // prospect at its new project. All best-effort: a miss costs tidiness,
+      // never the project.
+      if (prefillProspectId) {
+        for (const rule of OUTREACH_SNOOZE_RULES) {
+          try {
+            await snoozeProof(
+              data.id,
+              rule,
+              OUTREACH_SNOOZE_HOURS,
+              'Re-engagement outreach — the desk manages this project',
+              'reorder_desk',
+            )
+          } catch (e) {
+            console.error('[reorder-desk] snooze failed', rule, e)
+          }
+        }
+        // State-guarded: a stale reengageProspectId URL (restored tab,
+        // browser history) must not knock an already-contacted or converted
+        // prospect back to in_build.
+        const { error: prospectErr } = await supabase
+          .from('reorder_prospects')
+          .update({ proof_id: data.id, state: 'in_build', updated_at: new Date().toISOString() })
+          .eq('id', prefillProspectId)
+          .in('state', ['pending', 'queued', 'in_build'])
+        if (prospectErr) console.error('[reorder-desk] prospect link failed', prospectErr)
+      }
       if (resolvedConvoId) {
         void logAudit({
           action: 'proof.helpscout_link_set',

@@ -57,6 +57,7 @@ import OrderBuilderModal from '../src/components/OrderBuilderModal'
 import { StatusRule } from '../src/design'
 import { orderStatusLine, reorderForwardLink, type OrderStatusLine, type ProofOrderStatePayload } from '../src/lib/proofOrderState'
 import { ReorderForwardPanel, ReorderPanel, type ReorderState } from '../src/components/ReorderPanel'
+import ReorderDeskPanel from '../src/components/ReorderDeskPanel'
 import { REORDER_COPY } from '../src/lib/proofOrderState'
 import type { TrackingStage } from '../src/lib/orderTracking'
 import { ButtonGhost } from '../src/design'
@@ -912,6 +913,39 @@ function Elsewhere() {
   return <div style={{ padding: 40 }} data-nav-target>navigated away</div>
 }
 
+// ?path=/reorder-desk — the dashboard's Reorder desk panel (migration 000389)
+// on its own, at the dashboard rail's width (~25rem), against the
+// reorder-desk fixture module (verify-harness/fixtures/reorder-desk.ts,
+// ids rd-…). One prospect per bucket, so Today (two served + one promoted),
+// In build, the opened-but-quiet follow-up and the never-opened quiet close
+// all render from a single load.
+//
+// The panel's settings read resolves through the shared mock's settings row,
+// which carries no reorder_desk_* keys — the lib fail-safes to dailyLimit 5,
+// which is deliberate: the rig proves the desk renders fixture data even when
+// its settings are absent. Mounted inside a MemoryRouter because the panel
+// navigates (Start → the new-project form, Open → the proof page); those
+// land on Elsewhere rather than a real route.
+function ReorderDeskRig() {
+  return (
+    <MemoryRouter initialEntries={['/']}>
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <div className="min-h-screen bg-canvas p-8">
+              <div className="mx-auto w-full max-w-[25rem]">
+                <ReorderDeskPanel />
+              </div>
+            </div>
+          }
+        />
+        <Route path="*" element={<Elsewhere />} />
+      </Routes>
+    </MemoryRouter>
+  )
+}
+
 function Stub() {
   return <div style={{ padding: 40 }} data-nav-target>stub admin page</div>
 }
@@ -974,6 +1008,8 @@ const tree = requestedPath === '/order-builder' ? (
   <OrderBuilderRig />
 ) : requestedPath === '/reorder-panel' ? (
   <ReorderPanelRig />
+) : requestedPath === '/reorder-desk' ? (
+  <ReorderDeskRig />
 ) : requestedPath === '/approved-order-status' ? (
   <ApprovedOrderStatusRig />
 ) : requestedPath === '/abandon-dialog' ? (

@@ -119,7 +119,7 @@ function buildSampleContext(company: CompanyMode, version: VersionMode): Templat
 // `inhouse_production_note` is the one template here that never reaches a
 // customer — it's the note our own workshop reads — so it gets its own group
 // rather than sitting among the customer messages.
-type TemplateGroupKey = 'pre_send' | 'post_action' | 'project' | 'nudge' | 'order' | 'workshop'
+type TemplateGroupKey = 'pre_send' | 'post_action' | 'project' | 'nudge' | 'order' | 'workshop' | 'reengagement'
 
 // Designer-triggered notices about the PROJECT itself rather than about a
 // customer action. `proof_abandoned` is `proof_`-prefixed to match the
@@ -135,6 +135,9 @@ function templateGroup(id: string): TemplateGroupKey {
   if (PROJECT_TEMPLATES.has(id)) return 'project'
   if (id.startsWith('proof_')) return 'post_action'
   if (id.startsWith('nudge_')) return 'nudge'
+  // reorder_ must stay distinct from order_ (it doesn't match startsWith('order_'),
+  // but keep this test above it anyway so the distinction is explicit).
+  if (id.startsWith('reorder_')) return 'reengagement'
   if (id.startsWith('order_')) return 'order'
   return 'pre_send'
 }
@@ -153,6 +156,9 @@ function templateScope(id: string): TemplateVariableScope {
   // no artwork on it, so offering a link to insert would invite a dead end.
   if (PROJECT_TEMPLATES.has(id)) return 'project_lifecycle'
   if (id.startsWith('proof_')) return 'proof_viewer'
+  // Reorder-desk outreach (000389) resolves through the same compose context as
+  // the pre-send messages, so it reuses the existing variable chips — no new scope.
+  if (id.startsWith('reorder_')) return 'designer_picked'
   if (id.startsWith('order_reminder')) return 'order_reminder'
   if (id === 'order_paid_confirmation') return 'order_confirmation'
   if (id === 'order_cancelled' || id === 'order_revision') return 'order_lifecycle'
@@ -356,6 +362,12 @@ export default function AdminTemplatesSection() {
             heading="Order messages"
             blurb="Customer messages across the order lifecycle: the pay-link sent from the order builder, the automated reminders, the paid confirmation, and the cancel / revision notices. Each card's own description says when it's used."
             templates={templates.filter((t) => templateGroup(t.id) === 'order')}
+            onSaved={handleSaved}
+          />
+          <TemplateGroup
+            heading="Re-engagement"
+            blurb="The Reorder desk's outreach to past customers — one personal note, at most one follow-up."
+            templates={templates.filter((t) => templateGroup(t.id) === 'reengagement')}
             onSaved={handleSaved}
           />
           <TemplateGroup

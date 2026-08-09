@@ -36,6 +36,7 @@ import MessageSendPanel from '../components/MessageSendPanel'
 import { firstName } from '../lib/firstName'
 import { customerProofPath } from '../lib/customerProofUrl'
 import { fetchBundleCheckpointMembers, markSetReviewLinkSent, resolveCustomerReviewLink, type CustomerReviewLink } from '../lib/proofSets'
+import { markProspectContactedByProof } from '../lib/reorderDesk'
 import { buildBundleCheckpoint, type BundleCheckpointModel } from '../lib/bundleCheckpoint'
 import BundleCheckpoint from '../components/BundleCheckpoint'
 
@@ -99,6 +100,13 @@ export default function EditVersionPage() {
   // path. Mirrors the same field on NewVersionPage.
   const [proofHelpScoutConversationId, setProofHelpScoutConversationId] =
     useState<string | null>(null)
+  // Outreach-origin marker (Reorder desk, 000389) + whether THIS version has
+  // already been announced: together they decide whether the post-save send
+  // pre-fills the re-engagement note (first send of an outreach v1) or the
+  // normal first-proof/revision template.
+  const [proofReengagementProspectId, setProofReengagementProspectId] =
+    useState<string | null>(null)
+  const [versionAlreadySent, setVersionAlreadySent] = useState(false)
   // Preview gate state. After a successful save, render
   // VersionPreviewGate; when the designer clicks "Looks good"
   // the gate flips to MessageSendPanel (same as NewVersionPage)
@@ -362,10 +370,10 @@ export default function EditVersionPage() {
 
   async function loadAll(pid: string, vid: string) {
     const [proofResult, versionResult, imagesResult] = await Promise.all([
-      supabase.from('proofs').select('helpscout_conversation_id, contacts(full_name, companies(name))').eq('id', pid).single(),
+      supabase.from('proofs').select('helpscout_conversation_id, reengagement_prospect_id, contacts(full_name, companies(name))').eq('id', pid).single(),
       supabase
         .from('proof_versions')
-        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, names, core_colour_id, front_colour_id, back_colour_id, is_variant_round, card_type, has_personalisation, team_sharing_enabled, shape, materials(code, display_quantities, requires_ink_names, option_label, multi_variant, supports_personalisation)')
+        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, names, core_colour_id, front_colour_id, back_colour_id, is_variant_round, card_type, has_personalisation, team_sharing_enabled, shape, last_reply_sent_at, materials(code, display_quantities, requires_ink_names, option_label, multi_variant, supports_personalisation)')
         .eq('id', vid)
         .single(),
       supabase
@@ -390,8 +398,12 @@ export default function EditVersionPage() {
     // reply editor and the no-conversation continue-only path.
     const hsConvId = (proofResult.data as any)?.helpscout_conversation_id ?? null
     setProofHelpScoutConversationId(hsConvId)
+    setProofReengagementProspectId(
+      (proofResult.data as any)?.reengagement_prospect_id ?? null,
+    )
 
     const v = versionResult.data as any
+    setVersionAlreadySent(!!v.last_reply_sent_at)
     setVersionNumber(v.version_number)
     setMaterialDisplay(v.material_display)
     setIsVariantRound(!!v.is_variant_round)
@@ -1925,8 +1937,14 @@ export default function EditVersionPage() {
   if (savedVersionForPreview && previewApproved && proofId && versionId) {
     const bundleSetId = customerLink?.kind === 'bundle' ? customerLink.setId : null
     const showCheckpoint = bundleSetId != null && !bundleCheckpointBypassed
-    const tplId: 'first_proof' | 'revision' =
-      versionNumber === 1 ? 'first_proof' : 'revision'
+    // An outreach project's FIRST send (v1, never announced) uses the desk's
+    // re-engagement note — the standard wording presumes the customer asked
+    // for the work. A v1 that has already been announced, or any later
+    // version, is a normal revision/first-proof send.
+    const tplId: 'first_proof' | 'revision' | 'reorder_outreach' =
+      proofReengagementProspectId && versionNumber === 1 && !versionAlreadySent
+        ? 'reorder_outreach'
+        : versionNumber === 1 ? 'first_proof' : 'revision'
     const customerUrl =
       customerLink?.url ?? `${window.location.origin}${customerProofPath(proofId)}`
     const messageContext = {
@@ -1978,6 +1996,12 @@ export default function EditVersionPage() {
               // The reply that just went out carried the bundle review link,
               // so record the bundle as sent (no-op if it already was).
               if (customerLink?.kind === 'bundle') void markSetReviewLinkSent(customerLink.setId)
+              // Outreach projects: this send is the desk's first contact —
+              // move the prospect to contacted (idempotent on state).
+              if (proofReengagementProspectId && proofId)
+                void markProspectContactedByProof(proofId).catch((e) =>
+                  console.error('[reorder-desk] contacted stamp failed', e),
+                )
               navigate(panelExit)
             }}
             onSkip={() => navigate(panelExit)}

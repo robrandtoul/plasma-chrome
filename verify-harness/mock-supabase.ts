@@ -17,6 +17,7 @@
 import { customerProofQuery, customerProofRpc, customerProofInvoke } from './fixtures/customer-proof'
 import { payPagesQuery, payPagesRpc, payPagesInvoke } from './fixtures/pay-pages'
 import { versionFormQuery, versionFormRpc, versionFormInvoke } from './fixtures/version-form'
+import { reorderDeskQuery, reorderDeskRpc, reorderDeskInvoke } from './fixtures/reorder-desk'
 
 const now = Date.now()
 const daysAgo = (n: number) => new Date(now - n * 864e5).toISOString()
@@ -811,7 +812,8 @@ const FEEDBACK_ITEMS = [
 ]
 
 function resolveQuery(state: QueryState): { data: any; error: null; count?: number } {
-  const hooked = customerProofQuery(state) ?? payPagesQuery(state) ?? versionFormQuery(state)
+  const hooked =
+    customerProofQuery(state) ?? payPagesQuery(state) ?? versionFormQuery(state) ?? reorderDeskQuery(state)
   if (hooked) return hooked
 
   const { table, select, single, filters } = state
@@ -1209,7 +1211,8 @@ export const supabase: any = {
   // Unknown names resolve to an empty array, matching the file's existing
   // "unrelated chrome never breaks the page under test" philosophy.
   rpc: async (name: string, args?: any) => {
-    const hooked = customerProofRpc(name, args) ?? payPagesRpc(name, args) ?? versionFormRpc(name, args)
+    const hooked =
+      customerProofRpc(name, args) ?? payPagesRpc(name, args) ?? versionFormRpc(name, args) ?? reorderDeskRpc(name, args)
     if (hooked) return hooked
     if (name === 'dashboard_list') return { data: DASHBOARD_PROJECTS, error: null }
     // Stock Control dispatch state (migration 000356) — Admin → Shipping uses
@@ -1390,7 +1393,11 @@ export const supabase: any = {
   },
   functions: {
     invoke: async (name: string, opts?: { body?: any }) => {
-      const hooked = customerProofInvoke(name, opts?.body) ?? payPagesInvoke(name, opts?.body) ?? versionFormInvoke(name, opts?.body)
+      const hooked =
+        customerProofInvoke(name, opts?.body) ??
+        payPagesInvoke(name, opts?.body) ??
+        versionFormInvoke(name, opts?.body) ??
+        reorderDeskInvoke(name, opts?.body)
       if (hooked) return hooked
       // Full PaymentsStatus shape — AdminSettingsPage reads this on mount and
       // renders payStatus.stripe.* / .xero.* unguarded, so the generic

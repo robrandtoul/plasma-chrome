@@ -206,6 +206,13 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'proof_set.sent',         label: 'Bundle sent to customer' },
     { code: 'proof_set.deleted',      label: 'Bundle deleted' },
   ]},
+  { name: 'Reorder desk', actions: [
+    { code: 'reorder_desk.started',          label: 'Past customer started' },
+    { code: 'reorder_desk.skipped',          label: 'Past customer skipped' },
+    { code: 'reorder_desk.marked_contacted', label: 'Outreach sent by hand' },
+    { code: 'reorder_desk.follow_up_sent',   label: 'Re-engagement follow-up sent' },
+    { code: 'reorder_desk.closed_quiet',     label: 'Outreach closed — no response' },
+  ]},
   { name: 'Orders', actions: [
     { code: 'order.created',                  label: 'Order created' },
     { code: 'order.shipping_updated',         label: 'Delivery details updated' },
@@ -309,6 +316,7 @@ export const TARGET_TYPE_OPTIONS: ActionDef[] = [
   { code: 'ai_draft_proposal',   label: 'AI draft proposal' },
   { code: 'order_group',   label: 'Combined payment' },
   { code: 'proof_set',     label: 'Bundle' },
+  { code: 'reorder_prospect', label: 'Past customer (Reorder desk)' },
   { code: 'watch_item',    label: 'Flagged project' },
   { code: 'feedback',      label: 'Feedback item' },
   { code: 'announcement',  label: 'Announcement' },

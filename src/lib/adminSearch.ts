@@ -55,7 +55,7 @@ export const ADMIN_DESTINATIONS: AdminDestination[] = [
     group: 'Performance',
     icon: 'analytics',
     sidebar: true,
-    keywords: ['reports', 'conversion', 'funnel', 'stats', 'insights', 'metrics', 'performance', 'hot leads', 'designer performance', 'team performance', 'weekly', 'trends', 'won', 'approval rate', 'loss reasons', 'why we lose', 'segments', 'artwork check usage', 'proof check usage', 'who ran checks', 'check verdicts', 'flagged rate'],
+    keywords: ['reports', 'conversion', 'funnel', 'stats', 'insights', 'metrics', 'performance', 'hot leads', 'designer performance', 'team performance', 'weekly', 'trends', 'won', 'approval rate', 'loss reasons', 'why we lose', 'segments', 'artwork check usage', 'proof check usage', 'who ran checks', 'check verdicts', 'flagged rate', 're-engagement', 'reorder desk', 'back book', 'outreach results'],
     description: 'Conversion funnel, weekly trends, hot leads, team performance and artwork-check usage.',
   },
 
@@ -302,6 +302,15 @@ export const ADMIN_DESTINATIONS: AdminDestination[] = [
     icon: 'settings',
     keywords: ['customer tracking', 'progress strip', 'delivery tracking', 'supplier tracking', 'tracking level'],
     description: 'Settings › the customer order-progress strip.',
+  },
+  {
+    id: 'settings-reorder-desk',
+    label: 'Reorder desk',
+    path: '/admin/settings#reorder-desk',
+    group: 'System',
+    icon: 'settings',
+    keywords: ['reorder desk', 'back book', 're-engagement', 'past customers', 'win back', 'outreach', 'daily limit', 'follow up'],
+    description: 'Settings › the Reorder desk daily list and follow-up timing.',
   },
   {
     id: 'artwork-check',

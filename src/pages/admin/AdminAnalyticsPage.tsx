@@ -11,6 +11,7 @@ import {
   Coins,
   MapPin,
   CheckCircle2,
+  RotateCcw,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { designerColourCss } from '../../lib/designerColours'
@@ -303,6 +304,47 @@ interface AnnotationStats {
   weekly: AnnotationWeekRow[]
 }
 
+// ── Re-engagement (migration 000389) ─────────────────────────────────────────
+// Usage reporting for the Reorder desk — outreach to past customers built from
+// Xero history. The register counts every customer on the desk's books by
+// pipeline state; the outreach block measures what the window's contacts did
+// next. Number-ish fields typed number | string per the file's num() convention.
+interface ReengRegister {
+  total: number
+  pending: number
+  in_build: number
+  contacted: number
+  converted: number
+  declined: number
+  closed_no_response: number
+  suppressed: number
+}
+interface ReengPaidValue {
+  currency: string
+  orders: number
+  total: number | string
+}
+interface ReengOutreach {
+  contacted_in_window: number
+  opened: number
+  approved: number
+  paid: number
+  paid_value: ReengPaidValue[]
+}
+interface ReengWeekRow {
+  week_start: string
+  contacted: number
+  opened: number
+  approved: number
+  paid: number
+}
+interface ReengagementStats {
+  window_days: number
+  register: ReengRegister
+  outreach: ReengOutreach
+  weekly: ReengWeekRow[]
+}
+
 const LOSS_LABELS: Record<string, string> = {
   price_too_high: 'Price too high',
   different_direction: 'Wanted a different direction',
@@ -311,7 +353,7 @@ const LOSS_LABELS: Record<string, string> = {
   still_thinking: 'Still thinking',
 }
 
-type Tab = 'funnel' | 'hot' | 'team' | 'products' | 'checks' | 'annotations'
+type Tab = 'funnel' | 'hot' | 'team' | 'products' | 'checks' | 'annotations' | 'reengagement'
 
 const num = (v: number | string | null | undefined): number => {
   if (v == null) return 0
@@ -428,6 +470,14 @@ export default function AdminAnalyticsPage() {
   const [annError, setAnnError] = useState<string | null>(null)
   const [annLoading, setAnnLoading] = useState(true)
 
+  // Re-engagement (the Reorder desk, migration 000389). Same isolation again:
+  // its own adjustable window, and a missing 000389 must degrade to one
+  // explanatory panel rather than taking the page down.
+  const [reengDays, setReengDays] = useState(90)
+  const [reengStats, setReengStats] = useState<ReengagementStats | null>(null)
+  const [reengError, setReengError] = useState<string | null>(null)
+  const [reengLoading, setReengLoading] = useState(true)
+
   // Anthropic bills in USD; this converts for a familiar second figure only.
   // Null simply hides the pound line — the dollar figure is the real one.
   const [fxRates, setFxRates] = useState<ExchangeRates | null>(null)
@@ -484,6 +534,26 @@ export default function AdminAnalyticsPage() {
       cancelled = true
     }
   }, [annDays])
+
+  useEffect(() => {
+    let cancelled = false
+    setReengLoading(true)
+    void (async () => {
+      const { data, error: rpcErr } = await supabase.rpc('analytics_reengagement', { p_days: reengDays })
+      if (cancelled) return
+      if (rpcErr) {
+        setReengError(rpcErr.message)
+        setReengStats(null)
+      } else {
+        setReengError(null)
+        setReengStats(data as ReengagementStats)
+      }
+      setReengLoading(false)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [reengDays])
 
   useEffect(() => {
     let cancelled = false
@@ -544,6 +614,7 @@ export default function AdminAnalyticsPage() {
     { id: 'products', label: 'Products', icon: Boxes },
     { id: 'checks', label: 'Artwork checks', icon: ShieldCheck },
     { id: 'annotations', label: 'Annotations', icon: MapPin },
+    { id: 'reengagement', label: 'Re-engagement', icon: RotateCcw },
   ]
 
   return (
@@ -611,6 +682,15 @@ export default function AdminAnalyticsPage() {
               error={annError}
               days={annDays}
               onDaysChange={setAnnDays}
+            />
+          )}
+          {tab === 'reengagement' && (
+            <ReengagementSection
+              stats={reengStats}
+              loading={reengLoading}
+              error={reengError}
+              days={reengDays}
+              onDaysChange={setReengDays}
             />
           )}
         </>
@@ -2405,6 +2485,176 @@ function AnnotationWeeklyChart({ rows }: { rows: AnnotationWeekRow[] }) {
           Customer pins
         </span>
       </div>
+    </div>
+  )
+}
+
+// ── Re-engagement (the Reorder desk, migration 000389) ───────────────────────
+// Isolated like the checks and annotations tabs: its own window, its own
+// loading/error state, and a missing migration degrades to one explanatory
+// panel rather than taking the whole Analytics page down.
+
+const CURRENCY_SYMBOLS: Record<string, string> = { GBP: '£', EUR: '€', USD: '$' }
+
+function fmtPaidValue(v: ReengPaidValue): string {
+  const symbol = CURRENCY_SYMBOLS[v.currency]
+  const amount = num(v.total).toLocaleString('en-GB', { maximumFractionDigits: 0 })
+  return `${symbol ?? `${v.currency} `}${amount} from ${v.orders} order${v.orders === 1 ? '' : 's'}${symbol ? ` (${v.currency})` : ''}`
+}
+
+function ReengagementSection({
+  stats,
+  loading,
+  error,
+  days,
+  onDaysChange,
+}: {
+  stats: ReengagementStats | null
+  loading: boolean
+  error: string | null
+  days: number
+  onDaysChange: (d: number) => void
+}) {
+  const ranges = [30, 90, 180]
+
+  const rangeStrip = (
+    <div className="mb-4 flex items-center gap-2">
+      <span className="text-xs font-semibold uppercase tracking-wider text-ink-dim">Last</span>
+      {ranges.map((r) => (
+        <button
+          key={r}
+          onClick={() => onDaysChange(r)}
+          className={[
+            'rounded-full px-3 py-1 text-xs transition-colors',
+            days === r
+              ? 'bg-ink text-surface font-semibold'
+              : 'bg-surface text-ink-mute ring-1 ring-line hover:text-ink',
+          ].join(' ')}
+        >
+          {r} days
+        </button>
+      ))}
+    </div>
+  )
+
+  if (error) {
+    return (
+      <div className="rounded-2xl bg-out-soft p-6 text-sm text-out ring-1 ring-out">
+        Couldn’t load re-engagement figures: {error}
+        <p className="mt-2 text-ink-mute">
+          If this says the function does not exist, migration <code>000389</code> hasn’t been applied yet.
+        </p>
+      </div>
+    )
+  }
+  // Same belt-and-braces arm as the other isolated tabs: an unrecognised shape
+  // (older function signature, stubbed client) degrades to the empty path
+  // rather than throwing on stats.register.total and white-screening the page.
+  if (loading || !stats || !stats.register) {
+    return (
+      <>
+        {rangeStrip}
+        {loading ? (
+          <div className="flex justify-center py-16">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-gray-900" />
+          </div>
+        ) : (
+          <PanelShell title="Re-engagement" eyebrow="Reorder desk" icon={RotateCcw} accent="var(--c-brand)">
+            <p className="text-sm text-ink-mute">No re-engagement data available yet.</p>
+          </PanelShell>
+        )}
+      </>
+    )
+  }
+
+  const reg = stats.register
+  // Every collection defaulted: the tab must survive a partial payload the
+  // same way it survives a missing one.
+  const outreach = stats.outreach ?? { contacted_in_window: 0, opened: 0, approved: 0, paid: 0, paid_value: [] }
+  const paidValue = stats.outreach?.paid_value ?? []
+  const weeklyRows = stats.weekly ?? []
+  const inProgress = reg.pending + reg.in_build
+
+  if (reg.total === 0) {
+    return (
+      <>
+        {rangeStrip}
+        <PanelShell title="Re-engagement" eyebrow="Reorder desk" icon={RotateCcw} accent="var(--c-brand)">
+          <p className="text-sm text-ink-mute">
+            The register is empty — the desk hasn’t been seeded yet.
+          </p>
+        </PanelShell>
+      </>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {rangeStrip}
+
+      {/* The register (all-time pipeline state) and this window's outreach. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatTile label="Register size" value={String(reg.total)} sub="past customers on the books" />
+        <StatTile label="In progress" value={String(inProgress)} sub={`${reg.pending} pending · ${reg.in_build} in build`} />
+        <StatTile
+          label="Contacted in window"
+          value={String(outreach.contacted_in_window)}
+          sub={`${outreach.opened} opened · ${outreach.approved} approved`}
+        />
+        <StatTile
+          label="Converted"
+          value={String(reg.converted)}
+          sub={`${outreach.paid} paid in this window`}
+          accent="var(--c-in-stock)"
+        />
+      </div>
+
+      {/* Paid value per currency. Renders nothing until an outreach order is
+          paid; currencies are never summed into one figure. */}
+      {paidValue.length > 0 && (
+        <p className="text-[13px] text-ink-soft">
+          <span className="font-semibold text-ink">Paid value:</span>{' '}
+          {paidValue.map(fmtPaidValue).join(' · ')}
+        </p>
+      )}
+
+      <PanelShell title="Week by week" eyebrow="Outreach and what came back" icon={TrendingUp} accent="var(--c-brand)">
+        {weeklyRows.length === 0 ? (
+          <p className="text-sm text-ink-mute">No outreach sent in the last {days} days.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-line">
+                  <th className={thCls}>Week</th>
+                  <th className={thCls}>Contacted</th>
+                  <th className={thCls}>Opened</th>
+                  <th className={thCls}>Approved</th>
+                  <th className={thCls}>Paid</th>
+                </tr>
+              </thead>
+              <tbody>
+                {weeklyRows.map((r) => (
+                  <tr key={r.week_start} className="border-b border-line-soft last:border-0">
+                    <td className="px-3 py-2 text-ink">{fmtDate(r.week_start)}</td>
+                    <td className="px-3 py-2 font-semibold text-ink">{r.contacted}</td>
+                    <td className="px-3 py-2 text-ink-soft">{r.opened}</td>
+                    <td className="px-3 py-2 text-ink-soft">{r.approved}</td>
+                    <td className="px-3 py-2 text-ink-soft">{r.paid}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </PanelShell>
+
+      {/* The register's quiet ends, so the tiles above can't be mistaken for
+          the whole story. */}
+      <p className="text-xs text-ink-mute">
+        Also on the register: {reg.declined} declined, {reg.closed_no_response} closed with no response, and{' '}
+        {reg.suppressed} suppressed (asked to be left alone, or otherwise off limits).
+      </p>
     </div>
   )
 }

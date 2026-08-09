@@ -6,6 +6,7 @@ import { invalidatePublicSettings } from '../../lib/publicSettings'
 import { invalidateApprovalSettings } from '../../lib/approvalSettings'
 import { invalidateShippingSettings } from '../../lib/shippingSettings'
 import { invalidateOrderingEnabled } from '../../lib/orderingEnabled'
+import { invalidateReorderDeskSettings } from '../../lib/reorderDesk'
 import { FieldRow, RadioGroup, Toggle, inputClass } from './settingsControls'
 
 // /admin/settings — the operational cards only: Customer approvals,
@@ -88,6 +89,13 @@ interface Settings {
    *  push for everyone; the per-person Notifications screen + the database
    *  triggers all defer to it. */
   push_enabled: boolean
+  /** Reorder desk (migration 000389). `enabled` gates the dashboard desk card;
+   *  the daily limit is how many past customers the desk serves per working day;
+   *  follow-up days is how long after the outreach before an opened-but-quiet
+   *  customer resurfaces for a personal follow-up. */
+  reorder_desk_enabled: boolean
+  reorder_desk_daily_limit: number
+  reorder_desk_followup_days: number
 }
 
 type TrackingLevel = 'off' | 'broad' | 'granular'
@@ -169,6 +177,9 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   customer_tracking_enabled:         'setting.customer_tracking_enabled_updated',
   customer_tracking_config:          'setting.customer_tracking_config_updated',
   push_enabled:                      'setting.push_enabled_updated',
+  reorder_desk_enabled:              'setting.reorder_desk_enabled_updated',
+  reorder_desk_daily_limit:          'setting.reorder_desk_daily_limit_updated',
+  reorder_desk_followup_days:        'setting.reorder_desk_followup_days_updated',
 }
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -182,6 +193,7 @@ const SECTIONS = [
   { id: 'ordering-checkout', label: 'Ordering & checkout' },
   { id: 'workshop-handoff', label: 'Workshop hand-off' },
   { id: 'order-tracking', label: 'Order tracking' },
+  { id: 'reorder-desk', label: 'Reorder desk' },
   { id: 'designer-defaults', label: 'Designer defaults' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'help-scout', label: 'Help Scout' },
@@ -351,7 +363,7 @@ export default function AdminSettingsPage() {
   async function load() {
     const { data, error } = await supabase
       .from('settings')
-      .select('default_pricing_display, default_currency, approvals_enabled, proof_callouts_enabled, proof_pins_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, direct_handoff_mode, xero_stripe_account_code, xero_eu_tax_type, xero_row_tax_type, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent, push_enabled')
+      .select('default_pricing_display, default_currency, approvals_enabled, proof_callouts_enabled, proof_pins_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, direct_handoff_mode, xero_stripe_account_code, xero_eu_tax_type, xero_row_tax_type, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent, push_enabled, reorder_desk_enabled, reorder_desk_daily_limit, reorder_desk_followup_days')
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
@@ -430,6 +442,9 @@ export default function AdminSettingsPage() {
       || field === 'domestic_uk_ni_rate_gbp'
     ) {
       invalidateShippingSettings()
+    }
+    if (field.startsWith('reorder_desk')) {
+      invalidateReorderDeskSettings()
     }
 
     void logAudit({
@@ -551,6 +566,30 @@ export default function AdminSettingsPage() {
     void saveField(field, value)
   }
 
+  // Blur handler for the two Reorder desk number inputs (000389). Both are
+  // whole numbers within their column CHECK range; same surface-a-pill
+  // philosophy as onReminderNumberBlur above (no silent snap-back).
+  function onReorderDeskNumberBlur(field: 'reorder_desk_daily_limit' | 'reorder_desk_followup_days') {
+    if (!settings) return
+    const draft = drafts[field]
+    if (draft === undefined) return
+    const value = Number(draft)
+    if (!Number.isInteger(value)) {
+      setErrors((e) => ({ ...e, [field]: 'Whole number only.' }))
+      return
+    }
+    if (field === 'reorder_desk_daily_limit' && (value < 1 || value > 20)) {
+      setErrors((e) => ({ ...e, [field]: 'Between 1 and 20.' }))
+      return
+    }
+    if (field === 'reorder_desk_followup_days' && (value < 1 || value > 30)) {
+      setErrors((e) => ({ ...e, [field]: 'Between 1 and 30.' }))
+      return
+    }
+    if (errors[field]) setErrors((e) => ({ ...e, [field]: undefined }))
+    void saveField(field, value)
+  }
+
   // Blur handler for the US tariff text fields (Xero item code + the two
   // pay-page copy strings). Saves the trimmed draft; empty is allowed —
   // publicSettings.ts and invoiceBuild fall back to the shipped defaults / item
@@ -611,7 +650,7 @@ export default function AdminSettingsPage() {
         </p>
       </div>
 
-      {/* Jump nav — nine long sections; this pins under the app bar (same
+      {/* Jump nav — ten long sections; this pins under the app bar (same
           offset trick as the Orders page section headers) so any section is
           one tap away mid-scroll. Buttons rather than #hash anchors so the
           router URL stays clean. Bleeds to the screen edge below lg, in
@@ -1235,6 +1274,67 @@ export default function AdminSettingsPage() {
         )
       })()}
 
+      {/* ── Reorder desk (migration 000389) ───────────────────────── */}
+      <section id="reorder-desk" className={SECTION_CLASS}>
+        <h3 className="mb-4 text-sm font-semibold text-ink">Reorder desk</h3>
+        <div className="space-y-5">
+          <FieldRow
+            label="Reorder desk enabled"
+            help="Shows the Reorder desk on the dashboard — a small daily list of past customers most likely to need a top-up. Off hides the desk; nothing is ever sent automatically either way."
+            saved={recentlySaved('reorder_desk_enabled')}
+            working={working.reorder_desk_enabled}
+            error={errors.reorder_desk_enabled}
+          >
+            <Toggle
+              value={settings.reorder_desk_enabled}
+              onChange={(v) => void saveField('reorder_desk_enabled', v)}
+              disabled={!!working.reorder_desk_enabled}
+              label="Reorder desk enabled"
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="Customers served per day"
+            help="How many past customers the desk puts in front of the team each working day (1–20). A small number keeps every note personal — the desk is a short daily list, not a mailshot."
+            saved={recentlySaved('reorder_desk_daily_limit')}
+            working={working.reorder_desk_daily_limit}
+            error={errors.reorder_desk_daily_limit}
+          >
+            <input
+              type="number"
+              min={1}
+              max={20}
+              step={1}
+              inputMode="numeric"
+              value={drafts.reorder_desk_daily_limit ?? settings.reorder_desk_daily_limit}
+              onChange={(e) => setDrafts((d) => ({ ...d, reorder_desk_daily_limit: e.target.value === '' ? 1 : Number(e.target.value) }))}
+              onBlur={() => onReorderDeskNumberBlur('reorder_desk_daily_limit')}
+              className={`w-32 ${inputClass}`}
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="Days before the follow-up"
+            help="How long after the outreach before a customer who opened their page but went quiet resurfaces on the desk for a personal follow-up (1–30). Customers who reply, order, or ask to be left alone never resurface."
+            saved={recentlySaved('reorder_desk_followup_days')}
+            working={working.reorder_desk_followup_days}
+            error={errors.reorder_desk_followup_days}
+          >
+            <input
+              type="number"
+              min={1}
+              max={30}
+              step={1}
+              inputMode="numeric"
+              value={drafts.reorder_desk_followup_days ?? settings.reorder_desk_followup_days}
+              onChange={(e) => setDrafts((d) => ({ ...d, reorder_desk_followup_days: e.target.value === '' ? 1 : Number(e.target.value) }))}
+              onBlur={() => onReorderDeskNumberBlur('reorder_desk_followup_days')}
+              className={`w-32 ${inputClass}`}
+            />
+          </FieldRow>
+        </div>
+      </section>
+
       {/* ── Designer defaults ─────────────────────────────────────── */}
       <section id="designer-defaults" className={SECTION_CLASS}>
         <h3 className="mb-4 text-sm font-semibold text-ink">Designer defaults</h3>
@@ -1658,5 +1758,8 @@ function humanFieldLabel(field: keyof Settings): string {
     customer_tracking_enabled: 'Customer order tracking enabled',
     customer_tracking_config: 'Customer order tracking config',
     push_enabled: 'Push notifications enabled',
+    reorder_desk_enabled: 'Reorder desk enabled',
+    reorder_desk_daily_limit: 'Reorder desk daily limit',
+    reorder_desk_followup_days: 'Days before the reorder follow-up',
   }[field]
 }

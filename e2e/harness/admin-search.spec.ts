@@ -122,8 +122,9 @@ test.describe('admin feature search', () => {
       'href',
       '/admin/analytics',
     )
-    // The Analytics page's own tab strip proves the page mounted.
-    await expect(page.locator('main div.border-b > button')).toHaveCount(6)
+    // The Analytics page's own tab strip proves the page mounted (seven tabs
+    // since the Re-engagement tab, migration 000389).
+    await expect(page.locator('main div.border-b > button')).toHaveCount(7)
   })
 
   test('gibberish shows the empty state instead of crashing or navigating', async ({ page }) => {

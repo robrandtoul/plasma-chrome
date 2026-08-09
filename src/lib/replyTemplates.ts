@@ -312,6 +312,15 @@ export const DEFAULT_BODIES: Record<string, string> = {
     `Hi {first_name},\n\nJust a quick nudge on your card proof{? company} for {company}{/?} before it slips off our active list. Let us know if you'd like any changes — here's the link:\n\n{url}`,
   nudge_stuck_in_progress:
     `Hi {first_name},\n\nChecking in on your card proof{? company} for {company}{/?} — we haven't heard back in a little while. Happy to help with any tweaks; here's the link again:\n\n{url}`,
+  // Re-engagement outreach (the Reorder desk, seeded in 000389) — one personal
+  // note to a past customer whose Xero history suggests they may be running low,
+  // plus at most one follow-up. Both resolve through the designer-picked compose
+  // context, so they reuse the 'designer_picked' variable set ({first_name},
+  // {url}) rather than growing a scope of their own.
+  reorder_outreach:
+    `Hi {first_name},\n\nWe made your business cards a while back, and I wondered how you're doing for stock.\n\nYour artwork is still on file, so a repeat run is simple — we've put your page together with everything ready to look over, along with current prices:\n\n{url}\n\nIf anything needs updating first — a name, a job title, a detail — just reply and we'll sort it before anything is printed. And if now isn't the right time, no problem at all: say the word and we'll leave you be.`,
+  reorder_outreach_followup:
+    `Hi {first_name},\n\nJust floating this back up in case it slipped by — your cards are ready to reorder whenever suits, and there's no obligation at all:\n\n{url}\n\nIf now's not the right time, that's absolutely fine; we'll leave it with you.`,
   // Order messages — sent from the order builder with the pay-link.
   order_payment_link:
     `Hi,\n\nYour cards are approved and ready to order. You can choose your quantity, confirm delivery, and pay securely here:\n\n{order_url}\n\nIf you have any questions, just reply to this email.`,

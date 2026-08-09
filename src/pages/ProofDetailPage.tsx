@@ -22,6 +22,7 @@ import { extractServerError } from '../lib/edgeError'
 import { getRepliesEnabled } from '../lib/repliesEnabled'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
 import { invalidateApprovedNoOrderCount } from '../lib/approvedNoOrder'
+import { markProspectContactedByProof } from '../lib/reorderDesk'
 import OrderBuilderModal from '../components/OrderBuilderModal'
 import FlagProjectModal from '../components/FlagProjectModal'
 import { logAudit } from '../lib/audit'
@@ -117,6 +118,7 @@ interface Proof {
   // Set on the CHILD when a reorder is raised from another project (000373).
   // Non-null here means "this project IS somebody's reorder".
   reorder_of_proof_id: string | null
+  reengagement_prospect_id: string | null
   // Needed by the "bring in an existing project" picker — candidates are
   // this contact's other standalone projects.
   contact_id: string
@@ -1001,7 +1003,7 @@ export default function ProofDetailPage() {
     const [proofResult, versionsResult] = await Promise.all([
       supabase
         .from('proofs')
-        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, disclaimer_acknowledged_at, proof_set_id, set_discarded_at, reorder_requested_at, reorder_request_note, reorder_request_quantity, reorder_of_proof_id, contact_id, contacts(full_name, email, companies(id, name))')
+        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, disclaimer_acknowledged_at, proof_set_id, set_discarded_at, reorder_requested_at, reorder_request_note, reorder_request_quantity, reorder_of_proof_id, reengagement_prospect_id, contact_id, contacts(full_name, email, companies(id, name))')
         .eq('id', proofId)
         .single(),
       supabase
@@ -4805,8 +4807,17 @@ export default function ProofDetailPage() {
         const currentVersion = versions.find((v) => v.is_current)
         if (!currentVersion) return null
         if (!proof.helpscout_conversation_id) return null
-        const tplId: 'first_proof' | 'revision' =
-          currentVersion.version_number === 1 ? 'first_proof' : 'revision'
+        // Outreach projects (Reorder desk, 000389): the first send uses the
+        // re-engagement note — the standard wording presumes the customer
+        // asked for the work. "First" means no reply has EVER gone out on the
+        // proof (checked across ALL versions — last_reply_sent_at is
+        // per-version, so a freshly saved revision is always null and would
+        // otherwise re-arm the cold-open on every revision send).
+        const everSent = versions.some((v) => v.last_reply_sent_at)
+        const tplId: 'first_proof' | 'revision' | 'reorder_outreach' =
+          proof.reengagement_prospect_id && !everSent
+            ? 'reorder_outreach'
+            : currentVersion.version_number === 1 ? 'first_proof' : 'revision'
         const customerUrl = `${window.location.origin}${customerLinkPath}`
         const messageContext = {
           first_name: firstName(proof.contacts.full_name),
@@ -4851,6 +4862,12 @@ export default function ProofDetailPage() {
                       if (!bundleLink.sent_at) void markSetReviewLinkSent(bundleLink.id)
                       setSetSummary((s) => (s ? { ...s, sent_at: s.sent_at ?? nowIso } : s))
                     }
+                    // Outreach projects: this send is the desk's first
+                    // contact — move the prospect to contacted (idempotent).
+                    if (proof.reengagement_prospect_id)
+                      void markProspectContactedByProof(proof.id).catch((e) =>
+                        console.error('[reorder-desk] contacted stamp failed', e),
+                      )
                     setShowReplyModal(false)
                     if (id) loadProof(id)
                   }}

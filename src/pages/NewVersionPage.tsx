@@ -20,6 +20,7 @@ import MessageSendPanel from '../components/MessageSendPanel'
 import VersionPreviewGate from '../components/VersionPreviewGate'
 import { firstName } from '../lib/firstName'
 import { customerProofPath } from '../lib/customerProofUrl'
+import { markProspectContactedByProof } from '../lib/reorderDesk'
 import { DesignerChrome } from '../design'
 import { QrCodeUploadSection, type QrEntry } from '../components/QrCodeUploadSection'
 import type { ArtworkSource } from '../lib/qrArtworkScan'
@@ -281,6 +282,12 @@ export default function NewVersionPage() {
   // decide between rendering the editor or the no-conversation
   // continue-only path.
   const [proofHelpScoutConversationId, setProofHelpScoutConversationId] =
+    useState<string | null>(null)
+  // Outreach-origin marker (Reorder desk, 000389): switches the post-save
+  // panel's template to the re-engagement note — the standard "your proof is
+  // ready" wording presumes the customer asked for the work — and stamps the
+  // prospect as contacted when the send goes out.
+  const [proofReengagementProspectId, setProofReengagementProspectId] =
     useState<string | null>(null)
   // Just-saved version, used to swap out the form for the
   // MessageSendPanel after a successful save. Null while the form is
@@ -718,7 +725,7 @@ export default function NewVersionPage() {
       // (Ship 2 of intervention 3) knows whether to render the
       // editor or fall back to the no-conversation path. Fires in
       // parallel; not ordering-sensitive.
-      void supabase.from('proofs').select('helpscout_conversation_id, contact_id, contacts(full_name, company_id, companies(name))').eq('id', proofId!).single()
+      void supabase.from('proofs').select('helpscout_conversation_id, contact_id, reengagement_prospect_id, contacts(full_name, company_id, companies(name))').eq('id', proofId!).single()
         .then(({ data }) => {
           if (cancelled) return
           const row = data as any
@@ -730,6 +737,7 @@ export default function NewVersionPage() {
           }
           setProofContactId(row?.contact_id ?? null)
           setProofHelpScoutConversationId(row?.helpscout_conversation_id ?? null)
+          setProofReengagementProspectId(row?.reengagement_prospect_id ?? null)
         })
 
       // Materials for the picker. Filtered to active + published +
@@ -5307,8 +5315,13 @@ export default function NewVersionPage() {
               )
             }
           }
-          const tplId: 'first_proof' | 'revision' =
-            savedVersion.number === 1 ? 'first_proof' : 'revision'
+          // An outreach project's first send is the desk's re-engagement note,
+          // not the standard "your proof is ready" (whose wording presumes the
+          // customer requested the work — these customers did not).
+          const tplId: 'first_proof' | 'revision' | 'reorder_outreach' =
+            proofReengagementProspectId && savedVersion.number === 1
+              ? 'reorder_outreach'
+              : savedVersion.number === 1 ? 'first_proof' : 'revision'
           const customerUrl =
             customerLink?.url ?? `${window.location.origin}${customerProofPath(proofId!)}`
           const messageContext = {
@@ -5341,6 +5354,13 @@ export default function NewVersionPage() {
                 // link, so record the bundle as sent (no-op if it already
                 // was — the helper guards on sent_at IS NULL).
                 if (customerLink?.kind === 'bundle') void markSetReviewLinkSent(customerLink.setId)
+                // Outreach projects: the note that just went out IS the desk's
+                // first contact — move the prospect to contacted (idempotent;
+                // later revision sends no-op on the state guard).
+                if (proofReengagementProspectId)
+                  void markProspectContactedByProof(proofId!).catch((e) =>
+                    console.error('[reorder-desk] contacted stamp failed', e),
+                  )
                 navigate(panelExit)
               }}
               onSkip={() => navigate(panelExit)}

@@ -17,9 +17,10 @@
 //   2. the grouped sidebar renders on every route and highlights the section
 //      the visitor is actually on (aria-current) — the quiet drift where a
 //      page renders but the nav pretends you are somewhere else.
-//   3. the Analytics tabs actually switch, and the two fixture-backed panels
-//      (Artwork checks, Annotations) render tables and charts from their RPC
-//      fixtures — a broken RPC-shape mapping fails here rather than on live.
+//   3. the Analytics tabs actually switch, and the fixture-backed panels
+//      (Artwork checks, Annotations, Re-engagement) render tables and charts
+//      from their RPC fixtures — a broken RPC-shape mapping fails here rather
+//      than on live.
 //   4. the Settings jump nav lists exactly one link per on-page section,
 //      clicking one scrolls that section under the sticky chrome, and the
 //      #hash deep link the admin feature search relies on lands there too.
@@ -119,16 +120,18 @@ test.describe('every admin route mounts', () => {
 
 // ── 3. Analytics tabs ───────────────────────────────────────────────────────
 //
-// The six tab buttons are the only direct button children of the underlined
-// strip; everything below addresses tabs by ORDER, never by label.
+// The seven tab buttons are the only direct button children of the underlined
+// strip; everything below addresses tabs by ORDER, never by label. Order:
+// Funnel · Hot leads · Team · Products · Artwork checks · Annotations ·
+// Re-engagement (appended in migration 000389, so the earlier indices held).
 const ANALYTICS_TABS = 'main div.border-b > button'
 
 test.describe('analytics tabs', () => {
-  test('all six tabs switch and each renders its own panel', async ({ page }) => {
+  test('all seven tabs switch and each renders its own panel', async ({ page }) => {
     const errors = collectErrors(page)
     await page.goto(HARNESS + '/admin/analytics')
     const tabs = page.locator(ANALYTICS_TABS)
-    await expect(tabs).toHaveCount(6)
+    await expect(tabs).toHaveCount(7)
 
     // Funnel (the default tab): its stacked panels render even though the
     // funnel RPCs resolve empty in the harness — the page must not need live
@@ -148,6 +151,15 @@ test.describe('analytics tabs', () => {
     await tabs.nth(3).click()
     expect(await page.locator('main section').count()).toBeGreaterThanOrEqual(4)
 
+    // Re-engagement (last): the seeded analytics_reengagement fixture renders
+    // the happy path — the three window-range chips and the week-by-week
+    // panel with one row per fixture week. If the RPC → stats mapping drifts
+    // (or the fixture claim breaks), this collapses to the empty-register
+    // panel and the table count is what fails.
+    await tabs.nth(6).click()
+    await expect(page.locator('main button.rounded-full')).toHaveCount(3)
+    await expect(page.locator('main section table tbody tr')).toHaveCount(4)
+
     await page.waitForLoadState('networkidle')
     expect(errors).toEqual([])
   })
@@ -156,7 +168,7 @@ test.describe('analytics tabs', () => {
     const errors = collectErrors(page)
     await page.goto(HARNESS + '/admin/analytics')
     const tabs = page.locator(ANALYTICS_TABS)
-    await expect(tabs).toHaveCount(6)
+    await expect(tabs).toHaveCount(7)
     await tabs.nth(4).click()
 
     // The who-runs-it table is the first table on the tab and must carry one
@@ -173,7 +185,7 @@ test.describe('analytics tabs', () => {
   test('the checks chart swaps between day and week grain', async ({ page }) => {
     await page.goto(HARNESS + '/admin/analytics')
     const tabs = page.locator(ANALYTICS_TABS)
-    await expect(tabs).toHaveCount(6)
+    await expect(tabs).toHaveCount(7)
     await tabs.nth(4).click()
 
     // The grain toggle lives in the chart panel's own header: two buttons,
@@ -205,7 +217,7 @@ test.describe('analytics tabs', () => {
     const errors = collectErrors(page)
     await page.goto(HARNESS + '/admin/analytics')
     const tabs = page.locator(ANALYTICS_TABS)
-    await expect(tabs).toHaveCount(6)
+    await expect(tabs).toHaveCount(7)
     await tabs.nth(5).click()
 
     // One row per fixture designer in the who-writes-callouts table (3), and

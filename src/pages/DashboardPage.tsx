@@ -15,6 +15,8 @@ import { signThumbnails, type ThumbInfo } from '../lib/thumbnails'
 import { setProofWorklist } from '../lib/proofWorklist'
 import { useAuth } from '../lib/auth'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
+import { getReorderDeskSettings } from '../lib/reorderDesk'
+import ReorderDeskPanel from '../components/ReorderDeskPanel'
 import { orderTotal, type OrderAmounts } from '../lib/orderDisplay'
 import { formatPrice } from '../lib/currency'
 import { getExchangeRates, currencyToGbp, type ExchangeRates } from '../lib/exchangeRates'
@@ -3123,6 +3125,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   // and lives under "Recently ordered" there. invoiceProblem = paid orders whose
   // Xero invoice failed (a books gap that's otherwise only visible on /orders).
   const [orderingOn, setOrderingOn]       = useState(false)
+  const [reorderDeskOn, setReorderDeskOn] = useState(false)
   // Bumped when an admin posts an announcement from the hero. The banner takes
   // it as a refetch trigger — the composer lives in the hero action cluster
   // now, so it can't hand the new row straight to the banner beside it.
@@ -3433,6 +3436,11 @@ export default function DashboardPage({ activityView = false }: { activityView?:
       const on = await getOrderingEnabled()
       if (cancelled) return
       setOrderingOn(on)
+      // The Reorder desk flag rides the same mount effect but is independent
+      // of the ordering switch (000389).
+      void getReorderDeskSettings().then((desk) => {
+        if (!cancelled) setReorderDeskOn(desk.enabled)
+      })
       if (!on) return
       // "Paid" is a rolling 30-day window (the Approved tile keeps its 7), so
       // the cutoff is computed here rather than in SQL.
@@ -4773,6 +4781,11 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                     those rows unlabelled). Hidden entirely when ordering is
                     off, like the order stat tiles. */}
                 {orderingOn && <AwaitingPaymentPanel />}
+                {/* The Reorder desk (000389): today's past customers most
+                    likely to need a top-up, served from the scored register.
+                    Owns its own queries; hidden until Admin → Settings turns
+                    it on. Nothing here ever sends automatically. */}
+                {reorderDeskOn && <ReorderDeskPanel />}
                 {/* Follow-up automation Outbox (Phase 1). Owns its own small
                     nudge_runs / proof_nudges queries; the projects array is
                     only passed for client-side contact/company labels. */}
