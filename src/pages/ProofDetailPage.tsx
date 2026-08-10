@@ -118,7 +118,14 @@ interface Proof {
   // Set on the CHILD when a reorder is raised from another project (000373).
   // Non-null here means "this project IS somebody's reorder".
   reorder_of_proof_id: string | null
+  // Reorder-desk outreach (000389 / 000392). BOTH are read, because neither is
+  // complete on its own: reengagement_prospect_id is FK ON DELETE SET NULL, so
+  // deleting the register row silently un-marks the proof, and
+  // reengagement_context is null whenever buildReengagementContext found
+  // nothing worth showing. Live already carries one proof with a context and a
+  // null prospect id. Either present means "born from the desk".
   reengagement_prospect_id: string | null
+  reengagement_context: Record<string, unknown> | null
   // Needed by the "bring in an existing project" picker — candidates are
   // this contact's other standalone projects.
   contact_id: string
@@ -479,7 +486,18 @@ export default function ProofDetailPage() {
   // Null until the loadProof lookup answers; set to the reorder's proof id once
   // one exists. Gating on it is what stops the button outliving its own job.
   const [reorderChildId, setReorderChildId] = useState<string | null>(null)
-  const canRaiseReorder = !!proof?.reorder_requested_at && versions.length > 0 && !reorderChildId
+  // ⚠ An OUTREACH proof is excluded, and the exclusion is the point: that
+  // proof IS already the new project. "Raise the reorder" here would duplicate
+  // it into a child that duplicateProof cannot pre-approve — preApprove needs
+  // the SOURCE to be `approved` AND to have approval rows to carry, and an
+  // outreach proof is in_progress with neither — so the child is born OPEN, the
+  // customer is asked to approve artwork they already bought, and the real work
+  // is stranded on the wrong proof. Here the request is answered in place:
+  // approve this proof and raise the order on it, which is what clears the flag
+  // (000402).
+  const isOutreachProof = !!proof?.reengagement_prospect_id || !!proof?.reengagement_context
+  const canRaiseReorder =
+    !!proof?.reorder_requested_at && versions.length > 0 && !reorderChildId && !isOutreachProof
   const [reorderDialog, setReorderDialog] = useState(false)
   const [reorderBusy, setReorderBusy] = useState(false)
   const [reorderError, setReorderError] = useState<string | null>(null)
@@ -1003,7 +1021,7 @@ export default function ProofDetailPage() {
     const [proofResult, versionsResult] = await Promise.all([
       supabase
         .from('proofs')
-        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, disclaimer_acknowledged_at, proof_set_id, set_discarded_at, reorder_requested_at, reorder_request_note, reorder_request_quantity, reorder_of_proof_id, reengagement_prospect_id, contact_id, contacts(full_name, email, companies(id, name))')
+        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, disclaimer_acknowledged_at, proof_set_id, set_discarded_at, reorder_requested_at, reorder_request_note, reorder_request_quantity, reorder_of_proof_id, reengagement_prospect_id, reengagement_context, contact_id, contacts(full_name, email, companies(id, name))')
         .eq('id', proofId)
         .single(),
       supabase
@@ -3405,6 +3423,7 @@ export default function ProofDetailPage() {
                           companyName={proof.contacts.companies?.name ?? null}
                           onSnoozed={() => { if (id) loadProof(id) }}
                           onRaiseReorder={canRaiseReorder ? () => { setReorderError(null); setReorderDialog(true) } : undefined}
+                          isOutreach={isOutreachProof}
                           className="cursor-pointer"
                         >
                           <ProofStatusPill label={statusBucket.label} colour={statusBucket.colour} />

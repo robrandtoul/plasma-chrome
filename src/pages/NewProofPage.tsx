@@ -5,6 +5,7 @@ import { useAuth } from '../lib/auth'
 import { logAudit } from '../lib/audit'
 import { snoozeProof } from '../lib/snooze'
 import { OUTREACH_SNOOZE_RULES, OUTREACH_SNOOZE_HOURS } from '../lib/reorderDesk'
+import { buildReengagementContext, type ReengagementContext } from '../lib/reengagement'
 import { parseHelpscoutUrl, MIN_OVERRIDE_REASON_LENGTH } from '../lib/helpscout'
 import { titleCase } from '../lib/titleCase'
 // QuoteLink now rendered inside DesignerChrome (PR 35).
@@ -51,6 +52,11 @@ export default function NewProofPage() {
   // re-engagement outreach so chasing is suppressed and outcomes track back
   // to the register.
   const prefillProspectId = searchParams.get('reengageProspectId')
+  // Display-safe snapshot stamped onto the proof so /p/:id can greet a past
+  // customer by name and date. Null until the register row loads (and stays
+  // null for ordinary projects).
+  const [reengagementContext, setReengagementContext] =
+    useState<ReengagementContext | null>(null)
 
   // ── Company state ──────────────────────────────────────────────────────────
   const [allCompanies, setAllCompanies] = useState<Company[]>([])
@@ -178,6 +184,33 @@ export default function NewProofPage() {
     supabase.from('companies').select('id, name').order('name')
       .then(({ data }) => setAllCompanies((data ?? []) as Company[]))
   }, [])
+
+  // Reorder-desk outreach (000392): read the two display-safe facts the
+  // customer band needs — when they last ordered, and how many times. Fetched
+  // at mount rather than at save so a slow or failed read costs the band, not
+  // the project: a missing snapshot simply means no greeting.
+  useEffect(() => {
+    if (!prefillProspectId) return
+    let cancelled = false
+    void supabase
+      .from('reorder_prospects')
+      // ⚠ This select IS the feature's on-switch. buildReengagementContext is
+      // an allow-list over the row it is handed, so a column missing here is
+      // simply absent from the stored snapshot and every marker downstream
+      // silently never renders — with no error anywhere. Adding a field to the
+      // context means adding it here in the same change (000399).
+      // Single literal, not a concatenation: supabase-js parses the select
+      // string as a TYPE, and a joined expression it cannot read statically
+      // collapses the row to an error type.
+      .select('last_order_on, orders_count, last_spec, last_qty, last_variant_id, last_variant_label, last_material_id')
+      .eq('id', prefillProspectId)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return
+        setReengagementContext(buildReengagementContext(data))
+      })
+    return () => { cancelled = true }
+  }, [prefillProspectId])
 
   // Apply URL prefill once on mount. Contact selection is deferred to the
   // contact-load effect below so it survives that effect's reset pass.
@@ -957,6 +990,9 @@ export default function NewProofPage() {
             ? {
                 reengagement_prospect_id: prefillProspectId,
                 auto_nudge_disabled_at: new Date().toISOString(),
+                // Customer-visible by construction — allow-listed, never the
+                // raw register row (000392).
+                reengagement_context: reengagementContext,
               }
             : {}),
         })

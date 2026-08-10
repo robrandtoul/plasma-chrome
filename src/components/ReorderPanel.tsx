@@ -22,7 +22,12 @@ import { customerProofPath } from '../lib/customerProofUrl'
 // supabase/functions/request-reorder for why /p/:id must not be able to
 // transact.
 
-export type ReorderState = 'idle' | 'sending' | 'sent' | 'error'
+// 'throttled' is the re-engagement band's case only: on an outreach proof there
+// is no paid order to enumerate, so the server may answer a repeat submission
+// honestly ("you've already told us") instead of the uniform ok the ordinary
+// path returns to avoid being an oracle. Handled here too so a state this panel
+// can never receive still reads as acknowledged rather than re-arming the form.
+export type ReorderState = 'idle' | 'sending' | 'sent' | 'throttled' | 'error'
 
 export interface ReorderPanelProps {
   state: ReorderState
@@ -39,7 +44,7 @@ export function ReorderPanel({ state, alreadyRequested, onSubmit }: ReorderPanel
   // contact form.
   const [website, setWebsite] = useState('')
 
-  const acknowledged = state === 'sent' || alreadyRequested
+  const acknowledged = state === 'sent' || state === 'throttled' || alreadyRequested
   const busy = state === 'sending'
 
   // Which acknowledgement is honest here. The fork the customer cares about —

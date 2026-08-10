@@ -37,6 +37,7 @@ import AdminCatalogueDataPage from '../src/pages/admin/AdminCatalogueDataPage'
 import AdminContentPage from '../src/pages/admin/AdminContentPage'
 import AdminNeedsAttentionPage from '../src/pages/admin/AdminNeedsAttentionPage'
 import AdminShippingPage from '../src/pages/admin/AdminShippingPage'
+import AdminReorderRegisterPage from '../src/pages/admin/AdminReorderRegisterPage'
 import AdminAnalyticsPage from '../src/pages/admin/AdminAnalyticsPage'
 import AdminSettingsPage from '../src/pages/admin/AdminSettingsPage'
 import AdminArtworkCheckPage from '../src/pages/admin/AdminArtworkCheckPage'
@@ -1075,6 +1076,11 @@ const tree = requestedPath === '/order-builder' ? (
         <Route path="artwork-check" element={<AdminArtworkCheckPage />} />
         <Route path="needs-attention" element={<AdminNeedsAttentionPage />} />
         <Route path="shipping" element={<AdminShippingPage />} />
+        {/* The mock backend returns nothing for reorder_prospects, so this
+            mounts the register's EMPTY state — which is the state worth
+            proving renders, since a page that white-screens on no data is
+            exactly what a fresh database would show. */}
+        <Route path="reorder-register" element={<AdminReorderRegisterPage />} />
         <Route path="analytics" element={<AdminAnalyticsPage />} />
         <Route path="settings" element={<AdminSettingsPage />} />
         <Route path="demo-data" element={<AdminDemoDataPage />} />

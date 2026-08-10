@@ -19,6 +19,7 @@
 // pay pages.
 
 import { isTrackingStage, stageLabel, stageLine, type TrackingStage } from './orderTracking'
+import { parseReengagementContext, type ReengagementContext } from './reengagement'
 
 // Mirrors the `state` values built by proofs.public_get_proof_order_state.
 export type ProofOrderState = 'awaiting_payment' | 'link_expired' | 'paid' | 'none'
@@ -62,6 +63,12 @@ export interface ProofOrderStatePayload {
   // null for an abandoned one. This is what stops the bookmark going stale:
   // the old page becomes a hub pointing at whatever is current.
   reorderProofId: string | null
+  // The display-safe re-engagement snapshot (000392), present only when the
+  // Reorder desk created this project — i.e. we approached the customer rather
+  // than the other way round. Its presence is what lets /p/:id greet a past
+  // customer instead of interrogating them like someone who commissioned new
+  // work. Null on every ordinary proof and on any deployment predating 000392.
+  reengagement: ReengagementContext | null
 }
 
 export interface ReadyToOrderCopy {
@@ -122,6 +129,9 @@ export function parseProofOrderState(raw: unknown): ProofOrderStatePayload | nul
       typeof obj.reorder_proof_id === 'string' && obj.reorder_proof_id.length > 0
         ? obj.reorder_proof_id
         : null,
+    // Allow-listed field-by-field by parseReengagementContext, so a future
+    // column on the register can't reach the customer by riding along.
+    reengagement: parseReengagementContext(obj.reengagement),
   }
 }
 

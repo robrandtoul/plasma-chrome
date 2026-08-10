@@ -212,6 +212,7 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'reorder_desk.marked_contacted', label: 'Outreach sent by hand' },
     { code: 'reorder_desk.follow_up_sent',   label: 'Re-engagement follow-up sent' },
     { code: 'reorder_desk.closed_quiet',     label: 'Outreach closed — no response' },
+    { code: 'reorder_desk.restored',         label: 'Past customer put back on the register' },
   ]},
   { name: 'Orders', actions: [
     { code: 'order.created',                  label: 'Order created' },

@@ -72,6 +72,10 @@ export default function ReorderDeskPanel() {
         today,
         settings.dailyLimit,
         settings.followupDays,
+        // The recency guard. Omitting this fails OPEN — an empty set holds
+        // nobody back — which is why planDesk requires it rather than
+        // defaulting it.
+        data.recentlyActive,
       )
       if (next.promote.length > 0) {
         await promoteProspects(next.promote.map((p) => p.id), today)
@@ -233,6 +237,11 @@ export default function ReorderDeskPanel() {
                 <li key={p.id} className="px-5 py-3">
                   <p className="text-sm font-semibold text-ink">{p.customer_name}</p>
                   <p className="mt-0.5 text-[12px] text-ink-mute">{historyLine(p)}</p>
+                  {/* What they last bought (000393) — so whoever picks the card
+                      up builds the right thing without going to Xero for it. */}
+                  {p.last_spec && (
+                    <p className="mt-0.5 text-[12px] text-ink-soft">Last order: {p.last_spec}</p>
+                  )}
                   {emailPromptId === p.id && !p.email && (
                     <div className="mt-2">
                       <label className="block text-[12px] text-ink-mute" htmlFor={`desk-email-${p.id}`}>

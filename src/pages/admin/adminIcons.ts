@@ -2,6 +2,7 @@ import {
   BarChart3,
   Building2,
   PackageSearch,
+  RotateCcw,
   MapPin,
   Truck,
   AlertCircle,
@@ -24,6 +25,9 @@ export const ADMIN_ICONS: Record<string, LucideIcon> = {
   analytics: BarChart3,
   customers: Building2,
   orders: PackageSearch,
+  // Same glyph the Analytics Re-engagement tab uses, so the two views of the
+  // back book read as the same subject.
+  reorderregister: RotateCcw,
   shipping: MapPin,
   outsourcing: Truck,
   followups: AlertCircle,

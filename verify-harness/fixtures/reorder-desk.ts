@@ -27,6 +27,9 @@
 //             proof_versions     — .in('proof_id', rd-proof ids)
 //             proof_version_views— .eq('is_bot', false).in('proof_version_id', …)
 //             reorder_prospects  — head count .gte('contacted_at', a week ago)
+//             rpc reorder_prospects_recently_active — the serve-time recency
+//               guard (000395), claimed by name and returning no ids, so the
+//               rig's customers are all servable (see the hook)
 //   writes    reorder_prospects  — promote (.in('id')), skip / put back /
 //               sent-it-myself / follow-up stamp (.eq('id')); proofs
 //               quiet-close status flip (.eq('id')). All acknowledged and
@@ -103,6 +106,7 @@ function prospect(overrides: Record<string, any>): Record<string, any> {
     lifetime_value: 1450,
     avg_order_value: 480,
     cadence_days: 200,
+    last_spec: '250 gold metal cards (500 micron)',
     score: 50,
     score_reasons: ['3 orders', 'Last ordered May 2024'],
     state: 'pending',
@@ -333,7 +337,20 @@ export function reorderDeskRpc(name: string, args?: any): { data: any; error: an
       error: null,
     }
   }
-  // The desk panel itself reads everything through the query builder — no
+  // The serve-time recency guard (migration 000395), read by fetchDeskData on
+  // every desk load. Claimed BY NAME for the same reason as the analytics one
+  // above — it belongs to this feature alone. Returns NO ids: the rig's six
+  // fixture customers are all genuinely due, so the guard holds nobody back
+  // and every bucket lands exactly where the fixture comments promise.
+  //
+  // Claiming it rather than leaning on the mock's unknown-name fallback (also
+  // an empty array) is the point: the desk's own reads should be visible here,
+  // and a future rig that wants to prove the guard bites has one place to say
+  // so — return an rd- id and that customer drops out of Today.
+  if (name === 'reorder_prospects_recently_active') {
+    return { data: [], error: null }
+  }
+  // The desk panel itself reads everything else through the query builder — no
   // other RPCs to claim. (logAudit's RPC resolves through the mock's generic
   // empty fallback.)
   return null

@@ -64,7 +64,14 @@ export function attentionReason(
  * tweak the wording); the mapping is exhaustive over the rules so the
  * tooltip always has something to show.
  */
-export function attentionResolution(code: NeedsAttentionRule): string {
+export function attentionResolution(
+  code: NeedsAttentionRule,
+  opts?: {
+    /** True on a proof the Reorder desk itself created (000389 / 000392).
+     *  Only `reorder_requested` reads it — see that case. */
+    outreach?: boolean
+  },
+): string {
   switch (code) {
     case 'request_changes_no_version':
       return 'Upload a new version addressing the change request, or reply to the customer.'
@@ -90,7 +97,17 @@ export function attentionResolution(code: NeedsAttentionRule): string {
       // back, so this flag would stay up forever, and it leaves the copy
       // unapproved, so the customer would be asked to sign off artwork they
       // already bought. "Raise the reorder" does both.
-      return 'They want more of these cards. “Raise the reorder” copies the design into a new project, already approved, and clears this flag. Read their note first — if anything has changed it needs a fresh proof round rather than going straight to a pay link.'
+      // ⚠ On an OUTREACH proof the button this copy names is not on the page,
+      // and shouldn't be: that proof IS already the new project, so duplicating
+      // it would mint a child duplicateProof cannot pre-approve (it needs the
+      // source approved with approval rows to carry, and an outreach proof is
+      // in_progress with none) and strand the real work on the wrong proof.
+      // Sending a designer hunting for a missing control — with Duplicate,
+      // the thing the ordinary copy warns against, still sitting in the same
+      // menu — is how they'd end up doing exactly that.
+      return opts?.outreach
+        ? 'They want these cards. This project already IS the reorder — approve it and use “Create order” to send them a pay link, which clears this flag. Read their note first: if anything has changed it needs a fresh proof round rather than going straight to a pay link.'
+        : 'They want more of these cards. “Raise the reorder” copies the design into a new project, already approved, and clears this flag. Read their note first — if anything has changed it needs a fresh proof round rather than going straight to a pay link.'
   }
 }
 

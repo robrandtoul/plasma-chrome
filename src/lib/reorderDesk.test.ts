@@ -6,10 +6,12 @@
 // rest of the system has already made for us. The cases here pin the queue
 // arithmetic (the daily BUDGET — every queued_on-today row spends a slot
 // whatever state it has since moved to — stale-first re-serving, suppression
-// windows, dedupe across the three merged fetches) and the contacted-row
-// partitions (reply detection vs follow-up vs quiet close vs outcome sync),
-// because a silent bug in any of them either over-contacts customers who
-// asked for nothing or lets an opened-and-interested one go cold.
+// windows, dedupe across the three merged fetches), the serve-time recency
+// guard (000395 — never greet someone who has just ordered) and the
+// contacted-row partitions (reply detection vs follow-up vs quiet close vs
+// outcome sync), because a silent bug in any of them either over-contacts
+// customers who asked for nothing or lets an opened-and-interested one go
+// cold.
 //
 // ⚠ Import shim: reorderDesk.ts imports './supabase' (and './audit') at
 // module top, and the client's env module reads import.meta.env — which only
@@ -98,6 +100,7 @@ function mk(overrides: Partial<ReorderProspect> = {}): ReorderProspect {
     lifetime_value: 1200,
     avg_order_value: 400,
     cadence_days: 180,
+    last_spec: null,
     score: 50,
     score_reasons: ['3 orders', 'steady cadence'],
     state: 'pending',
@@ -117,11 +120,22 @@ function facts(
   entries: Array<[string, Partial<OutreachProofFacts>]>,
 ): Map<string, OutreachProofFacts> {
   return new Map(
-    entries.map(([id, f]) => [id, { status: 'in_progress', opened: false, repliedAt: null, ...f }]),
+    entries.map(([id, f]) => [
+      id,
+      { status: 'in_progress', opened: false, repliedAt: null, hasPaidOrder: false, ...f },
+    ]),
   )
 }
 
 const ids = (list: ReorderProspect[]) => list.map((p) => p.id)
+
+// The serve-time recency guard's answer when it is holding nobody back — the
+// baseline every pre-existing case runs under, so the guard's own cases below
+// are the only place the desk's behaviour changes. Passed explicitly at every
+// call site rather than leaning on planDesk's default: the default exists for
+// call-site compatibility, and a test that relied on it would stop exercising
+// the argument the panel actually has to pass.
+const NO_RECENT_ACTIVITY: ReadonlySet<string> = new Set<string>()
 
 // ── Promotion arithmetic ─────────────────────────────────────────────────────
 
@@ -131,7 +145,7 @@ test('promotion tops the queue up to dailyLimit from pending, best score first',
   const p80 = mk({ score: 80 })
   const p70 = mk({ score: 70 })
   // Deliberately unsorted input — planDesk owns the ordering.
-  const plan = planDesk([p70, q1, p90, p80], facts([]), TODAY, 3, FOLLOWUP)
+  const plan = planDesk([p70, q1, p90, p80], facts([]), TODAY, 3, FOLLOWUP, NO_RECENT_ACTIVITY)
 
   // Already-queued-today spends a budget slot: room for only 2 promotions.
   assertEqual(ids(plan.promote), [p90.id, p80.id], 'promote')
@@ -142,7 +156,7 @@ test('promotion tops the queue up to dailyLimit from pending, best score first',
 test('promote contains only rows needing the DB write — never the already-queued-today ones', () => {
   const q1 = mk({ state: 'queued', queued_on: TODAY, score: 99 })
   const p1 = mk({ score: 40 })
-  const plan = planDesk([q1, p1], facts([]), TODAY, 5, FOLLOWUP)
+  const plan = planDesk([q1, p1], facts([]), TODAY, 5, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(plan.promote), [p1.id], 'promote')
   assertEqual(ids(plan.queue), [q1.id, p1.id], 'queue')
 })
@@ -153,7 +167,7 @@ test('yesterday’s stale queued rows are re-served before fresh pending, and ap
   // queued_on, so it must be in promote.
   const stale = mk({ state: 'queued', queued_on: YESTERDAY, score: 5 })
   const fresh = mk({ score: 95 })
-  const plan = planDesk([fresh, stale], facts([]), TODAY, 1, FOLLOWUP)
+  const plan = planDesk([fresh, stale], facts([]), TODAY, 1, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(plan.promote), [stale.id], 'promote')
   assertEqual(ids(plan.queue), [stale.id], 'queue')
 })
@@ -162,7 +176,7 @@ test('several stale rows re-serve by score, still ahead of any pending', () => {
   const staleLow = mk({ state: 'queued', queued_on: YESTERDAY, score: 10 })
   const staleHigh = mk({ state: 'queued', queued_on: YESTERDAY, score: 20 })
   const fresh = mk({ score: 95 })
-  const plan = planDesk([fresh, staleLow, staleHigh], facts([]), TODAY, 2, FOLLOWUP)
+  const plan = planDesk([fresh, staleLow, staleHigh], facts([]), TODAY, 2, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(plan.promote), [staleHigh.id, staleLow.id], 'promote')
 })
 
@@ -182,7 +196,7 @@ test('working a card does not refill the desk: queued_on-today rows spend budget
   })
   const p90 = mk({ score: 90 })
   const p80 = mk({ score: 80 })
-  const plan = planDesk([started, emailed, p90, p80], facts([]), TODAY, 3, FOLLOWUP)
+  const plan = planDesk([started, emailed, p90, p80], facts([]), TODAY, 3, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(plan.promote), [p90.id], 'promote')
   assertEqual(ids(plan.queue), [p90.id], 'queue')
   assertEqual(ids(plan.inBuild), [started.id], 'inBuild')
@@ -193,7 +207,7 @@ test('a pending row already served today is not re-promoted, but still spends it
   // same day nor free its slot for a fresh name.
   const skipped = mk({ state: 'pending', queued_on: TODAY, score: 99 })
   const fresh = mk({ score: 40 })
-  const plan = planDesk([skipped, fresh], facts([]), TODAY, 2, FOLLOWUP)
+  const plan = planDesk([skipped, fresh], facts([]), TODAY, 2, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(plan.promote), [fresh.id], 'promote')
   assertEqual(ids(plan.queue), [fresh.id], 'queue')
 })
@@ -205,7 +219,7 @@ test('duplicate rows from the merged fetches dedupe by id, first occurrence wins
   const q1 = mk({ state: 'queued', queued_on: TODAY, score: 60 })
   const dupe = { ...q1, state: 'pending' as const }
   const fresh = mk({ score: 40 })
-  const plan = planDesk([q1, dupe, fresh], facts([]), TODAY, 2, FOLLOWUP)
+  const plan = planDesk([q1, dupe, fresh], facts([]), TODAY, 2, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(plan.queue), [q1.id, fresh.id], 'queue')
   assertEqual(ids(plan.promote), [fresh.id], 'promote')
 })
@@ -220,7 +234,7 @@ test('an unservable queued-today row drops from the queue display but still spen
     score: 70,
   })
   const fresh = mk({ score: 95 })
-  const plan = planDesk([restedAfterServe, fresh], facts([]), TODAY, 1, FOLLOWUP)
+  const plan = planDesk([restedAfterServe, fresh], facts([]), TODAY, 1, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(plan.queue), [], 'queue')
   assertEqual(ids(plan.promote), [], 'promote')
 })
@@ -230,7 +244,7 @@ test('an unservable queued-today row drops from the queue display but still spen
 test('suppressed_until in the future keeps a pending row out of promotion entirely', () => {
   const rested = mk({ score: 99, suppressed_until: TOMORROW })
   const plain = mk({ score: 10 })
-  const plan = planDesk([rested, plain], facts([]), TODAY, 5, FOLLOWUP)
+  const plan = planDesk([rested, plain], facts([]), TODAY, 5, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(plan.promote), [plain.id], 'promote')
   assertEqual(ids(plan.queue), [plain.id], 'queue')
 })
@@ -238,13 +252,13 @@ test('suppressed_until in the future keeps a pending row out of promotion entire
 test('suppressed_until today or earlier no longer suppresses', () => {
   const dueToday = mk({ score: 60, suppressed_until: TODAY })
   const lapsed = mk({ score: 50, suppressed_until: YESTERDAY })
-  const plan = planDesk([dueToday, lapsed], facts([]), TODAY, 5, FOLLOWUP)
+  const plan = planDesk([dueToday, lapsed], facts([]), TODAY, 5, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(plan.promote), [dueToday.id, lapsed.id], 'promote')
 })
 
 test('a stale queued row inside its suppression window is not re-served either', () => {
   const stale = mk({ state: 'queued', queued_on: YESTERDAY, score: 80, suppressed_until: TOMORROW })
-  const plan = planDesk([stale], facts([]), TODAY, 5, FOLLOWUP)
+  const plan = planDesk([stale], facts([]), TODAY, 5, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(plan.queue), [], 'queue')
   assertEqual(ids(plan.promote), [], 'promote')
 })
@@ -253,11 +267,11 @@ test('a stale queued row inside its suppression window is not re-served either',
 
 test('in_build rows land in inBuild regardless of the limit, never in the queue', () => {
   const building = mk({ state: 'in_build', proof_id: 'pr-1', score: 100 })
-  const zero = planDesk([building], facts([]), TODAY, 0, FOLLOWUP)
+  const zero = planDesk([building], facts([]), TODAY, 0, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(zero.inBuild), [building.id], 'inBuild at limit 0')
   assertEqual(ids(zero.queue), [], 'queue at limit 0')
 
-  const five = planDesk([building], facts([]), TODAY, 5, FOLLOWUP)
+  const five = planDesk([building], facts([]), TODAY, 5, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(five.inBuild), [building.id], 'inBuild at limit 5')
   assertEqual(ids(five.queue), [], 'queue at limit 5')
 })
@@ -267,7 +281,7 @@ test('in_build rows land in inBuild regardless of the limit, never in the queue'
 test('dailyLimit 0 serves nothing and promotes nothing', () => {
   const stale = mk({ state: 'queued', queued_on: YESTERDAY, score: 80 })
   const pending = mk({ score: 90 })
-  const plan = planDesk([stale, pending], facts([]), TODAY, 0, FOLLOWUP)
+  const plan = planDesk([stale, pending], facts([]), TODAY, 0, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(plan.queue), [], 'queue')
   assertEqual(ids(plan.promote), [], 'promote')
 })
@@ -296,6 +310,7 @@ test('contacted + due + opened → followUps; not opened → quietCloses', () =>
     TODAY,
     5,
     FOLLOWUP,
+    NO_RECENT_ACTIVITY,
   )
   assertEqual(ids(plan.followUps), [opened.id], 'followUps')
   assertEqual(ids(plan.quietCloses), [unopened.id], 'quietCloses')
@@ -303,13 +318,13 @@ test('contacted + due + opened → followUps; not opened → quietCloses', () =>
 
 test('follow_up_due_on today counts as due (inclusive)', () => {
   const dueToday = contacted({ proof_id: 'pr-t', follow_up_due_on: TODAY })
-  const plan = planDesk([dueToday], facts([['pr-t', { opened: true }]]), TODAY, 5, FOLLOWUP)
+  const plan = planDesk([dueToday], facts([['pr-t', { opened: true }]]), TODAY, 5, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(plan.followUps), [dueToday.id], 'followUps')
 })
 
 test('a follow-up not yet due lands in neither bucket', () => {
   const early = contacted({ proof_id: 'pr-e', follow_up_due_on: TOMORROW })
-  const plan = planDesk([early], facts([['pr-e', { opened: true }]]), TODAY, 5, FOLLOWUP)
+  const plan = planDesk([early], facts([['pr-e', { opened: true }]]), TODAY, 5, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(plan.followUps), [], 'followUps')
   assertEqual(ids(plan.quietCloses), [], 'quietCloses')
 })
@@ -319,7 +334,7 @@ test('missing proof facts (null proof_id, or a proof the map doesn’t know) rea
   // evidence anyone opened the page, and silence is handled as silence.
   const noProof = contacted({ proof_id: null })
   const unknownProof = contacted({ proof_id: 'pr-unknown' })
-  const plan = planDesk([noProof, unknownProof], facts([]), TODAY, 5, FOLLOWUP)
+  const plan = planDesk([noProof, unknownProof], facts([]), TODAY, 5, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(plan.quietCloses), [noProof.id, unknownProof.id], 'quietCloses')
   assertEqual(ids(plan.followUps), [], 'followUps')
 })
@@ -333,7 +348,7 @@ test('a sent follow-up closes quietly once its window passes (boundary day inclu
     proof_id: 'pr-fp',
     followed_up_at: '2026-03-05T10:00:00Z',
   })
-  const plan = planDesk([windowPassed], facts([['pr-fp', { opened: true }]]), TODAY, 5, FOLLOWUP)
+  const plan = planDesk([windowPassed], facts([['pr-fp', { opened: true }]]), TODAY, 5, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(plan.quietCloses), [windowPassed.id], 'quietCloses')
   assertEqual(ids(plan.followUps), [], 'followUps')
 })
@@ -344,7 +359,7 @@ test('a sent follow-up still inside its window lands in neither bucket', () => {
     proof_id: 'pr-fw',
     followed_up_at: '2026-03-06T10:00:00Z',
   })
-  const plan = planDesk([waiting], facts([['pr-fw', { opened: true }]]), TODAY, 5, FOLLOWUP)
+  const plan = planDesk([waiting], facts([['pr-fw', { opened: true }]]), TODAY, 5, FOLLOWUP, NO_RECENT_ACTIVITY)
   assertEqual(ids(plan.followUps), [], 'followUps')
   assertEqual(ids(plan.quietCloses), [], 'quietCloses')
 })
@@ -362,6 +377,7 @@ test('a customer reply after the outreach lands in toReply — even unopened, ev
     TODAY,
     5,
     FOLLOWUP,
+    NO_RECENT_ACTIVITY,
   )
   assertEqual(ids(plan.toReply), [replier.id], 'toReply')
   assertEqual(ids(plan.followUps), [], 'followUps')
@@ -379,6 +395,7 @@ test('a reply from BEFORE the outreach (old thread) is ignored', () => {
     TODAY,
     5,
     FOLLOWUP,
+    NO_RECENT_ACTIVITY,
   )
   assertEqual(ids(plan.toReply), [], 'toReply')
   assertEqual(ids(plan.followUps), [oldThread.id], 'followUps')
@@ -392,6 +409,7 @@ test('replied-and-approved → toReply wins (checked before the outcome buckets)
     TODAY,
     5,
     FOLLOWUP,
+    NO_RECENT_ACTIVITY,
   )
   assertEqual(ids(plan.toReply), [both.id], 'toReply')
   assertEqual(ids(plan.toConvert), [], 'toConvert')
@@ -410,6 +428,7 @@ test('a reply also beats the post-follow-up quiet close', () => {
     TODAY,
     5,
     FOLLOWUP,
+    NO_RECENT_ACTIVITY,
   )
   assertEqual(ids(plan.toReply), [answered.id], 'toReply')
   assertEqual(ids(plan.quietCloses), [], 'quietCloses')
@@ -417,16 +436,52 @@ test('a reply also beats the post-follow-up quiet close', () => {
 
 // ── Outcome sync ────────────────────────────────────────────────────────────
 
-test('a contacted prospect whose proof got approved goes to toConvert, not followUps — even when due', () => {
-  const won = contacted({ proof_id: 'pr-won' })
+test('approving is not buying: an approved proof goes to toAccept, a PAID one to toConvert', () => {
+  // ⚠ The register's "Ordered again" is the number the whole 2,739-name
+  // campaign gets judged by, and it used to be written on proof status alone —
+  // so one press of Approve, or a designer tidying up with "Mark as approved",
+  // booked a sale that did not exist. Money is the only signal that means it.
+  const saidYes = contacted({ proof_id: 'pr-yes' })
+  const bought = contacted({ proof_id: 'pr-paid' })
   const plan = planDesk(
-    [won],
-    facts([['pr-won', { status: 'approved', opened: true }]]),
+    [saidYes, bought],
+    facts([
+      ['pr-yes', { status: 'approved', opened: true }],
+      ['pr-paid', { status: 'approved', opened: true, hasPaidOrder: true }],
+    ]),
     TODAY,
     5,
     FOLLOWUP,
+    NO_RECENT_ACTIVITY,
   )
-  assertEqual(ids(plan.toConvert), [won.id], 'toConvert')
+  assertEqual(ids(plan.toConvert), [bought.id], 'toConvert')
+  assertEqual(ids(plan.toAccept), [saidYes.id], 'toAccept')
+  // And neither is chased. Leaving the approved one in 'contacted' was the
+  // reason 'accepted' had to be a real state: the tail of that branch would
+  // send a "still thinking?" note to someone who had already said yes, then
+  // quietly close them.
+  assertEqual(ids(plan.followUps), [], 'followUps')
+  assertEqual(ids(plan.quietCloses), [], 'quietCloses')
+})
+
+test('an accepted row is not re-written on every reload, and still converts when they pay', () => {
+  // syncProspectOutcomes runs on every desk load, so a steady-state row must
+  // produce no write at all — and the row must still be able to progress.
+  const resting = mk({ state: 'accepted', proof_id: 'pr-rest', contacted_at: '2026-03-03T09:00:00Z' })
+  const paying = mk({ state: 'accepted', proof_id: 'pr-pay', contacted_at: '2026-03-03T09:00:00Z' })
+  const plan = planDesk(
+    [resting, paying],
+    facts([
+      ['pr-rest', { status: 'approved', opened: true }],
+      ['pr-pay', { status: 'approved', opened: true, hasPaidOrder: true }],
+    ]),
+    TODAY,
+    5,
+    FOLLOWUP,
+    NO_RECENT_ACTIVITY,
+  )
+  assertEqual(ids(plan.toAccept), [], 'toAccept — already there, nothing to write')
+  assertEqual(ids(plan.toConvert), [paying.id], 'toConvert')
   assertEqual(ids(plan.followUps), [], 'followUps')
   assertEqual(ids(plan.quietCloses), [], 'quietCloses')
 })
@@ -439,6 +494,7 @@ test('a contacted prospect whose proof was abandoned elsewhere goes to toClose',
     TODAY,
     5,
     FOLLOWUP,
+    NO_RECENT_ACTIVITY,
   )
   assertEqual(ids(plan.toClose), [lost.id], 'toClose')
   assertEqual(ids(plan.quietCloses), [], 'quietCloses')
@@ -462,18 +518,122 @@ test('replied rows sync outcomes but never enter the follow-up or reply buckets'
   const plan = planDesk(
     [repliedWon, repliedOpen],
     facts([
-      ['pr-rw', { status: 'approved', opened: true, repliedAt: '2026-03-05T08:00:00Z' }],
+      ['pr-rw', { status: 'approved', opened: true, hasPaidOrder: true, repliedAt: '2026-03-05T08:00:00Z' }],
       ['pr-ro', { opened: true, repliedAt: '2026-03-05T08:00:00Z' }],
     ]),
     TODAY,
     5,
     FOLLOWUP,
+    NO_RECENT_ACTIVITY,
   )
   assertEqual(ids(plan.toConvert), [repliedWon.id], 'toConvert')
   assertEqual(ids(plan.toReply), [], 'toReply')
   assertEqual(ids(plan.followUps), [], 'followUps')
   assertEqual(ids(plan.quietCloses), [], 'quietCloses')
   assertEqual(ids(plan.toClose), [], 'toClose')
+})
+
+// ── The serve-time recency guard (000395) ───────────────────────────────────
+//
+// Sits at the end rather than beside the suppression cases so it can reuse the
+// contacted() fixture above: the guard's most important property is what it
+// must NOT do, and that only shows on a mid-flow row.
+//
+// The register holds a customer's Xero history, which goes stale the moment
+// they buy again. reorder_prospects_recently_active is the live answer to "has
+// this person ordered, or started a project, in the last 180 days?", and a yes
+// must beat any score.
+
+test('a recently-active pending row is never promoted, however good its score', () => {
+  // The exact live defect this closes: five register rows the desk would have
+  // served were customers who had just ordered through the app.
+  const justOrdered = mk({ score: 99 })
+  const plain = mk({ score: 10 })
+  const plan = planDesk(
+    [justOrdered, plain],
+    facts([]),
+    TODAY,
+    5,
+    FOLLOWUP,
+    new Set([justOrdered.id]),
+  )
+  assertEqual(ids(plan.promote), [plain.id], 'promote')
+  assertEqual(ids(plan.queue), [plain.id], 'queue')
+})
+
+test('a recently-active stale-queued row is dropped from the queue, not re-served', () => {
+  // Yesterday's unactioned card would normally go to the front of today's
+  // queue. If they have bought since, it must simply stop being offered —
+  // the carry-over is a suggestion, and nothing is half-built behind it.
+  const staleActive = mk({ state: 'queued', queued_on: YESTERDAY, score: 80 })
+  const staleQuiet = mk({ state: 'queued', queued_on: YESTERDAY, score: 20 })
+  const plan = planDesk(
+    [staleActive, staleQuiet],
+    facts([]),
+    TODAY,
+    5,
+    FOLLOWUP,
+    new Set([staleActive.id]),
+  )
+  assertEqual(ids(plan.promote), [staleQuiet.id], 'promote')
+  assertEqual(ids(plan.queue), [staleQuiet.id], 'queue')
+})
+
+test('a card promoted earlier today stops being offered once its customer orders — but keeps its slot', () => {
+  // Promoted this morning, ordered at lunchtime. Same treatment as a row
+  // another dashboard rested after promotion: it drops off the display, and
+  // its budget slot stays spent so the desk doesn't refill with a fresh name.
+  const orderedSincePromotion = mk({ state: 'queued', queued_on: TODAY, score: 70 })
+  const fresh = mk({ score: 95 })
+  const plan = planDesk(
+    [orderedSincePromotion, fresh],
+    facts([]),
+    TODAY,
+    1,
+    FOLLOWUP,
+    new Set([orderedSincePromotion.id]),
+  )
+  assertEqual(ids(plan.queue), [], 'queue')
+  assertEqual(ids(plan.promote), [], 'promote')
+})
+
+test('a recently-active in_build or contacted row is left alone — the desk is mid-flow with them', () => {
+  // The guard stops us OFFERING someone. Once a designer has built their
+  // project, or the outreach has gone out, yanking the card would strand
+  // half-finished work and hide a conversation already under way. (A customer
+  // who orders mid-outreach is exactly the win the desk exists for.)
+  const building = mk({ state: 'in_build', proof_id: 'pr-guard-b', score: 100 })
+  const awaiting = contacted({ proof_id: 'pr-guard-c' })
+  const plan = planDesk(
+    [building, awaiting],
+    facts([['pr-guard-c', { opened: true }]]),
+    TODAY,
+    5,
+    FOLLOWUP,
+    new Set([building.id, awaiting.id]),
+  )
+  assertEqual(ids(plan.inBuild), [building.id], 'inBuild')
+  assertEqual(ids(plan.followUps), [awaiting.id], 'followUps')
+})
+
+test('an empty guard set changes nothing, and ids outside the register are inert', () => {
+  // The whole partition must be byte-identical to the pre-guard behaviour when
+  // the guard holds nobody back — including when the RPC failed and handed
+  // back an empty set, which is the fail-open path fetchRecentlyActive takes.
+  const stale = mk({ state: 'queued', queued_on: YESTERDAY, score: 5 })
+  const fresh = mk({ score: 95 })
+  const building = mk({ state: 'in_build', proof_id: 'pr-guard-e' })
+  const rows = [fresh, stale, building]
+
+  const expect = (plan: ReturnType<typeof planDesk>, label: string) => {
+    assertEqual(ids(plan.promote), [stale.id, fresh.id], `${label} promote`)
+    assertEqual(ids(plan.queue), [fresh.id, stale.id], `${label} queue`)
+    assertEqual(ids(plan.inBuild), [building.id], `${label} inBuild`)
+  }
+
+  expect(planDesk(rows, facts([]), TODAY, 5, FOLLOWUP, NO_RECENT_ACTIVITY), 'empty')
+  // A guard set naming someone who isn't in today's fetch must not perturb it.
+  expect(planDesk(rows, facts([]), TODAY, 5, FOLLOWUP, new Set(['rp-not-here'])), 'unrelated')
 })
 
 // ── todayIsoLocal ───────────────────────────────────────────────────────────

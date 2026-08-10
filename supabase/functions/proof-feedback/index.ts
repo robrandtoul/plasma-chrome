@@ -151,7 +151,7 @@ async function handle(req: Request): Promise<Response> {
   // version currency. A bad proof_id is rejected so we don't store orphan rows.
   const { data: proof, error: proofErr } = await admin
     .from('proofs')
-    .select('id, helpscout_conversation_id, proof_set_id, status')
+    .select('id, helpscout_conversation_id, proof_set_id, status, reengagement_context')
     .eq('id', proofId)
     .maybeSingle()
   if (proofErr) return json({ error: 'lookup failed', detail: proofErr.message }, 500)
@@ -224,6 +224,43 @@ async function handle(req: Request): Promise<Response> {
       .eq('id', proofId)
       .is('auto_nudge_disabled_at', null)
     if (stopErr) console.error('[proof-feedback] stop-nudges failed:', stopErr.message)
+  }
+
+  // ── Tell the Reorder desk to stand down ──────────────────────────────────
+  //
+  // Re-engagement outreach only (000392): this proof exists because WE
+  // approached a past customer, and the desk chases silence. Saying "not right
+  // now" is the opposite of silence — but nothing else records it. The Help
+  // Scout write below is an internal NOTE, which fires no reply event and so
+  // stamps nothing (verified live: the one existing proof_feedback row's proof
+  // carries no matching reply stamp, while proof-action's customer-thread posts
+  // stamp within seconds). Without this the desk reads the decline as silence
+  // and either chases them again or quiet-closes the project — setting it
+  // `abandoned`, which turns the page they just used into "This proof is
+  // closed".
+  //
+  // src/lib/reorderDesk.ts customerRepliedSinceContact() reads exactly this
+  // column, so the row moves to `replied` and the desk steps back — reversibly
+  // and visibly, rather than writing a terminal outcome. ⚠ Deliberately NOT a
+  // write to reorder_prospects: that row is keyed on the past CUSTOMER, not
+  // this proof, and /p/:id is handed around by team sharing — so one click by
+  // anyone holding the link would permanently foreclose all future outreach to
+  // them. Every anon write reachable from this page is additive and
+  // human-reviewed; recording the terminal outcome stays a designer's job.
+  //
+  // Awaited, not `void`: a bare PostgREST builder never sends (CLAUDE.md,
+  // "supabase-js queries are lazy"). Best-effort — a stamp failure must not
+  // cost the customer their feedback.
+  if ((proof as { reengagement_context: unknown }).reengagement_context != null) {
+    const stampIso = new Date().toISOString()
+    const { error: stampErr } = await admin
+      .from('proofs')
+      .update({ helpscout_last_customer_reply_at: stampIso })
+      .eq('id', proofId)
+      // The same GREATEST guard helpscout-webhook uses: a genuine later email
+      // reply must never be regressed by this.
+      .or(`helpscout_last_customer_reply_at.is.null,helpscout_last_customer_reply_at.lt.${stampIso}`)
+    if (stampErr) console.error('[proof-feedback] reply stamp failed:', stampErr.message)
   }
 
   // Best-effort Help Scout note so the designer sees the reason and can follow

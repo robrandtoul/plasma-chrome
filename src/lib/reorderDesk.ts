@@ -13,6 +13,10 @@
 //   * A customer who never opens their page gets silence and a quiet close;
 //     only openers earn the follow-up.
 //   * One outreach per customer per cycle; skipped customers rest for 90 days.
+//   * A customer who has ordered — or started a project — recently is held
+//     back at serve time however good their score, so the desk can never greet
+//     someone with "how are you doing for stock?" a fortnight after their
+//     cards arrived, or mid-conversation. See RECENTLY_ACTIVE_DAYS.
 
 import { supabase } from './supabase'
 import { logAudit } from './audit'
@@ -24,6 +28,7 @@ export type ProspectState =
   | 'in_build'
   | 'contacted'
   | 'replied'
+  | 'accepted'
   | 'converted'
   | 'declined'
   | 'closed_no_response'
@@ -41,6 +46,9 @@ export interface ReorderProspect {
   lifetime_value: number | null
   avg_order_value: number | null
   cadence_days: number | null
+  /** What they last bought, sentence-ready (000393). Null when the source
+   *  invoice had more than one product line, or predates the enrichment. */
+  last_spec: string | null
   score: number
   score_reasons: string[]
   state: ProspectState
@@ -56,7 +64,7 @@ export interface ReorderProspect {
 
 export const PROSPECT_COLUMNS =
   'id, xero_contact_id, customer_name, email, currency, first_order_on, last_order_on, ' +
-  'orders_count, lifetime_value, avg_order_value, cadence_days, score, score_reasons, ' +
+  'orders_count, lifetime_value, avg_order_value, cadence_days, last_spec, score, score_reasons, ' +
   'state, queued_on, contacted_at, follow_up_due_on, followed_up_at, proof_id, ' +
   'matched_contact_id, outcome_note, suppressed_until'
 
@@ -140,6 +148,10 @@ export interface OutreachProofFacts {
    *  The outreach note explicitly invites replying WITHOUT opening the page,
    *  so a reply is engagement even when `opened` is false. */
   repliedAt: string | null
+  /** A production order on this proof the customer has actually PAID (000402
+   *  / 000403). "Ordered again" is a claim about money, so it is keyed off
+   *  this and NEVER off proof status — an approval is not a sale. */
+  hasPaidOrder: boolean
 }
 
 /** A reply counts only if it landed after the outreach went out — these
@@ -164,8 +176,16 @@ export interface DeskPlan {
    *  passed, or the one follow-up went out and its window passed too. Closed
    *  quietly, no email. Never contains a customer who has REPLIED. */
   quietCloses: ReorderProspect[]
-  /** Outcome sync: their proof got approved → mark converted. */
+  /** Outcome sync: they PAID for a production order → mark converted. Keyed
+   *  off money, never off proof status: an approval — especially a designer's
+   *  "Mark as approved" — is not a sale, and the register's "Ordered again"
+   *  figure is what the whole campaign is judged by. */
   toConvert: ReorderProspect[]
+  /** Outcome sync: they approved, but nothing has been paid for yet. An
+   *  explicit state rather than a plan bucket, because leaving them in
+   *  'contacted' means the follow-up window chases a customer who has already
+   *  said yes and then quietly closes them. */
+  toAccept: ReorderProspect[]
   /** Outcome sync: their proof was abandoned elsewhere → close the prospect. */
   toClose: ReorderProspect[]
   /** Outcome sync: the customer replied by email since the outreach — a live
@@ -177,6 +197,7 @@ export interface DeskPlan {
 function servable(p: ReorderProspect, todayIso: string): boolean {
   return !p.suppressed_until || p.suppressed_until <= todayIso
 }
+
 
 /** Date-only arithmetic for the follow-up windows (YYYY-MM-DD in, out). */
 function plusDaysIso(dateIso: string, days: number): string {
@@ -203,6 +224,16 @@ export function planDesk(
   todayIso: string,
   dailyLimit: number,
   followupDays: number,
+  // Register ids the recency guard is holding back today (DeskData.recentlyActive,
+  // from migration 000395). Defaulted ONLY so the parameter is additive at the
+  // existing call sites — an empty set means "guard says nobody", which is the
+  // fail-open direction, so every real caller must pass DeskData.recentlyActive.
+  // ⚠ REQUIRED, deliberately undefaulted. An empty set means "hold nobody
+  // back", so a defaulted parameter fails OPEN — a caller that forgot it would
+  // silently serve customers who ordered a fortnight ago, which is the exact
+  // failure this guard exists to prevent. Making it required turns that
+  // omission into a compile error instead.
+  recentlyActive: ReadonlySet<string>,
 ): DeskPlan {
   const queuedToday: ReorderProspect[] = []
   const staleQueued: ReorderProspect[] = []
@@ -211,6 +242,7 @@ export function planDesk(
   const followUps: ReorderProspect[] = []
   const quietCloses: ReorderProspect[] = []
   const toConvert: ReorderProspect[] = []
+  const toAccept: ReorderProspect[] = []
   const toClose: ReorderProspect[] = []
   const toReply: ReorderProspect[] = []
 
@@ -225,30 +257,54 @@ export function planDesk(
     if (seen.has(p.id)) continue
     seen.add(p.id)
 
+    // The recency guard (000395) applies to the two buckets that OFFER a
+    // customer up — never to a project already under way. A row in in_build or
+    // contacted is mid-flow: the designer has built a proof (or sent it), so
+    // pulling the card would strand half-finished work and hide an outreach
+    // that has already gone out. Holding someone back is only honest before
+    // anyone has spoken to them.
+    const heldBack = recentlyActive.has(p.id)
+
     if (p.state === 'queued') {
       // servable() guards the display too: a row another dashboard suppressed
-      // after promotion must not render, though it still spends its slot.
+      // after promotion must not render, though it still spends its slot. The
+      // guard reads the same way — a card promoted this morning whose customer
+      // has since ordered stops being offered, while its slot stays spent so
+      // the desk doesn't quietly refill itself with a fresh name.
       if (p.queued_on === todayIso) {
-        if (servable(p, todayIso)) queuedToday.push(p)
-      } else if (servable(p, todayIso)) staleQueued.push(p)
+        if (servable(p, todayIso) && !heldBack) queuedToday.push(p)
+      } else if (servable(p, todayIso) && !heldBack) staleQueued.push(p)
       continue
     }
     if (p.state === 'pending') {
-      if (servable(p, todayIso) && p.queued_on !== todayIso) pending.push(p)
+      if (servable(p, todayIso) && p.queued_on !== todayIso && !heldBack) pending.push(p)
       continue
     }
     if (p.state === 'in_build') {
       inBuild.push(p)
       continue
     }
-    if (p.state === 'contacted' || p.state === 'replied') {
+    if (p.state === 'contacted' || p.state === 'replied' || p.state === 'accepted') {
       const facts = p.proof_id ? proofFacts.get(p.proof_id) : undefined
       if (customerRepliedSinceContact(p, facts) && p.state === 'contacted') {
         toReply.push(p)
         continue
       }
-      if (facts?.status === 'approved') {
+      // ⚠ Converted means a PAID order exists, never proof status. It used to
+      // read `facts?.status === 'approved'`, so one press of Approve — or a
+      // designer tidying up with "Mark as approved" — wrote "Ordered again"
+      // against a customer who had bought nothing, and dropped them out of
+      // every bucket below for good.
+      if (facts?.hasPaidOrder) {
         toConvert.push(p)
+        continue
+      }
+      // Said yes, nothing sold yet. An explicit state, NOT left in 'contacted':
+      // the tail of this branch would otherwise send a "still thinking?"
+      // follow-up to a customer who has already approved, and then quiet-close
+      // them. Guarded on the state so a steady-state reload isn't a write.
+      if (facts?.status === 'approved') {
+        if (p.state !== 'accepted') toAccept.push(p)
         continue
       }
       if (facts?.status === 'abandoned') {
@@ -276,26 +332,90 @@ export function planDesk(
   const promote = [...staleQueued, ...pending].slice(0, room)
   const queue = [...queuedToday, ...promote].sort(byScore)
 
-  return { queue, promote, inBuild, followUps, quietCloses, toConvert, toClose, toReply }
+  return { queue, promote, inBuild, followUps, quietCloses, toConvert, toAccept, toClose, toReply }
 }
 
 // ── Data fetch ──────────────────────────────────────────────────────────────
+
+/**
+ * How far back the serve-time recency guard looks — the default of migration
+ * 000395's `reorder_prospects_recently_active(p_days)`.
+ *
+ * 180 is not a taste figure: it is exactly the rest the nightly reconcile
+ * applies to a customer after an order (`suppressed_until = paid_at + 180`,
+ * and the same on enrolment), so the guard and the data agree — the customer
+ * the reconcile has rested is the same customer this read holds back, and
+ * neither can quietly outlive the other. Change one and change the other.
+ */
+export const RECENTLY_ACTIVE_DAYS = 180
 
 export interface DeskData {
   prospects: ReorderProspect[]
   proofFacts: Map<string, OutreachProofFacts>
   /** Contacted in the last 7 days — the panel's "this week" line. */
   contactedThisWeek: number
+  /** Register ids to hold back today: their email matches a contact with a paid
+   *  order, or a live project, inside RECENTLY_ACTIVE_DAYS. Pass straight into
+   *  planDesk. Empty when the guard couldn't be read — see fetchRecentlyActive. */
+  recentlyActive: Set<string>
+}
+
+/** `returns setof uuid` reaches us from PostgREST as a bare array of strings.
+ *  The wrapped `[{ …: uuid }]` shape is accepted too rather than depending on
+ *  that: an unrecognised shape here fails OPEN (an empty set serves everyone),
+ *  which is the one direction this guard must never fail in unnoticed. */
+function toIdSet(data: unknown): Set<string> {
+  const out = new Set<string>()
+  if (!Array.isArray(data)) return out
+  for (const row of data) {
+    if (typeof row === 'string') {
+      out.add(row)
+    } else if (row && typeof row === 'object') {
+      const first = Object.values(row as Record<string, unknown>).find((v) => typeof v === 'string')
+      if (first) out.add(first)
+    }
+  }
+  return out
+}
+
+/**
+ * The serve-time half of the recency guard (000395): who must not be offered
+ * today. The nightly reconcile rests these customers too, but this catches the
+ * order placed since the last run — which is precisely the case that would
+ * greet someone a fortnight after their cards arrived.
+ *
+ * Tolerant by design: the RPC is newer than this bundle, so against a database
+ * without 000395 the call fails (`function does not exist`) and the desk must
+ * carry on working exactly as it did before rather than refusing to load. It is
+ * deliberately NOT silent — serving someone who has just ordered is the failure
+ * this exists to prevent, so a miss is logged rather than swallowed.
+ */
+async function fetchRecentlyActive(): Promise<Set<string>> {
+  try {
+    const { data, error } = await supabase.rpc('reorder_prospects_recently_active', {
+      p_days: RECENTLY_ACTIVE_DAYS,
+    })
+    if (error) {
+      console.warn('[reorder-desk] recency guard unavailable — serving without it', error)
+      return new Set()
+    }
+    return toIdSet(data)
+  } catch (err) {
+    console.warn('[reorder-desk] recency guard threw — serving without it', err)
+    return new Set()
+  }
 }
 
 export async function fetchDeskData(): Promise<DeskData> {
   const today = todayIsoLocal()
-  // Three reads: the live states in full (bounded populations), a slice of the
+  // Four reads: the live states in full (bounded populations), a slice of the
   // SERVABLE pending pool deep enough to fill any day's promotions (the
   // server-side suppression filter matters — resting skipped rows must not
-  // occupy the slice and starve the desk), and everyone served today whatever
-  // state they've moved to (the daily budget).
-  const [liveRes, pendingRes, servedRes] = await Promise.all([
+  // occupy the slice and starve the desk), everyone served today whatever
+  // state they've moved to (the daily budget), and the recency guard. The
+  // guard rides alongside rather than gating the others: it resolves to an
+  // empty set on failure, so it can never be what stops the desk loading.
+  const [liveRes, pendingRes, servedRes, recentlyActive] = await Promise.all([
     supabase
       .from('reorder_prospects')
       .select(PROSPECT_COLUMNS)
@@ -311,6 +431,7 @@ export async function fetchDeskData(): Promise<DeskData> {
       .from('reorder_prospects')
       .select(PROSPECT_COLUMNS)
       .eq('queued_on', today),
+    fetchRecentlyActive(),
   ])
   if (liveRes.error) throw liveRes.error
   if (pendingRes.error) throw pendingRes.error
@@ -335,7 +456,26 @@ export async function fetchDeskData(): Promise<DeskData> {
         opened: false,
         repliedAt: (row as { helpscout_last_customer_reply_at?: string | null })
           .helpscout_last_customer_reply_at ?? null,
+        hasPaidOrder: false,
       })
+
+    // Has the customer actually bought? (000402 / 000403)
+    // 'paid' | 'fulfilled' | 'revision' is "money in, order live" — every such
+    // row on live carries paid_at — and it excludes a link that only went out
+    // ('sent') or lapsed ('cancelled'). order_kind rules out the two rows that
+    // are not a sale: a free reprint (000295) and an internal prototype
+    // (000287).
+    const { data: orderRows, error: orderErr } = await supabase
+      .from('orders')
+      .select('proof_id')
+      .in('proof_id', proofIds)
+      .eq('order_kind', 'production')
+      .in('status', ['paid', 'fulfilled', 'revision'])
+    if (orderErr) throw orderErr
+    for (const o of orderRows ?? []) {
+      const facts = proofFacts.get(o.proof_id as string)
+      if (facts) facts.hasPaidOrder = true
+    }
 
     // "Opened" = any non-bot view of any version of the proof.
     const { data: versionRows, error: verErr } = await supabase
@@ -366,7 +506,7 @@ export async function fetchDeskData(): Promise<DeskData> {
     .select('id', { count: 'exact', head: true })
     .gte('contacted_at', weekAgo)
 
-  return { prospects, proofFacts, contactedThisWeek: count ?? 0 }
+  return { prospects, proofFacts, contactedThisWeek: count ?? 0, recentlyActive }
 }
 
 // ── State transitions ───────────────────────────────────────────────────────
@@ -681,12 +821,22 @@ export async function syncProspectOutcomes(plan: DeskPlan): Promise<void> {
         if (error) console.error('[reorder-desk] replied sync failed', error)
       })
   }
+  for (const p of plan.toAccept) {
+    void supabase
+      .from('reorder_prospects')
+      .update({ state: 'accepted', updated_at: new Date().toISOString() })
+      .eq('id', p.id)
+      .in('state', ['contacted', 'replied'])
+      .then(({ error }) => {
+        if (error) console.error('[reorder-desk] accepted sync failed', error)
+      })
+  }
   for (const p of plan.toConvert) {
     void supabase
       .from('reorder_prospects')
       .update({ state: 'converted', updated_at: new Date().toISOString() })
       .eq('id', p.id)
-      .in('state', ['contacted', 'replied'])
+      .in('state', ['contacted', 'replied', 'accepted'])
       .then(({ error }) => {
         if (error) console.error('[reorder-desk] convert sync failed', error)
       })
@@ -700,7 +850,7 @@ export async function syncProspectOutcomes(plan: DeskPlan): Promise<void> {
         updated_at: new Date().toISOString(),
       })
       .eq('id', p.id)
-      .in('state', ['contacted', 'replied'])
+      .in('state', ['contacted', 'replied', 'accepted'])
       .then(({ error }) => {
         if (error) console.error('[reorder-desk] close sync failed', error)
       })

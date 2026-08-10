@@ -68,6 +68,7 @@ const AdminNeedsAttentionPage = lazyWithRetry(() => import('./pages/admin/AdminN
 const AdminCatalogueDataPage = lazyWithRetry(() => import('./pages/admin/AdminCatalogueDataPage'), 'AdminCatalogueDataPage')
 const AdminAnalyticsPage = lazyWithRetry(() => import('./pages/admin/AdminAnalyticsPage'), 'AdminAnalyticsPage')
 const AdminShippingPage = lazyWithRetry(() => import('./pages/admin/AdminShippingPage'), 'AdminShippingPage')
+const AdminReorderRegisterPage = lazyWithRetry(() => import('./pages/admin/AdminReorderRegisterPage'), 'AdminReorderRegisterPage')
 const DesignDemo = lazyWithRetry(() => import('./design/_demo'), 'DesignDemo')
 
 // Shown while a lazy route chunk is in flight. Mirrors the centred spinner
@@ -197,6 +198,7 @@ function AppShell() {
           <Route path="customers" element={<CustomersPage />} />
           <Route path="customers/:companyId" element={<CustomerDetailPage />} />
           <Route path="orders" element={<AdminOrderLogPage />} />
+          <Route path="reorder-register" element={<AdminReorderRegisterPage />} />
           <Route path="shipping" element={<AdminShippingPage />} />
           <Route path="materials" element={<AdminMaterialsPage />} />
           <Route path="materials/new" element={<AdminCreateMaterialPage />} />

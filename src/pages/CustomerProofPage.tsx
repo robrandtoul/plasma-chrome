@@ -62,6 +62,19 @@ import {
 import { BRAND_ORDER } from '../lib/theme'
 import { getPublicSettings, ABOUT_PROOF_COPY_DEFAULT, type PublicSettings } from '../lib/publicSettings'
 import type { PricingSnapshot, PricingVariant, Currency } from '../lib/types'
+import ReengagementBand from '../components/ReengagementBand'
+import {
+  previousOrderMarkers,
+  previousOrderThicknessRows,
+  previousSpecFromReengagement,
+  reengagementRequestOnFile,
+  shouldShowReengagementBand,
+  suppressApproveForOutreach,
+  variantDimension,
+  type PreviousOrderMarkers,
+  type ReorderRequestKind,
+} from '../lib/reengagement'
+import type { PreviousSpec } from '../lib/previousSpec'
 
 // Pricing-card header glyph, picked from the version's currency so the
 // icon matches the prices shown beneath it (£ / $ / €) instead of always
@@ -1178,6 +1191,27 @@ export default function CustomerProofPage() {
   // signal: it flips when every required slot on the current
   // version is approved (000126 trigger or designer override).
   const proofIsApproved = proof.status === 'approved'
+  // Re-engagement outreach (000389 / 000392): this customer didn't ask for a
+  // proof — the Reorder desk approached them with their own past design. When
+  // the snapshot is present the page opens with a welcome band instead of the
+  // usual "your proof is ready" framing. Null on every ordinary proof.
+  const reengagement = orderState?.reengagement ?? null
+  const showReengagementBand = shouldShowReengagementBand({
+    context: reengagement,
+    proofStatus: proof.status,
+    isCurrentVersion: !!activeVersion?.is_current,
+  })
+  // Gated on the band SHOWING, not merely on the proof being an outreach one:
+  // the suppression may only apply where the band is there to offer the
+  // alternative. Once a designer sends v2 the customer really is reviewing work
+  // in progress, and approve/request-changes is the correct pair for the first
+  // time — so this goes false on its own with no second switch to remember.
+  const hideApproveForOutreach =
+    showReengagementBand &&
+    suppressApproveForOutreach({
+      context: reengagement,
+      versionNumber: activeVersion?.version_number ?? null,
+    })
   const latestVersion =
     versions.find((v) => v.is_current) ?? versions[versions.length - 1] ?? null
 
@@ -1622,7 +1656,13 @@ export default function CustomerProofPage() {
     const showEarlierVersionWarning =
       !activeVersion.is_current && !proofIsApproved && latestVersion != null
     return (
-      <div className="mt-6 flex flex-col gap-3 sm:items-start">
+      // data-proof-actions marks the approval band wherever it renders. It
+      // began as the scroll target for the re-engagement band's actions; those
+      // now collect the request in place, so nothing points at it, but it stays
+      // as the one stable hook onto a control set that has four different
+      // shapes (named recipients, shared, Set (single), Set (collection)) — the
+      // Approve-suppression tests below need to find it in all of them.
+      <div data-proof-actions className="mt-6 flex flex-col gap-3 sm:items-start">
         {showEarlierVersionWarning && latestVersion && (
           // "Heads up" earlier-version warning. Quiet low-soft
           // (amber) card with a pill + body copy. Was Direction-B
@@ -1646,7 +1686,9 @@ export default function CustomerProofPage() {
             customer should be on the latest version to do that),
             so the eyebrow goes too. */}
         {!showEarlierVersionWarning && (
-          <span className="eyebrow">Request changes or approve</span>
+          <span className="eyebrow">
+            {hideApproveForOutreach ? 'Anything to change?' : 'Request changes or approve'}
+          </span>
         )}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           {showEarlierVersionWarning && latestVersion ? (
@@ -1670,12 +1712,21 @@ export default function CustomerProofPage() {
               Request changes
             </ButtonInk>
           )}
-          <ButtonCoral
-            icon={Check}
-            onClick={() => openActionPanel(activeVersion.id, name, 'approve', opts?.displayName)}
-          >
-            {approveLabel}
-          </ButtonCoral>
+          {/* ⚠ Approve is withheld on an outreach proof's first version —
+              see suppressApproveForOutreach. It is not a taste call: pressing
+              it books a sale that does not exist, marks the register "Ordered
+              again", and drops the customer out of every follow-up bucket for
+              good. The band above collects the commercial answer instead.
+              Request changes stays: it means what it says here, and it is the
+              honest fallback if the band's form fails. */}
+          {!hideApproveForOutreach && (
+            <ButtonCoral
+              icon={Check}
+              onClick={() => openActionPanel(activeVersion.id, name, 'approve', opts?.displayName)}
+            >
+              {approveLabel}
+            </ButtonCoral>
+          )}
         </div>
       </div>
     )
@@ -1978,18 +2029,48 @@ export default function CustomerProofPage() {
   // body carries the proof id plus what they typed and nothing addressable,
   // the response is a bare status, and the server re-checks eligibility — the
   // button showing is a convenience, never the authorisation.
-  async function requestReorder(input: { quantity: number | null; note: string }) {
+  async function requestReorder(input: {
+    quantity: number | null
+    note: string
+    kind?: ReorderRequestKind
+  }) {
     if (!id || reorderState === 'sending') return
     setReorderState('sending')
     try {
       const { data, error } = await supabase.functions.invoke<{ status?: string }>(
         'request-reorder',
-        { body: { proof_id: id, quantity: input.quantity, note: input.note } },
+        {
+          body: {
+            proof_id: id,
+            quantity: input.quantity,
+            note: input.note,
+            ...(input.kind ? { kind: input.kind } : {}),
+          },
+        },
       )
-      setReorderState(!error && data?.status === 'ok' ? 'sent' : 'error')
+      if (error) {
+        setReorderState('error')
+        return
+      }
+      // 'throttled' is the outreach branch answering honestly that a request
+      // is already on file. Anything else that isn't a plain ok is an error —
+      // never optimistic, because "thanks, we've got that" when we haven't is
+      // the single worst thing this page can say.
+      if (data?.status === 'throttled') setReorderState('throttled')
+      else setReorderState(data?.status === 'ok' ? 'sent' : 'error')
     } catch {
       setReorderState('error')
     }
+  }
+
+  // The band's submit. Same call, same state — the two surfaces are the same
+  // request and must never disagree about whether it landed.
+  function requestReorderFromBand(input: {
+    kind: ReorderRequestKind
+    quantity: number | null
+    note: string
+  }) {
+    void requestReorder(input)
   }
 
   // Server-resolved gate; the client never re-derives it. The acknowledgement
@@ -2000,6 +2081,12 @@ export default function CustomerProofPage() {
   // to name (000374). Mutually exclusive with reorderOffered by construction.
   const reorderForward = reorderForwardLink(orderState)
   const reorderAlreadyRequested = reorderRequestIsRecent(orderState?.reorderRequestedAt ?? null)
+  // The band's own acknowledgement gate. Holds until a designer has raised the
+  // order rather than for 24 hours — see reengagementRequestOnFile.
+  const reengageRequestOnFile = reengagementRequestOnFile({
+    requestedAt: orderState?.reorderRequestedAt ?? null,
+    hasOrder: (orderState?.state ?? 'none') !== 'none',
+  })
 
   // Top-level variant-round render. Returns a fragment with two
   // <section>s: pricing card on top, then the variant comparison grid.
@@ -2309,6 +2396,7 @@ export default function CustomerProofPage() {
                 // hardcoded null here is the right answer rather than
                 // threading the active currency's live pricing.
                 personalisationPricing={null}
+                previousOrder={previousOrderMarks}
               />
             )}
             {!activeVersion.custom_quote && activeVersion.shipping_note && (
@@ -2530,6 +2618,50 @@ export default function CustomerProofPage() {
           .filter(v => Object.keys(v.prices).length > 0),
       }
     : { variants: [] }
+
+  // "Same as last time" markers for a customer the Reorder desk brought back
+  // (000389 / 000392). The band above SAYS what they last ordered; this points
+  // at it — the thickness column, the quantity row, the matching row of the
+  // thickness guide — so a returning customer can see their own order in the
+  // grid rather than reconstructing it from a sentence.
+  //
+  // Null on every ordinary proof, on an older version, and on an approved or
+  // abandoned one, because it rides the same gate as the band itself: markers
+  // without the greeting that explains them would read as the page having
+  // opinions about what the customer should buy.
+  //
+  // The material guard lives inside previousSpecFromReengagement rather than
+  // here, so a future call site can't reintroduce a plastic order's thickness
+  // on a steel proof by forgetting it.
+  const previousOrderSpec: PreviousSpec | null = showReengagementBand
+    ? previousSpecFromReengagement(reengagement, {
+        materialId: activeVersion?.material_id ?? null,
+      })
+    : null
+
+  // ⚠ What the grid's columns ARE, read off the catalogue rather than assumed.
+  // material_variants.variant_type is thickness | ink_count | finish | default,
+  // and the grid renders whichever one this material is priced on: metal by
+  // thickness, Standard Paper by finish, and Translucent / Satin Plastic and
+  // Letterpress by ink count, whose headers read "2 Inks", "3 Inks". Anything
+  // written about "the thicknesses above" on those last three is false.
+  //
+  // Resolved from the variants the grid actually renders (post-curation), so a
+  // row the page couldn't resolve arrives as undefined and refuses the marker
+  // rather than inheriting its neighbours' dimension.
+  const previousOrderDimension = variantDimension(
+    livePricingSnapshot.variants.map(
+      (v) => variantRows.find((r) => r.id === v.variant_id)?.variant_type,
+    ),
+  )
+
+  // One decision, read by both the price grid and the thickness guide. Derived
+  // here rather than inside each surface precisely so the two cannot contradict
+  // each other about the customer's own history — see PreviousOrderMarkers.
+  const previousOrderMarks: PreviousOrderMarkers = previousOrderMarkers(previousOrderSpec, {
+    offeredVariantIds: livePricingSnapshot.variants.map((v) => v.variant_id),
+    dimension: previousOrderDimension,
+  })
 
   // Locked-variant spec surface. When the version's pricing grid has
   // exactly one variant AND that variant_type is 'finish', the
@@ -2814,7 +2946,10 @@ export default function CustomerProofPage() {
           the very bottom of the page by design, so the strip offers the
           jump straight to it — the one moment that placement trade-off
           reverses. Presentation only. */}
-      {isReminderVisit && !proofIsApproved && (
+      {/* Suppressed when the re-engagement band is up: both say "welcome
+          back", and this one's "your proof is ready whenever you are" tells a
+          customer we approached that they were the ones keeping us waiting. */}
+      {isReminderVisit && !proofIsApproved && !showReengagementBand && (
         <div className="border-b border-line bg-canvas">
           <div className="mx-auto max-w-[1280px] px-gutter py-2.5 flex flex-wrap items-baseline gap-x-4 gap-y-1">
             <span className="text-sm text-ink">
@@ -3089,6 +3224,7 @@ export default function CustomerProofPage() {
                         quoteMaxQuantity={activeVersion.quote_max_quantity}
                         quantitySurcharges={quantitySurcharges}
                         personalisationPricing={activePersonalisationPricing}
+                        previousOrder={previousOrderMarks}
                       />
                       {personalisationBreakevenQty != null && (
                         <p className="mt-3 text-[13px] text-ink-mute leading-relaxed">
@@ -3222,6 +3358,39 @@ export default function CustomerProofPage() {
               <main> note) so its cards re-sequence with the left rail's;
               real two-column flex container on lg+. */}
           <div className="contents lg:flex lg:flex-col lg:gap-7 lg:min-w-0">
+
+            {/* The re-engagement welcome band (000392). Lives at the top of
+                the WIDE column rather than full-width above <main>: its
+                checklist says "on the card below", and from here it sits
+                literally above the artwork, while the identity and
+                specification cards pull up alongside it in the left rail
+                instead of being pushed a screenful down. order-first keeps it
+                the opening statement on mobile, where the columns collapse to
+                one flow. Gated on activeVersion by the enclosing <main>. */}
+            {showReengagementBand && reengagement && (
+              <div className="order-first lg:order-none">
+                <ReengagementBand
+                  context={reengagement}
+                  hasQrCodes={(versionQrImages[activeVersion.id] ?? []).length > 0}
+                  materialDisplay={activeVersion.material_display}
+                  // The band collects the request itself rather than pointing
+                  // at the approval controls. That is safe where pointing at
+                  // the ACTION PANEL would not be — the panel's slot key
+                  // differs per proof shape (a recipient's name, the shared
+                  // sentinel, a layout id, a round variant) and a wrong guess
+                  // loses what the customer typed, whereas request-reorder
+                  // takes a proof id and nothing else.
+                  onRequestReorder={
+                    activeVersion.approvals_enabled ? requestReorderFromBand : undefined
+                  }
+                  state={reorderState}
+                  alreadyRequested={reengageRequestOnFile}
+                  onNotRightNow={
+                    activeVersion.approvals_enabled ? openDeclineFeedbackPanel : undefined
+                  }
+                />
+              </div>
+            )}
 
             {/* Version filmstrip — picture cards, one per version, each
                 showing that draft's first front plate plus a one-line
@@ -4013,8 +4182,22 @@ export default function CustomerProofPage() {
                 <p className="max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-ink-soft">
                   {thicknessIntroForMaterial(thicknessNotes, activeVersion.material_code)}
                 </p>
+                {/* previousOrderThicknessRows badges the thickness a
+                    returning customer last bought — and strips the shared
+                    catalogue's "Most popular" from every row, which this
+                    panel has never shown and must not start showing: the
+                    designer already chose the thickness for this proof.
+
+                    ⚠ It is handed the GRID'S resolved markers, not the raw
+                    spec. The grid and this guide sit on one screen describing
+                    one purchase, so a badge here that the grid didn't place
+                    reads as the page contradicting itself — which is exactly
+                    what a curated grid used to produce. */}
                 <MetalThicknessPanel
-                  options={thicknessSetForMaterial(thicknessNotes, activeVersion.material_code)}
+                  options={previousOrderThicknessRows(
+                    thicknessSetForMaterial(thicknessNotes, activeVersion.material_code),
+                    previousOrderMarks,
+                  )}
                 />
               </div>
             </PanelShell>
@@ -4141,6 +4324,7 @@ export default function CustomerProofPage() {
                       quoteMaxQuantity={activeVersion.quote_max_quantity}
                       quantitySurcharges={quantitySurcharges}
                       personalisationPricing={activePersonalisationPricing}
+                      previousOrder={previousOrderMarks}
                     />
                     {personalisationBreakevenQty != null && (
                       <p className="mt-3 text-[13px] text-ink-mute leading-relaxed">
@@ -4343,6 +4527,7 @@ export default function CustomerProofPage() {
             <DeclineFeedbackPanel
               proofId={id ?? ''}
               proofVersionId={activeVersion.id}
+              suppressRecovery={showReengagementBand}
               className="order-11 lg:order-none"
               id="decline-feedback"
             />
@@ -4768,6 +4953,7 @@ function PaperPricingTable({
   quoteMaxQuantity,
   quantitySurcharges,
   personalisationPricing,
+  previousOrder = null,
 }: {
   snapshot: PricingSnapshot
   currency: Currency
@@ -4781,9 +4967,77 @@ function PaperPricingTable({
   // two rows render beneath the base grid: a Personalisation row and
   // a bold Total row. Otherwise the table renders exactly as before.
   personalisationPricing: PersonalisationPricing | null
+  // What a returning customer bought last time, when the Reorder desk
+  // brought them back AND the material matches (000389 / 000392). Null
+  // on every ordinary proof, which is the common case: the whole block
+  // below then renders exactly as it did before this feature existed.
+  //
+  // ⚠ The RESOLVED markers, not the raw snapshot. The decision — which column
+  // may be badged, whether the explainer may be spoken at all, and in whose
+  // vocabulary — belongs to previousOrderMarkers, because this grid is not the
+  // only surface describing the purchase and the surfaces must agree. It also
+  // knows what this grid's columns are: they are only thicknesses on the metal
+  // family, and this component cannot tell from the snapshot alone.
+  previousOrder?: PreviousOrderMarkers | null
 }) {
   const { variants } = snapshot
   if (!variants?.length) return null
+
+  // Everything below is the page's single decision, unpacked. Undated badge
+  // text because a table cell is 70-110px wide in the left rail, where "Your
+  // last order · March 2024" either wraps to four lines or forces the column
+  // so wide the grid scrolls sideways; the date is said twice on this page
+  // already (the band's own sentence, and the thickness guide).
+  const badgedVariantId = previousOrder?.badgeId ?? null
+  const previousQty = previousOrder?.quantity ?? null
+  const previousNote = previousOrder?.note ?? null
+  const previousBadge = previousOrder?.badgeTextShort ?? null
+  // A quiet wash rather than the badge's own fill: it runs the height of the
+  // table, so at chip strength it would read as an alert.
+  // No column tint. A wash behind eleven rows of prices is a large filled area
+  // carrying chip-strength colour: it reads as an overlay sitting behind the
+  // table rather than part of it, its edges never line up with the cell
+  // padding, and it says nothing the header badge hasn't already said — nor
+  // anything at all to a screen reader. The badge is the signal.
+
+  // The chip. Same clothes as the pay-page choosers' badge, deliberately: the
+  // returning customer may well see both pages, and one badge that looks like
+  // two different things is worse than either.
+  const badgeChip = (kind: string) =>
+    previousBadge ? (
+      <span
+        data-previous-order={kind}
+        className="whitespace-nowrap rounded-full bg-brand-soft px-2 py-0.5 font-sans text-[11px] font-medium leading-tight text-[var(--c-brand-800)]"
+      >
+        {previousBadge}
+      </span>
+    ) : null
+
+  // Footnotes under the grid. The variant note only ever appears when the
+  // option they bought ISN'T in this grid ("isn't available on this order" —
+  // never "we no longer offer", because the grid is scoped to what this proof
+  // prices, not to what the catalogue still sells), and only when the columns
+  // are a dimension the note can name. The quantity line is the fallback for a
+  // quantity the grid doesn't list: the fact is worth stating even when
+  // there's no row to mark.
+  const previousNotes = (qtyShown: boolean) => {
+    const hint = previousQty != null && !qtyShown ? previousOrder?.quantityNote ?? null : null
+    if (!previousNote && !hint) return null
+    return (
+      <div className="mt-3 space-y-1">
+        {previousNote && (
+          <p data-previous-order="thickness-note" className="text-[13px] leading-relaxed text-ink-mute">
+            {previousNote}
+          </p>
+        )}
+        {hint && (
+          <p data-previous-order="quantity-note" className="text-[13px] leading-relaxed text-ink-mute">
+            {hint}
+          </p>
+        )}
+      </div>
+    )
+  }
 
   const lookupSet = [
     ...new Set(variants.flatMap((v) => Object.keys(v.prices).map(Number))),
@@ -4857,6 +5111,12 @@ function PaperPricingTable({
                       rowSpan={hasPersonalisation ? 3 : 1}
                     >
                       {qty.toLocaleString()}
+                      {/* On a single-column proof — paper, wood, acrylic,
+                          carbon fibre — this is the ONLY marker available,
+                          since there is no thickness column to point at. */}
+                      {qty === previousQty && (
+                        <span className="mt-1.5 block w-fit">{badgeChip('quantity')}</span>
+                      )}
                     </td>
                     <td
                       className={[
@@ -4892,6 +5152,7 @@ function PaperPricingTable({
             })}
           </tbody>
         </table>
+        {previousNotes(rows.some((r) => r.qty === previousQty))}
         <QuantityLookup
           variants={variants}
           currency={currency}
@@ -4927,6 +5188,9 @@ function PaperPricingTable({
                 key={v.variant_id}
                 scope="col"
                 className="eyebrow py-3 pl-2 text-right sm:pl-4"
+                // Matched by ID against the variants this grid is actually
+                // rendering — never by label, so a renamed or re-priced
+                // variant can't collect a badge that belongs elsewhere.
               >
                 {/* Compact unit on mobile (e.g. "300µm") so the four
                     columns fit without horizontal scroll; full label
@@ -4936,6 +5200,9 @@ function PaperPricingTable({
                     (ink counts, finishes) are unaffected by the replace. */}
                 <span className="sm:hidden normal-case">{v.display.replace(/\s*microns?\b/i, 'µm')}</span>
                 <span className="hidden sm:inline">{v.display}</span>
+                {v.variant_id === badgedVariantId && (
+                  <span className="mt-1 block normal-case tracking-normal">{badgeChip('thickness')}</span>
+                )}
               </th>
             ))}
           </tr>
@@ -4952,6 +5219,9 @@ function PaperPricingTable({
                     rowSpan={hasPersonalisation ? 3 : 1}
                   >
                     {qty.toLocaleString()}
+                    {qty === previousQty && (
+                      <span className="mt-1.5 block w-fit">{badgeChip('quantity')}</span>
+                    )}
                   </td>
                   {variants.map((v) => {
                     const base = v.prices[String(qty)]
@@ -5037,6 +5307,7 @@ function PaperPricingTable({
         </tbody>
       </table>
     </div>
+    {previousNotes(visibleQuantities.includes(previousQty ?? -1))}
     <QuantityLookup
       variants={variants}
       currency={currency}

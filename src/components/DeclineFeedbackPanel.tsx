@@ -48,6 +48,7 @@ export default function DeclineFeedbackPanel({
   proofId,
   proofVersionId,
   setDiscard = false,
+  suppressRecovery = false,
   onSubmitted,
   className = '',
   id,
@@ -59,6 +60,14 @@ export default function DeclineFeedbackPanel({
   // front door must never show pricing. Default false = the proof page's
   // behaviour, byte-for-byte.
   setDiscard?: boolean
+  // Re-engagement outreach (000392). Same copy as the ordinary proof page —
+  // this customer IS deciding whether to approve — but no cheaper-material
+  // offer. The band two inches above says the artwork is exactly as we last
+  // printed it; answering "too expensive" with a different material both
+  // contradicts that and reads as an unsolicited downsell of a design they
+  // chose years ago. Kept separate from setDiscard, which also changes the
+  // wording.
+  suppressRecovery?: boolean
   // Fires after a successful submit so the set review page can reflect the
   // card as set aside without a refetch.
   onSubmitted?: () => void
@@ -85,8 +94,9 @@ export default function DeclineFeedbackPanel({
     setReason(code)
     setError(null)
     // No recovery offers in setDiscard mode — the set front door carries no
-    // pricing (the offer card quotes from-prices and a discount).
-    if (code === 'price_too_high' && !setDiscard) {
+    // pricing (the offer card quotes from-prices and a discount) — nor on an
+    // outreach proof, where a cheaper material contradicts the page.
+    if (code === 'price_too_high' && !setDiscard && !suppressRecovery) {
       setRecoveryLoading(true)
       try {
         const { data } = await supabase.rpc('public_get_cheaper_alternatives', { p_proof_id: proofId })
@@ -192,9 +202,10 @@ export default function DeclineFeedbackPanel({
         <>
           <p className="text-sm text-gray-700">{selected?.followUp}</p>
 
-          {/* Price-objection recovery offers — never in setDiscard mode
+          {/* Price-objection recovery offers — never in setDiscard mode, and
+              never on an outreach proof (see suppressRecovery)
               (the set front door carries no pricing). */}
-          {reason === 'price_too_high' && !setDiscard && (
+          {reason === 'price_too_high' && !setDiscard && !suppressRecovery && (
             <div className="mt-3 rounded-lg border border-gray-200 bg-white p-3 text-sm">
               {recoveryLoading ? (
                 <p className="text-gray-500">Finding some options…</p>

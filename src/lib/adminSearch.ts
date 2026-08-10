@@ -81,6 +81,16 @@ export const ADMIN_DESTINATIONS: AdminDestination[] = [
     description: 'Every order and its payment status.',
   },
   {
+    id: 'reorder-register',
+    label: 'Reorder register',
+    path: '/admin/reorder-register',
+    group: 'Customers & orders',
+    icon: 'reorderregister',
+    sidebar: true,
+    keywords: ['reorder register', 'back book', 'past customers', 're-engagement', 'reengagement', 'win back', 'winback', 'lapsed customers', 'old customers', 'former customers', 'reorder desk', 'outreach', 'lifetime value', 'repeat customers', 'xero history', 'prospects', 'who to call'],
+    description: 'Every past customer, what they last bought and when they are due.',
+  },
+  {
     id: 'shipping',
     label: 'Shipping',
     path: '/admin/shipping',

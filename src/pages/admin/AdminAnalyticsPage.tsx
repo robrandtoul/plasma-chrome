@@ -314,6 +314,10 @@ interface ReengRegister {
   pending: number
   in_build: number
   contacted: number
+  /** 000403/000404: said yes, nothing paid for yet. Its own bucket — folding it
+   *  into `contacted` would say they hadn't answered, and into `converted` that
+   *  they had bought. */
+  accepted: number
   converted: number
   declined: number
   closed_no_response: number
@@ -2604,7 +2608,14 @@ function ReengagementSection({
         <StatTile
           label="Converted"
           value={String(reg.converted)}
-          sub={`${outreach.paid} paid in this window`}
+          // ⚠ Converted counts PAID production orders, never approvals (000403).
+          // The figure fell when that shipped; the old one was wrong, because a
+          // designer's "Mark as approved" was being counted as a sale.
+          sub={
+            (reg.accepted ?? 0) > 0
+              ? `${outreach.paid} paid in this window · ${reg.accepted} said yes, awaiting a pay link`
+              : `${outreach.paid} paid in this window`
+          }
           accent="var(--c-in-stock)"
         />
       </div>

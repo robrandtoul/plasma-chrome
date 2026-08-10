@@ -53,6 +53,10 @@ interface ResolvePopoverProps {
    * having looked at what is being copied.
    */
   onRaiseReorder?: () => void
+  /** The proof was created by the Reorder desk, so "Raise the reorder" is
+   *  deliberately absent and the resolution copy must not name it. Dashboard
+   *  call sites leave this undefined and are unchanged. */
+  isOutreach?: boolean
   /** The trigger element (the reason chip or the status pill). */
   children: ReactNode
   className?: string
@@ -72,6 +76,7 @@ export function ResolvePopover({
   companyName,
   onSnoozed,
   onRaiseReorder,
+  isOutreach,
   children,
   className = '',
 }: ResolvePopoverProps) {
@@ -239,7 +244,7 @@ export function ResolvePopover({
       <div className="mt-1 text-ink-soft">{attentionReason(ruleCode, meta)}</div>
       <div className="mt-1.5 text-ink-soft">
         <span className="font-semibold text-ink">To resolve · </span>
-        {attentionResolution(ruleCode)}
+        {attentionResolution(ruleCode, { outreach: isOutreach })}
       </div>
       {/* Secondary signals (000221) — the other rules that also fired
           but lost the one-chip collapse. Visibility only; the chip's

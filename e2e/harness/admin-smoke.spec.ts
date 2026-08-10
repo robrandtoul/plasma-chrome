@@ -78,6 +78,7 @@ const ADMIN_ROUTES: { path: string; active: string | null }[] = [
   { path: '/admin/artwork-check', active: '/admin/artwork-check' },
   { path: '/admin/needs-attention', active: '/admin/needs-attention' },
   { path: '/admin/shipping', active: '/admin/shipping' },
+  { path: '/admin/reorder-register', active: '/admin/reorder-register' },
   { path: '/admin/analytics', active: '/admin/analytics' },
   { path: '/admin/settings', active: '/admin/settings' },
   { path: '/admin/demo-data', active: null },
