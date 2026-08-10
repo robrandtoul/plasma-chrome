@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import CardActionsMenu from '../../components/CardActionsMenu'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
@@ -8,7 +9,7 @@ import { Pill, type PillColour } from '../../design'
 // definition of "today". Both are imported rather than restated: if the
 // register's idea of what is servable today drifted from the desk's, the two
 // screens would quietly disagree about the same customers.
-import { todayIsoLocal, type ProspectState } from '../../lib/reorderDesk'
+import { todayIsoLocal, type ProspectState, scoreReasonsWorthShowing } from '../../lib/reorderDesk'
 import type { Currency } from '../../lib/types'
 
 // Admin → Reorder register. The whole back book on one screen.
@@ -414,14 +415,14 @@ export default function AdminReorderRegisterPage() {
         <p className="mt-2">
           This page only <em>shows</em> the register. The Reorder desk on the dashboard is what works
           it — five customers a day off the top of this list, each one contacted by a person, never
-          automatically. Use the three actions on a row to take someone out of that supply or put
-          them back.
+          automatically. The <span aria-hidden="true">…</span> menu on a row takes someone out of
+          that supply, or puts them back.
         </p>
       </section>
 
       {/* ── Summary strip ───────────────────────────────────────────────── */}
       {summaryError ? (
-        <p className="mb-4 rounded-2xl bg-low-soft px-4 py-3 text-sm text-low ring-1 ring-low">
+        <p className="mb-4 rounded-2xl bg-low-soft px-3 py-3 text-sm text-low ring-1 ring-low">
           The register totals could not be counted, so they are left off rather than shown wrong.
           The list below is unaffected.
         </p>
@@ -494,7 +495,7 @@ export default function AdminReorderRegisterPage() {
       </section>
 
       {actionError && (
-        <p className="mb-4 rounded-2xl bg-out-soft px-4 py-3 text-sm text-out ring-1 ring-out">{actionError}</p>
+        <p className="mb-4 rounded-2xl bg-out-soft px-3 py-3 text-sm text-out ring-1 ring-out">{actionError}</p>
       )}
 
       {/* ── List ────────────────────────────────────────────────────────── */}
@@ -527,7 +528,13 @@ export default function AdminReorderRegisterPage() {
       ) : (
         <>
           <div className="table-scroll overflow-y-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
-            <table className="w-full text-sm">
+            {/* ⚠ min-w, not just w-full. Inside .table-scroll (overflow-x:auto)
+                a bare w-full table obeys the container and squeezes columns
+                instead of scrolling — which is what wrapped the prose cells to
+                roughly one word per line and pushed the status and action
+                columns off the right edge. Given a floor it scrolls, and every
+                column keeps a usable width. */}
+            <table className="w-full min-w-[60rem] text-sm">
               <thead>
                 <tr className="border-b border-line-soft">
                   <th className={thClass}>Customer</th>
@@ -549,9 +556,10 @@ export default function AdminReorderRegisterPage() {
                   const suppressed = r.state === 'suppressed'
                   const busy = busyId === r.id
                   const reasons = (r.score_reasons ?? []).filter(Boolean)
+                  const extraReasons = scoreReasonsWorthShowing(reasons)
                   return (
                     <tr key={r.id} className="border-b border-line-soft align-top last:border-0">
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-3">
                         <div className="font-medium text-ink">{r.customer_name}</div>
                         {r.email ? (
                           <div className="truncate text-xs text-ink-mute" title={r.email}>{r.email}</div>
@@ -570,11 +578,11 @@ export default function AdminReorderRegisterPage() {
                         )}
                       </td>
 
-                      <td className="max-w-[16rem] px-4 py-3 text-ink-soft">
+                      <td className="min-w-[10rem] max-w-[15rem] px-3 py-3 text-ink-soft">
                         {r.last_spec ?? <span className="text-ink-dim">—</span>}
                       </td>
 
-                      <td className="whitespace-nowrap px-4 py-3 text-ink-mute">
+                      <td className="whitespace-nowrap px-3 py-3 text-ink-mute">
                         {fmtDate(r.last_order_on)}
                         {r.cadence_days != null && (
                           <div className="text-xs text-ink-dim">
@@ -583,23 +591,31 @@ export default function AdminReorderRegisterPage() {
                         )}
                       </td>
 
-                      <td className="px-4 py-3 text-right tabular-nums text-ink-soft">
+                      <td className="px-3 py-3 text-right tabular-nums text-ink-soft">
                         {r.orders_count ?? 0}
                       </td>
 
                       {/* Each row in its OWN currency — never added up. */}
-                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-ink-soft">
+                      <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-ink-soft">
                         {money(r.lifetime_value, r.currency)}
                       </td>
 
-                      <td className="max-w-[18rem] px-4 py-3">
+                      {/* The number, and ONLY the part of the reasoning the row
+                          doesn't already state three columns to the left. The
+                          full list stays on the title for anyone who wants it. */}
+                      <td
+                        className="min-w-[9rem] px-3 py-3"
+                        title={reasons.length > 0 ? reasons.join(' · ') : undefined}
+                      >
                         <div className="font-semibold tabular-nums text-ink">{r.score ?? 0}</div>
-                        {reasons.length > 0 && (
-                          <div className="mt-0.5 text-xs text-ink-mute">{reasons.join(' · ')}</div>
+                        {extraReasons.length > 0 && (
+                          <div className="mt-0.5 text-xs leading-snug text-ink-mute">
+                            {extraReasons.join(' · ')}
+                          </div>
                         )}
                       </td>
 
-                      <td className="whitespace-nowrap px-4 py-3">
+                      <td className="whitespace-nowrap px-3 py-3">
                         <Pill colour={pill.colour}>{pill.label}</Pill>
                         {resting && !suppressed && (
                           <div className="mt-1 text-xs text-ink-dim">
@@ -613,39 +629,31 @@ export default function AdminReorderRegisterPage() {
                         )}
                       </td>
 
-                      <td className="whitespace-nowrap px-4 py-3 text-right">
-                        <div className="flex flex-col items-end gap-1">
-                          {!suppressed && (
-                            <button
-                              type="button"
-                              onClick={() => rest(r)}
-                              disabled={busy}
-                              className={quietBtn}
-                            >
-                              Rest 90 days
-                            </button>
-                          )}
-                          {(suppressed || resting) && (
-                            <button
-                              type="button"
-                              onClick={() => restore(r)}
-                              disabled={busy}
-                              className={actionBtn}
-                            >
-                              Put back
-                            </button>
-                          )}
-                          {!suppressed && (
-                            <button
-                              type="button"
-                              onClick={() => suppress(r)}
-                              disabled={busy}
-                              className={quietBtn}
-                            >
-                              Never contact
-                            </button>
-                          )}
-                        </div>
+                      {/* One overflow menu, not three stacked buttons. Three
+                          buttons cost roughly eight columns' worth of width and
+                          pushed themselves off the right of the table — so the
+                          page's only controls were the part you couldn't reach.
+                          Same CardActionsMenu the Orders page uses. */}
+                      <td className="w-12 whitespace-nowrap px-3 py-3 text-right">
+                        <CardActionsMenu
+                          label={`Actions for ${r.customer_name}`}
+                          items={[
+                            ...(!suppressed
+                              ? [{ label: 'Rest 90 days', onClick: () => rest(r), disabled: busy }]
+                              : []),
+                            ...(suppressed || resting
+                              ? [{ label: 'Put back on the register', onClick: () => restore(r), disabled: busy }]
+                              : []),
+                            ...(!suppressed
+                              ? [{
+                                  label: 'Never contact',
+                                  onClick: () => suppress(r),
+                                  disabled: busy,
+                                  tone: 'danger' as const,
+                                }]
+                              : []),
+                          ]}
+                        />
                       </td>
                     </tr>
                   )
@@ -693,6 +701,4 @@ function SummaryTile({ label, value, sub }: { label: string; value: string; sub:
 
 const selectClass = 'select-styled min-w-[12rem] rounded border border-line bg-surface px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'
 const inputClass = 'rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'
-const thClass = 'px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim'
-const actionBtn = 'text-[12px] font-semibold text-brand hover:underline disabled:opacity-50'
-const quietBtn = 'text-[12px] text-ink-mute hover:text-ink hover:underline disabled:opacity-50'
+const thClass = 'px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim'

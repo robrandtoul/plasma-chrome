@@ -42,7 +42,7 @@ registerHooks({
   },
 })
 
-const { planDesk, todayIsoLocal } = await import('./reorderDesk.ts')
+const { planDesk, todayIsoLocal, scoreReasonsWorthShowing } = await import('./reorderDesk.ts')
 type ReorderProspect = import('./reorderDesk.ts').ReorderProspect
 type OutreachProofFacts = import('./reorderDesk.ts').OutreachProofFacts
 
@@ -531,6 +531,50 @@ test('replied rows sync outcomes but never enter the follow-up or reply buckets'
   assertEqual(ids(plan.followUps), [], 'followUps')
   assertEqual(ids(plan.quietCloses), [], 'quietCloses')
   assertEqual(ids(plan.toClose), [], 'toClose')
+})
+
+// ── What the register table should print ────────────────────────────────────
+
+test('score reasons drop everything the row already says, and keep what it does not', () => {
+  // ⚠ Measured on live across all 2,758 rows: 100% restate the Orders column,
+  // 100% restate Last ordered, 99.9% restate Lifetime, and only 142 add the
+  // "overdue" clause. Printing the lot beside those three columns said each
+  // number twice AND wrapped a sentence to about one word per line, which is
+  // what pushed the status and action columns off the right of the screen.
+  const live = [
+    '5 previous orders',
+    'last ordered ~6 months ago',
+    '~£2232 lifetime',
+    'overdue by their own rhythm (~every 6 months)',
+  ]
+  // ⚠ The parenthetical is dropped too: "(~every 6 months)" is word-for-word
+  // what the Last-ordered column already prints as "usually every 6 months",
+  // and it is the difference between the actions column being on screen and
+  // being scrolled off it.
+  assertEqual(
+    scoreReasonsWorthShowing(live),
+    ['overdue by their own rhythm'],
+    'only the overdue clause survives, without the cadence the row already prints',
+  )
+
+  // The common shape: nothing to add, so the cell shows the number alone.
+  assertEqual(
+    scoreReasonsWorthShowing(['1 previous order', 'last ordered ~23 months ago', '~£190 lifetime']),
+    [],
+    'a row whose reasons are pure restatement adds nothing',
+  )
+
+  // ⚠ Fails OPEN. The seeding job writes this text freehand, so a genuinely
+  // new clause must SURFACE rather than be silently swallowed — the filter is
+  // a deny-list of the three known duplicates, never an allow-list.
+  assertEqual(
+    scoreReasonsWorthShowing(['2 previous orders', 'bought three materials from us']),
+    ['bought three materials from us'],
+    'an unrecognised reason is shown, not hidden',
+  )
+
+  assertEqual(scoreReasonsWorthShowing(null), [], 'null is empty, not a crash')
+  assertEqual(scoreReasonsWorthShowing([]), [], 'empty is empty')
 })
 
 // ── The serve-time recency guard (000395) ───────────────────────────────────

@@ -80,6 +80,18 @@ function onReorderDeskPage(): boolean {
   return path === '/reorder-desk'
 }
 
+// The admin register page (/admin/reorder-register). Kept separate from the
+// desk rig above because the two read the SAME table with different query
+// shapes, and a single predicate would have the register's paged list stealing
+// the desk's state-filtered reads.
+function onReorderRegisterPage(): boolean {
+  if (typeof window === 'undefined') return false
+  const path =
+    new URLSearchParams(window.location.search).get('path') ??
+    (window.location.hash ? window.location.hash.replace(/^#/, '') : '')
+  return path === '/admin/reorder-register'
+}
+
 // Local-clock YYYY-MM-DD, matching todayIsoLocal in src/lib/reorderDesk.ts.
 // Re-derived here rather than imported: pulling the lib in would drag its
 // './supabase' import into this module, which in the harness aliases back to
@@ -108,7 +120,15 @@ function prospect(overrides: Record<string, any>): Record<string, any> {
     cadence_days: 200,
     last_spec: '250 gold metal cards (500 micron)',
     score: 50,
-    score_reasons: ['3 orders', 'Last ordered May 2024'],
+    // Verbatim shape from live (see scoreReasonsWorthShowing): three clauses
+    // that restate columns the table already prints, and — on the rows that
+    // earn it — the one clause that adds something.
+    score_reasons: [
+      '3 previous orders',
+      'last ordered ~15 months ago',
+      '~£1450 lifetime',
+      'overdue by their own rhythm (~every 7 months)',
+    ],
     state: 'pending',
     queued_on: null,
     contacted_at: null,
@@ -208,6 +228,29 @@ export function reorderDeskQuery(state: HookQueryState): { data: any; error: nul
   const { table, filters } = state
 
   if (table === 'reorder_prospects') {
+    // ── The admin register page ────────────────────────────────────────────
+    // Its four summary tiles are head-only counts; its table is one paged,
+    // sorted, searchable read. Answered from the same PROSPECTS list so the
+    // page renders REAL rows — the layout only misbehaves when there is
+    // content in the prose cells, so an empty-state-only rig proved nothing
+    // about the thing that was actually wrong with it.
+    if (onReorderRegisterPage()) {
+      if (state.head) {
+        const st = filters['eq:state']
+        const n = typeof st === 'string'
+          ? PROSPECTS.filter((p) => p.state === st).length
+          : PROSPECTS.length
+        return { data: [], error: null, count: n }
+      }
+      let rows = PROSPECTS.slice()
+      const st = filters['eq:state']
+      if (typeof st === 'string') rows = rows.filter((p) => p.state === st)
+      if (Array.isArray(filters['in:state'])) {
+        rows = rows.filter((p) => (filters['in:state'] as string[]).includes(p.state))
+      }
+      return { data: rows, error: null, count: rows.length }
+    }
+
     // No other fixture area owns this table, but the desk's list reads carry
     // no rd- id, so stay silent off the rig page anyway.
     if (!onReorderDeskPage()) return null

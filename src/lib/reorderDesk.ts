@@ -140,6 +140,42 @@ export function invalidateReorderDeskSettings(): void {
 
 // ── The daily plan (pure — unit tested) ─────────────────────────────────────
 
+/**
+ * The part of a prospect's score reasons that the register table does NOT
+ * already show in its own columns.
+ *
+ * ⚠ Measured on live, all 2,758 rows: every single one restates the Orders
+ * column ("5 previous orders"), the Last-ordered column ("last ordered ~6
+ * months ago") and the Lifetime column ("~£2232 lifetime"). Only 142 say
+ * anything else — the "overdue by their own rhythm" clause — and NOTHING says
+ * a fourth thing. Rendering the lot beside those three columns printed each
+ * number twice and, being a sentence in a narrow cell, wrapped to about one
+ * word per line and pushed the rest of the table off the screen.
+ *
+ * So the table shows the number, and this shows only what the number's
+ * neighbours cannot. The full list is still available on the cell's title, so
+ * nothing is lost — it just stops being said twice.
+ *
+ * Substring matching rather than a structured field because score_reasons is
+ * free text written by the seeding job; if that job ever starts emitting a
+ * genuinely new clause it will surface here by default rather than be hidden,
+ * which is the safe direction.
+ */
+export function scoreReasonsWorthShowing(reasons: string[] | null | undefined): string[] {
+  if (!reasons) return []
+  const restatesAColumn = /previous order|last ordered|lifetime/i
+  return reasons
+    .filter((r) => r && !restatesAColumn.test(r))
+    // The surviving clause reads "overdue by their own rhythm (~every 7
+    // months)" — and that parenthetical is word-for-word the cadence the
+    // Last-ordered column already prints as "usually every 7 months". Dropping
+    // it is the same rule as the filter above, applied inside a clause rather
+    // than across them, and it is what lets the column be narrow enough for the
+    // row actions to stay on screen.
+    .map((r) => r.replace(/\s*\(~?every[^)]*\)\s*$/i, '').trim())
+    .filter(Boolean)
+}
+
 /** What the desk knows about an outreach proof when partitioning. */
 export interface OutreachProofFacts {
   status: string

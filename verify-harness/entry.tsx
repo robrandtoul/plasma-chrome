@@ -1076,10 +1076,12 @@ const tree = requestedPath === '/order-builder' ? (
         <Route path="artwork-check" element={<AdminArtworkCheckPage />} />
         <Route path="needs-attention" element={<AdminNeedsAttentionPage />} />
         <Route path="shipping" element={<AdminShippingPage />} />
-        {/* The mock backend returns nothing for reorder_prospects, so this
-            mounts the register's EMPTY state — which is the state worth
-            proving renders, since a page that white-screens on no data is
-            exactly what a fresh database would show. */}
+        {/* Served with real rows by the reorder-desk fixture module (see
+            onReorderRegisterPage there). It used to mount the EMPTY state,
+            which proved the page doesn't white-screen on a fresh database but
+            said nothing about the layout — and the layout only misbehaves once
+            there is content in the prose cells, which is exactly where it was
+            wrong. */}
         <Route path="reorder-register" element={<AdminReorderRegisterPage />} />
         <Route path="analytics" element={<AdminAnalyticsPage />} />
         <Route path="settings" element={<AdminSettingsPage />} />
