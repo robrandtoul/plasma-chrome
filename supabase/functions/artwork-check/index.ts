@@ -1105,10 +1105,17 @@ Deno.serve(async (req) => {
     baseCtx.skippedFiles = [...picked.skipped]
     const documents: ContentBlock[] = []
     let printsRawTotal = 0
-    // Kept so the cut-through geometry check can read the same bytes we send
-    // to the model. Only for cut-capable materials, so a plastic job pays
-    // nothing for it.
-    const cutThroughInput: { name: string; bytes: Uint8Array }[] = []
+    const asDocument = (name: string, bytes: Uint8Array): ContentBlock => ({
+      type: 'document',
+      source: { type: 'base64', media_type: 'application/pdf', data: bytesToBase64(bytes) },
+      title: name,
+    })
+    // Base64 costs a file its own size again, so on a cut-capable material —
+    // the only one whose geometry we measure — the raw bytes are held back and
+    // encoded AFTER the geometry leg, one at a time, instead of both copies of
+    // every file staying alive across the whole run. A plastic job encodes as
+    // it downloads exactly as before and pays nothing for any of this.
+    const awaitingGeometry: { name: string; bytes: Uint8Array }[] = []
     for (const f of picked.files) {
       const bytes = await downloadSharedLinkFile(dbxToken, order.dropbox_folder_url, f.path)
       if (!bytes) {
@@ -1121,28 +1128,33 @@ Deno.serve(async (req) => {
       }
       baseCtx.printFileNames.push(f.name)
       printsRawTotal += bytes.length
-      if (baseCtx.cutThrough) cutThroughInput.push({ name: f.name, bytes })
-      documents.push({
-        type: 'document',
-        source: { type: 'base64', media_type: 'application/pdf', data: bytesToBase64(bytes) },
-        title: f.name,
-      })
+      if (baseCtx.cutThrough) awaitingGeometry.push({ name: f.name, bytes })
+      else documents.push(asDocument(f.name, bytes))
     }
 
     // ── Will any cut-out piece fall out? ────────────────────────────────────
     // Measured from the vector geometry rather than judged from the page
     // images: a supporting strut is 0.4-1.2 mm, a few pixels at page scale.
     // Best-effort — any failure yields no faces and the check carries on
-    // exactly as before.
+    // exactly as before. Time-bounded inside analyseOrderArtwork: this is the
+    // one leg whose cost grows with the number of cards, and an overrun costs
+    // the isolate (and so the whole check), not just this leg.
     let cutThroughFaces: CutThroughFace[] = []
-    if (cutThroughInput.length > 0) {
+    if (awaitingGeometry.length > 0) {
       try {
         // A cut-through hole is on both faces; collapse the duplicate so one
         // fault reads as one finding.
-        cutThroughFaces = dedupeMirroredFaces(await analyseOrderArtwork(cutThroughInput))
+        cutThroughFaces = dedupeMirroredFaces(await analyseOrderArtwork(awaitingGeometry))
       } catch (err) {
         console.error('[artwork-check] cut-through check failed:', (err as Error)?.message)
       }
+    }
+    // Encode now the geometry is done with them, releasing each raw buffer as
+    // its document block is built. Order is preserved: on a cut-capable
+    // material every file came through here, on any other none did.
+    while (awaitingGeometry.length > 0) {
+      const held = awaitingGeometry.shift()!
+      documents.push(asDocument(held.name, held.bytes))
     }
     if (documents.length === 0) {
       return await finish(buildErrorReport(runModel,'no readable print files (.pdf/.ai) in the Dropbox folder', buildInputs(baseCtx, threadMessages, threadFound)))

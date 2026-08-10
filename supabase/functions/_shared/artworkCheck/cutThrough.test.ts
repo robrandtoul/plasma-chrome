@@ -22,6 +22,7 @@ import {
   boxOf,
   components,
   CUT_FILL,
+  CUT_THROUGH_MIN_FACES,
   describeFace,
   MIN_ISLAND_PT2,
   pairPrintFiles,
@@ -603,6 +604,108 @@ function pdfArtwork(cx: number, tie: boolean): string {
 }
 
 {
+  // The lazy parse drops each face as soon as no later pair needs it. That
+  // must change only how much is alive at once, never what gets measured — so
+  // a fault in the LAST pair of a long order is still caught, and the pairs
+  // before it are unaffected by having been evicted.
+  const strutted = buildPdf(pdfArtwork(126, true))
+  const unstrutted = buildPdf(pdfArtwork(126, false))
+  const faces = await analyseOrderArtwork([
+    { name: '01_P1_Front_CF.ai', bytes: strutted },
+    { name: '02_P1_Back_CF.ai', bytes: strutted },
+    { name: '01_P2_Front_CF.ai', bytes: strutted },
+    { name: '02_P2_Back_CF.ai', bytes: strutted },
+    { name: '01_P3_Front_CF.ai', bytes: unstrutted },
+    { name: '02_P3_Back_CF.ai', bytes: unstrutted },
+  ])
+  eq('every face in a multi-card order is reported', faces.length, 6)
+  eq(
+    'a fault in the last pair of a long order is still caught',
+    faces.find((f) => f.label === '01_P3_Front_CF.ai')?.result.status,
+    'dropout',
+  )
+  eq(
+    'and an earlier pair is unaffected by eviction',
+    faces.find((f) => f.label === '01_P1_Front_CF.ai')?.result.status,
+    'clean',
+  )
+}
+
+{
+  // An order big enough to exhaust the isolate's CPU must come back partially
+  // measured and SAY so — the alternative, seen live on order 403880, is the
+  // platform killing the worker mid-run so the whole artwork check stores
+  // nothing at all and the order can never be placed.
+  const art = buildPdf(pdfArtwork(126, true))
+  const files: { name: string; bytes: Uint8Array }[] = []
+  for (let i = 1; i <= 6; i++) {
+    files.push({ name: `01_P${i}_Front_CF.ai`, bytes: art })
+    files.push({ name: `02_P${i}_Back_CF.ai`, bytes: art })
+  }
+  // First reading is the start stamp; every later reading is past the budget.
+  let ticks = 0
+  const faces = await analyseOrderArtwork(files, {
+    minFaces: 2,
+    timeBudgetMs: 100,
+    now: () => (ticks++ === 0 ? 0 : 1_000),
+  })
+  eq('every face is still accounted for', faces.length, 12)
+  const measured = faces.filter((f) => f.result.status !== 'cannot_check')
+  const unmeasured = faces.filter((f) => f.result.status === 'cannot_check')
+  eq('the floor is measured', measured.length, 2)
+  eq('the rest come back unmeasured rather than missing', unmeasured.length, 10)
+  check(
+    'and each says why it was not measured',
+    unmeasured.every((f) =>
+      /more cards than the check can measure|other side of this card was measured/.test(f.result.reason ?? '')),
+    unmeasured[0]?.result.reason,
+  )
+  check('no findings are invented for them', unmeasured.every((f) => f.result.islands.length === 0))
+  // Measuring in card-first order must not reorder the report: results still
+  // come back in pair order, one entry per print file, exactly as before.
+  const pairOrder = pairPrintFiles(files.map((f) => f.name)).map((p) => p.face)
+  check('results stay in pair order', faces.every((f, i) => f.label === pairOrder[i]))
+  eq('every print file is reported exactly once', new Set(faces.map((f) => f.label)).size, 12)
+  // The budget buys cards, not faces: with room for two it must measure one
+  // face of each of two DIFFERENT cards, never both faces of the first.
+  eq('the floor is spent on distinct cards', new Set(measured.map((f) => f.label.replace(/^\d+_/, ''))).size, 2)
+  check(
+    'so the pair it did reach is reported as covered by its other side',
+    faces.some((f) => /other side of this card was measured/.test(f.result.reason ?? '')),
+  )
+
+  const summary = summariseCutThrough(faces)
+  check(
+    'the summary states the partial coverage',
+    /not measured/.test(summary?.detail ?? ''),
+    summary?.detail,
+  )
+  check(
+    'and never reports more faces measured than were',
+    /^2 card faces measured\./.test(summary?.detail ?? ''),
+    summary?.detail,
+  )
+}
+
+{
+  // The floor holds even with no budget at all, so the orders that complete
+  // today (four faces was the largest ever) cannot start being truncated.
+  const art = buildPdf(pdfArtwork(126, true))
+  const files: { name: string; bytes: Uint8Array }[] = []
+  for (let i = 1; i <= 5; i++) {
+    files.push({ name: `01_P${i}_Front_CF.ai`, bytes: art })
+    files.push({ name: `02_P${i}_Back_CF.ai`, bytes: art })
+  }
+  const faces = await analyseOrderArtwork(files, { timeBudgetMs: 0, now: () => 10_000 })
+  eq(
+    'the default floor is measured even on a spent budget',
+    faces.filter((f) => f.result.status !== 'cannot_check').length,
+    CUT_THROUGH_MIN_FACES,
+  )
+  check('and the floor is at least the largest order seen in production', CUT_THROUGH_MIN_FACES >= 4)
+}
+
+{
   eq('no files -> no context block', buildCutThroughContext([]), '')
 }
 
@@ -864,7 +967,7 @@ const faceResult = (over: Partial<import('./cutThrough.ts').FaceResult>) => ({
   ])!
   eq('a partial run still passes on what it read', s.outcome, 'passed')
   check('counting only the measured face', /^1 card face measured\./.test(s.detail), s.detail)
-  check('and declaring the unread one', /1 card face couldn’t be read/.test(s.detail), s.detail)
+  check('and declaring the unmeasured one', /1 card face not measured/.test(s.detail), s.detail)
 }
 
 console.log(`\ncutThrough: ${passed} passed, ${failed} failed`)

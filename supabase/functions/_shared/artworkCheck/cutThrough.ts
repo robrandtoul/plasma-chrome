@@ -1061,64 +1061,183 @@ export interface CutThroughFace {
   result: FaceResult
 }
 
+/** A face we did not measure, for whatever reason. Never a silent omission. */
+function unmeasuredFace(label: string, reason: string): CutThroughFace {
+  return {
+    label,
+    result: {
+      status: 'cannot_check',
+      islands: [],
+      reason,
+      cutRegions: 0,
+      printedWhiteRegions: 0,
+      mirroredAreaShare: 0,
+      cardWidthPt: 0,
+      cardHeightPt: 0,
+    },
+  }
+}
+
+/**
+ * How long the geometry may run before it stops starting new faces.
+ *
+ * This leg is pure computation — no network, no disk — so elapsed wall time is
+ * its CPU time, which is the resource that actually runs out: an edge isolate
+ * gets 2s of CPU per request and is killed outright (HTTP 546) on overrun,
+ * taking the whole artwork check down with it. That is not a hypothetical; it
+ * is what happened to order 403880 (The Experience Auto Group, 7 recipients),
+ * where 14 carbon-fibre print files spent ~880ms of CPU here on a fast laptop
+ * — several times that on an isolate — and every run died at ~31s having
+ * stored nothing at all, so `place-order` then refused for want of a check
+ * that could never complete.
+ *
+ * A budget rather than a flat file cap because the thing worth bounding is
+ * work, not files: a slow isolate does less, a fast one does more, and neither
+ * dies. Bytes were the wrong unit for image size (see imageResize.ts) for the
+ * same reason. Note the budget needs no machine-speed guess of its own — it is
+ * wall time read on the isolate that is actually running, and for a leg with
+ * no I/O in it that IS the CPU being spent.
+ *
+ * Sized from what the rest of a run costs, since the 2s is for all of it: the
+ * legs common to both checks (thread, header probes, zxing decodes at ~10ms an
+ * image, JSON) measure ~400-500ms on a fast laptop, and the order path adds
+ * ~80ms encoding its print files. Only that other work scales with how slow
+ * the isolate is, so the budget is set low enough to leave it room to be
+ * several times slower and still land inside 2s — plus the overrun of the one
+ * face already in flight, which the check can only stop between faces.
+ *
+ * Deliberately cautious, because the two ways of being wrong do not cost the
+ * same. Too low and some faces come back unmeasured, which the report says
+ * plainly. Too high and the isolate is killed, which loses the entire check —
+ * every other leg included — and leaves the order unplaceable.
+ */
+export const CUT_THROUGH_TIME_BUDGET_MS = 400
+
+/**
+ * Faces measured before the budget is consulted at all.
+ *
+ * Four because that is the largest cut-through order that has ever completed
+ * in production; anything at or below it is known to fit and must not start
+ * being truncated by this change.
+ */
+export const CUT_THROUGH_MIN_FACES = 4
+
 /**
  * Check every print file in an order folder, each against its opposite side.
  *
  * Strictly best-effort: a file that will not parse becomes a 'cannot_check'
  * face, never an exception, so this can never fail the artwork check it runs
  * inside. Same fail-safe stance as qrDecode.ts.
+ *
+ * Two bounds keep a big order from killing the isolate it runs in. Faces are
+ * measured until the time budget is spent (see CUT_THROUGH_TIME_BUDGET_MS),
+ * and the rest come back as 'cannot_check' so the report and the summary count
+ * them as unmeasured — partial coverage that says so, rather than a clean bill
+ * of health for cards nobody looked at. Separately, files are parsed on demand
+ * and dropped as soon as no later pair needs them, so the number of live
+ * ParsedFaces stays near two however many cards the order has; each file is
+ * still parsed at most once.
  */
 export async function analyseOrderArtwork(
   files: { name: string; bytes: Uint8Array }[],
+  opts: { timeBudgetMs?: number; minFaces?: number; now?: () => number } = {},
 ): Promise<CutThroughFace[]> {
-  const parsed = new Map<string, ParsedFace | null>()
-  for (const f of files) {
-    try {
-      parsed.set(f.name, await parseFace(f.bytes))
-    } catch {
-      parsed.set(f.name, null)
-    }
+  const timeBudgetMs = opts.timeBudgetMs ?? CUT_THROUGH_TIME_BUDGET_MS
+  const minFaces = opts.minFaces ?? CUT_THROUGH_MIN_FACES
+  const now = opts.now ?? (() => Date.now())
+  const startedAt = now()
+
+  const bytesByName = new Map(files.map((f) => [f.name, f.bytes]))
+  const pairs = pairPrintFiles(files.map((f) => f.name))
+
+  // How many pairs still need each file, so a parsed face can be dropped the
+  // moment it can no longer be referenced.
+  const stillNeeded = new Map<string, number>()
+  const need = (name: string) => stillNeeded.set(name, (stillNeeded.get(name) ?? 0) + 1)
+  for (const pair of pairs) {
+    need(pair.face)
+    if (pair.opposite) need(pair.opposite)
   }
-  const out: CutThroughFace[] = []
-  for (const pair of pairPrintFiles(files.map((f) => f.name))) {
-    const front = parsed.get(pair.face) ?? null
-    if (!front) {
-      out.push({
-        label: pair.face,
-        result: {
-          status: 'cannot_check',
-          islands: [],
-          reason: 'the artwork in this file could not be read',
-          cutRegions: 0,
-          printedWhiteRegions: 0,
-          mirroredAreaShare: 0,
-          cardWidthPt: 0,
-          cardHeightPt: 0,
-        },
-      })
+
+  const parsed = new Map<string, ParsedFace | null>()
+  async function parseOnce(name: string): Promise<ParsedFace | null> {
+    if (parsed.has(name)) return parsed.get(name) ?? null
+    const bytes = bytesByName.get(name)
+    let face: ParsedFace | null = null
+    if (bytes) {
+      try {
+        face = await parseFace(bytes)
+      } catch {
+        face = null
+      }
+    }
+    parsed.set(name, face)
+    return face
+  }
+  function releaseOnce(name: string): void {
+    const left = (stillNeeded.get(name) ?? 0) - 1
+    stillNeeded.set(name, left)
+    if (left <= 0) parsed.delete(name)
+  }
+  function releasePair(pair: FacePair): void {
+    releaseOnce(pair.face)
+    if (pair.opposite) releaseOnce(pair.opposite)
+  }
+
+  // Which physical card each pair belongs to. Every card yields two pairs —
+  // front-as-face and back-as-face — and a cut-through hole is on both faces
+  // by definition, which is the whole reason dedupeMirroredFaces exists. So
+  // when the budget is short, one face of every card is worth far more than
+  // both faces of the first few: measuring in file-name order would have spent
+  // this order's entire budget on backs and left three cards untouched.
+  const cardKey = (pair: FacePair) => [pair.face, pair.opposite ?? pair.face].sort().join(' ')
+  const firstFaceOfCard: number[] = []
+  const secondFaceOfCard: number[] = []
+  const seenCards = new Set<string>()
+  pairs.forEach((pair, i) => {
+    const key = cardKey(pair)
+    if (seenCards.has(key)) secondFaceOfCard.push(i)
+    else {
+      seenCards.add(key)
+      firstFaceOfCard.push(i)
+    }
+  })
+  const isSecondFace = new Set(secondFaceOfCard)
+
+  // Measured in card-first order, reported back in the caller's order.
+  const out = new Array<CutThroughFace>(pairs.length)
+  let attempted = 0
+  for (const i of [...firstFaceOfCard, ...secondFaceOfCard]) {
+    const pair = pairs[i]
+
+    if (attempted >= minFaces && now() - startedAt >= timeBudgetMs) {
+      out[i] = unmeasuredFace(
+        pair.face,
+        isSecondFace.has(i)
+          ? 'the other side of this card was measured instead'
+          : 'this order has more cards than the check can measure in one run',
+      )
+      releasePair(pair)
       continue
     }
-    const back = pair.opposite ? (parsed.get(pair.opposite) ?? null) : null
+    attempted++
+
+    const front = await parseOnce(pair.face)
+    if (!front) {
+      out[i] = unmeasuredFace(pair.face, 'the artwork in this file could not be read')
+      releasePair(pair)
+      continue
+    }
+    const back = pair.opposite ? await parseOnce(pair.opposite) : null
     const oppositeMissingReason = pair.opposite && !back
       ? `the artwork for the other side (${pair.opposite}) could not be read, so we cannot tell whether this white is cut through or printed`
       : undefined
     try {
-      out.push({ label: pair.face, result: analyseFace(front, back, { oppositeMissingReason }) })
+      out[i] = { label: pair.face, result: analyseFace(front, back, { oppositeMissingReason }) }
     } catch {
-      out.push({
-        label: pair.face,
-        result: {
-          status: 'cannot_check',
-          islands: [],
-          reason: 'the cut-through check could not complete for this file',
-          cutRegions: 0,
-          printedWhiteRegions: 0,
-          mirroredAreaShare: 0,
-          cardWidthPt: 0,
-          cardHeightPt: 0,
-        },
-      })
+      out[i] = unmeasuredFace(pair.face, 'the cut-through check could not complete for this file')
     }
+    releasePair(pair)
   }
   return out
 }
@@ -1277,21 +1396,24 @@ export function summariseCutThrough(faces: CutThroughFace[]): CheckSummary | nul
   let conditionalFaces = 0
   let cleanFaces = 0
   let nothingCutFaces = 0
-  let unreadableFaces = 0
+  // Faces we did not measure, whichever reason applies — unreadable artwork or
+  // an order too big to work through in one run. Both leave the same hole in
+  // the coverage, and the per-card line in "Couldn't check" gives the reason.
+  let unmeasuredFaces = 0
   for (const { result } of faces) {
     switch (result.status) {
       case 'dropout': loosePieces += result.islands.length; break
       case 'possible_dropout': conditionalFaces++; break
       case 'clean': cleanFaces++; break
       case 'no_cut_artwork': nothingCutFaces++; break
-      case 'cannot_check': unreadableFaces++; break
+      case 'cannot_check': unmeasuredFaces++; break
     }
   }
 
   const key = 'cut_through'
   const label = 'Loose pieces'
   const faceCount = (n: number) => `${n} card face${n === 1 ? '' : 's'}`
-  const measured = faces.length - unreadableFaces
+  const measured = faces.length - unmeasuredFaces
 
   // Two short sentences rather than one long clause: the UI prints these after
   // "Loose pieces — ", so a detail that opens with its own dash reads as two
@@ -1301,13 +1423,13 @@ export function summariseCutThrough(faces: CutThroughFace[]): CheckSummary | nul
       key,
       label,
       outcome: 'not_run',
-      detail: `None of the ${faceCount(faces.length)} could be read, so nothing was measured — see “Couldn’t check”.`,
+      detail: `None of the ${faceCount(faces.length)} were measured — see “Couldn’t check”.`,
     }
   }
 
   // Partial coverage must never read as full coverage.
-  const tail = unreadableFaces > 0
-    ? ` ${faceCount(unreadableFaces)} couldn’t be read — see “Couldn’t check”.`
+  const tail = unmeasuredFaces > 0
+    ? ` ${faceCount(unmeasuredFaces)} not measured — see “Couldn’t check”.`
     : ''
   const measuredSentence = `${faceCount(measured)} measured.`
 
