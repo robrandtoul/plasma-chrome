@@ -59,7 +59,13 @@
 // Keep this verbose until the send pipeline is proven stable.
 
 import { requireDesigner } from '../_shared/admin.ts'
-import { fetchConversation, getAccessToken, HsError, postStaffReply } from '../_shared/helpscout.ts'
+import {
+  createStaffConversation,
+  fetchConversation,
+  getAccessToken,
+  HsError,
+  postStaffReply,
+} from '../_shared/helpscout.ts'
 import { messageBodyToHtml } from '../_shared/messageHtml.ts'
 
 const CORS_HEADERS = {
@@ -88,6 +94,10 @@ function debugFromError(err: unknown): { name: string; message: string; stack: s
 
 interface SendReplyResult {
   thread_id: number
+  /** Set only when the linked conversation was sealed for age and the message
+   *  went out on a NEW one instead. The proof has been re-pointed at it; the
+   *  caller may want to say so rather than silently swapping the link. */
+  new_conversation_id?: string
 }
 
 // Help Scout's reply endpoint requires customer.id explicitly,
@@ -99,10 +109,10 @@ interface SendReplyResult {
 // (404), the GET fails for any other reason (passes status), or
 // the conversation has no primary customer to attribute the reply
 // to (502 — unusual; would need designer intervention in HS).
-async function fetchPrimaryCustomerId(
+async function fetchConversationContext(
   token: string,
   conversationId: string,
-): Promise<number> {
+): Promise<{ customerId: number; mailboxId: number | null; subject: string | null }> {
   console.log('[send-helpscout-reply] GET conversation for primary customer')
   const conv = await fetchConversation(token, conversationId)
   if (!conv) {
@@ -116,7 +126,33 @@ async function fetchPrimaryCustomerId(
     )
   }
   console.log('[send-helpscout-reply] fetched primary customer', { id: customerId })
-  return customerId
+  // Mailbox and subject are only needed if the reply turns out to be
+  // impossible and we have to open a fresh conversation instead (see
+  // isLockedForAge). Reading them here costs nothing — it is the same GET.
+  return { customerId, mailboxId: conv.mailboxId ?? null, subject: conv.subject ?? null }
+}
+
+/**
+ * Help Scout refuses to update a conversation once it is older than the
+ * account's retention policy: 412 Precondition Failed, "Conversation locked -
+ * conversation is older than company policy allows and cannot be updated
+ * further."
+ *
+ * ⚠ This is NOT an edge case for us, it is the normal state of a re-engagement.
+ * The Reorder desk exists to contact customers who last bought years ago, and
+ * the new-proof form helpfully links their old thread — which is exactly the
+ * thread Help Scout has since sealed. It hit on the very first desk send.
+ * supabase/functions/request-reorder already reasons this way for the customer
+ * side ("a reorder months or years later cannot reuse the original"); this is
+ * the same fact reaching the designer side.
+ *
+ * Matched on the documented error slug as well as the prose, so a reworded
+ * message doesn't silently turn this back into a dead end.
+ */
+function isLockedForAge(err: unknown): boolean {
+  if (!(err instanceof HsError) || err.status !== 412) return false
+  const m = err.message.toLowerCase()
+  return m.includes('conversation-locked-age') || m.includes('conversation locked')
 }
 
 // Wrapper around the shared postStaffReply helper. Adds the
@@ -314,14 +350,78 @@ Deno.serve(async (req) => {
       console.log('[send-helpscout-reply] requesting access token')
       const token = await getAccessToken(appId, appSecret)
       console.log('[send-helpscout-reply] got access token')
-      const customerId = await fetchPrimaryCustomerId(token, conversationId)
+      const convo = await fetchConversationContext(token, conversationId)
       // Hand Help Scout finished HTML (escaped, URLs wrapped in <a> tags,
       // newlines as <br>) rather than a plain-text body. Help Scout's own
       // nl2br + auto-linking runs in an order that folds a "<br><br>…"
       // following a bare URL into the link's href — the iPhone-404 bug on
       // the first-proof / revision templates, whose copy sits after {url}.
       // See _shared/messageHtml.ts.
-      result = await postReply(token, conversationId, messageBodyToHtml(body), userIdNum, customerId, hsStatus)
+      const html = messageBodyToHtml(body)
+      try {
+        result = await postReply(token, conversationId, html, userIdNum, convo.customerId, hsStatus)
+      } catch (replyErr) {
+        if (!isLockedForAge(replyErr)) throw replyErr
+
+        // ── The thread is sealed. Start a new one rather than dead-end. ────
+        //
+        // Failing here leaves the designer holding a message they cannot send
+        // and a project the customer never hears about — and on the Reorder
+        // desk that is the DEFAULT outcome, not a rare one, because every
+        // customer it serves last bought years ago.
+        //
+        // ⚠ The proof is RE-POINTED at the new conversation. That is the
+        // load-bearing half: helpscout-webhook stamps reply activity by
+        // matching helpscout_conversation_id, and the desk decides whether a
+        // customer has answered from those stamps. Leaving the proof pointed at
+        // the sealed thread would send the message and then treat the reply as
+        // silence — chasing someone who had already written back, and
+        // eventually quiet-closing them.
+        if (!convo.mailboxId) {
+          throw new HsError(
+            502,
+            'That Help Scout conversation is locked for age and carries no mailbox, so a new one cannot be opened. Send this one by hand from Help Scout.',
+          )
+        }
+        console.log('[send-helpscout-reply] conversation locked for age; opening a new one', {
+          oldConversationId: conversationId,
+          mailboxId: convo.mailboxId,
+        })
+        const newId = await createStaffConversation(token, {
+          mailboxId: convo.mailboxId,
+          // The old subject keeps continuity for the customer — it is still
+          // about their cards. Only a conversation with no subject at all
+          // falls back to a generic one.
+          subject: convo.subject?.trim() || 'Your Plasma Design business cards',
+          customerId: convo.customerId,
+          userId: userIdNum,
+          text: html,
+          status: hsStatus,
+        })
+        if (!newId) {
+          // Help Scout accepted it but told us nothing. The customer HAS the
+          // message, so this must not read as a failure — but we cannot
+          // re-point the proof, so say exactly that.
+          console.error('[send-helpscout-reply] new conversation created but no id returned')
+          result = { thread_id: 0 }
+        } else {
+          const { error: repointErr } = await admin
+            .from('proofs')
+            .update({
+              helpscout_conversation_id: newId,
+              helpscout_conversation_url: `https://secure.helpscout.net/conversation/${newId}`,
+            })
+            .eq('id', proofId)
+          if (repointErr) {
+            // The message went out; only the link is stale. Log loudly rather
+            // than fail the send — a designer re-sending because they think it
+            // failed would email the customer twice.
+            console.error('[send-helpscout-reply] re-point failed', repointErr.message)
+          }
+          console.log('[send-helpscout-reply] new conversation opened', { newId })
+          result = { thread_id: 0, new_conversation_id: newId }
+        }
+      }
     } catch (hsErr) {
       if (hsErr instanceof HsError) {
         const upstream = hsErr.status === 404 ? 404 : 502

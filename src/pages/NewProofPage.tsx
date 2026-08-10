@@ -1033,6 +1033,10 @@ export default function NewProofPage() {
               OUTREACH_SNOOZE_HOURS,
               'Re-engagement outreach — the desk manages this project',
               'reorder_desk',
+              // ⚠ Unattributed. The designer clicked "Start their project",
+              // not "snooze four rules" — stamping their id makes the
+              // dashboard read as though they silenced the flags by hand.
+              { system: true },
             )
           } catch (e) {
             console.error('[reorder-desk] snooze failed', rule, e)

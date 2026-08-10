@@ -423,6 +423,11 @@ export async function createStaffConversation(
     customerId: number
     userId: number
     text: string
+    /** Defaults to 'pending' — the new conversation is waiting on the CUSTOMER,
+     *  so it belongs in their queue. 'closed' is for a message that ENDS the
+     *  exchange (the abandon notice), where leaving it Pending would put a
+     *  closed-off project straight back in the chase queue. */
+    status?: 'pending' | 'closed'
   },
 ): Promise<string | null> {
   const resp = await fetch('https://api.helpscout.net/v2/conversations', {
@@ -435,7 +440,7 @@ export async function createStaffConversation(
     body: JSON.stringify({
       subject: body.subject,
       type: 'email',
-      status: 'pending',
+      status: body.status ?? 'pending',
       mailboxId: body.mailboxId,
       customer: { id: body.customerId },
       threads: [

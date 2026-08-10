@@ -14,6 +14,13 @@ export async function snoozeProof(
   hours: number,
   note: string | null = null,
   source: string = 'resolve_nudge',
+  opts: {
+    /** True when the app is snoozing on its own initiative rather than because
+     *  a designer clicked snooze. Stores snoozed_by = null, so the dashboard
+     *  shows the note's reason instead of blaming whoever happened to be
+     *  logged in. The 000167 RLS policy allows null for exactly this. */
+    system?: boolean
+  } = {},
 ): Promise<void> {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Not authenticated')
@@ -25,7 +32,11 @@ export async function snoozeProof(
       {
         proof_id:      proofId,
         rule_code:     ruleCode,
-        snoozed_by:    user.id,
+        // ⚠ null on a system snooze. A designer creating a Reorder-desk
+        // outreach project has four chase rules snoozed on their behalf;
+        // stamping their id makes the dashboard read as though they went and
+        // silenced four flags by hand.
+        snoozed_by:    opts.system ? null : user.id,
         snoozed_until: snoozedUntil,
         note:          note?.trim() || null,
       },
@@ -37,7 +48,12 @@ export async function snoozeProof(
     action: 'proof.snoozed',
     targetType: 'proof',
     targetId: proofId,
-    metadata: { rule_code: ruleCode, hours, note: note?.trim() || null, source },
+    metadata: {
+      rule_code: ruleCode, hours, note: note?.trim() || null, source,
+      // The audit row still records WHO was signed in, even when the snooze
+      // itself is unattributed — the action was theirs, the decision wasn't.
+      ...(opts.system ? { system: true } : {}),
+    },
   })
 }
 
