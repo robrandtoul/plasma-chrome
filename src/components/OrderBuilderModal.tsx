@@ -3,6 +3,7 @@ import Modal from './Modal'
 import { Field, Input, ButtonCoral, ButtonGhost } from '../design'
 import XeroContactPicker, { type XeroContact } from './XeroContactPicker'
 import { supabase } from '../lib/supabase'
+import { parseReengagementContext, previousSpecFromReengagement } from '../lib/reengagement'
 import { customerOrderUrl } from '../lib/customerOrderUrl'
 import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { SHIP_COUNTRIES, REPRESENTATIVE_POSTCODES } from '../lib/shipCountries'
@@ -313,6 +314,12 @@ export default function OrderBuilderModal({
     optionLabel: string | null
     quantity: number | null
     paidAt: string | null
+    /** Where the suggestion came from. An order we hold is a fact; the register
+     *  is Xero history, so the designer is told which they are looking at. */
+    sourceKind: 'order' | 'register'
+    /** Register path only: the month, already formatted. ⚠ NOT derived from a
+     *  timestamp — see the fetch below. */
+    whenLabel: string | null
   } | null>(null)
   const [prevDismissed, setPrevDismissed] = useState(false)
   // Engaged = the fields are showing and a spec will be sent (if meaningful).
@@ -583,10 +590,70 @@ export default function OrderBuilderModal({
           optionLabel: row.option_label,
           quantity: row.quantity,
           paidAt: row.paid_at,
+          sourceKind: 'order',
+          whenLabel: null,
         })
       })
     return () => { cancelled = true }
   }, [proofId, materialId])
+
+  // Second source: the Reorder desk's own snapshot, for a customer whose
+  // history predates this app (docs/reorder-register-rescrape-spec.md Part B).
+  //
+  // ⚠ Reads the PROOF's own reengagement_context rather than querying the
+  // register. That is the whole design. A register lookup keyed on the contact
+  // cannot tell "the customer's previous purchase" from "the order already sitting
+  // on this proof" — the nightly reconcile folds app payments back into the
+  // register, and the only available discriminator is a date whose two sides
+  // come from different clocks (Xero's invoice date vs Stripe's payment stamp,
+  // measured 1-16 days apart on live). Measured: 14 of 17 answers such a lookup
+  // returned were the proof's OWN order handed back as the previous one. The
+  // snapshot on the proof was written once, at outreach time, from history that
+  // was already complete then — so it cannot echo an order placed afterwards.
+  //
+  // ⚠ Converted by previousSpecFromReengagement, never re-derived here. That
+  // helper refuses the WHOLE spec on a material mismatch, never emits a label
+  // without its id, and never emits a finish — and it is the same function the
+  // customer's own proof page uses, so the two can never disagree about what
+  // this customer last bought. Anything that re-implements those rules in this
+  // modal is a bug.
+  useEffect(() => {
+    if (!proofId || !materialId) return
+    if (prevSuggestion?.sourceKind === 'order') return // an order we hold always wins
+    let cancelled = false
+    void supabase
+      .from('proofs')
+      .select('reengagement_context')
+      .eq('id', proofId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled || !data) return
+        const ctx = parseReengagementContext(
+          (data as { reengagement_context?: unknown }).reengagement_context,
+        )
+        const spec = previousSpecFromReengagement(ctx, { materialId })
+        if (!spec) return
+        setPrevSuggestion((cur) => {
+          if (cur?.sourceKind === 'order') return cur
+          return {
+            variantId: spec.variant_id,
+            variantLabel: spec.variant_label,
+            optionId: spec.option_id,
+            optionLabel: spec.option_label,
+            quantity: spec.quantity,
+            // ⚠ No timestamp on this path, deliberately. The register stores a
+            // DATE; casting it to a timestamptz uses the server's timezone
+            // while the client formats in the browser's, which slides a
+            // 1st-of-month into the previous month west of Greenwich. The
+            // month is pre-formatted by formatOrderMonth instead.
+            paidAt: null,
+            sourceKind: 'register',
+            whenLabel: spec.label,
+          }
+        })
+      })
+    return () => { cancelled = true }
+  }, [proofId, materialId, prevSuggestion?.sourceKind])
 
   // Shipping settings (box tare, intl adjustment %, domestic flat rates) +
   // live GBP→EUR/USD rates, for the indicative estimate. Both have their own
@@ -1698,8 +1765,11 @@ export default function OrderBuilderModal({
                           .filter(Boolean)
                           .join(' · ')}
                       </span>
-                      {prevSuggestion.paidAt && (
+                      {prevSuggestion.sourceKind === 'order' && prevSuggestion.paidAt && (
                         <span className="text-ink-mute"> — paid {formatMonthYear(prevSuggestion.paidAt)}</span>
+                      )}
+                      {prevSuggestion.sourceKind === 'register' && prevSuggestion.whenLabel && (
+                        <span className="text-ink-mute"> — {prevSuggestion.whenLabel}</span>
                       )}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2">
@@ -1718,7 +1788,11 @@ export default function OrderBuilderModal({
                           setPrevOptionId(finishEligible ? prevSuggestion.optionId ?? '' : '')
                           setPrevOptionLabel(finishEligible ? prevSuggestion.optionLabel ?? '' : '')
                           setPrevQuantity(prevSuggestion.quantity != null ? String(prevSuggestion.quantity) : '')
-                          setPrevWhen(formatMonthYear(prevSuggestion.paidAt))
+                          setPrevWhen(
+                            prevSuggestion.sourceKind === 'register'
+                              ? prevSuggestion.whenLabel ?? ''
+                              : formatMonthYear(prevSuggestion.paidAt),
+                          )
                           setDirty(true)
                         }}
                         className="rounded-full bg-ink px-4 py-1.5 text-sm font-medium text-on-ink transition-colors hover:opacity-90"

@@ -654,6 +654,59 @@ test('nothing to point at yields no spec, even on a matching material', () => {
   )
 })
 
+// ── Why the ORDER BUILDER reads the proof, not the register ─────────────────
+//
+// Part B of the re-scrape spec proposed a second source for the builder's
+// "Their last order": look the customer up in the register when we hold no paid
+// order. Measured against live, that lookup returned 17 answers of which 14 were
+// the proof's OWN order handed back as the customer's PREVIOUS one — because
+// reconcile_reorder_register() folds app payments into the register, and the
+// only discriminator available was a date whose two sides come from different
+// clocks (Xero's invoice date vs Stripe's payment stamp, 1-16 days apart).
+//
+// So the builder reads the PROOF's own reengagement_context instead: a snapshot
+// written once at outreach time, from history that was already complete then,
+// which therefore cannot echo an order placed afterwards. These tests pin the
+// properties that design relies on.
+
+test('the snapshot converts to exactly the builder\'s PreviousSpec shape', () => {
+  const spec = previousSpecFromReengagement(BOUGHT, { materialId: BOUGHT.last_material_id })
+  assert(spec !== null, 'a matching snapshot converts')
+  assert(spec!.variant_id === BOUGHT.last_variant_id, 'variant id rides through')
+  assert(spec!.quantity === BOUGHT.last_qty, 'quantity rides through')
+  assert(spec!.source === 'auto', 'it is an auto suggestion, not a hand entry')
+})
+
+test('⚠ it NEVER emits a finish, so the builder cannot suggest one', () => {
+  // The register learned finishes in 000407, but they are deliberately not let
+  // through here — see the spec's decision 4. Measured: only 5 of the surfaced
+  // answers would carry one, so the gate costs nothing and stays until it is
+  // explicitly opened.
+  const spec = previousSpecFromReengagement(BOUGHT, { materialId: BOUGHT.last_material_id })
+  assert(spec!.option_id === null, 'no option id')
+  assert(spec!.option_label === null, 'no option label')
+})
+
+test('⚠ a material mismatch refuses the WHOLE spec, not just the variant', () => {
+  // The quantity and the date must go too. "Last time you ordered 1,500" printed
+  // over a grid for a different material is a claim about the customer's own
+  // history that happens to be about a different product — and it reaches the
+  // pay page through previous_spec, which is customer-visible.
+  const spec = previousSpecFromReengagement(BOUGHT, { materialId: 'a-different-material' })
+  assert(spec === null, 'nothing at all, not a partial suggestion')
+})
+
+test('the month is pre-formatted, so no caller can re-derive it from a timestamp', () => {
+  // ⚠ The register stores a DATE. Casting it to a timestamptz uses the server's
+  // timezone while the client formats in the browser's, which slides a
+  // 1st-of-month into the previous month west of Greenwich.
+  const spec = previousSpecFromReengagement(
+    { ...BOUGHT, last_order_on: '2024-03-01' },
+    { materialId: BOUGHT.last_material_id },
+  )
+  assert(spec!.label === 'March 2024', `got ${spec!.label}`)
+})
+
 console.log('\nvariantDimension — what a grid’s columns actually are')
 
 test('one known type is the dimension; anything else refuses', () => {
