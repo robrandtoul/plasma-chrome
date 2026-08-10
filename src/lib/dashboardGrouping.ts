@@ -229,8 +229,9 @@ const HELPSCOUT_REPLY_WINDOW_MS = 30 * 86_400_000
 export function helpscoutReplyEvents(
   projects: DashboardProject[],
   bundleByProof?: ReadonlyMap<string, { setId: string }>,
+  now: number = Date.now(),
 ): DashboardLatestEvent[] {
-  const cutoff = Date.now() - HELPSCOUT_REPLY_WINDOW_MS
+  const cutoff = now - HELPSCOUT_REPLY_WINDOW_MS
   // Group key → every row that shares it. Rows on a proof with no conversation
   // id get a key nothing else can collide with, so they pass straight through.
   const groups = new Map<string, DashboardLatestEvent[]>()
@@ -441,23 +442,37 @@ export function orderReminderEvents(reminders: OrderReminderRow[], projects: Das
 }
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
+//
+// Every clock-reading helper below takes an optional `now` (the
+// `now: number = Date.now()` pattern used across src/lib — relativeTime,
+// awaitingPayment, announcements, …). Production callers omit it and get the
+// real clock; tests pin it.
+//
+// The seam exists because Today / This week / Older are CALENDAR-day buckets,
+// not elapsed-time ones. A test fixture built as "1 hour ago" genuinely falls on
+// yesterday's date when the suite runs between local midnight and 01:00, so a
+// bucket assertion that reads the wall clock is wrong for the first hour of
+// every day — it just usually goes unnoticed because CI runs in UTC.
+//
+// ⚠ Passing one of these to .filter/.map directly would feed the array INDEX in
+// as `now`. Wrap it in an arrow — see buildSnoozedSection.
 
-export function startOfToday(): Date {
-  const n = new Date()
+export function startOfToday(now: number = Date.now()): Date {
+  const n = new Date(now)
   return new Date(n.getFullYear(), n.getMonth(), n.getDate())
 }
 
-export function isSameDay(iso: string): boolean {
+export function isSameDay(iso: string, now: number = Date.now()): boolean {
   const t = new Date(iso)
-  const s = startOfToday()
+  const s = startOfToday(now)
   return t.getFullYear() === s.getFullYear()
       && t.getMonth()    === s.getMonth()
       && t.getDate()     === s.getDate()
 }
 
-export function isThisWeek(iso: string): boolean {
+export function isThisWeek(iso: string, now: number = Date.now()): boolean {
   const t = new Date(iso)
-  const s = startOfToday()
+  const s = startOfToday(now)
   const diffDays = Math.floor(
     (s.getTime() - new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime()) / 86_400_000
   )
@@ -479,9 +494,9 @@ export function isThisWeek(iso: string): boolean {
  * in the future. False for recently-awakened proofs (snoozed_until in the
  * 24-hour grace window) and for proofs that were never snoozed.
  */
-export function isCurrentlySnoozed(p: DashboardProject): boolean {
+export function isCurrentlySnoozed(p: DashboardProject, now: number = Date.now()): boolean {
   if (!p.snoozed_until) return false
-  return new Date(p.snoozed_until).getTime() > Date.now()
+  return new Date(p.snoozed_until).getTime() > now
 }
 
 /**
@@ -489,10 +504,9 @@ export function isCurrentlySnoozed(p: DashboardProject): boolean {
  * These proofs are bucketed in Today regardless of last_activity_at, since
  * the designer hasn't had a chance to act on them since they woke up.
  */
-export function recentlyAwakened(p: DashboardProject): boolean {
+export function recentlyAwakened(p: DashboardProject, now: number = Date.now()): boolean {
   if (!p.snoozed_until) return false
   const expiry = new Date(p.snoozed_until).getTime()
-  const now    = Date.now()
   return expiry <= now && expiry >= now - 24 * 60 * 60 * 1000
 }
 
@@ -643,9 +657,9 @@ export function isCustomerReplied(p: BucketInput): boolean {
  * Resolve a proof to the single workflow bucket its pill, left cap, and
  * matching headline tile all share. See the precedence note above.
  */
-export function proofBucket(p: BucketInput): BucketDisplay {
+export function proofBucket(p: BucketInput, now: number = Date.now()): BucketDisplay {
   let bucket: ProofBucket
-  if (p.snoozed_until && new Date(p.snoozed_until).getTime() > Date.now()) {
+  if (p.snoozed_until && new Date(p.snoozed_until).getTime() > now) {
     bucket = 'snoozed'
   } else if (p.rule_code != null) {
     bucket = 'needs_attention'
@@ -696,13 +710,17 @@ export interface HelpscoutActivity {
  * chase rules are suppressed (the default 3 days matches the rule guard's
  * default grace window).
  */
-export function recentHelpscoutActivity(p: DashboardProject, withinDays = 3): HelpscoutActivity | null {
+export function recentHelpscoutActivity(
+  p: DashboardProject,
+  withinDays = 3,
+  now: number = Date.now(),
+): HelpscoutActivity | null {
   const candidates: HelpscoutActivity[] = []
   if (p.helpscout_last_reply_at) candidates.push({ kind: 'staff', at: p.helpscout_last_reply_at })
   if (p.helpscout_last_customer_reply_at) candidates.push({ kind: 'customer', at: p.helpscout_last_customer_reply_at })
   if (candidates.length === 0) return null
   const newest = candidates.sort((a, b) => b.at.localeCompare(a.at))[0]
-  const cutoff = Date.now() - withinDays * 86_400_000
+  const cutoff = now - withinDays * 86_400_000
   return new Date(newest.at).getTime() >= cutoff ? newest : null
 }
 
@@ -740,7 +758,7 @@ export function activityTimestamp(
 
 // ── Grouping functions ────────────────────────────────────────────────────────
 
-export function groupByTime(projects: DashboardProject[]): ProjectSection[] {
+export function groupByTime(projects: DashboardProject[], now: number = Date.now()): ProjectSection[] {
   const today: DashboardProject[] = []
   const week:  DashboardProject[] = []
   const older: DashboardProject[] = []
@@ -750,9 +768,9 @@ export function groupByTime(projects: DashboardProject[]): ProjectSection[] {
       older.push(p)
       continue
     }
-    if (recentlyAwakened(p) || isSameDay(ts)) today.push(p)
-    else if (isThisWeek(ts))                  week.push(p)
-    else                                       older.push(p)
+    if (recentlyAwakened(p, now) || isSameDay(ts, now)) today.push(p)
+    else if (isThisWeek(ts, now))                       week.push(p)
+    else                                                 older.push(p)
   }
   const out: ProjectSection[] = []
   if (today.length) out.push({ key: 'today', title: 'Today',     kind: 'time', projects: today })
@@ -776,8 +794,11 @@ export function groupByCompany(projects: DashboardProject[]): ProjectSection[] {
   return individual ? [...named, individual] : named
 }
 
-export function buildSnoozedSection(projects: DashboardProject[]): ProjectSection[] {
-  const snoozed = projects.filter(isCurrentlySnoozed)
+export function buildSnoozedSection(projects: DashboardProject[], now: number = Date.now()): ProjectSection[] {
+  // Arrow rather than a bare `filter(isCurrentlySnoozed)`: filter passes the
+  // element's INDEX as the second argument, which would land in `now` and read
+  // every long-expired snooze as still active.
+  const snoozed = projects.filter((p) => isCurrentlySnoozed(p, now))
   if (!snoozed.length) return []
   return [{ key: '__snoozed__', title: 'Snoozed', kind: 'snoozed', projects: snoozed }]
 }
