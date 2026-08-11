@@ -210,12 +210,16 @@ const ORDERS: FixtureOrder[] = [
     proofs: { helpscout_last_reply_at: daysAgo(1), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-3', contacts: contact('Globex', 'Hank Scorpio') },
     help_requested_at: daysAgo(0.2),
   }),
-  // Awaiting payment — second member of group g1.
+  // Awaiting payment — second member of group g1. Its customer let the link
+  // lapse and asked for another: the second of the two "stuck at the checkout"
+  // stamps, and the reason each is fetched with its own ordering rather than
+  // one `.or()` that would let the commoner truncate the rarer away.
   order({
     id: 'o4',
     quantity: 250,
     order_group_id: 'g1',
     proofs: { helpscout_last_reply_at: daysAgo(1), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-3', contacts: contact('Globex', 'Hank Scorpio') },
+    pay_link_resend_requested_at: daysAgo(0.3),
   }),
   // Awaiting payment — two more standalone orders so the Combine control
   // still has 2+ eligible candidates with g1's members locked away.
@@ -579,6 +583,10 @@ const DASHBOARD_PROJECTS = [
     contact_email: 'laurence@leccy.example',
     approved_at: null,
     material_display: 'Gun Metal',
+    // The customer came back to /p/ and asked for more of these (000372). Only
+    // the Latest-activity feed reads this stamp — the row's own reorder line
+    // keys off reorder_of_proof_id, which is the CHILD project's marker.
+    reorder_requested_at: daysAgo(0.2),
     designer_name: 'Donna Lambe',
     designer_initials: 'DL',
     designer_colour: 'coral',
@@ -706,6 +714,22 @@ const BUNDLE_MEMBERS = [
 
 const BUNDLE_SETS = [
   { id: 'set-1', token: 'set-token', sent_at: daysAgo(0.02), last_opened_at: null },
+  // A bundle the customer has opened, behind the "opened their bundle" row in
+  // Latest activity. Nothing else records that visit — the review hub lists the
+  // cards without registering a view on any of them — and it is the only feed
+  // row that links somewhere other than a proof.
+  //
+  // ⚠ Appended, never prepended. The proof_sets branch below ignores `eq:id`,
+  // so a caller asking for ONE set takes rows[0]; keeping set-1 first is what
+  // stops this fixture reaching the bundle workspace and checkpoint rigs.
+  {
+    id: 'set-a',
+    token: 'set-token-a',
+    sent_at: daysAgo(3),
+    last_opened_at: hoursAgo(5),
+    proofs: [{ id: 'p-b1' }, { id: 'p-b2' }, { id: 'p-b3' }],
+    contacts: contact('Atlus Consulting Engineers', 'Saba'),
+  },
 ]
 
 // ——— Flagged board fixtures (watch_items / watch_updates) ———
@@ -1131,7 +1155,27 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
   } else if (table === 'order_groups') {
     // sent_at is read by the dashboard's Awaiting-payment panel, which reports a
     // combined payment from the GROUP's stamps rather than any member's.
-    rows = [{ id: 'g1', status: 'sent', currency: 'GBP', token: 'gtok', payment_reference: 'GRP-TEST01', sent_at: daysAgo(6), expires_at: daysAhead(12), pay_link_opened_at: null, xero_invoice_id: null, xero_invoice_error: null }]
+    rows = [
+      { id: 'g1', status: 'sent', currency: 'GBP', token: 'gtok', payment_reference: 'GRP-TEST01', sent_at: daysAgo(6), expires_at: daysAhead(12), pay_link_opened_at: null, xero_invoice_id: null, xero_invoice_error: null, orders: [] },
+      // A combined payment whose link the customer has opened. The open is
+      // stamped on the GROUP, never on a member — read the orders table alone
+      // and a combined payment shows nothing at all — so the Latest-activity
+      // feed reads it from here and names it from the embedded members.
+      //
+      // Deliberately NOT referenced by any row in ORDERS: the Awaiting-payment
+      // panel fetches groups with an `in:id` of the member orders it loaded, so
+      // an unreferenced group is invisible to it and this fixture can't move
+      // that panel's numbers.
+      {
+        id: 'g2', status: 'sent', currency: 'GBP', token: 'gtok2', payment_reference: 'GRP-TEST02',
+        sent_at: daysAgo(2), expires_at: daysAhead(12), pay_link_opened_at: hoursAgo(3),
+        xero_invoice_id: null, xero_invoice_error: null,
+        orders: [
+          { proof_id: 'p-grp-1', proofs: { contacts: contact('Wonka Industries', 'Willy Wonka') } },
+          { proof_id: 'p-grp-2', proofs: { contacts: contact('Wonka Industries', 'Willy Wonka') } },
+        ],
+      },
+    ]
     if (Array.isArray(filters['in:id'])) rows = rows.filter((r) => filters['in:id'].includes(r.id))
   } else if (table === 'profiles') {
     rows = [...PROFILES]

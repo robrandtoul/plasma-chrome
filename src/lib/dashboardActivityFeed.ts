@@ -1,7 +1,7 @@
 import type { DashboardLatestEvent, DashboardProject } from './dashboardGrouping'
 
 // The Latest-activity card shows the newest 20 things that happened, merged
-// across six sources. Both the polled rebuild in DashboardPage and the live
+// across a dozen sources. Both the polled rebuild in DashboardPage and the live
 // path below trim to this same number, so a row arriving live can never push
 // the feed past the length the next poll would produce.
 export const ACTIVITY_FEED_CAP = 20

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { DesignerChrome, useDesignerProfile, useIsMobile, Sheet, ButtonCoral, ButtonGhost, ButtonInk, ProofStatusPill, HelpTip } from '../design'
-import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Layers, Link as LinkIcon, Repeat, ThumbsDown, PictureInPicture2 } from 'lucide-react'
+import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Layers, Link as LinkIcon, Repeat, ThumbsDown, PictureInPicture2, Banknote, HelpCircle, RotateCcw } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -59,17 +59,26 @@ import {
   payLinkSentEvents,
   orderReminderEvents,
   proofFeedbackEvents,
+  orderPaidEvents,
+  groupPayLinkOpenEvents,
+  checkoutHelpEvents,
+  reorderRequestedEvents,
+  bundleOpenedEvents,
   type PayLinkOpenRow,
   type PayLinkSentRow,
   type OrderReminderRow,
   type ProofFeedbackFeedRow,
+  type OrderPaidRow,
+  type GroupPayLinkOpenRow,
+  type CheckoutHelpRow,
+  type BundleOpenRow,
   type DashboardLatestEvent,
   type DashboardProject,
   type NeedsAttentionRule,
   type ProjectSection,
 } from '../lib/dashboardGrouping'
-// Near-live Latest activity: realtime carries page views, a poll carries the
-// other five sources. See the note above ACTIVITY_POLL_MS for the split.
+// Near-live Latest activity: realtime carries page views, a poll carries every
+// other source. See the note above ACTIVITY_POLL_MS for the split.
 import {
   ACTIVITY_FEED_CAP,
   applyLiveView,
@@ -2423,6 +2432,40 @@ const ACTIVITY_VISUAL: Record<DashboardLatestEvent['event_type'], ActivityVisual
     tint: 'var(--c-ink-mute)',
     verbCopy: () => 'was sent a payment reminder',
   },
+  // The customer bought. Green — the same "this went well" hue as an approval,
+  // and the only row in the feed that is money in the bank.
+  order_paid: {
+    icon: Banknote,
+    tint: 'var(--c-in-stock)',
+    verbCopy: () => 'paid for their order',
+  },
+  // Stuck at the checkout. Amber rather than red: it needs a person today, but
+  // nothing is broken. Matches the "Asked for help" chip on the Orders page, so
+  // the two surfaces read as the same signal.
+  checkout_help: {
+    icon: HelpCircle,
+    tint: 'var(--c-low)',
+    verbCopy: () => 'asked for help paying',
+  },
+  pay_link_resend_requested: {
+    icon: RotateCcw,
+    tint: 'var(--c-low)',
+    verbCopy: () => 'asked for a fresh payment link',
+  },
+  // They want to buy the same cards again (000372). Brand hue, not the paid
+  // green: this is an ask, not a sale — somebody still has to raise the reorder.
+  reorder_requested: {
+    icon: Repeat,
+    tint: 'var(--c-brand)',
+    verbCopy: () => 'asked to order these again',
+  },
+  // Opened the bundle review page. Same "customer opened something" hue as a
+  // page view and a pay-link open, because that is exactly what it is.
+  bundle_opened: {
+    icon: Layers,
+    tint: 'var(--c-allocated)',
+    verbCopy: () => 'opened their bundle',
+  },
 }
 
 function LatestActivityPanel({
@@ -2519,19 +2562,22 @@ function LatestActivityPanel({
             const failed =
               (e.event_type === 'approve' || e.event_type === 'request_changes') &&
               e.helpscout_thread_id == null
-            // Present only when this row stood in for several proofs sharing
-            // one Help Scout conversation (helpscoutReplyEvents).
+            // Present only when this row stood in for several proofs — a shared
+            // Help Scout conversation, or one combined payment across them.
             const collapsed = e.collapsed && e.collapsed.count > 1 ? e.collapsed : null
+            // Nearly every row opens its project; a bundle-opened row overrides
+            // this with the bundle workspace, since that's what was opened.
+            const href = e.link ?? `/proofs/${e.proof_id}`
             return (
               <li
                 key={e.id}
                 role="button"
                 tabIndex={0}
-                onClick={() => navigate(`/proofs/${e.proof_id}`)}
+                onClick={() => navigate(href)}
                 onKeyDown={(ev) => {
                   if (ev.key === 'Enter' || ev.key === ' ') {
                     ev.preventDefault()
-                    navigate(`/proofs/${e.proof_id}`)
+                    navigate(href)
                   }
                 }}
                 className="flex cursor-pointer items-start gap-3 px-5 py-4 transition-colors hover:bg-canvas focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]"
@@ -2946,17 +2992,18 @@ function readDashboardSnapshot(searchTerm: string): DashboardSnapshot | null {
 
 // ── Latest-activity feed ─────────────────────────────────────────────────────
 //
-// The card is six sources merged on the client, not a table, so keeping it
+// The card is a dozen sources merged on the client, not a table, so keeping it
 // fresh splits in two:
 //
 //   • Page views arrive over realtime (useLiveDashboardViews). They're the
 //     highest-volume source, the most time-sensitive — "they're reading it
 //     right now" — and the only one already in the supabase_realtime
 //     publication, so they cost no migration.
-//   • The other five are polled. Three of them are timestamp UPDATEs on rows
-//     rather than inserts (Help Scout replies, pay-link opens, pay-link sends),
-//     which realtime can't filter by changed column, and none of their tables
-//     are published.
+//   • Everything else is polled: ten queries below, plus two more derived from
+//     the already-loaded projects array (Help Scout replies, reorder requests).
+//     Most of them are timestamp UPDATEs on rows rather than inserts — a
+//     payment, a pay-link open, a bundle being opened — which realtime can't
+//     filter by changed column, and none of their tables are published.
 //
 // At roughly 40 feed rows a day across the whole company (measured on live), a
 // 45-second poll is indistinguishable from live to somebody reading the card,
@@ -2964,13 +3011,17 @@ function readDashboardSnapshot(searchTerm: string): DashboardSnapshot | null {
 // than load-bearing: a blocked socket costs seconds of freshness, not rows.
 const ACTIVITY_POLL_MS = 45_000
 
-// The five polled sources, in the shape buildActivityFeed wants them.
+// The polled sources, in the shape buildActivityFeed wants them.
 interface ActivitySources {
   events: DashboardLatestEvent[]
   payLinkOpens: PayLinkOpenRow[]
   payLinkSents: PayLinkSentRow[]
   orderReminders: OrderReminderRow[]
   feedback: ProofFeedbackFeedRow[]
+  orderPaid: OrderPaidRow[]
+  groupPayLinkOpens: GroupPayLinkOpenRow[]
+  checkoutHelp: CheckoutHelpRow[]
+  bundleOpens: BundleOpenRow[]
 }
 
 /**
@@ -2987,21 +3038,82 @@ async function fetchActivitySources(): Promise<ActivitySources | null> {
     .select('*')
     .order('created_at', { ascending: false })
     .limit(ACTIVITY_FEED_CAP)
-  // Pay-link opens (000262) — the customer opened a still-payable link.
+  // Every order-side row below embeds the proof's customer. The projects array
+  // is still preferred for naming, but the dashboard's working set is narrow
+  // and an order outlives it — on live, 56% of the last 30 days' payments sat
+  // on proofs outside it, which is a feed of anonymous "Customer paid for their
+  // order" rows without this. See resolveCustomer.
+  const ORDER_CUSTOMER = 'proofs(contacts(full_name, companies(name)))'
+  // Pay-link opens (000262) — the customer opened their payment link.
   // Synthesised into the feed like the Help Scout reply rows, bounded by the
   // same feed cap.
+  //
+  // Deliberately NOT scoped to status = 'sent' any more: that read as "a
+  // still-payable link", so the row vanished at the moment they paid and the
+  // feed lost the last trace of the payment journey it never showed the end of.
   const payLinkOpensPromise = supabase
     .from('orders')
-    .select('id, proof_id, pay_link_opened_at')
-    .eq('status', 'sent')
+    .select(`id, proof_id, pay_link_opened_at, ${ORDER_CUSTOMER}`)
     .not('pay_link_opened_at', 'is', null)
     .order('pay_link_opened_at', { ascending: false })
+    .limit(ACTIVITY_FEED_CAP)
+  // Payments (orders.paid_at). Cancelled orders keep their stamp and a free
+  // reprint is born paid, so both are excluded exactly as the Paid-30d tile
+  // excludes them — orderPaidEvents applies the same two rules again over the
+  // rows, which is what makes them testable.
+  //
+  // Fetched at twice the cap because a combined payment collapses many member
+  // rows into one feed row (10 groups = 22 member orders on live).
+  const orderPaidPromise = supabase
+    .from('orders')
+    .select(`id, proof_id, paid_at, order_group_id, status, order_kind, ${ORDER_CUSTOMER}`)
+    .not('paid_at', 'is', null)
+    .neq('status', 'cancelled')
+    .neq('order_kind', 'reprint')
+    .order('paid_at', { ascending: false })
+    .limit(ACTIVITY_FEED_CAP * 2)
+  // A combined payment's link is opened against the GROUP row, never a member's
+  // (21 of the 22 paid member orders on live carry no open of their own), so
+  // without this a combined payment shows nothing at all. The embed is the
+  // member orders, purely to name the customer and give the row a destination.
+  const groupPayLinkOpensPromise = supabase
+    .from('order_groups')
+    .select(`id, pay_link_opened_at, orders(proof_id, ${ORDER_CUSTOMER})`)
+    .not('pay_link_opened_at', 'is', null)
+    .order('pay_link_opened_at', { ascending: false })
+    .limit(ACTIVITY_FEED_CAP)
+  // Stuck at the checkout: asked us a question (order-question), or asked for a
+  // fresh link after theirs expired. Two queries rather than one `.or()`,
+  // because a single query can only be ordered by one of the two stamps — and
+  // the loser would then be silently truncated away by the winner once either
+  // becomes common. Both are rare today; that's exactly when this kind of bound
+  // gets written and forgotten.
+  const checkoutHelpPromise = supabase
+    .from('orders')
+    .select(`id, proof_id, help_requested_at, pay_link_resend_requested_at, ${ORDER_CUSTOMER}`)
+    .not('help_requested_at', 'is', null)
+    .order('help_requested_at', { ascending: false })
+    .limit(ACTIVITY_FEED_CAP)
+  const checkoutResendPromise = supabase
+    .from('orders')
+    .select(`id, proof_id, help_requested_at, pay_link_resend_requested_at, ${ORDER_CUSTOMER}`)
+    .not('pay_link_resend_requested_at', 'is', null)
+    .order('pay_link_resend_requested_at', { ascending: false })
+    .limit(ACTIVITY_FEED_CAP)
+  // Bundle review pages the customer opened (000311). The hub lists the cards
+  // without recording a view on any of them, so this is the only trace a
+  // customer who reads the bundle and doesn't click into a card leaves at all.
+  const bundleOpensPromise = supabase
+    .from('proof_sets')
+    .select('id, last_opened_at, proofs(id), contacts(full_name, companies(name))')
+    .not('last_opened_at', 'is', null)
+    .order('last_opened_at', { ascending: false })
     .limit(ACTIVITY_FEED_CAP)
   // Successful pay-link sends (orders.sent_at) — any status, online only
   // (offline orders send no link; filtered in payLinkSentEvents).
   const payLinkSentsPromise = supabase
     .from('orders')
-    .select('id, proof_id, sent_at, payment_method')
+    .select(`id, proof_id, sent_at, payment_method, ${ORDER_CUSTOMER}`)
     .not('sent_at', 'is', null)
     .order('sent_at', { ascending: false })
     .limit(ACTIVITY_FEED_CAP)
@@ -3010,7 +3122,7 @@ async function fetchActivitySources(): Promise<ActivitySources | null> {
   // Only real sends (state = 'sent') — dry-run rows are skipped.
   const orderRemindersPromise = supabase
     .from('order_nudges')
-    .select('id, created_at, orders(proof_id)')
+    .select(`id, created_at, orders(proof_id, ${ORDER_CUSTOMER})`)
     .eq('state', 'sent')
     .order('created_at', { ascending: false })
     .limit(ACTIVITY_FEED_CAP)
@@ -3027,12 +3139,22 @@ async function fetchActivitySources(): Promise<ActivitySources | null> {
     { data: payLinkSentRows, error: payLinkSentsError },
     { data: orderReminderRows, error: orderRemindersError },
     { data: feedbackRows, error: feedbackError },
+    { data: orderPaidRows, error: orderPaidError },
+    { data: groupPayLinkOpenRows, error: groupPayLinkOpensError },
+    { data: checkoutHelpRows, error: checkoutHelpError },
+    { data: checkoutResendRows, error: checkoutResendError },
+    { data: bundleOpenRows, error: bundleOpensError },
   ] = await Promise.all([
     eventsPromise,
     payLinkOpensPromise,
     payLinkSentsPromise,
     orderRemindersPromise,
     feedbackPromise,
+    orderPaidPromise,
+    groupPayLinkOpensPromise,
+    checkoutHelpPromise,
+    checkoutResendPromise,
+    bundleOpensPromise,
   ])
 
   // dashboard_latest_events is the backbone — every page view, approval and
@@ -3052,6 +3174,11 @@ async function fetchActivitySources(): Promise<ActivitySources | null> {
     ['pay-link sends', payLinkSentsError],
     ['order reminders', orderRemindersError],
     ['decline feedback', feedbackError],
+    ['order payments', orderPaidError],
+    ['combined pay-link opens', groupPayLinkOpensError],
+    ['checkout help', checkoutHelpError],
+    ['pay-link resend requests', checkoutResendError],
+    ['bundle opens', bundleOpensError],
   ] as const) {
     if (err) console.warn(`[DashboardPage] activity source "${label}" failed`, err)
   }
@@ -3060,10 +3187,17 @@ async function fetchActivitySources(): Promise<ActivitySources | null> {
   // PostgREST to-one embed can surface as an object or a single-element array
   // depending on type inference, so normalise both; rows whose parent order is
   // gone (null) are dropped.
-  const orderReminders: OrderReminderRow[] = ((orderReminderRows ?? []) as Array<{ id: string; created_at: string | null; orders: { proof_id: string } | { proof_id: string }[] | null }>)
-    .map((r) => {
+  type ReminderRow = {
+    id: string
+    created_at: string | null
+    orders: Pick<OrderReminderRow, 'proof_id' | 'proofs'> | Array<Pick<OrderReminderRow, 'proof_id' | 'proofs'>> | null
+  }
+  const orderReminders: OrderReminderRow[] = ((orderReminderRows ?? []) as ReminderRow[])
+    .map((r): OrderReminderRow | null => {
       const ord = Array.isArray(r.orders) ? r.orders[0] : r.orders
-      return ord?.proof_id ? { id: r.id, created_at: r.created_at, proof_id: ord.proof_id } : null
+      return ord?.proof_id
+        ? { id: r.id, created_at: r.created_at, proof_id: ord.proof_id, proofs: ord.proofs }
+        : null
     })
     .filter((r): r is OrderReminderRow => r !== null)
 
@@ -3073,19 +3207,31 @@ async function fetchActivitySources(): Promise<ActivitySources | null> {
     payLinkSents: (payLinkSentRows ?? []) as PayLinkSentRow[],
     orderReminders,
     feedback: (feedbackRows ?? []) as ProofFeedbackFeedRow[],
+    orderPaid: (orderPaidRows ?? []) as OrderPaidRow[],
+    groupPayLinkOpens: (groupPayLinkOpenRows ?? []) as GroupPayLinkOpenRow[],
+    // The two stamps are fetched separately so neither can truncate the other,
+    // and an order carrying both appears in both lists. checkoutHelpEvents keys
+    // its output by row id + stamp, so the overlap collapses rather than
+    // printing the same question twice.
+    checkoutHelp: [
+      ...((checkoutHelpRows ?? []) as CheckoutHelpRow[]),
+      ...((checkoutResendRows ?? []) as CheckoutHelpRow[]),
+    ],
+    bundleOpens: (bundleOpenRows ?? []) as BundleOpenRow[],
   }
 }
 
 /**
  * Merge the real customer-activity events with the synthetic rows built from
  * timestamps that were never stored as events — Help Scout replies, pay-link
- * opens and sends, order reminders, decline feedback — then sort newest-first
- * and cap, so the card stays "the latest 20 things that happened" across all
- * six sources rather than the latest 20 of any one of them.
+ * opens and sends, payments, checkout questions, reorder requests, bundle
+ * opens, order reminders, decline feedback — then sort newest-first and cap, so
+ * the card stays "the latest 20 things that happened" across every source
+ * rather than the latest 20 of any one of them.
  *
- * The bundle index has to be resolved before this runs: helpscoutReplyEvents
- * collapses proofs that share a Help Scout conversation, and only that index
- * can say whether they're one bundle or merely share a thread.
+ * The bundle index has to be resolved before this runs: several builders
+ * collapse a group of proofs into one row, and only that index can say whether
+ * those proofs are one bundle or merely share a thread or a payment.
  */
 function buildActivityFeed(
   sources: ActivitySources,
@@ -3099,6 +3245,11 @@ function buildActivityFeed(
     ...payLinkSentEvents(sources.payLinkSents, projects),
     ...orderReminderEvents(sources.orderReminders, projects),
     ...proofFeedbackEvents(sources.feedback, projects),
+    ...orderPaidEvents(sources.orderPaid, projects, bundleIndex.byProof),
+    ...groupPayLinkOpenEvents(sources.groupPayLinkOpens, projects, bundleIndex.byProof),
+    ...checkoutHelpEvents(sources.checkoutHelp, projects),
+    ...reorderRequestedEvents(projects),
+    ...bundleOpenedEvents(sources.bundleOpens, projects),
   ]
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .slice(0, ACTIVITY_FEED_CAP)
@@ -3108,7 +3259,7 @@ function buildActivityFeed(
 
 // activityView: render the dashboard's data in "Activity page" mode instead —
 // the /activity route the mobile tab bar links to. Reuses this page's whole
-// data pipeline (the feed is synthesised from five sources), so there's one
+// data pipeline (the feed is synthesised from a dozen sources), so there's one
 // loader and zero drift; it just renders the three activity panels as a
 // normal page inside the app chrome rather than the dashboard body.
 export default function DashboardPage({ activityView = false }: { activityView?: boolean }) {

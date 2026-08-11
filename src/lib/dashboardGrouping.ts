@@ -170,6 +170,17 @@ export interface DashboardLatestEvent {
     | 'pay_link_sent'
     | 'order_reminder_sent'
     | 'declined'
+    // The customer bought (orders.paid_at / a combined payment).
+    | 'order_paid'
+    // They reached the checkout and got stuck — asked us a question, or asked
+    // for a fresh link after theirs expired. Two types rather than one because
+    // the two need different things done about them.
+    | 'checkout_help'
+    | 'pay_link_resend_requested'
+    // They asked for more of cards they already bought (000372).
+    | 'reorder_requested'
+    // They opened their bundle review page (proof_sets.last_opened_at).
+    | 'bundle_opened'
   actor_name: string
   recipient_name: string | null
   helpscout_thread_id: string | null
@@ -184,12 +195,85 @@ export interface DashboardLatestEvent {
   version_number: number
   contact_name: string | null
   company_name: string | null
-  // Set only on a synthetic reply row that stood in for several proofs sharing
-  // one Help Scout conversation (see helpscoutReplyEvents). `count` is how many
-  // proofs were collapsed into this row — always ≥ 2, since a lone row carries
-  // no marker at all — and `bundle` says whether those proofs are one bundle,
-  // which is the only case the copy may call them "cards in the bundle".
+  // Set only on a synthetic row that stood in for several proofs: a reply on a
+  // Help Scout conversation they share (helpscoutReplyEvents), or one combined
+  // payment across them (orderPaidEvents / groupPayLinkOpenEvents). `count` is
+  // how many proofs were collapsed into this row — always ≥ 2, since a lone row
+  // carries no marker at all — and `bundle` says whether those proofs are one
+  // bundle, the only case the copy may call them "cards in the bundle".
   collapsed?: { count: number; bundle: boolean }
+  // Where the row goes when clicked. Defaults to the proof, which is right for
+  // every row keyed to one project; a bundle-opened row overrides it with the
+  // bundle workspace, because the bundle is the thing that was opened.
+  link?: string
+}
+
+// Shared by the collapsing builders: several proofs may only be CALLED a bundle
+// when every one of them is in the same one. `undefined` in the set means at
+// least one is in no bundle at all — the case that must not be described as a
+// bundle, and the case a size check alone would wave through.
+function isOneBundle(
+  proofIds: string[],
+  bundleByProof?: ReadonlyMap<string, { setId: string }>,
+): boolean {
+  const setIds = new Set(proofIds.map((id) => bundleByProof?.get(id)?.setId))
+  return setIds.size === 1 && !setIds.has(undefined)
+}
+
+// ── Naming the customer on a synthetic row ────────────────────────────────────
+//
+// A to-one PostgREST embed can surface as an object or a single-element array
+// depending on how the types are inferred (the order_nudges fetch has always
+// normalised both), so every level here tolerates either.
+export interface EmbeddedContact {
+  full_name?: string | null
+  companies?: { name?: string | null } | Array<{ name?: string | null }> | null
+}
+export interface EmbeddedProofCustomer {
+  contacts?: EmbeddedContact | EmbeddedContact[] | null
+}
+
+function unwrapOne<T>(value: T | T[] | null | undefined): T | undefined {
+  if (Array.isArray(value)) return value[0]
+  return value ?? undefined
+}
+
+export interface ResolvedCustomer {
+  actorName: string
+  contactName: string | null
+  companyName: string | null
+  versionNumber: number
+}
+
+/**
+ * Work out who a synthetic row is about.
+ *
+ * The loaded projects array is preferred: it's what every other row on the card
+ * reads from, so one customer looks identical wherever they appear. But the
+ * dashboard's working set is deliberately narrow — active work, approvals from
+ * the last fortnight, pins — and an ORDER outlives it. Measured on live on
+ * 11 Aug 2026: 69 of the 123 payments in the previous 30 days sat on proofs
+ * outside that set, because a project is approved and closed long before the
+ * money lands. Every one of those rows would have read "Customer paid for their
+ * order", with no company on it and nothing to tell two of them apart.
+ *
+ * So the order-side queries embed the proof's contact and company too, and that
+ * embed is the fallback. It carries no version number — nothing in this family
+ * of rows puts one in its copy, so 0 is honest rather than lossy.
+ */
+export function resolveCustomer(
+  project: DashboardProject | undefined,
+  embedded?: EmbeddedProofCustomer | EmbeddedProofCustomer[] | null,
+): ResolvedCustomer {
+  const contact = unwrapOne(unwrapOne(embedded)?.contacts)
+  const contactName = project?.contact_name ?? contact?.full_name ?? null
+  const companyName = project?.company_name ?? unwrapOne(contact?.companies)?.name ?? null
+  return {
+    actorName: contactName ?? companyName ?? 'Customer',
+    contactName,
+    companyName,
+    versionNumber: project?.current_version_number ?? 0,
+  }
 }
 
 // Only surface email replies from the last 30 days in the Latest activity feed.
@@ -284,16 +368,11 @@ export function helpscoutReplyEvents(
     // therefore its React key and the proof it opens) is the same one on every
     // load even if the projects query comes back in a different order.
     const sorted = [...rows].sort((a, b) => a.proof_id.localeCompare(b.proof_id))
-    // One shared set id across every collapsed proof means they really are one
-    // bundle. `undefined` in the set means at least one of them is in no bundle
-    // — which is the case that must NOT be described as a bundle, and the case
-    // a size check alone would wave through.
-    const setIds = new Set(sorted.map((r) => bundleByProof?.get(r.proof_id)?.setId))
     out.push({
       ...sorted[0],
       collapsed: {
         count: sorted.length,
-        bundle: setIds.size === 1 && !setIds.has(undefined),
+        bundle: isOneBundle(sorted.map((r) => r.proof_id), bundleByProof),
       },
     })
   }
@@ -343,10 +422,16 @@ export function proofFeedbackEvents(
 // into the Latest-activity feed shape here. Proof display info is looked up from
 // the loaded projects so the row reads "Acme opened the pay link". Same 30-day
 // window + the feed's 20-row cap bound it.
+//
+// The fetch used to scope this to status = 'sent' — "a still-payable link" —
+// which meant the row DISAPPEARED at the moment the customer paid, taking the
+// last trace of their payment journey with it. An open is a thing that happened;
+// it isn't undone by what happened next.
 export interface PayLinkOpenRow {
   id: string
   proof_id: string
   pay_link_opened_at: string | null
+  proofs?: EmbeddedProofCustomer | EmbeddedProofCustomer[] | null
 }
 export function payLinkOpenEvents(opens: PayLinkOpenRow[], projects: DashboardProject[]): DashboardLatestEvent[] {
   const cutoff = Date.now() - HELPSCOUT_REPLY_WINDOW_MS
@@ -354,18 +439,18 @@ export function payLinkOpenEvents(opens: PayLinkOpenRow[], projects: DashboardPr
   const out: DashboardLatestEvent[] = []
   for (const o of opens) {
     if (!o.pay_link_opened_at || new Date(o.pay_link_opened_at).getTime() < cutoff) continue
-    const p = byProof.get(o.proof_id)
+    const who = resolveCustomer(byProof.get(o.proof_id), o.proofs)
     out.push({
       id: `paylink-${o.id}`,
       created_at: o.pay_link_opened_at,
       event_type: 'pay_link_opened',
-      actor_name: p?.contact_name ?? p?.company_name ?? 'Customer',
+      actor_name: who.actorName,
       recipient_name: null,
       helpscout_thread_id: null,
       proof_id: o.proof_id,
-      version_number: p?.current_version_number ?? 0,
-      contact_name: p?.contact_name ?? null,
-      company_name: p?.company_name ?? null,
+      version_number: who.versionNumber,
+      contact_name: who.contactName,
+      company_name: who.companyName,
     })
   }
   return out
@@ -379,6 +464,7 @@ export interface PayLinkSentRow {
   proof_id: string
   sent_at: string | null
   payment_method: string | null
+  proofs?: EmbeddedProofCustomer | EmbeddedProofCustomer[] | null
 }
 export function payLinkSentEvents(sents: PayLinkSentRow[], projects: DashboardProject[]): DashboardLatestEvent[] {
   const cutoff = Date.now() - HELPSCOUT_REPLY_WINDOW_MS
@@ -387,18 +473,18 @@ export function payLinkSentEvents(sents: PayLinkSentRow[], projects: DashboardPr
   for (const o of sents) {
     if (o.payment_method === 'offline') continue
     if (!o.sent_at || new Date(o.sent_at).getTime() < cutoff) continue
-    const p = byProof.get(o.proof_id)
+    const who = resolveCustomer(byProof.get(o.proof_id), o.proofs)
     out.push({
       id: `paylink-sent-${o.id}`,
       created_at: o.sent_at,
       event_type: 'pay_link_sent',
-      actor_name: p?.contact_name ?? p?.company_name ?? 'Customer',
+      actor_name: who.actorName,
       recipient_name: null,
       helpscout_thread_id: null,
       proof_id: o.proof_id,
-      version_number: p?.current_version_number ?? 0,
-      contact_name: p?.contact_name ?? null,
-      company_name: p?.company_name ?? null,
+      version_number: who.versionNumber,
+      contact_name: who.contactName,
+      company_name: who.companyName,
     })
   }
   return out
@@ -415,6 +501,7 @@ export interface OrderReminderRow {
   id: string
   proof_id: string
   created_at: string | null
+  proofs?: EmbeddedProofCustomer | EmbeddedProofCustomer[] | null
 }
 export function orderReminderEvents(reminders: OrderReminderRow[], projects: DashboardProject[]): DashboardLatestEvent[] {
   const cutoff = Date.now() - HELPSCOUT_REPLY_WINDOW_MS
@@ -422,20 +509,314 @@ export function orderReminderEvents(reminders: OrderReminderRow[], projects: Das
   const out: DashboardLatestEvent[] = []
   for (const r of reminders) {
     if (!r.created_at || new Date(r.created_at).getTime() < cutoff) continue
-    const p = byProof.get(r.proof_id)
+    const who = resolveCustomer(byProof.get(r.proof_id), r.proofs)
     out.push({
       id: `order-reminder-${r.id}`,
       created_at: r.created_at,
       event_type: 'order_reminder_sent',
       // Outbound like pay_link_sent: the customer is the recipient, so they
       // lead the row ("Acme was sent a payment reminder"), never "You".
-      actor_name: p?.contact_name ?? p?.company_name ?? 'Customer',
+      actor_name: who.actorName,
       recipient_name: null,
       helpscout_thread_id: null,
       proof_id: r.proof_id,
-      version_number: p?.current_version_number ?? 0,
-      contact_name: p?.contact_name ?? null,
-      company_name: p?.company_name ?? null,
+      version_number: who.versionNumber,
+      contact_name: who.contactName,
+      company_name: who.companyName,
+    })
+  }
+  return out
+}
+
+// A completed payment (orders.paid_at) — the single most important thing a
+// customer does, and the one moment this feed never showed.
+//
+// Two rules the row depends on, both learned from live data:
+//
+//  • Not every paid_at is a payment. A cancelled order keeps its stamp (6 on
+//    live) and a free reprint off the Flagged board is BORN paid — so both are
+//    excluded here, exactly as the Paid-30d tile excludes them. Without that the
+//    card announces "Acme paid for their order" about money nobody paid.
+//  • A combined payment is ONE event. The Stripe webhook flips the group and
+//    every member order together (10 groups = 22 member rows on live), so
+//    members collapse onto their group id and the survivor carries `collapsed`
+//    for the "covers N projects" subline. Row-per-order would print one
+//    customer's single payment three times over.
+//
+// The status/kind rules are applied here as well as in the fetch's filters, so
+// they're testable and so the rule lives with the explanation of why it exists.
+export interface OrderPaidRow {
+  id: string
+  proof_id: string
+  paid_at: string | null
+  order_group_id: string | null
+  status: string | null
+  order_kind: string | null
+  proofs?: EmbeddedProofCustomer | EmbeddedProofCustomer[] | null
+}
+
+export function orderPaidEvents(
+  rows: OrderPaidRow[],
+  projects: DashboardProject[],
+  bundleByProof?: ReadonlyMap<string, { setId: string }>,
+  now: number = Date.now(),
+): DashboardLatestEvent[] {
+  const cutoff = now - HELPSCOUT_REPLY_WINDOW_MS
+  const byProof = new Map(projects.map((p) => [p.proof_id, p]))
+  // Group id → its member rows. A standalone order gets a key nothing else can
+  // collide with, the same shape helpscoutReplyEvents uses for unlinked proofs.
+  const groups = new Map<string, OrderPaidRow[]>()
+  for (const o of rows) {
+    if (!o.paid_at || new Date(o.paid_at).getTime() < cutoff) continue
+    if (o.status === 'cancelled') continue
+    if (o.order_kind === 'reprint') continue
+    const key = o.order_group_id ? `g:${o.order_group_id}` : `o:${o.id}`
+    const existing = groups.get(key)
+    if (existing) existing.push(o)
+    else groups.set(key, [o])
+  }
+
+  const out: DashboardLatestEvent[] = []
+  for (const members of groups.values()) {
+    // Survivor picked by proof id rather than by input order, so the row (and
+    // therefore its React key and the project it opens) is the same one on every
+    // load even if the query comes back ordered differently.
+    const sorted = [...members].sort((a, b) => a.proof_id.localeCompare(b.proof_id))
+    const lead = sorted[0]
+    // Any member can name the customer — a group is one payer by construction —
+    // so scan for the first that resolves rather than giving up on the lead's
+    // own embed being thin.
+    const who = sorted
+      .map((m) => resolveCustomer(byProof.get(m.proof_id), m.proofs))
+      .find((r) => r.actorName !== 'Customer') ?? resolveCustomer(byProof.get(lead.proof_id), lead.proofs)
+    // One webhook call flips them, but they're still separate rows with their
+    // own stamps: take the newest so the row can never read as older than the
+    // payment it describes.
+    const at = sorted.reduce<string>(
+      (latest, m) => (m.paid_at && m.paid_at > latest ? m.paid_at : latest),
+      lead.paid_at as string,
+    )
+    out.push({
+      id: lead.order_group_id ? `order-paid-group-${lead.order_group_id}` : `order-paid-${lead.id}`,
+      created_at: at,
+      event_type: 'order_paid',
+      actor_name: who.actorName,
+      recipient_name: null,
+      helpscout_thread_id: null,
+      proof_id: lead.proof_id,
+      version_number: who.versionNumber,
+      contact_name: who.contactName,
+      company_name: who.companyName,
+      ...(sorted.length > 1
+        ? { collapsed: { count: sorted.length, bundle: isOneBundle(sorted.map((m) => m.proof_id), bundleByProof) } }
+        : {}),
+    })
+  }
+  return out
+}
+
+// A combined payment's pay-link open (order_groups.pay_link_opened_at). The
+// group link is the one the customer is sent, and opening it stamps the GROUP
+// row — not any member's — so 21 of the 22 paid member orders on live carry no
+// open of their own. Read the orders table alone and a combined payment shows
+// nothing at all: not the open, not the payment.
+//
+// Members arrive as an embedded child array purely to name the customer and
+// give the row somewhere to go; one is picked stably by proof id.
+export interface GroupPayLinkOpenRow {
+  id: string
+  pay_link_opened_at: string | null
+  orders: Array<{ proof_id: string; proofs?: EmbeddedProofCustomer | EmbeddedProofCustomer[] | null }> | null
+}
+
+export function groupPayLinkOpenEvents(
+  groups: GroupPayLinkOpenRow[],
+  projects: DashboardProject[],
+  bundleByProof?: ReadonlyMap<string, { setId: string }>,
+  now: number = Date.now(),
+): DashboardLatestEvent[] {
+  const cutoff = now - HELPSCOUT_REPLY_WINDOW_MS
+  const byProof = new Map(projects.map((p) => [p.proof_id, p]))
+  const out: DashboardLatestEvent[] = []
+  for (const g of groups) {
+    if (!g.pay_link_opened_at || new Date(g.pay_link_opened_at).getTime() < cutoff) continue
+    // A group with no readable members can't be named or linked, so it would
+    // render as "Customer opened the payment link" pointing at nothing.
+    const members = (g.orders ?? []).filter((o) => o.proof_id)
+    const proofIds = [...new Set(members.map((o) => o.proof_id))].sort()
+    if (proofIds.length === 0) continue
+    // One payer per group, so any member that resolves can name the row.
+    const who = members
+      .map((m) => resolveCustomer(byProof.get(m.proof_id), m.proofs))
+      .find((r) => r.actorName !== 'Customer') ?? resolveCustomer(byProof.get(proofIds[0]))
+    out.push({
+      id: `paylink-group-${g.id}`,
+      created_at: g.pay_link_opened_at,
+      event_type: 'pay_link_opened',
+      actor_name: who.actorName,
+      recipient_name: null,
+      helpscout_thread_id: null,
+      proof_id: proofIds[0],
+      version_number: who.versionNumber,
+      contact_name: who.contactName,
+      company_name: who.companyName,
+      ...(proofIds.length > 1
+        ? { collapsed: { count: proofIds.length, bundle: isOneBundle(proofIds, bundleByProof) } }
+        : {}),
+    })
+  }
+  return out
+}
+
+// The customer reached the checkout and got stuck. Both stamps are written by
+// their own action on the pay page: help_requested_at is the "Not sure? Ask us"
+// box (the order-question edge function), pay_link_resend_requested_at is their
+// link having expired and them asking for another.
+//
+// Rare — three rows in the whole table on live — and both already show as a chip
+// on Orders and a line on the order timeline. They're here because this card is
+// the surface people actually watch, and somebody at the checkout who can't
+// finish is the most valuable interruption in the system.
+//
+// One row per stamp, and two event types rather than one: the verbs have to say
+// which happened, because the two ask for different things (answer a question
+// vs reactivate a link).
+export interface CheckoutHelpRow {
+  id: string
+  proof_id: string
+  help_requested_at: string | null
+  pay_link_resend_requested_at: string | null
+  proofs?: EmbeddedProofCustomer | EmbeddedProofCustomer[] | null
+}
+
+export function checkoutHelpEvents(
+  rows: CheckoutHelpRow[],
+  projects: DashboardProject[],
+  now: number = Date.now(),
+): DashboardLatestEvent[] {
+  const cutoff = now - HELPSCOUT_REPLY_WINDOW_MS
+  const byProof = new Map(projects.map((p) => [p.proof_id, p]))
+  // The two stamps are fetched separately (each needs its own ordering, or the
+  // rarer one is silently truncated away by the commoner), so one order can
+  // arrive twice. Keyed by id + stamp, last write wins — the rows are identical.
+  const out = new Map<string, DashboardLatestEvent>()
+  for (const o of rows) {
+    const who = resolveCustomer(byProof.get(o.proof_id), o.proofs)
+    const base = {
+      actor_name: who.actorName,
+      recipient_name: null,
+      helpscout_thread_id: null,
+      proof_id: o.proof_id,
+      version_number: who.versionNumber,
+      contact_name: who.contactName,
+      company_name: who.companyName,
+    }
+    if (o.help_requested_at && new Date(o.help_requested_at).getTime() >= cutoff) {
+      out.set(`checkout-help-${o.id}`, {
+        ...base,
+        id: `checkout-help-${o.id}`,
+        created_at: o.help_requested_at,
+        event_type: 'checkout_help',
+      })
+    }
+    if (o.pay_link_resend_requested_at && new Date(o.pay_link_resend_requested_at).getTime() >= cutoff) {
+      out.set(`checkout-resend-${o.id}`, {
+        ...base,
+        id: `checkout-resend-${o.id}`,
+        created_at: o.pay_link_resend_requested_at,
+        event_type: 'pay_link_resend_requested',
+      })
+    }
+  }
+  return [...out.values()]
+}
+
+// The customer asked for more of the cards they already bought (000372) — a
+// stamp on the SOURCE proof, so it reads straight off the loaded projects like
+// the reply rows rather than costing a query of its own.
+//
+// Nothing ever clears reorder_requested_at: it survives the designer raising the
+// reorder, which is what lets the source page keep saying a customer asked. That
+// is right here too — the feed records things that happened at a time, and the
+// 30-day window retires the row on its own.
+export function reorderRequestedEvents(
+  projects: DashboardProject[],
+  now: number = Date.now(),
+): DashboardLatestEvent[] {
+  const cutoff = now - HELPSCOUT_REPLY_WINDOW_MS
+  const out: DashboardLatestEvent[] = []
+  for (const p of projects) {
+    const at = p.reorder_requested_at
+    if (!at || new Date(at).getTime() < cutoff) continue
+    out.push({
+      id: `reorder-${p.proof_id}`,
+      created_at: at,
+      event_type: 'reorder_requested',
+      actor_name: p.contact_name ?? p.company_name ?? 'Customer',
+      recipient_name: null,
+      helpscout_thread_id: null,
+      proof_id: p.proof_id,
+      version_number: p.current_version_number ?? 0,
+      contact_name: p.contact_name,
+      company_name: p.company_name,
+    })
+  }
+  return out
+}
+
+// The customer opened their bundle review page (proof_sets.last_opened_at,
+// stamped by record_proof_set_opened once the bundle has been sent).
+//
+// Invisible to every other source: the review hub lists the cards without
+// recording a view on any of them, so a customer who opens the link, reads it
+// and doesn't click into a card leaves no trace whatsoever today.
+//
+// The stamp is a single "last opened" value rather than a log, so a second open
+// moves this row's clock instead of adding another — the same shape as the
+// per-day view dedupe, and the reason the id is keyed to the bundle.
+export interface BundleOpenRow {
+  id: string
+  last_opened_at: string | null
+  proofs: Array<{ id: string }> | null
+  // proof_sets.contact_id is NOT NULL, so unlike the order rows this embed is
+  // always there to fall back on when the bundle's cards are all outside the
+  // dashboard's working set.
+  contacts?: EmbeddedContact | EmbeddedContact[] | null
+}
+
+export function bundleOpenedEvents(
+  sets: BundleOpenRow[],
+  projects: DashboardProject[],
+  now: number = Date.now(),
+): DashboardLatestEvent[] {
+  const cutoff = now - HELPSCOUT_REPLY_WINDOW_MS
+  const byProof = new Map(projects.map((p) => [p.proof_id, p]))
+  const out: DashboardLatestEvent[] = []
+  for (const s of sets) {
+    if (!s.last_opened_at || new Date(s.last_opened_at).getTime() < cutoff) continue
+    // Members name the customer; the row itself goes to the bundle, because the
+    // bundle is what was opened. A member we hold no project for still names the
+    // bundle correctly via the next one, so scan rather than take the first.
+    const memberIds = [...new Set((s.proofs ?? []).map((p) => p.id).filter(Boolean))].sort()
+    const who = resolveCustomer(
+      memberIds.map((id) => byProof.get(id)).find(Boolean),
+      { contacts: s.contacts },
+    )
+    out.push({
+      id: `bundle-opened-${s.id}`,
+      created_at: s.last_opened_at,
+      event_type: 'bundle_opened',
+      actor_name: who.actorName,
+      recipient_name: null,
+      helpscout_thread_id: null,
+      // Kept for the React key and for parity with every other row; the click
+      // goes to `link`, which the panel prefers when it's set.
+      proof_id: memberIds[0] ?? s.id,
+      version_number: who.versionNumber,
+      contact_name: who.contactName,
+      company_name: who.companyName,
+      link: `/bundles/${s.id}`,
+      ...(memberIds.length > 1 ? { collapsed: { count: memberIds.length, bundle: true } } : {}),
     })
   }
   return out

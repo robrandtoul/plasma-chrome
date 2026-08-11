@@ -15,7 +15,7 @@
 // widths (the page uniquely carries both a search field and a header CTA).
 import { StrictMode, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { MemoryRouter, Routes, Route } from 'react-router-dom'
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
 import OrdersPage from '../src/pages/OrdersPage'
 import OrderLogPage from '../src/pages/OrderLogPage'
 import OrderReviewPage from '../src/pages/OrderReviewPage'
@@ -911,8 +911,18 @@ function ReorderPanelRig() {
   )
 }
 
+// Every path the rig doesn't render itself lands here, so reaching it proves a
+// navigation fired. It also reports WHERE, because most rows on these pages
+// differ only in their destination — an activity row that opens the wrong
+// project, or a bundle row that opens a card instead of the bundle, looks
+// identical to a correct one through a bare "did we navigate" assertion.
 function Elsewhere() {
-  return <div style={{ padding: 40 }} data-nav-target>navigated away</div>
+  const { pathname } = useLocation()
+  return (
+    <div style={{ padding: 40 }} data-nav-target data-nav-path={pathname}>
+      navigated away
+    </div>
+  )
 }
 
 // ?path=/reorder-desk — the dashboard's Reorder desk panel (migration 000389)

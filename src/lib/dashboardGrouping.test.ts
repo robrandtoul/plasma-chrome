@@ -5,8 +5,8 @@
 // determines where a proof appears in the time-bucketed list after a
 // snooze expires.
 
-import { recentlyAwakened, isCurrentlySnoozed, groupByTime, activityTimestamp, buildSnoozedSection, proofBucket, recentHelpscoutActivity, helpscoutReplyEvents } from './dashboardGrouping'
-import type { DashboardProject } from './dashboardGrouping'
+import { recentlyAwakened, isCurrentlySnoozed, groupByTime, activityTimestamp, buildSnoozedSection, proofBucket, recentHelpscoutActivity, helpscoutReplyEvents, resolveCustomer, orderPaidEvents, groupPayLinkOpenEvents, checkoutHelpEvents, reorderRequestedEvents, bundleOpenedEvents } from './dashboardGrouping'
+import type { DashboardProject, OrderPaidRow, GroupPayLinkOpenRow, CheckoutHelpRow, BundleOpenRow } from './dashboardGrouping'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -840,6 +840,257 @@ test('collapsed rows are only marked as a bundle when every proof is in one', ()
   const noBundleInfoAtAll = replyEvents(projects)
   assertEqual(noBundleInfoAtAll[0].collapsed?.count, 2)
   assertEqual(noBundleInfoAtAll[0].collapsed?.bundle, false)
+})
+
+// ── Order & checkout activity rows ────────────────────────────────────────────
+//
+// Each builder below bridges a TIMESTAMP into the feed — a payment, a question
+// asked at the checkout, a bundle being opened. None is a stored event, which is
+// why none of them was on the dashboard at all until now, and the mistakes they
+// can make are the quiet kind: a row announcing money that never arrived, or one
+// customer's single payment printed three times over.
+
+console.log('\nresolveCustomer()')
+
+test('the loaded project names the row when it has one', () => {
+  const who = resolveCustomer(
+    makeProject({ contact_name: 'Ada Lovelace', company_name: 'Analytical Engines', current_version_number: 3 }),
+    { contacts: { full_name: 'Stale Name', companies: { name: 'Stale Co' } } },
+  )
+  assertEqual(who.companyName, 'Analytical Engines')
+  assertEqual(who.versionNumber, 3)
+})
+
+// The measured case: 69 of 123 payments in the 30 days to 11 Aug 2026 sat on
+// proofs outside the dashboard's working set, because a project is approved and
+// closed long before the money arrives.
+test('a proof outside the working set is still named, from the embed', () => {
+  const who = resolveCustomer(undefined, { contacts: { full_name: 'Ada Lovelace', companies: { name: 'Analytical Engines' } } })
+  assertEqual(who.contactName, 'Ada Lovelace')
+  assertEqual(who.companyName, 'Analytical Engines')
+  assertEqual(who.actorName, 'Ada Lovelace')
+  assertEqual(who.versionNumber, 0, 'the embed carries no version, and no row in this family prints one')
+})
+
+// PostgREST returns a to-one embed as an object or a single-element array
+// depending on how the types infer — the order_nudges fetch has always had to
+// normalise both.
+test('the array form of a to-one embed is read the same as the object form', () => {
+  const who = resolveCustomer(undefined, [{ contacts: [{ full_name: 'Ada Lovelace', companies: [{ name: 'Analytical Engines' }] }] }])
+  assertEqual(who.contactName, 'Ada Lovelace')
+  assertEqual(who.companyName, 'Analytical Engines')
+})
+
+test('with neither source the row falls back to a generic customer', () => {
+  const who = resolveCustomer(undefined, null)
+  assertEqual(who.actorName, 'Customer')
+  assertEqual(who.contactName, null)
+  assertEqual(who.companyName, null)
+})
+
+console.log('\norderPaidEvents()')
+
+function paidRow(overrides: Partial<OrderPaidRow> = {}): OrderPaidRow {
+  return {
+    id: 'o1',
+    proof_id: 'p1',
+    paid_at: hoursAgo(2),
+    order_group_id: null,
+    status: 'paid',
+    order_kind: 'production',
+    ...overrides,
+  }
+}
+
+const paidProjects = [
+  makeProject({ proof_id: 'p1', contact_name: 'Ada Lovelace', company_name: 'Analytical Engines' }),
+  makeProject({ proof_id: 'p2', contact_name: 'Ada Lovelace', company_name: 'Analytical Engines' }),
+  makeProject({ proof_id: 'p3', contact_name: 'Ada Lovelace', company_name: 'Analytical Engines' }),
+]
+
+test('a payment becomes one row naming the customer', () => {
+  const events = orderPaidEvents([paidRow()], paidProjects, undefined, NOW)
+  assertEqual(events.length, 1)
+  assertEqual(events[0].event_type, 'order_paid')
+  assertEqual(events[0].company_name, 'Analytical Engines')
+  assertEqual(events[0].proof_id, 'p1')
+  assertEqual(events[0].collapsed, undefined, 'a lone payment carries no collapsed marker')
+})
+
+// Six cancelled orders on live still carry a paid_at. Reading the stamp alone
+// would announce a payment for money that has since been given back.
+test('a cancelled order keeps its paid_at and must not read as a payment', () => {
+  const events = orderPaidEvents([paidRow({ status: 'cancelled' })], paidProjects, undefined, NOW)
+  assertEqual(events.length, 0)
+})
+
+// A free reprint off the Flagged board is BORN paid — nobody paid anything.
+test('a free reprint is born paid and must not read as a payment', () => {
+  const events = orderPaidEvents([paidRow({ order_kind: 'reprint' })], paidProjects, undefined, NOW)
+  assertEqual(events.length, 0)
+})
+
+// The Stripe webhook flips the group and every member together, so the naive
+// row-per-order reading prints one payment as three.
+test('a combined payment is one row covering its member orders', () => {
+  const events = orderPaidEvents(
+    [
+      paidRow({ id: 'o1', proof_id: 'p1', order_group_id: 'g1' }),
+      paidRow({ id: 'o2', proof_id: 'p2', order_group_id: 'g1' }),
+      paidRow({ id: 'o3', proof_id: 'p3', order_group_id: 'g1' }),
+    ],
+    paidProjects, undefined, NOW,
+  )
+  assertEqual(events.length, 1)
+  assertEqual(events[0].collapsed?.count, 3)
+  assertEqual(events[0].id, 'order-paid-group-g1')
+})
+
+test('the collapsed row carries the newest member stamp', () => {
+  const events = orderPaidEvents(
+    [
+      paidRow({ id: 'o1', proof_id: 'p1', order_group_id: 'g1', paid_at: hoursAgo(5) }),
+      paidRow({ id: 'o2', proof_id: 'p2', order_group_id: 'g1', paid_at: hoursAgo(2) }),
+    ],
+    paidProjects, undefined, NOW,
+  )
+  assertEqual(events[0].created_at, hoursAgo(2))
+})
+
+test('the surviving member is the same one regardless of input order', () => {
+  const rows = [
+    paidRow({ id: 'o1', proof_id: 'p1', order_group_id: 'g1' }),
+    paidRow({ id: 'o2', proof_id: 'p2', order_group_id: 'g1' }),
+  ]
+  const forward = orderPaidEvents(rows, paidProjects, undefined, NOW)
+  const reversed = orderPaidEvents([...rows].reverse(), paidProjects, undefined, NOW)
+  assertEqual(forward[0].proof_id, reversed[0].proof_id)
+  assertEqual(forward[0].id, reversed[0].id)
+})
+
+// Same rule as the reply rows: sharing a payment is the trigger, but only
+// proofs genuinely in one bundle may be described as one.
+test('a combined payment is only called a bundle when its cards are one', () => {
+  const rows = [
+    paidRow({ id: 'o1', proof_id: 'p1', order_group_id: 'g1' }),
+    paidRow({ id: 'o2', proof_id: 'p2', order_group_id: 'g1' }),
+  ]
+  const oneBundle = orderPaidEvents(rows, paidProjects, new Map([
+    ['p1', { setId: 'set-a' }],
+    ['p2', { setId: 'set-a' }],
+  ]), NOW)
+  assertEqual(oneBundle[0].collapsed?.bundle, true)
+
+  const unrelated = orderPaidEvents(rows, paidProjects, new Map([
+    ['p1', { setId: 'set-a' }],
+  ]), NOW)
+  assertEqual(unrelated[0].collapsed?.bundle, false)
+})
+
+test('payments older than the window are dropped', () => {
+  const events = orderPaidEvents([paidRow({ paid_at: daysAgo(45) })], paidProjects, undefined, NOW)
+  assertEqual(events.length, 0)
+})
+
+console.log('\ngroupPayLinkOpenEvents()')
+
+// The group link is the one the customer is sent, and opening it stamps the
+// GROUP row — 21 of the 22 paid member orders on live carry no open of their
+// own, so reading the orders table alone shows a combined payment as nothing.
+test('a combined pay-link open becomes one row keyed to the group', () => {
+  const events = groupPayLinkOpenEvents(
+    [{ id: 'g1', pay_link_opened_at: hoursAgo(1), orders: [{ proof_id: 'p2' }, { proof_id: 'p1' }] }],
+    paidProjects, undefined, NOW,
+  )
+  assertEqual(events.length, 1)
+  assertEqual(events[0].event_type, 'pay_link_opened')
+  assertEqual(events[0].id, 'paylink-group-g1')
+  assertEqual(events[0].proof_id, 'p1', 'names and links to the same member every load')
+  assertEqual(events[0].collapsed?.count, 2)
+})
+
+test('a group with no readable members is skipped rather than rendered nameless', () => {
+  const rows: GroupPayLinkOpenRow[] = [{ id: 'g1', pay_link_opened_at: hoursAgo(1), orders: [] }]
+  assertEqual(groupPayLinkOpenEvents(rows, paidProjects, undefined, NOW).length, 0)
+  assertEqual(
+    groupPayLinkOpenEvents([{ id: 'g1', pay_link_opened_at: hoursAgo(1), orders: null }], paidProjects, undefined, NOW).length,
+    0,
+  )
+})
+
+console.log('\ncheckoutHelpEvents()')
+
+test('both checkout stamps produce their own row, with distinct verbs', () => {
+  const rows: CheckoutHelpRow[] = [
+    { id: 'o1', proof_id: 'p1', help_requested_at: hoursAgo(3), pay_link_resend_requested_at: hoursAgo(1) },
+  ]
+  const events = checkoutHelpEvents(rows, paidProjects, NOW)
+  assertEqual(events.length, 2)
+  assert(events.some((e) => e.event_type === 'checkout_help'), 'has the question row')
+  assert(events.some((e) => e.event_type === 'pay_link_resend_requested'), 'has the resend row')
+})
+
+// The two stamps are fetched separately so neither truncates the other, which
+// means an order carrying both is handed to the builder twice.
+test('an order arriving in both fetches is not printed twice', () => {
+  const row: CheckoutHelpRow = {
+    id: 'o1', proof_id: 'p1', help_requested_at: hoursAgo(3), pay_link_resend_requested_at: null,
+  }
+  const events = checkoutHelpEvents([row, { ...row }], paidProjects, NOW)
+  assertEqual(events.length, 1)
+})
+
+test('checkout stamps older than the window are dropped', () => {
+  const events = checkoutHelpEvents(
+    [{ id: 'o1', proof_id: 'p1', help_requested_at: daysAgo(45), pay_link_resend_requested_at: null }],
+    paidProjects, NOW,
+  )
+  assertEqual(events.length, 0)
+})
+
+console.log('\nreorderRequestedEvents()')
+
+test('a reorder request becomes a row on the project that was asked about', () => {
+  const events = reorderRequestedEvents(
+    [makeProject({ proof_id: 'p9', contact_name: 'Ada Lovelace', reorder_requested_at: hoursAgo(4) })],
+    NOW,
+  )
+  assertEqual(events.length, 1)
+  assertEqual(events[0].event_type, 'reorder_requested')
+  assertEqual(events[0].proof_id, 'p9')
+})
+
+// Nothing ever clears the stamp — it survives the designer raising the reorder,
+// so only the window retires the row.
+test('a reorder request older than the window is dropped', () => {
+  const events = reorderRequestedEvents(
+    [makeProject({ proof_id: 'p9', reorder_requested_at: daysAgo(45) })],
+    NOW,
+  )
+  assertEqual(events.length, 0)
+})
+
+console.log('\nbundleOpenedEvents()')
+
+const bundleRow: BundleOpenRow = {
+  id: 'set-a', last_opened_at: hoursAgo(1), proofs: [{ id: 'p2' }, { id: 'p1' }],
+}
+
+test('a bundle open links to the bundle, not to one of its cards', () => {
+  const events = bundleOpenedEvents([bundleRow], paidProjects, NOW)
+  assertEqual(events.length, 1)
+  assertEqual(events[0].event_type, 'bundle_opened')
+  assertEqual(events[0].link, '/bundles/set-a')
+  assertEqual(events[0].company_name, 'Analytical Engines', 'named from a member project')
+})
+
+// last_opened_at is one value that moves, not a log. A bundle-keyed id is what
+// turns a second open into the same row with a newer clock.
+test('a second open moves the same row rather than adding one', () => {
+  const first = bundleOpenedEvents([bundleRow], paidProjects, NOW)
+  const second = bundleOpenedEvents([{ ...bundleRow, last_opened_at: hoursAgo(0.5) }], paidProjects, NOW)
+  assertEqual(first[0].id, second[0].id)
+  assert(second[0].created_at > first[0].created_at, 'the clock moved')
 })
 
 // ── Summary ───────────────────────────────────────────────────────────────────
