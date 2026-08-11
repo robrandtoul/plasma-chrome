@@ -16,6 +16,7 @@ import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { approvalCarriesForSlot, slotsNeedingReapproval } from '../lib/approvalCarry'
 import { useImageFileDrop } from '../lib/useImageFileDrop'
 import { PageDropOverlay } from '../components/PageDropOverlay'
+import { DropboxImportModal } from '../components/DropboxImportModal'
 import MessageSendPanel from '../components/MessageSendPanel'
 import VersionPreviewGate from '../components/VersionPreviewGate'
 import { firstName } from '../lib/firstName'
@@ -703,6 +704,7 @@ export default function NewVersionPage() {
   // in their drop handlers, so window-level drops only fire for
   // drops outside any per-cell zone.
   const { isZoneDragOver, isPageDragOver, zoneProps } = useImageFileDrop({ onFiles: (f) => addFilesBatch(f) })
+  const [dropboxImportOpen, setDropboxImportOpen] = useState(false)
 
   // Commit any pending soft-delete on unmount so the blob URL
   // doesn't leak across page navigations. See removeImage for
@@ -5244,6 +5246,14 @@ export default function NewVersionPage() {
           first, so the overlay never double-fires for a precise
           drop. */}
       <PageDropOverlay visible={isPageDragOver} />
+      {/* Imported files go through addFilesBatch, exactly as a drop or a
+          browse does, so they inherit the same type, size and per-tab limit
+          checks rather than getting a second, laxer path in. */}
+      <DropboxImportModal
+        open={dropboxImportOpen}
+        onClose={() => setDropboxImportOpen(false)}
+        onAdd={(files) => addFilesBatch(files)}
+      />
       <div className="mx-auto max-w-6xl px-4 py-10 pb-32 sm:px-6">
 
         {/* Breadcrumb back to Proofs / this project. */}
@@ -6700,6 +6710,23 @@ export default function NewVersionPage() {
                       className="sr-only"
                     />
                   </div>
+                  {/* Reusing an old order's artwork. Sits under the drop zone
+                      rather than beside it because it is the rarer route —
+                      most versions start from files the designer already has
+                      to hand. Gated on the same hasAnySlot rule as the zone:
+                      with nowhere to put an image, importing one would fail at
+                      the moment it arrived. */}
+                  {!dropDisabled && (
+                    <div className="mt-2 text-center">
+                      <button
+                        type="button"
+                        onClick={() => setDropboxImportOpen(true)}
+                        className="text-sm font-medium text-ink-soft underline underline-offset-2 hover:text-ink"
+                      >
+                        Bring in artwork from an old order
+                      </button>
+                    </div>
+                  )}
                 </div>
               )
             })()}

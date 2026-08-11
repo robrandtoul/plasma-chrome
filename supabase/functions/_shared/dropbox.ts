@@ -135,6 +135,155 @@ export async function downloadSharedLinkFile(
   return buf ? new Uint8Array(buf) : null
 }
 
+// ── Reading a folder by PATH ────────────────────────────────────────────────
+//
+// The shared-link helpers above serve the Orders page, where a designer pastes
+// a link to a folder they just made. Reusing archived artwork needs the other
+// route, because an ARCHIVED order folder has never been shared — three checked
+// at random from 2008, 2013 and 2017 had no link at all — and making one would
+// publish a decade of customers' artwork on permanent, public, downloadable
+// URLs. Reading by path needs no link and publishes nothing.
+//
+// Path listing is also simply better where it applies: Dropbox allows
+// recursive:true here, which the shared-link form forbids, so one call replaces
+// the level-by-level walk above.
+
+export interface FolderListing {
+  /** Path of the folder itself, as Dropbox knows it. */
+  folderPath: string
+  folderName: string
+  /** Entries with paths RELATIVE to the folder, e.g. "/JPGs/Proof01.jpg". */
+  entries: { name: string; path: string; is_folder: boolean; size: number }[]
+}
+
+const MAX_ENTRIES = 2000
+
+/**
+ * List a folder and everything under it. Null when the path does not exist.
+ *
+ * ⚠ Tries the path as given, then under each top-level folder. This is not
+ * belt-and-braces — it is the difference between working and not. Plasma's
+ * Dropbox is a team space, so the account's real path to an order folder is
+ * `/Rob Randtoul/Orders/Order 38294 - Norwood`, while the address bar a
+ * designer copies from shows `/Orders/Order 38294 - Norwood`. The member folder
+ * is simply absent from what they can see and paste, so the obvious
+ * implementation 404s on every hand-pasted URL while looking perfectly correct.
+ */
+export async function listFolderByPath(token: string, path: string): Promise<FolderListing | null> {
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+
+  const open = async (p: string): Promise<Response | null> => {
+    const r = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ path: p, recursive: true, limit: 500 }),
+    })
+    return r.ok ? r : null
+  }
+
+  let res = await open(path)
+  if (!res) {
+    // Prepend each top-level folder in turn. Bounded by however many the
+    // account has (a handful), and stops at the first that opens.
+    const rootRes = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ path: '', recursive: false, limit: 200 }),
+    })
+    const root = rootRes.ok ? await rootRes.json().catch(() => null) : null
+    for (const e of Array.isArray(root?.entries) ? root.entries : []) {
+      if (e['.tag'] !== 'folder' || typeof e.path_display !== 'string') continue
+      const candidate = `${e.path_display}${path}`
+      res = await open(candidate)
+      if (res) {
+        path = candidate
+        break
+      }
+    }
+  }
+  if (!res) return null
+
+  const entries: FolderListing['entries'] = []
+
+  // The folder's own path as Dropbox spells it — case and namespace may differ
+  // from what was pasted, and the relative paths below are cut from it.
+  const prefix = path.replace(/\/+$/, '')
+  const prefixLower = prefix.toLowerCase()
+
+  while (res.ok) {
+    const page = await res.json().catch(() => null)
+    for (const e of Array.isArray(page?.entries) ? page.entries : []) {
+      const full = (e.path_display as string | undefined) ?? ''
+      const rel = full.toLowerCase().startsWith(prefixLower) ? full.slice(prefix.length) : full
+      entries.push({
+        name: (e.name as string) ?? '',
+        path: rel || `/${e.name}`,
+        is_folder: e['.tag'] === 'folder',
+        size: typeof e.size === 'number' ? e.size : 0,
+      })
+      if (entries.length >= MAX_ENTRIES) break
+    }
+    if (entries.length >= MAX_ENTRIES || !page?.has_more || !page?.cursor) break
+    res = await fetch('https://api.dropboxapi.com/2/files/list_folder/continue', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ cursor: page.cursor }),
+    })
+  }
+
+  return { folderPath: prefix, folderName: prefix.split('/').filter(Boolean).pop() ?? prefix, entries }
+}
+
+/**
+ * Find a folder by name. Used only when the designer supplied a bare name
+ * rather than a link or a path.
+ *
+ * ⚠ Returns a path only when exactly ONE folder matches. Order folders are
+ * named "Order <number> - <customer>", and the number makes a full name
+ * unique — but a partial one ("Norwood") can match several years of that
+ * customer's work, and picking the first would hand back a different job's
+ * artwork with nothing on screen to say so.
+ */
+export async function findFolderByName(token: string, name: string): Promise<string | null> {
+  const res = await fetch('https://api.dropboxapi.com/2/files/search_v2', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: name,
+      options: { filename_only: true, file_status: 'active', max_results: 25 },
+    }),
+  })
+  if (!res.ok) return null
+  const body = await res.json().catch(() => null)
+  const matches: string[] = []
+  for (const m of Array.isArray(body?.matches) ? body.matches : []) {
+    const md = m?.metadata?.metadata
+    if (md?.['.tag'] === 'folder' && typeof md.path_display === 'string') matches.push(md.path_display)
+  }
+  const exact = matches.filter((p) => (p.split('/').pop() ?? '').toLowerCase() === name.trim().toLowerCase())
+  if (exact.length === 1) return exact[0]
+  return matches.length === 1 ? matches[0] : null
+}
+
+/**
+ * A direct, time-limited URL for one file's bytes.
+ *
+ * These are served with `access-control-allow-origin: *`, so the browser
+ * fetches the artwork straight from Dropbox — verified against a real order
+ * file. That keeps megabytes of JPEG out of this function entirely, and means
+ * the cropping happens where the crop engine already lives.
+ */
+export async function getTemporaryLink(token: string, path: string): Promise<string | null> {
+  const res = await fetch('https://api.dropboxapi.com/2/files/get_temporary_link', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  })
+  if (!res.ok) return null
+  const body = await res.json().catch(() => null)
+  return typeof body?.link === 'string' ? body.link : null
+}
+
 // Parse an order folder name into its number + project. Folders are named
 // "Order <number> - <project>" (e.g. "Order 403792 - Glosfume") — which is also
 // exactly the Help Scout subject Stock Control keys on, so the number is read

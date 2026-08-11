@@ -63,6 +63,7 @@
     "test:bundle-checkpoint": "tsx src/lib/bundleCheckpoint.test.ts",
     "test:order-tracking": "tsx src/lib/orderTracking.test.ts",
     "test:panel-crop": "tsx src/lib/proofPanelCrop.test.ts",
+    "test:dropbox-proofs": "tsx supabase/functions/_shared/dropboxProofFiles.test.ts",
     "test:order-holds": "tsx src/lib/orderHolds.test.ts",
     "test:order-timeline": "tsx src/lib/orderTimeline.test.ts",
     "test:order-log": "tsx src/lib/orderLog.test.ts",

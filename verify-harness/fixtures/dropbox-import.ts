@@ -1,0 +1,59 @@
+// Fixtures for the "bring in artwork from an old order" import.
+//
+// The two images below are SYNTHETIC — a stand-in panelled proof and a
+// stand-in clean one — and they are `data:` URLs on purpose. The harness makes
+// external hosts fail fast so a spec cannot quietly grow a dependency on the
+// live internet, but `fetch()` reads a data: URL happily. That means the whole
+// client path runs offline for real: fetch, measure, crop, preview. Nothing is
+// stubbed between the modal and the crop engine, so a regression in the
+// detector shows up here as a visibly wrong contact sheet rather than passing
+// on a mock.
+//
+// The panelled one has type from 3% to 34% and is detected and cut at 0.343;
+// the clean one is correctly left alone. Both are checked by the harness spec.
+
+const PANELLED = 'data:image/png;base64,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'
+
+const CLEAN = 'data:image/png;base64,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'
+
+/**
+ * Stub for the dropbox-order-proofs edge function.
+ *
+ * Covers the four states the contact sheet has to render: a crop that worked,
+ * an image with no panel, a file that cannot be fetched, and the skipped-files
+ * list. Returning a real `link` for the first two is what lets the modal do its
+ * actual work rather than being handed a finished answer.
+ */
+export function dropboxImportInvoke(name: string, body?: any): { data: any; error: any } | null {
+  if (name !== 'dropbox-order-proofs') return null
+  const input = String(body?.input ?? '')
+
+  // An input the fixture does not know about behaves like a real miss, so the
+  // error path is reachable from the rig without special-casing it in a spec.
+  if (!/norwood|38294/i.test(input)) {
+    return {
+      data: { ok: false, error: 'Could not open that folder. Check the address, or open it in Dropbox and copy the address from the bar.' },
+      error: null,
+    }
+  }
+
+  return {
+    data: {
+      ok: true,
+      folder_name: 'Order 38294 - Norwood',
+      order_number: '38294',
+      project_name: 'Norwood',
+      basis: 'Showing the 3 files named “Proof…” in the JPGs folder.',
+      files: [
+        { name: 'Proof01_MistyNeal_Bamboo.jpg', path: '/JPGs/Proof01_MistyNeal_Bamboo.jpg', size: 356081, why: 'named Proof…', link: PANELLED, error: null },
+        { name: 'Proof02_BrianMurphy_Bamboo.jpg', path: '/JPGs/Proof02_BrianMurphy_Bamboo.jpg', size: 337725, why: 'named Proof…', link: CLEAN, error: null },
+        { name: 'Proof03_Unreadable.jpg', path: '/JPGs/Proof03_Unreadable.jpg', size: 6_400_000, why: 'named Proof…', link: null, error: 'Could not fetch this file from Dropbox.' },
+      ],
+      skipped: [
+        { name: '01_MistyNeal.ai', reason: 'Illustrator print file' },
+        { name: 'PRINT ME.rtf', reason: 'workshop note' },
+      ],
+    },
+    error: null,
+  }
+}

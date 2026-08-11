@@ -18,6 +18,7 @@ import { customerProofQuery, customerProofRpc, customerProofInvoke } from './fix
 import { payPagesQuery, payPagesRpc, payPagesInvoke } from './fixtures/pay-pages'
 import { versionFormQuery, versionFormRpc, versionFormInvoke } from './fixtures/version-form'
 import { reorderDeskQuery, reorderDeskRpc, reorderDeskInvoke } from './fixtures/reorder-desk'
+import { dropboxImportInvoke } from './fixtures/dropbox-import'
 
 const now = Date.now()
 const daysAgo = (n: number) => new Date(now - n * 864e5).toISOString()
@@ -1441,7 +1442,8 @@ export const supabase: any = {
         customerProofInvoke(name, opts?.body) ??
         payPagesInvoke(name, opts?.body) ??
         versionFormInvoke(name, opts?.body) ??
-        reorderDeskInvoke(name, opts?.body)
+        reorderDeskInvoke(name, opts?.body) ??
+        dropboxImportInvoke(name, opts?.body)
       if (hooked) return hooked
       // Full PaymentsStatus shape — AdminSettingsPage reads this on mount and
       // renders payStatus.stripe.* / .xero.* unguarded, so the generic
