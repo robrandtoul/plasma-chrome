@@ -279,6 +279,17 @@ export function buildContextText(ctx: CheckContext): string {
     lines.push('Recipients on the proof version (strong reference for who is on each card):')
     for (const r of ctx.recipients) lines.push(`- ${r}`)
   } else {
+    // ⚠ TRUE ONLY BECAUSE AN EMPTY ROSTER CURRENTLY MEANS ONE. Every shape that
+    // reaches here with no names really is shared or set work: set_single and
+    // set_collection carry layouts rather than names, and a Selection has its
+    // roster forced to [] on save. So the absence of names IS the evidence.
+    // That stops being true the moment a caller checks a proof whose roster was
+    // never captured rather than never existed — e.g. a back-book rebuild seeded
+    // from an old Dropbox folder, where no roster is ever recovered. Such a
+    // caller would have this asserted on every job, and "shared / set design" is
+    // the reading that wipes a recipient list on save. Before pointing this at
+    // imported work, make the caller distinguish "no recipients" from
+    // "recipients unknown" and say the latter instead of guessing.
     lines.push('No named recipients — a shared / set design.')
   }
   if (ctx.quantitySplit.length > 0) {
@@ -424,6 +435,17 @@ export function buildProofContextText(ctx: ProofCheckContext): string {
     lines.push('Recipients on this proof version (strong reference for who is on each card):')
     for (const r of ctx.recipients) lines.push(`- ${r}`)
   } else {
+    // ⚠ TRUE ONLY BECAUSE AN EMPTY ROSTER CURRENTLY MEANS ONE. Every shape that
+    // reaches here with no names really is shared or set work: set_single and
+    // set_collection carry layouts rather than names, and a Selection has its
+    // roster forced to [] on save. So the absence of names IS the evidence.
+    // That stops being true the moment a caller checks a proof whose roster was
+    // never captured rather than never existed — e.g. a back-book rebuild seeded
+    // from an old Dropbox folder, where no roster is ever recovered. Such a
+    // caller would have this asserted on every job, and "shared / set design" is
+    // the reading that wipes a recipient list on save. Before pointing this at
+    // imported work, make the caller distinguish "no recipients" from
+    // "recipients unknown" and say the latter instead of guessing.
     lines.push('No named recipients — a shared / set design.')
   }
 

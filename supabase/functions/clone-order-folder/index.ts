@@ -15,10 +15,16 @@
 // Always responds 200 with an { ok } discriminator (matching dropbox-folder);
 // the only non-200s are genuine client errors (bad method / JSON / inputs).
 //
-// Auth: verify_jwt = true (the designer's session JWT, like dropbox-folder).
-// Reads the Dropbox connection with a service-role client.
+// Auth: verify_jwt = true PLUS requireDesigner in the body, like dropbox-folder.
+// The in-body check is the load-bearing one: verify_jwt only proves a validly-
+// signed project JWT, and the publishable anon key is one — it ships in every
+// visitor's browser bundle. That matters more here than on dropbox-folder,
+// because this endpoint WRITES: it copies a folder inside Plasma's Dropbox and
+// mints a new shared link for the copy. Reads the Dropbox connection with a
+// service-role client.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { requireDesigner } from '../_shared/admin.ts'
 import { getDropboxAccessToken, parseOrderFolderName, listSharedLinkEntries } from '../_shared/dropbox.ts'
 
 const CORS = {
@@ -33,6 +39,14 @@ function json(body: unknown, status = 200): Response {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   if (req.method !== 'POST') return json({ ok: false, error: 'Method not allowed' }, 405)
+
+  // Designer or admin only — checked BEFORE the body is read, so an
+  // unauthenticated caller never reaches the Dropbox connection, and in
+  // particular never reaches the copy. Returns the shared 401/403 Response,
+  // which carries { error } rather than this function's { ok:false } shape; a
+  // missing `ok` reads as failure on the frontend either way.
+  const check = await requireDesigner(req)
+  if (check instanceof Response) return check
 
   let body: Record<string, unknown>
   try {

@@ -8,10 +8,17 @@
 // retry-order-invoice shape) so the frontend reads outcomes uniformly; the only
 // non-200s are genuine client errors (bad method / unparseable JSON / no link).
 //
-// Auth: verify_jwt = true (the designer's session JWT). Reads the Dropbox
-// connection with a service-role client.
+// Auth: verify_jwt = true PLUS requireDesigner in the body. Both are needed and
+// the second is the load-bearing one — verify_jwt only proves the caller holds a
+// validly-signed project JWT, and the publishable anon key is exactly that. It
+// ships in every visitor's browser bundle, so verify_jwt alone left this open to
+// anyone: hand it a Dropbox shared link and it resolves and lists that link
+// through Plasma's own Dropbox account, including links restricted to our team
+// that the caller could not open themselves. Reads the Dropbox connection with a
+// service-role client.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { requireDesigner } from '../_shared/admin.ts'
 import { getDropboxAccessToken, parseOrderFolderName, listSharedLinkEntries } from '../_shared/dropbox.ts'
 
 const CORS = {
@@ -26,6 +33,15 @@ function json(body: unknown, status = 200): Response {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   if (req.method !== 'POST') return json({ ok: false, error: 'Method not allowed' }, 405)
+
+  // Designer or admin only — checked BEFORE the body is read, so an
+  // unauthenticated caller never reaches the Dropbox connection at all. Returns
+  // the shared 401/403 Response, which carries { error } rather than this
+  // function's { ok:false } shape; the frontend reads a missing `ok` as failure
+  // either way, and an auth rejection is precisely the "genuine client error"
+  // case the header comment reserves non-200s for.
+  const check = await requireDesigner(req)
+  if (check instanceof Response) return check
 
   let body: Record<string, unknown>
   try {
