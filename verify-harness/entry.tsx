@@ -1011,7 +1011,18 @@ const extraQuery = (() => {
 // mock-vcard.ts) because the real one calls another origin and the harness is
 // offline, which is why none of this was checkable before.
 function QrDestinationRig() {
-  const qr = (id: string, slug: string, label: string) => ({
+  // ⚠ `kind` matters as much as the slug. A qcrd.uk code reaches us two ways:
+  // pasted into the version form's vCard field (kind 'hosted_vcard', slug
+  // column set) or — far more commonly — dropped in as an IMAGE and decoded
+  // (kind 'url', slug column null). The live SkyWalker Septic proof is the
+  // second, and keying the panel on the stored kind is exactly why its
+  // customer saw a bare qcrd.uk link. Both shapes are rigged here.
+  const qr = (
+    id: string,
+    slug: string,
+    label: string,
+    kind: 'hosted_vcard' | 'url' = 'hosted_vcard',
+  ) => ({
     id,
     signed_url:
       'data:image/svg+xml;utf8,' +
@@ -1026,26 +1037,35 @@ function QrDestinationRig() {
       ),
     label,
     is_qr_code: true,
-    qr_kind: 'hosted_vcard',
+    qr_kind: kind,
     qr_decoded_data: `https://qcrd.uk/${slug}`,
-    qr_vcard_slug: slug,
+    // Null on the image-upload path — the whole point of the case.
+    qr_vcard_slug: kind === 'hosted_vcard' ? slug : null,
     associated_name: null,
     side: null as null,
   })
 
-  return (
-    <div className="mx-auto max-w-3xl space-y-8 p-6">
-      <QrCodePanel
-        qrImages={[
+  // ?state=redirect-only drops the hosted vCard, so the standing "scanning
+  // saves the contact details to a phone" note has nothing true to describe
+  // and must stand down. That note used to print on every proof with any QR.
+  const state = new URLSearchParams(window.location.search).get('state') ?? 'all'
+  const images =
+    state === 'redirect-only'
+      ? [qr('q-uploaded', 'qr-redirect', 'Redirect, uploaded as an image', 'url')]
+      : [
+          // Card 1 is the live SkyWalker shape: uploaded as an image, stored
+          // as kind 'url' with no slug. It must still show its destination.
+          qr('q-uploaded', 'qr-redirect', 'Redirect, uploaded as an image', 'url'),
           qr('q-redirect', 'qr-redirect', 'Redirect — a long tracking-laden URL'),
           qr('q-vcard', 'qr-vcard', 'Hosted vCard — contact fields'),
           qr('q-draft', 'qr-draft', 'Redirect — card not live yet'),
           qr('q-noaddress', 'qr-noaddress', 'Redirect — no address set'),
           qr('q-missing', 'qr-missing', 'No such card'),
-        ]}
-        names={[]}
-        isVariantRound={false}
-      />
+        ]
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-8 p-6">
+      <QrCodePanel qrImages={images} names={[]} isVariantRound={false} />
     </div>
   )
 }

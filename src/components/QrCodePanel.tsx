@@ -24,7 +24,7 @@
 // embedded photos make QRs too dense for letterpress / metal
 // printing, so we never produce them.
 
-import { useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { QrCode } from 'lucide-react'
 import {
   classifyQrData,
@@ -39,7 +39,7 @@ import {
   type VcardBundle,
   VcardConfigError,
 } from '../lib/vcardClient'
-import { summariseDestination } from '../lib/qrDestination'
+import { parseShortLink, summariseDestination } from '../lib/qrDestination'
 import { PanelShell, tokens } from '../design'
 import {
   QR_PANEL_INTRO_COPY_DEFAULT,
@@ -77,7 +77,122 @@ interface QrCodePanelProps {
   vcardCopy?: string | null
 }
 
+// ── Plasma (qcrd.uk) card resolution ─────────────────────────────────
+//
+// A qcrd.uk QR encodes a token, not an address, and one slug space serves
+// BOTH hosted vCards and plain redirects. Only the card row says which — so
+// the badge, the contents and the standing instructions all have to wait for
+// the same lookup, and must never be allowed to disagree about the answer.
+// Resolving once here and handing the result down is what guarantees that.
+//
+// ⚠ Which QRs get resolved is decided by the PAYLOAD, not by the stored
+// `qr_kind`. The same code reaches us two ways — pasted into the version
+// form's vCard field (kind `hosted_vcard`, slug column set) or dropped in as
+// an image and decoded (kind `url`, slug column null) — and the second is the
+// common one. Keying on the kind is exactly the bug this replaces: the live
+// SkyWalker Septic proof stored its code as `url`, so the destination view
+// never ran and the customer was shown a bare qcrd.uk link.
+
+type PlasmaCardState =
+  | { kind: 'loading' }
+  | { kind: 'loaded'; bundle: VcardBundle }
+  | { kind: 'unavailable'; message: string }
+  | { kind: 'not_found' }
+
+/** The qcrd.uk slug this QR points at, from either storage path. */
+function plasmaSlugForImage(image: GridImage): string | null {
+  if (image.qr_vcard_slug) return image.qr_vcard_slug
+  const short = parseShortLink(image.qr_decoded_data ?? '')
+  return short?.kind === 'plasma' ? short.slug : null
+}
+
+/**
+ * Resolve every distinct slug on the panel in one pass.
+ *
+ * Deliberately keyed on the whole set rather than fetched per card: a shared
+ * QR renders once under every named recipient, so a per-card fetch asked the
+ * vCard app for the same slug once per person on the proof.
+ */
+function usePlasmaCards(slugs: string[]): Map<string, PlasmaCardState> {
+  // Join for a stable dependency — a fresh array each render would re-fetch
+  // on every parent update. Comma is safe as the separator because a slug is
+  // [a-zA-Z0-9-] only (the vCard app's own rule), so it can never contain one.
+  const key = slugs.join(',')
+  const [states, setStates] = useState<Map<string, PlasmaCardState>>(new Map())
+
+  useEffect(() => {
+    const list = key ? key.split(',') : []
+    if (list.length === 0) {
+      setStates(new Map())
+      return
+    }
+    setStates(new Map(list.map((s) => [s, { kind: 'loading' } as PlasmaCardState])))
+    let cancelled = false
+    void (async () => {
+      const entries = await Promise.all(
+        list.map(async (slug): Promise<[string, PlasmaCardState]> => {
+          try {
+            const result = await fetchVcardForSlug(slug)
+            if (result.ok) return [slug, { kind: 'loaded', bundle: result.data }]
+            if (result.reason === 'not_found') return [slug, { kind: 'not_found' }]
+            return [slug, { kind: 'unavailable', message: result.message ?? 'Lookup failed.' }]
+          } catch (err) {
+            // The page must never break because the vCard app is down; the
+            // customer can still read the link and approve.
+            const message =
+              err instanceof VcardConfigError
+                ? 'vCard app integration is not configured on this site.'
+                : (err as Error).message
+            return [slug, { kind: 'unavailable', message }]
+          }
+        }),
+      )
+      if (!cancelled) setStates(new Map(entries))
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [key])
+
+  return states
+}
+
+const PlasmaCardsContext = createContext<Map<string, PlasmaCardState>>(new Map())
+
 export function QrCodePanel({ qrImages, names, isVariantRound, className, introCopy, vcardCopy }: QrCodePanelProps) {
+  // Hooks before the early return — qrImages can legitimately be empty.
+  const slugs = useMemo(() => {
+    const seen = new Set<string>()
+    for (const img of qrImages) {
+      const slug = plasmaSlugForImage(img)
+      if (slug) seen.add(slug)
+    }
+    return [...seen]
+  }, [qrImages])
+  const plasmaCards = usePlasmaCards(slugs)
+
+  // The standing "For Plasma vCards, scanning saves the contact details to a
+  // phone" note is only true of an actual vCard. On a redirect it is plainly
+  // wrong, and it used to show on every proof with any QR at all — including
+  // proofs with no Plasma code on them. Show it only once something on this
+  // panel has resolved to a real contact card.
+  const showVcardCopy = [...plasmaCards.values()].some(
+    (s) => s.kind === 'loaded' && s.bundle.card.target_type !== 'external_url',
+  )
+
+  const section = (children: React.ReactNode) => (
+    <PlasmaCardsContext.Provider value={plasmaCards}>
+      <QrSection
+        className={className}
+        introCopy={introCopy}
+        vcardCopy={showVcardCopy ? vcardCopy : null}
+        showVcardCopy={showVcardCopy}
+      >
+        {children}
+      </QrSection>
+    </PlasmaCardsContext.Provider>
+  )
+
   if (qrImages.length === 0) return null
 
   // Variant rounds: QR rows are version-wide (no round_variant_id on
@@ -85,13 +200,13 @@ export function QrCodePanel({ qrImages, names, isVariantRound, className, introC
   // per-recipient grouping doesn't apply to variant rounds.
   if (isVariantRound) {
     return (
-      <QrSection className={className} introCopy={introCopy} vcardCopy={vcardCopy}>
+      section(
         <div className="space-y-6">
           {qrImages.map((img) => (
             <QrCodeCard key={img.id} image={img} />
           ))}
-        </div>
-      </QrSection>
+        </div>,
+      )
     )
   }
 
@@ -102,13 +217,13 @@ export function QrCodePanel({ qrImages, names, isVariantRound, className, introC
   // panel.
   if (names.length === 0) {
     return (
-      <QrSection className={className} introCopy={introCopy} vcardCopy={vcardCopy}>
+      section(
         <div className="space-y-6">
           {qrImages.map((img) => (
             <QrCodeCard key={img.id} image={img} />
           ))}
-        </div>
-      </QrSection>
+        </div>,
+      )
     )
   }
 
@@ -127,7 +242,7 @@ export function QrCodePanel({ qrImages, names, isVariantRound, className, introC
   if (!hasAnyContent) return null
 
   return (
-    <QrSection className={className} introCopy={introCopy} vcardCopy={vcardCopy}>
+    section(
       <div className="space-y-8">
         {perRecipient.map(({ name, qrs }) => {
           // Skip recipients with no QRs visible to them (no
@@ -154,8 +269,8 @@ export function QrCodePanel({ qrImages, names, isVariantRound, className, introC
             </div>
           )
         })}
-      </div>
-    </QrSection>
+      </div>,
+    )
   )
 }
 
@@ -166,11 +281,19 @@ function QrSection({
   className,
   introCopy,
   vcardCopy,
+  showVcardCopy = true,
 }: {
   children: React.ReactNode
   className?: string
   introCopy?: string | null
   vcardCopy?: string | null
+  /**
+   * Whether the vCard note applies at all. It describes scanning saving
+   * contact details to a phone, which is true of a hosted vCard and false of
+   * a redirect — and it used to print on every proof carrying any QR, Plasma
+   * or not. Defaults true so the standalone/legacy callers are unchanged.
+   */
+  showVcardCopy?: boolean
 }) {
   // Admin-editable copy (migration 000200), with the shipped defaults
   // as the fallback so a null/loading/empty value never blanks the
@@ -196,9 +319,11 @@ function QrSection({
           <p className="text-[14px] leading-[1.6] text-ink-soft m-0 whitespace-pre-line">
             {intro}
           </p>
-          <p className="text-[13px] leading-[1.55] text-ink-mute m-0 whitespace-pre-line">
-            {vcard}
-          </p>
+          {showVcardCopy && (
+            <p className="text-[13px] leading-[1.55] text-ink-mute m-0 whitespace-pre-line">
+              {vcard}
+            </p>
+          )}
         </div>
         <div className="min-w-0">{children}</div>
       </div>
@@ -221,6 +346,13 @@ function QrCodeCard({
   // partial-rollout rows shouldn't crash the page.
   const decoded = image.qr_decoded_data ?? ''
   const kind: QrKind = image.qr_kind ?? classifyQrData(decoded)
+
+  // Resolved once for the whole panel; null for anything that isn't a
+  // qcrd.uk code. Derived from the PAYLOAD, so it catches a Plasma link
+  // however the row was stored — see the note on usePlasmaCards.
+  const plasmaSlug = plasmaSlugForImage(image)
+  const plasmaCards = useContext(PlasmaCardsContext)
+  const plasmaState = plasmaSlug ? plasmaCards.get(plasmaSlug) : undefined
 
   return (
     <article className="grid gap-5 sm:grid-cols-[120px_1fr] rounded-[10px] bg-canvas border border-line p-5">
@@ -246,9 +378,13 @@ function QrCodeCard({
         )}
       </div>
       <div className="min-w-0">
-        <KindBadge kind={kind} />
+        <KindBadge kind={kind} plasmaState={plasmaState} />
         <div className="mt-3">
-          <DecodedContents kind={kind} data={decoded} vcardSlug={image.qr_vcard_slug ?? null} />
+          {plasmaState ? (
+            <PlasmaCardView state={plasmaState} url={decoded} />
+          ) : (
+            <DecodedContents kind={kind} data={decoded} />
+          )}
         </div>
       </div>
     </article>
@@ -269,34 +405,42 @@ const KIND_LABELS: Record<QrKind, string> = {
   hosted_vcard: 'Plasma vCard',
 }
 
-function KindBadge({ kind }: { kind: QrKind }) {
+/**
+ * The chip above each QR. For a qcrd.uk code the stored kind can't be trusted
+ * to describe it: a redirect dropped in as an image stores as `url` ("Website
+ * link" — true but uninformative), and a redirect pasted into the version
+ * form's vCard field stores as `hosted_vcard`, which would badge a Google
+ * search "Plasma vCard". So a Plasma code is labelled from the resolved card,
+ * and reads the neutral "Plasma link" until the lookup lands or if it fails —
+ * never a guess that later turns out wrong.
+ */
+function plasmaBadgeLabel(state: PlasmaCardState): string {
+  if (state.kind !== 'loaded') return 'Plasma link'
+  return state.bundle.card.target_type === 'external_url' ? 'Plasma link' : 'Plasma vCard'
+}
+
+function KindBadge({ kind, plasmaState }: { kind: QrKind; plasmaState?: PlasmaCardState }) {
   return (
     <span className="inline-flex items-center rounded-full bg-line-soft text-ink-soft px-2.5 py-1 eyebrow" style={{ letterSpacing: '0.14em' }}>
-      {KIND_LABELS[kind]}
+      {plasmaState ? plasmaBadgeLabel(plasmaState) : KIND_LABELS[kind]}
     </span>
   )
 }
 
 // ── Decoded contents dispatcher ──────────────────────────────────────
 
-function DecodedContents({
-  kind,
-  data,
-  vcardSlug,
-}: {
-  kind: QrKind
-  data: string
-  /** Populated by the proof-viewer only for kind = 'hosted_vcard' rows. */
-  vcardSlug: string | null
-}) {
+/**
+ * Renders anything that ISN'T a Plasma (qcrd.uk) code — those are routed to
+ * PlasmaCardView by QrCodeCard before this is reached, keyed on the payload
+ * rather than the stored kind, so `hosted_vcard` never arrives here.
+ */
+function DecodedContents({ kind, data }: { kind: QrKind; data: string }) {
   switch (kind) {
     case 'hosted_vcard':
-      // The hosted-vCard renderer fetches live contact details from
-      // the vCard app and shows them field by field. Falls back to
-      // the URL + a "temporarily unavailable" line if the vCard app
-      // is unreachable, so the page never breaks even if the
-      // integration is down.
-      return <HostedVcardView slug={vcardSlug} url={data} />
+      // Only reachable if the row claims hosted_vcard but its payload isn't a
+      // qcrd.uk link at all — a corrupt or hand-edited row. Show the raw URL
+      // rather than an empty panel.
+      return <UrlView raw={data} />
     case 'vcard':
       return <VCardView raw={data} />
     case 'mecard':
@@ -390,14 +534,20 @@ function VCardView({ raw }: { raw: string }) {
   )
 }
 
-// ── HostedVcardView ─────────────────────────────────────────────────
+// ── PlasmaCardView ──────────────────────────────────────────────────
 //
-// Hosted-vCard QRs encode a short URL only. The customer can't verify
-// the actual contact details from the URL itself, so the panel fetches
-// the live contact data from the vCard app via its anon RPCs and
-// renders the relevant fields. Styling fields (photo, cover, accent,
-// font) are intentionally not shown — they're the customer's job to
-// personalise after the cards arrive.
+// A qcrd.uk QR encodes a short URL only, so the customer can verify
+// nothing from the payload itself. One slug space serves two products:
+// a hosted vCard (render the contact fields) and a plain redirect
+// (render where it lands). Only the card row says which, so this is
+// presentation-only — the lookup happens once for the whole panel in
+// usePlasmaCards, which is what stops the badge, these contents and the
+// standing instructions disagreeing, and stops a shared QR being
+// fetched once per named recipient.
+//
+// Styling fields (photo, cover, accent, font) are intentionally not
+// shown — they're the customer's job to personalise after the cards
+// arrive.
 //
 // If the vCard app is unreachable (network error, env vars missing,
 // CORS, anything), the panel degrades gracefully: it shows the URL,
@@ -406,49 +556,7 @@ function VCardView({ raw }: { raw: string }) {
 // The customer can always re-open the page later if they want to
 // re-verify.
 
-function HostedVcardView({ slug, url }: { slug: string | null; url: string }) {
-  // Three states: idle (loading), loaded with data, error.
-  type State =
-    | { kind: 'loading' }
-    | { kind: 'loaded'; bundle: VcardBundle }
-    | { kind: 'unavailable'; message: string }
-    | { kind: 'not_found' }
-  const [state, setState] = useState<State>({ kind: 'loading' })
-
-  useEffect(() => {
-    if (!slug) {
-      setState({ kind: 'unavailable', message: 'No Plasma vCard slug attached to this QR.' })
-      return
-    }
-    let cancelled = false
-    void (async () => {
-      try {
-        const result = await fetchVcardForSlug(slug)
-        if (cancelled) return
-        if (result.ok) {
-          setState({ kind: 'loaded', bundle: result.data })
-        } else if (result.reason === 'not_found') {
-          setState({ kind: 'not_found' })
-        } else {
-          setState({ kind: 'unavailable', message: result.message ?? 'Lookup failed.' })
-        }
-      } catch (err) {
-        if (cancelled) return
-        if (err instanceof VcardConfigError) {
-          setState({
-            kind: 'unavailable',
-            message: 'vCard app integration is not configured on this site.',
-          })
-        } else {
-          setState({ kind: 'unavailable', message: (err as Error).message })
-        }
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [slug])
-
+function PlasmaCardView({ state, url }: { state: PlasmaCardState; url: string }) {
   // URL row is always shown, regardless of state — it's what the QR
   // literally encodes and the customer should always be able to read
   // the destination back to themselves.
@@ -474,8 +582,10 @@ function HostedVcardView({ slug, url }: { slug: string | null; url: string }) {
       <div className="space-y-3">
         {urlLine}
         <div className="text-[13px] text-ink-mute">
-          The Plasma vCard for this QR hasn't been published yet. The
-          link is correct and will resolve as soon as the card is live.
+          We couldn't find a Plasma card for this code. It may simply not have
+          been published yet — or the code may be wrong, in which case scanning
+          it would reach a "not found" page. Worth checking with us before you
+          approve.
         </div>
       </div>
     )
