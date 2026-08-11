@@ -1058,8 +1058,14 @@ const tree = requestedPath === '/order-builder' ? (
     </Routes>
   </MemoryRouter>
 ) : requestedPath === '/dashboard' ? (
+  // extraQuery rides along so the dashboard's URL-carried state can be
+  // exercised: the page keeps its search term and tile filter in the query
+  // string (?q= / ?tile=) rather than component state, deliberately, so a
+  // filtered view survives opening a proof and coming back — and so it can be
+  // bookmarked. Landing straight on ?q=… is also the only way to test a
+  // searched FIRST load, with no debounce race between typing and the refetch.
   <TeamChatProvider>
-    <MemoryRouter initialEntries={['/']}>
+    <MemoryRouter initialEntries={[`/${extraQuery}`]}>
       <Routes>
         <Route path="/" element={<DashboardPage />} />
         <Route path="*" element={<Elsewhere />} />

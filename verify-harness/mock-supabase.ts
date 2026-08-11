@@ -21,6 +21,7 @@ import { reorderDeskQuery, reorderDeskRpc, reorderDeskInvoke } from './fixtures/
 
 const now = Date.now()
 const daysAgo = (n: number) => new Date(now - n * 864e5).toISOString()
+const hoursAgo = (n: number) => new Date(now - n * 36e5).toISOString()
 const daysAhead = (n: number) => new Date(now + n * 864e5).toISOString()
 
 // ——— tiny inline artwork so cards render a thumbnail ———
@@ -1081,8 +1082,33 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
     ]
   } else if (table === 'proof_sets') {
     rows = BUNDLE_SETS
+  } else if (table === 'nudge_runs') {
+    // The Outbox's heartbeat (000214). Matched on the select, not on
+    // includes(): the panel reads this table TWICE, and its second read —
+    // unfinished runs — filters with `.is('finished_at', null)`, which this
+    // mock chains as a no-op. Handing that read the finished row below would
+    // raise the "a run never finished, sending is paused" alarm on a healthy
+    // fixture.
+    rows = select.includes('mode')
+      ? [{ id: 'run-1', started_at: hoursAgo(3), finished_at: hoursAgo(3), mode: 'live', candidates_computed: 3, sent: 1, skipped: 2, errors: null }]
+      : []
+  } else if (table === 'proof_nudges') {
+    // The latest run's ledger, one row per Outbox section so all three render:
+    // a send, a skip only a human can clear, and a self-clearing hold. Every
+    // proof_id here is a DASHBOARD_PROJECTS row, because the panel has no names
+    // of its own — it turns proof_id into "Sweet Beats" by looking the proof up
+    // in the array the dashboard hands it. Same select-string split as above:
+    // the stale-'sending' read narrows with `.lt`, which this mock ignores.
+    rows = select.includes('rendered_body')
+      ? [
+          { id: 'n-1', proof_id: 'p-x1', rule_code: 'sent_never_viewed', source: 'auto', state: 'sent', outcome: 'sent', detail: null, rendered_body: 'Just checking you saw the proof.', created_at: hoursAgo(2) },
+          { id: 'n-2', proof_id: 'p-r1', rule_code: 'viewed_not_actioned', source: 'auto', state: 'skipped', outcome: 'skipped_conversation_missing', detail: 'No Help Scout conversation is linked to this project.', created_at: hoursAgo(2) },
+          { id: 'n-3', proof_id: 'p-r2', rule_code: 'sent_never_viewed', source: 'auto', state: 'skipped', outcome: 'skipped_grace_window', detail: null, created_at: hoursAgo(2) },
+        ]
+      : []
+    if (filters['eq:source']) rows = rows.filter((r) => r.source === filters['eq:source'])
   } else if (table === 'settings') {
-    rows = [{ ordering_enabled: true, order_reminders_max: 3, order_reminder_interval_days: 3, auto_order_reminders_enabled: true, artwork_check_mode: 'live', artwork_check_required: false, artwork_check_model: null, proof_check_enabled: true, proof_callouts_enabled: true, proof_pins_enabled: true, direct_handoff_mode: 'live' }]
+    rows = [{ ordering_enabled: true, order_reminders_max: 3, order_reminder_interval_days: 3, auto_order_reminders_enabled: true, auto_nudges_enabled: true, artwork_check_mode: 'live', artwork_check_required: false, artwork_check_model: null, proof_check_enabled: true, proof_callouts_enabled: true, proof_pins_enabled: true, direct_handoff_mode: 'live' }]
   } else if (table === 'site_settings') {
     rows = [{ needs_attention_rules: { helpscout_reply_grace_days: 3 } }]
   } else if (table === 'order_nudges') {
@@ -1214,7 +1240,25 @@ export const supabase: any = {
     const hooked =
       customerProofRpc(name, args) ?? payPagesRpc(name, args) ?? versionFormRpc(name, args) ?? reorderDeskRpc(name, args)
     if (hooked) return hooked
-    if (name === 'dashboard_list') return { data: DASHBOARD_PROJECTS, error: null }
+    // The real function (000205) returns the working set for an empty search
+    // and, for a non-empty one, ONLY the rows matching it across five fields —
+    // it is NOT a superset of the working set. Modelled here because that
+    // narrowing is load-bearing on the dashboard: everything the page joins
+    // against this array by proof_id (Outbox labels, the activity feed) loses
+    // its names if it reads the searched copy. Ignoring p_search made the page
+    // untestable in exactly the place it broke.
+    if (name === 'dashboard_list') {
+      const term = String(args?.p_search ?? '').trim().toLowerCase()
+      if (!term) return { data: DASHBOARD_PROJECTS, error: null }
+      const hit = (v: unknown) => String(v ?? '').toLowerCase().includes(term)
+      return {
+        data: DASHBOARD_PROJECTS.filter((p: any) =>
+          hit(p.company_name) || hit(p.contact_name) || hit(p.contact_email) ||
+          hit(p.helpscout_conversation_id) || hit(p.proof_id),
+        ),
+        error: null,
+      }
+    }
     // Stock Control dispatch state (migration 000356) — Admin → Shipping uses
     // this to drop already-sent parcels off the readiness worklist. o9 is
     // delivered, o10 shipped-but-not-yet-delivered; both are `fulfilled` with

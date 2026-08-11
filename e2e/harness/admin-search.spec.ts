@@ -185,13 +185,18 @@ test.describe('designer command palette', () => {
     await expect(input).toBeVisible()
     const options = page.getByRole('option')
 
-    // 'qu' filters the pages to a single hit and (after the debounce) merges
-    // the eight fixture projects from dashboard_list ABOVE it: 9 rows under
-    // two group headers. The first row is a project (it carries the status
-    // pill), the last is the page destination (it doesn't) — the ordering
-    // that puts "the job I'm looking for" before "a page I could open".
-    await input.fill('qu')
-    await expect(options).toHaveCount(9)
+    // 'sa' filters the pages to a single hit and (after the debounce) merges
+    // the fixture projects whose contact matches — Saba's three bundle cards
+    // and Marisa Bell — ABOVE it: 5 rows under two group headers. The first row
+    // is a project (it carries the status pill), the last is the page
+    // destination (it doesn't) — the ordering that puts "the job I'm looking
+    // for" before "a page I could open".
+    //
+    // The term has to genuinely match a customer: dashboard_list's search is
+    // modelled properly in the mock now, so a term matching no project (this
+    // spec used to type 'qu') correctly returns nothing to merge.
+    await input.fill('sa')
+    await expect(options).toHaveCount(5)
     await expect(page.locator(GROUP_HEADERS)).toHaveCount(2)
     await expect(options.first().locator('span.pill')).toHaveCount(1)
     await expect(options.last().locator('span.pill')).toHaveCount(0)
@@ -203,17 +208,16 @@ test.describe('designer command palette', () => {
     await expect(input).toBeVisible()
     const options = page.getByRole('option')
 
-    // Start from the settled two-character state (9 rows), then delete one
-    // character: the proof rows must drop instantly, leaving only the single
-    // page hit. If the two-character gate regressed, the mock's
-    // always-returns-8 dashboard_list would keep 8 proof rows on screen and
-    // this count breaks.
-    await input.fill('qu')
-    await expect(options).toHaveCount(9)
+    // Start from the settled two-character state, then delete one character:
+    // the proof rows must drop instantly, leaving pages only. Asserted as "no
+    // row carries a status pill" plus the single group header rather than a
+    // row count, because one character matches pages fuzzily and how many it
+    // finds is not this test's business.
+    await input.fill('sa')
+    await expect(options).toHaveCount(5)
     await input.press('Backspace')
-    await expect(options).toHaveCount(1)
-    await expect(page.locator(GROUP_HEADERS)).toHaveCount(1)
     await expect(options.locator('span.pill')).toHaveCount(0)
+    await expect(page.locator(GROUP_HEADERS)).toHaveCount(1)
   })
 
   test('clearing the query restores browse mode', async ({ page }) => {
@@ -221,7 +225,7 @@ test.describe('designer command palette', () => {
     const input = page.getByRole('combobox')
     await expect(input).toBeVisible()
 
-    await input.fill('qu')
+    await input.fill('sa')
     await expect(page.locator(GROUP_HEADERS)).toHaveCount(2)
 
     await page.getByRole('button', { name: /clear/i }).click()

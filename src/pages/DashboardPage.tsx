@@ -2916,6 +2916,10 @@ interface DashboardSnapshot {
   searchTerm: string
   savedAt: number
   projects: DashboardProject[]
+  // The unfiltered working set behind the sidebar cards — snapshotted beside
+  // the list so a return trip repaints named Outbox/activity rows, not the
+  // proof-id fallbacks.
+  workingSet: DashboardProject[]
   latestEvents: DashboardLatestEvent[]
   leadTimes: LeadTime[]
   tileCounts: TileCounts | null
@@ -3112,6 +3116,21 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   const { session } = useAuth()
   const userId = session?.user.id ?? null
   const [projects, setProjects]           = useState<DashboardProject[]>([])
+  // The unfiltered working set — what dashboard_list() returns with NO search
+  // term. Identical to `projects` until the designer types in the search box,
+  // at which point `projects` narrows to the matches (000205) while this stays
+  // whole.
+  //
+  // WHY BOTH. The sidebar cards describe the whole desk, not the filtered list,
+  // and two of them look proofs up by id in this array: the Outbox turns a
+  // proof_id into "Vandelay Industries", and Latest activity both names its
+  // rows and derives the Help Scout reply rows outright. Joined against a
+  // searched list they came up empty — the Outbox fell back to "Proof
+  // 2b1d5918…" for every line and the activity card quietly dropped rows —
+  // which is exactly the failure the AwaitingPaymentPanel note below describes
+  // and sidesteps by owning its own queries. Same posture as the tile counts:
+  // page furniture reads the whole desk, only the list obeys the search.
+  const [workingSet, setWorkingSet]       = useState<DashboardProject[]>([])
   // Server-computed tile counts (migration 000202). Counted across every
   // proof in the DB, not the loaded `projects` subset, so the headline
   // numbers stay correct no matter how many proofs exist. Null until the
@@ -3144,7 +3163,9 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   // handler was created — the classic stale-closure bug, and here it would show
   // as live rows quietly enriched against a projects list from ten minutes ago.
   const latestEventsRef = useRef<DashboardLatestEvent[]>([])
-  const projectsRef = useRef<DashboardProject[]>([])
+  // The feed enriches against the WORKING SET, never the searched list — see
+  // the workingSet note above.
+  const workingSetRef = useRef<DashboardProject[]>([])
   const bundleIndexRef = useRef<BundleIndex>(EMPTY_BUNDLE_INDEX)
   // Production lead times for the sidebar chart under Latest activity.
   // Sourced from materials (same table the admin Lead times tab edits);
@@ -3242,7 +3263,13 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   // ref so loadDashboard() (called from many places — mount, visibility,
   // after pin/snooze writes) always re-fetches for the active search
   // without every call site threading it through. Empty = working set.
-  const serverSearchRef = useRef('')
+  //
+  // Seeded from the URL, not from '': the search term lives in ?q= precisely so
+  // a filtered view survives opening a proof and coming back, and can be
+  // bookmarked — and every one of those arrivals starts with a term already in
+  // hand. Starting empty made them fetch the whole working set, throw it away,
+  // and fetch again 300ms later when the debounce noticed the mismatch.
+  const serverSearchRef = useRef(search)
 
   // ── Mobile-only: the Activity tab's unseen dot + the stat-tiles scroll
   // strip. None of this has any effect at md:+ (the activity aside renders
@@ -3305,6 +3332,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     const snap = readDashboardSnapshot(serverSearchRef.current)
     if (snap) {
       setProjects(snap.projects)
+      setWorkingSet(snap.workingSet)
       setLatestEvents(snap.latestEvents)
       setLeadTimes(snap.leadTimes)
       setTileCounts(snap.tileCounts)
@@ -3354,7 +3382,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   // ── Near-live Latest activity ─────────────────────────────────────────────
   //
   // Keep the refs above in step with the state the feed paths read.
-  useEffect(() => { projectsRef.current = projects }, [projects])
+  useEffect(() => { workingSetRef.current = workingSet }, [workingSet])
   useEffect(() => { bundleIndexRef.current = bundleIndex }, [bundleIndex])
   useEffect(() => { latestEventsRef.current = latestEvents }, [latestEvents])
 
@@ -3368,12 +3396,12 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     // Before the first load there are no projects to enrich the synthetic rows
     // against, so a rebuild now would drop every Help Scout reply and pay-link
     // row and then put them back a moment later.
-    if (projectsRef.current.length === 0) return
+    if (workingSetRef.current.length === 0) return
     activityRefreshInFlight.current = true
     try {
       const sources = await fetchActivitySources()
       if (!sources) return
-      const next = buildActivityFeed(sources, projectsRef.current, bundleIndexRef.current)
+      const next = buildActivityFeed(sources, workingSetRef.current, bundleIndexRef.current)
       latestEventsRef.current = next
       setLatestEvents(next)
       // Keep the return-trip snapshot in step, so navigating to a proof and
@@ -3402,9 +3430,9 @@ export default function DashboardPage({ activityView = false }: { activityView?:
   useLiveDashboardViews({
     // Wait for the first load: a row arriving before there are projects can't
     // be enriched, and would spend a refetch discovering that.
-    enabled: projects.length > 0,
+    enabled: workingSet.length > 0,
     onView: (row: LiveViewRow) => {
-      const { events, needsRefresh } = applyLiveView(latestEventsRef.current, row, projectsRef.current)
+      const { events, needsRefresh } = applyLiveView(latestEventsRef.current, row, workingSetRef.current)
       // A view we can't name from what's loaded (a superseded version, or a
       // proof outside the working set) is fetched properly rather than guessed.
       if (needsRefresh) { void refreshActivityFeed(); return }
@@ -3512,7 +3540,18 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     // p_search empty → working set; non-empty → matches across all
     // proofs incl. the archive (migration 000205). The term is held in a
     // ref so every loadDashboard() caller re-fetches for the active search.
-    const projectsPromise = supabase.rpc('dashboard_list', { p_search: serverSearchRef.current })
+    const searchTerm = serverSearchRef.current
+    const projectsPromise = supabase.rpc('dashboard_list', { p_search: searchTerm })
+
+    // The same call with NO search term, for the sidebar cards (see the
+    // workingSet note by its useState). A searched dashboard_list returns ONLY
+    // the matches — it is not a superset of the working set — so while a search
+    // is active the sidebar needs its own copy. When the box is empty the two
+    // are the same fetch, so searching is the only time this costs a second
+    // round trip, and it is one indexed call on a page that already makes eight.
+    const workingSetPromise = searchTerm
+      ? supabase.rpc('dashboard_list', { p_search: '' })
+      : projectsPromise
 
     // Note: the stat-tile counts come from the dashboard_tile_counts()
     // RPC, fetched below in the same Promise.all (see countsPromise).
@@ -3567,6 +3606,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
 
     const [
       { data: projectRows, error: projectsError },
+      { data: workingSetRows, error: workingSetError },
       activitySources,
       { data: pinRows },
       { data: leadTimeRows },
@@ -3574,7 +3614,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
       { count: flaggedCount },
       { data: bundleMemberRows, error: bundleMembersError },
       { data: bundleSetRows, error: bundleSetsError },
-    ] = await Promise.all([projectsPromise, activityPromise, pinsPromise, leadTimesPromise, countsPromise, flaggedCountPromise, bundleMembersPromise, bundleSetsPromise])
+    ] = await Promise.all([projectsPromise, workingSetPromise, activityPromise, pinsPromise, leadTimesPromise, countsPromise, flaggedCountPromise, bundleMembersPromise, bundleSetsPromise])
 
     // dashboard_list IS the page. If it failed, say so — the old code
     // destructured `data` only, so an expired JWT, an RLS change or a 500 all
@@ -3591,6 +3631,17 @@ export default function DashboardPage({ activityView = false }: { activityView?:
 
     const typedProjects = (projectRows ?? []) as DashboardProject[]
     setProjects(typedProjects)
+
+    // A failed working-set read keeps the copy already on screen rather than
+    // blanking it: supabase-js returns data: null on error, so the idiomatic
+    // `?? []` would put the sidebar straight back into the unlabelled state
+    // this exists to prevent. Same posture as the bundle index below.
+    const nextWorkingSet = workingSetError
+      ? (console.error('[DashboardPage] working-set dashboard_list failed', workingSetError),
+         workingSetRef.current)
+      : ((workingSetRows ?? []) as DashboardProject[])
+    setWorkingSet(nextWorkingSet)
+    workingSetRef.current = nextWorkingSet
 
     if (counts) setTileCounts(counts as TileCounts)
     setFlaggedOpenCount(flaggedCount ?? 0)
@@ -3616,7 +3667,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
     // blanking it — fetchActivitySources returns null only when the backbone
     // query failed, i.e. when we genuinely know nothing new.
     const mergedEvents = activitySources
-      ? buildActivityFeed(activitySources, typedProjects, nextBundleIndex)
+      ? buildActivityFeed(activitySources, nextWorkingSet, nextBundleIndex)
       : latestEventsRef.current
     setLatestEvents(mergedEvents)
     latestEventsRef.current = mergedEvents
@@ -3660,6 +3711,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
       searchTerm: serverSearchRef.current,
       savedAt: Date.now(),
       projects: typedProjects,
+      workingSet: nextWorkingSet,
       latestEvents: mergedEvents,
       leadTimes: (leadTimeRows ?? []) as LeadTime[],
       tileCounts: (counts as TileCounts | null) ?? null,
@@ -4144,7 +4196,7 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                   <LatestActivityPanel events={latestEvents} navigate={navigate} fill />
                 )}
                 {activityTab === 'followups' && (
-                  <NudgeOutboxPanel projects={projects} onAfterSend={() => loadDashboard()} fill />
+                  <NudgeOutboxPanel projects={workingSet} onAfterSend={() => loadDashboard()} fill />
                 )}
                 {activityTab === 'leadtimes' && (
                   <LeadTimesChart leadTimes={leadTimes} navigate={navigate} fill />
@@ -4788,8 +4840,10 @@ export default function DashboardPage({ activityView = false }: { activityView?:
                 {reorderDeskOn && <ReorderDeskPanel />}
                 {/* Follow-up automation Outbox (Phase 1). Owns its own small
                     nudge_runs / proof_nudges queries; the projects array is
-                    only passed for client-side contact/company labels. */}
-                <NudgeOutboxPanel projects={projects} onAfterSend={() => loadDashboard()} />
+                    only passed for client-side contact/company labels — hence
+                    the WORKING SET, not the searched list, or every row falls
+                    back to "Proof 2b1d5918…" the moment anyone searches. */}
+                <NudgeOutboxPanel projects={workingSet} onAfterSend={() => loadDashboard()} />
                 <LeadTimesChart leadTimes={leadTimes} navigate={navigate} />
               </DashboardRail>
             </div>
