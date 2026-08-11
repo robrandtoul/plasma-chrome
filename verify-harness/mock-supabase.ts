@@ -1047,6 +1047,11 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
         contact_id: 'c-1',
         contacts: { full_name: 'Valentina Ring', email: 'valentina@realise.example', companies: { id: 'co-1', name: 'Realise' } },
       }]
+    } else if (Array.isArray(filters['in:id'])) {
+      // The approved-artwork batch (Orders page) asks for many proofs' approval
+      // dates at once — one row per requested id, or the map it builds is keyed
+      // on undefined and every card loses its "Approved <date>".
+      rows = (filters['in:id'] as string[]).map((id) => ({ id, approved_at: daysAgo(1) }))
     } else {
       rows = [{ approved_at: daysAgo(1) }]
     }
@@ -1066,10 +1071,35 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
     } else {
       // Two approved files (front + back, shared artwork) so the To-order card's
       // Approved artwork panel renders a populated list.
-      rows = [
-        { id: 'img-front', image_path: 'proofs/approved-front.pdf', original_filename: 'Approved_Front.pdf', associated_name: null, side: 'front', layout_id: null },
-        { id: 'img-back', image_path: 'proofs/approved-back.pdf', original_filename: 'Approved_Back.pdf', associated_name: null, side: 'back', layout_id: null },
-      ]
+      //
+      // The batched read (`.in('proof_version_id', …)`, used by the Orders page
+      // for every card at once) groups the rows BY that column, so each
+      // requested version needs its own pair — a flat two-row fixture with no
+      // proof_version_id groups under `undefined` and every card comes back
+      // empty.
+      // Single-version reads keep the stable `img-front` / `img-back` ids the
+      // annotation fixtures below are pinned to.
+      const versionIds: string[] = Array.isArray(filters['in:proof_version_id'])
+        ? filters['in:proof_version_id']
+        : [filters['eq:proof_version_id'] ?? 'demo-version']
+      rows = versionIds.flatMap((vid, i) => {
+        // Globex (order o6) is the two-recipient fixture — a shared front plus
+        // a card each — so the collapsed strip's "+N more" truncation and the
+        // panel's per-recipient rows have something to render. Every other
+        // order keeps the plain shared front/back pair.
+        if (vid === 'ver-p-o6') {
+          return [
+            { id: 'img-o6-shared', proof_version_id: vid, image_path: 'proofs/o6-front.pdf', original_filename: 'Globex_Front_Shared.pdf', associated_name: null, side: 'front', layout_id: null },
+            { id: 'img-o6-hs-b', proof_version_id: vid, image_path: 'proofs/o6-hs-back.pdf', original_filename: 'Globex_Back_HScorpio.pdf', associated_name: 'Hank Scorpio', side: 'back', layout_id: null },
+            { id: 'img-o6-fg-b', proof_version_id: vid, image_path: 'proofs/o6-fg-back.pdf', original_filename: 'Globex_Back_FGrimes.pdf', associated_name: 'Frank Grimes', side: 'back', layout_id: null },
+          ]
+        }
+        const suffix = i === 0 ? '' : `-${vid}`
+        return [
+          { id: `img-front${suffix}`, proof_version_id: vid, image_path: 'proofs/approved-front.pdf', original_filename: 'Approved_Front.pdf', associated_name: null, side: 'front', layout_id: null },
+          { id: `img-back${suffix}`, proof_version_id: vid, image_path: 'proofs/approved-back.pdf', original_filename: 'Approved_Back.pdf', associated_name: null, side: 'back', layout_id: null },
+        ]
+      })
     }
   } else if (table === 'proof_events') {
     // The change request the pins below arrived with — same proof_event_id, so

@@ -33,6 +33,8 @@ import { useConfirm } from '../components/ConfirmDialog'
 import SendPayLinkModal from '../components/SendPayLinkModal'
 import DesignerAvatar from '../components/DesignerAvatar'
 import ApprovedArtworkPanel from '../components/ApprovedArtworkPanel'
+import ApprovedArtworkStrip from '../components/ApprovedArtworkStrip'
+import { fetchApprovedArtworkBatch, type ApprovedArtwork, type ApprovedArtworkLoad } from '../lib/approvedArtwork'
 import ArtworkCheckReportView, { type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
 import HoldOrderDialog from '../components/HoldOrderDialog'
 import { ChevronDown, StickyNote } from 'lucide-react'
@@ -795,6 +797,13 @@ export default function OrdersPage() {
   // Lets an order card show its OWN material's artwork when the proof's current
   // version is a different material (see thumbForOrder).
   const [materialThumbs, setMaterialThumbs] = useState<Record<string, ThumbInfo>>({})
+  // The approved production files behind each placeable order, keyed by ORDER
+  // id (not proof id — two orders off one proof can be different finishes, so
+  // each gets its own slice). Loaded in ONE batch for the whole queue, because
+  // both the collapsed card's one-line artwork strip and the expanded prep
+  // form's file list read it: per-card fetching would have been ~4 requests
+  // per order on every page load. `null` = the batch hasn't answered yet.
+  const [artworkByOrder, setArtworkByOrder] = useState<Map<string, ApprovedArtwork> | 'error' | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   // The order whose hand-off to Stock Control is being finished off right now,
@@ -1202,6 +1211,12 @@ export default function OrdersPage() {
       setOrders(rows)
       setCapped(rows.length >= 300)
       setLoading(false)
+      // The approved-artwork map belongs to the PREVIOUS set of orders, so it
+      // stands down the moment new rows land — not when its own refetch
+      // finishes further down. A card absent from a map that claims to be
+      // ready reads as "this order has no approved artwork", which would be a
+      // false alarm on an order that simply hadn't been looked up yet.
+      setArtworkByOrder(null)
 
       // The current version of each order's proof, so "Re-send link" can post on
       // the Help Scout thread (send-helpscout-reply requires a version_id).
@@ -1307,6 +1322,25 @@ export default function OrdersPage() {
         }
       }
 
+      // The approved artwork behind every order in Place — the filenames its
+      // collapsed card lists and the files its Download ZIP hands over.
+      //
+      // ONE batch for the whole section (see fetchApprovedArtworkBatch), and
+      // scoped to placeable orders: a revision order deliberately shows no
+      // artwork at all (its current version may be the replacement still being
+      // changed, not the approved set), and awaiting-payment cards have no
+      // production step to fetch files for.
+      const placeable = rows.filter(isPlaceable).filter((r) => r.status !== 'revision')
+      if (placeable.length > 0) {
+        void fetchApprovedArtworkBatch(
+          placeable.map((r) => ({ key: r.id, proofId: r.proof_id, materialOptionId: r.material_option_id })),
+        )
+          .then((m) => { if (!cancelled) setArtworkByOrder(m) })
+          .catch(() => { if (!cancelled) setArtworkByOrder('error') })
+      } else if (!cancelled) {
+        setArtworkByOrder(new Map())
+      }
+
       // Thumbnails for every order card that shows one: paid (To order),
       // revision (Being revised), and sent (Awaiting payment). The Links-to-send
       // worklist's thumbnails are loaded in the approved-no-order block above.
@@ -1329,6 +1363,16 @@ export default function OrdersPage() {
   // artwork that will replace what was bought, i.e. always the current version.
   function thumbForOrder(o: OrderRow): ThumbInfo | null {
     return (o.material_id ? materialThumbs[`${o.proof_id}:${o.material_id}`] : undefined) ?? thumbs[o.proof_id] ?? null
+  }
+
+  // This order's slice of the approved-artwork batch, in the shape both the
+  // collapsed strip and the expanded panel read. A key the finished map doesn't
+  // hold means the proof has no current version to take files from — 'ready'
+  // with nothing, which is a real answer and reads differently from 'loading'.
+  function artworkLoadFor(o: OrderRow): ApprovedArtworkLoad {
+    if (artworkByOrder === null) return { status: 'loading' }
+    if (artworkByOrder === 'error') return { status: 'error' }
+    return { status: 'ready', artwork: artworkByOrder.get(o.id) ?? null }
   }
 
   // Jump from a Fix pointer row to the order's card further down the page:
@@ -2392,6 +2436,7 @@ export default function OrdersPage() {
                             supplierCount={o.material_variants?.materials?.outsourced_supplier_ids?.length ?? 0}
                             suggested={suggestedDate(o)}
                             proofMaterialCode={proofMaterialCodes[o.proof_id] ?? null}
+                            artworkLoad={artworkLoadFor(o)}
                             busy={busyId === o.id}
                             copied={copiedId === o.id}
                             flash={flashOrderId === o.id}
@@ -2975,6 +3020,7 @@ function OrderCard({
   handoffError = null,
   onRetryHandoff,
   proofMaterialCode,
+  artworkLoad,
   showArtworkChip = false,
   onOpenArtworkReport,
   onHold,
@@ -3000,6 +3046,13 @@ function OrderCard({
   handoffError?: string | null
   onRetryHandoff?: () => void
   proofMaterialCode: string | null
+  /**
+   * This order's approved production files, from the page-level batch. Omitted
+   * (Being revised) means the card shows no artwork at all — the current
+   * version there may be the replacement still being changed, not the set the
+   * customer signed off.
+   */
+  artworkLoad?: ApprovedArtworkLoad
   showArtworkChip?: boolean
   onOpenArtworkReport?: () => void
   /** Opens the hold dialog (000377). Omitted = the menu offers no hold action. */
@@ -3364,6 +3417,23 @@ function OrderCard({
             )}
           </div>
 
+          {/* The approved files, on the COLLAPSED row: what they're called, and
+              one click to download them all. Getting the artwork out is the
+              first move of prep — it goes into the Dropbox order folder whose
+              link the form below then wants — so it shouldn't be behind the
+              form. Replaced by the full panel (per-file downloads, approved
+              date, finish caution) once the card is opened, both reading the
+              same batch so they can't name different files. */}
+          {!expanded && !isRevision && artworkLoad && (
+            <ApprovedArtworkStrip
+              load={artworkLoad}
+              projectName={order.proofs?.contacts?.full_name ?? customerLabel(order)}
+              customerName={order.proofs?.contacts?.companies?.name ?? '—'}
+              materialDisplay={order.material_variants?.materials?.display_name ?? null}
+              onShowAll={() => setExpanded(true)}
+            />
+          )}
+
           {/* A re-approved revision shows this even COLLAPSED, and tinted: it
               is now sitting in Place looking like ordinary work, but the
               Dropbox folder still holds the artwork the customer rejected until
@@ -3615,6 +3685,7 @@ function OrderCard({
               customerName={order.proofs?.contacts?.companies?.name ?? '—'}
               materialDisplay={order.material_variants?.materials?.display_name ?? null}
               materialOptionId={order.material_option_id}
+              preloaded={artworkLoad}
             />
           )}
             </>

@@ -196,11 +196,44 @@ test.describe('orders work queue', () => {
     await expect(card.getByRole('button', { name: /hide details/i })).toBeVisible()
   })
 
-  test('a collapsed card shows one visible primary with the rest behind the ⋯ menu', async ({ page }) => {
-    // Exactly two buttons on the collapsed o6 card: the primary and the menu
-    // trigger. A third always-visible action is the regression.
+  test('a collapsed To-order card names its approved files and offers them', async ({ page }) => {
+    // The approved artwork used to live ONLY inside the expanded prep form, so
+    // "what are this order's files called" and "give me them" — the first move
+    // of prep, since the files go into the Dropbox order folder whose link the
+    // form then asks for — were behind an expand on every card.
+    //
+    // o6 (Globex) is the two-recipient fixture: a shared front plus a card
+    // each, so the line has to truncate. Two names, then a control for the
+    // rest; every name is its own download, and the ZIP takes the lot.
     const card = page.locator('#order-card-o6')
-    await expect(card.locator('button')).toHaveCount(2)
+    const artwork = card.getByRole('group', { name: 'Approved artwork' })
+    await expect(artwork).toBeVisible()
+    await expect(artwork.getByRole('button', { name: /^Download Globex_/ })).toHaveCount(2)
+    await expect(artwork.getByRole('button', { name: /^Download all 3 approved artwork/ })).toBeVisible()
+
+    // The truncation is honest: "+1 more" opens the card, where the full list
+    // lives. Opening also RETIRES the line — the panel below states the same
+    // files, and the two must never both be on screen claiming the set.
+    await artwork.getByRole('button', { name: /more$/ }).click()
+    await expect(card.locator('input[type=date]')).toHaveCount(1)
+    await expect(card.getByRole('group', { name: 'Approved artwork' })).toHaveCount(0)
+
+    // The panel is fed by the page's batch, not its own fetch, so all three
+    // files are listed with no loading step in between — the collapsed line
+    // and the expanded list cannot name different files.
+    await expect(card.getByRole('listitem').filter({ hasText: 'Globex_' })).toHaveCount(3)
+  })
+
+  test('a collapsed card shows one visible primary with the rest behind the ⋯ menu', async ({ page }) => {
+    // Exactly two card actions on the collapsed o6 card: the primary and the
+    // menu trigger. A third always-visible action is the regression.
+    //
+    // Scoped past the approved-artwork line (the filenames, each of which
+    // downloads itself, and its ZIP): those are content — what this order's
+    // files are called and how to get them — not another route through the
+    // order, which is what the one-primary rule is about.
+    const card = page.locator('#order-card-o6')
+    await expect(card.locator('button:not([role="group"] button)')).toHaveCount(2)
 
     await card.getByRole('button', { name: /more actions/i }).click()
     const menu = page.getByRole('menu')

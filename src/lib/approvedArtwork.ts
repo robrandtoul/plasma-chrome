@@ -81,6 +81,170 @@ function sortFiles(files: ApprovedArtworkFile[]): ApprovedArtworkFile[] {
   })
 }
 
+// How a batch load is getting on, for a caller that fetches many orders' files
+// at once and hands each card its own result. A plain `ApprovedArtwork | null`
+// can't carry this: null would have to mean both "still loading" and "this
+// order genuinely has no approved files", and a card would announce the second
+// while the first was still true.
+export type ApprovedArtworkLoad =
+  | { status: 'loading' }
+  | { status: 'ready'; artwork: ApprovedArtwork | null }
+  | { status: 'error' }
+
+// One caller's worth of "which files were approved for THIS order?". Keyed by
+// the caller's own id (an order id) rather than the proof id, because the
+// finish narrowing is per ORDER: one proof can carry two orders bought in two
+// different finishes, and each wants its own slice of the same image set.
+export interface ApprovedArtworkRequest {
+  key: string
+  proofId: string
+  /** The order's `material_option_id`. See fetchApprovedArtwork's note. */
+  materialOptionId?: string | null
+}
+
+type VersionRow = {
+  id: string
+  proof_id: string
+  version_number: number
+  shape: string | null
+  material_options: string[] | null
+}
+
+type ImageRow = {
+  id: string
+  proof_version_id: string
+  image_path: string
+  original_filename: string | null
+  associated_name: string | null
+  side: 'front' | 'back' | null
+  layout_id: string | null
+  material_option: string | null
+}
+
+// Fetch approved artwork for MANY orders in a fixed number of round trips
+// (proofs + current versions + images, plus finish labels and layout titles
+// only when something needs them) rather than the ~4 per proof a loop over
+// fetchApprovedArtwork would cost. The Orders page shows an artwork line on
+// every card in Place, so the per-card shape would have put dozens of requests
+// on the page load — the same trap the thumbnails already avoid.
+//
+// Requests whose proof has no current version are simply absent from the map;
+// the caller reads that as "nothing to show", exactly as the single-proof
+// helper's null does.
+export async function fetchApprovedArtworkBatch(
+  requests: ApprovedArtworkRequest[],
+): Promise<Map<string, ApprovedArtwork>> {
+  const out = new Map<string, ApprovedArtwork>()
+  const proofIds = Array.from(new Set(requests.map((r) => r.proofId).filter(Boolean)))
+  if (proofIds.length === 0) return out
+
+  const [{ data: proofRows }, { data: versionRows }] = await Promise.all([
+    supabase.from('proofs').select('id, approved_at').in('id', proofIds),
+    // One current version per proof by construction (`is_current` is the
+    // single-current invariant every approval path upholds), so this replaces
+    // the per-proof "fetch all versions, find the current one" read.
+    supabase
+      .from('proof_versions')
+      .select('id, proof_id, version_number, shape, material_options')
+      .in('proof_id', proofIds)
+      .eq('is_current', true),
+  ])
+
+  const approvedAtByProof = new Map<string, string | null>(
+    ((proofRows ?? []) as { id: string; approved_at: string | null }[]).map((p) => [p.id, p.approved_at]),
+  )
+  const versionByProof = new Map<string, VersionRow>()
+  for (const v of (versionRows ?? []) as VersionRow[]) {
+    if (!versionByProof.has(v.proof_id)) versionByProof.set(v.proof_id, v)
+  }
+  if (versionByProof.size === 0) return out
+
+  const versionIds = Array.from(versionByProof.values(), (v) => v.id)
+  // Finish labels are only worth fetching for orders whose version actually
+  // carries tabs to narrow — same test the single-proof path applies.
+  const optionIds = Array.from(new Set(
+    requests
+      .filter((r) => {
+        const v = versionByProof.get(r.proofId)
+        return !!r.materialOptionId && (v?.material_options?.length ?? 0) > 0
+      })
+      .map((r) => r.materialOptionId as string),
+  ))
+  const collectionVersionIds = Array.from(versionByProof.values())
+    .filter((v) => v.shape === 'set_collection')
+    .map((v) => v.id)
+
+  const [{ data: imageRows }, { data: optionRows }, { data: layoutRows }] = await Promise.all([
+    supabase
+      .from('proof_version_images')
+      .select('id, proof_version_id, image_path, original_filename, associated_name, side, layout_id, material_option')
+      .in('proof_version_id', versionIds)
+      .eq('is_qr_code', false),
+    optionIds.length > 0
+      ? supabase.from('material_options').select('id, code, display_name').in('id', optionIds)
+      : Promise.resolve({ data: [] as unknown[] }),
+    collectionVersionIds.length > 0
+      ? supabase.from('proof_layouts').select('id, title, proof_version_id').in('proof_version_id', collectionVersionIds)
+      : Promise.resolve({ data: [] as unknown[] }),
+  ])
+
+  const imagesByVersion = new Map<string, ImageRow[]>()
+  for (const r of (imageRows ?? []) as ImageRow[]) {
+    const list = imagesByVersion.get(r.proof_version_id)
+    if (list) list.push(r)
+    else imagesByVersion.set(r.proof_version_id, [r])
+  }
+  const optionById = new Map<string, { code: string | null; display_name: string | null }>(
+    ((optionRows ?? []) as { id: string; code: string | null; display_name: string | null }[])
+      .map((o) => [o.id, { code: o.code, display_name: o.display_name }]),
+  )
+  const layoutTitles = new Map<string, string>()
+  for (const l of (layoutRows ?? []) as { id: string; title: string }[]) layoutTitles.set(l.id, l.title)
+
+  for (const req of requests) {
+    const current = versionByProof.get(req.proofId)
+    if (!current) continue
+
+    const versionOptionCodes = Array.isArray(current.material_options) ? current.material_options : []
+    const opt = req.materialOptionId ? optionById.get(req.materialOptionId) : undefined
+    const finishCode = versionOptionCodes.length > 0 ? opt?.code ?? null : null
+    const finishLabel = versionOptionCodes.length > 0 ? opt?.display_name ?? null : null
+
+    const scope = scopeToOrderedFinish(imagesByVersion.get(current.id) ?? [], versionOptionCodes, finishCode)
+    // Set (collection) images fold by layout title, not recipient name.
+    const isCollection = current.shape === 'set_collection'
+
+    const files = sortFiles(
+      scope.images.map((r) => ({
+        imageId: r.id,
+        imagePath: r.image_path,
+        originalFilename: r.original_filename,
+        side: r.side,
+        associatedName: r.associated_name,
+        layoutId: r.layout_id,
+        layoutTitle: r.layout_id ? layoutTitles.get(r.layout_id) ?? null : null,
+        versionNumber: current.version_number,
+      })),
+    )
+
+    out.set(req.key, {
+      files,
+      approvedAt: approvedAtByProof.get(req.proofId) ?? null,
+      isOneSided: !files.some((f) => f.side === 'back'),
+      isAllShared: !isCollection && files.every((f) => f.associatedName == null),
+      isCollection,
+      // Only claim a finish when it actually narrowed the set — on the two
+      // uncertain outcomes the label would describe files that aren't all there.
+      finishLabel: scope.outcome === 'scoped' ? finishLabel ?? finishCode : null,
+      finishScope: scope.outcome,
+      finishUncertain: finishScopeIsUncertain(scope.outcome),
+      finishTabCount: versionOptionCodes.length,
+    })
+  }
+
+  return out
+}
+
 // Fetch the approved artwork for a proof, narrowed to the finish the order was
 // placed against. Returns null if it has no current version (shouldn't happen
 // for an ordered proof). files is [] when the current version carries no non-QR
@@ -91,100 +255,18 @@ function sortFiles(files: ApprovedArtworkFile[]): ApprovedArtworkFile[] {
 // optional only so a caller can't fail to compile; omitting it on a
 // finish-tabbed proof yields the full matrix flagged as uncertain, which the
 // UI shows as a warning. Never pass null to mean "all finishes".
+//
+// One request through the batch loader rather than its own implementation, so
+// the collapsed one-line summary and the expanded file list can never disagree
+// about which files this order was approved on.
 export async function fetchApprovedArtwork(
   proofId: string,
   opts: { materialOptionId?: string | null } = {},
 ): Promise<ApprovedArtwork | null> {
-  const [{ data: proofRow }, { data: versionRows }] = await Promise.all([
-    supabase.from('proofs').select('approved_at').eq('id', proofId).maybeSingle(),
-    supabase
-      .from('proof_versions')
-      .select('id, version_number, is_current, shape, material_options')
-      .eq('proof_id', proofId)
-      .order('created_at', { ascending: false }),
+  const map = await fetchApprovedArtworkBatch([
+    { key: proofId, proofId, materialOptionId: opts.materialOptionId ?? null },
   ])
-
-  const versions = (versionRows ?? []) as {
-    id: string
-    version_number: number
-    is_current: boolean
-    shape: string | null
-    material_options: string[] | null
-  }[]
-  const current = versions.find((v) => v.is_current)
-  if (!current) return null
-
-  const { data: imageRows } = await supabase
-    .from('proof_version_images')
-    .select('id, image_path, original_filename, associated_name, side, layout_id, material_option')
-    .eq('proof_version_id', current.id)
-    .eq('is_qr_code', false)
-  const allImages = (imageRows ?? []) as {
-    id: string
-    image_path: string
-    original_filename: string | null
-    associated_name: string | null
-    side: 'front' | 'back' | null
-    layout_id: string | null
-    material_option: string | null
-  }[]
-
-  // Resolve the order's finish id → the code the images are stamped with.
-  // Only worth a round trip when the version actually has tabs to narrow.
-  const versionOptionCodes = Array.isArray(current.material_options) ? current.material_options : []
-  let finishCode: string | null = null
-  let finishLabel: string | null = null
-  if (versionOptionCodes.length > 0 && opts.materialOptionId) {
-    const { data: optionRow } = await supabase
-      .from('material_options')
-      .select('code, display_name')
-      .eq('id', opts.materialOptionId)
-      .maybeSingle()
-    const opt = optionRow as { code: string | null; display_name: string | null } | null
-    finishCode = opt?.code ?? null
-    finishLabel = opt?.display_name ?? null
-  }
-
-  const scope = scopeToOrderedFinish(allImages, versionOptionCodes, finishCode)
-  const images = scope.images
-
-  // Set (collection) images fold by layout title, not recipient name.
-  const isCollection = current.shape === 'set_collection'
-  const layoutTitles = new Map<string, string>()
-  if (isCollection) {
-    const { data: layoutRows } = await supabase
-      .from('proof_layouts')
-      .select('id, title')
-      .eq('proof_version_id', current.id)
-    for (const l of (layoutRows ?? []) as { id: string; title: string }[]) layoutTitles.set(l.id, l.title)
-  }
-
-  const files = sortFiles(
-    images.map((r) => ({
-      imageId: r.id,
-      imagePath: r.image_path,
-      originalFilename: r.original_filename,
-      side: r.side,
-      associatedName: r.associated_name,
-      layoutId: r.layout_id,
-      layoutTitle: r.layout_id ? layoutTitles.get(r.layout_id) ?? null : null,
-      versionNumber: current.version_number,
-    })),
-  )
-
-  return {
-    files,
-    approvedAt: (proofRow as { approved_at?: string | null } | null)?.approved_at ?? null,
-    isOneSided: !files.some((f) => f.side === 'back'),
-    isAllShared: !isCollection && files.every((f) => f.associatedName == null),
-    isCollection,
-    // Only claim a finish when it actually narrowed the set — on the two
-    // uncertain outcomes the label would describe files that aren't all there.
-    finishLabel: scope.outcome === 'scoped' ? finishLabel ?? finishCode : null,
-    finishScope: scope.outcome,
-    finishUncertain: finishScopeIsUncertain(scope.outcome),
-    finishTabCount: versionOptionCodes.length,
-  }
+  return map.get(proofId) ?? null
 }
 
 // Sign a storage path → blob (short expiry; the caller uses it immediately).

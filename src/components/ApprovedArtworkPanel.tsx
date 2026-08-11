@@ -5,7 +5,7 @@ import {
   downloadApprovedFile,
   downloadApprovedArtworkZip,
   fileRowMeta,
-  type ApprovedArtwork,
+  type ApprovedArtworkLoad,
 } from '../lib/approvedArtwork'
 
 // The approved artwork for an order, shown in the To-order card's prep area so
@@ -14,8 +14,11 @@ import {
 // section: the file list, per-file downloads, and a "Download all as ZIP"
 // hand-off (original filenames preserved).
 //
-// Mounts lazily (only when the card is expanded), so it fetches on mount rather
-// than eagerly for every order in the queue.
+// Takes the artwork preloaded when the caller already has it — the Orders page
+// batches every card's files in one go for the collapsed one-line strip, so
+// expanding a card must not go and fetch the same thing again (and must not be
+// able to show a DIFFERENT answer from the line it replaces). Falls back to
+// fetching on mount for any caller without a batch.
 
 function formatApprovedDate(iso: string | null): string | null {
   if (!iso) return null
@@ -30,6 +33,7 @@ export default function ApprovedArtworkPanel({
   customerName,
   materialDisplay,
   materialOptionId,
+  preloaded,
 }: {
   proofId: string
   projectName: string
@@ -38,23 +42,28 @@ export default function ApprovedArtworkPanel({
   // The order's chosen finish. A proof shown in three metal finishes carries
   // three images per side; only the ordered one is this order's artwork.
   materialOptionId: string | null
+  // The caller's batch load for this order. Omitted = fetch it here.
+  preloaded?: ApprovedArtworkLoad
 }) {
-  const [artwork, setArtwork] = useState<ApprovedArtwork | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState(false)
+  const [own, setOwn] = useState<ApprovedArtworkLoad>({ status: 'loading' })
   const [zipBusy, setZipBusy] = useState(false)
   const [busyFileId, setBusyFileId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (preloaded) return
     let cancelled = false
-    setLoading(true)
-    setLoadError(false)
+    setOwn({ status: 'loading' })
     fetchApprovedArtwork(proofId, { materialOptionId })
-      .then((a) => { if (!cancelled) { setArtwork(a); setLoading(false) } })
-      .catch(() => { if (!cancelled) { setLoadError(true); setLoading(false) } })
+      .then((a) => { if (!cancelled) setOwn({ status: 'ready', artwork: a }) })
+      .catch(() => { if (!cancelled) setOwn({ status: 'error' }) })
     return () => { cancelled = true }
-  }, [proofId, materialOptionId])
+  }, [proofId, materialOptionId, preloaded])
+
+  const load = preloaded ?? own
+  const artwork = load.status === 'ready' ? load.artwork : null
+  const loading = load.status === 'loading'
+  const loadError = load.status === 'error'
 
   async function handleZip() {
     if (!artwork) return
