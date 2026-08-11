@@ -5,7 +5,7 @@
 // backtest (a naive field-equality check would have false-flagged 3 of the 4
 // orders tested). Tune it from shadow-mode reports, not from taste.
 
-import type { ReportInputs } from './types.ts'
+import type { ReportInputs, ShortLinkDestination } from './types.ts'
 
 export const SYSTEM_PROMPT = `You are the pre-print artwork sanity check for Plasma Design, a printer of premium business cards. A designer re-types the customer's contact details into the card artwork by hand, and the customer approves a proof — but a transcription typo (or a missed later revision) survives visual QC, because any plausible string looks right. Your job: compare what the customer ACTUALLY supplied against what is ACTUALLY on the print files, character by character, and report anything a human should look at before the job goes to production. You never decide — a human reviews every flag; your report must make that review take seconds.
 
@@ -58,6 +58,9 @@ QR RULES
 - Cross-check QR contact fields against the card face AND the thread — a vCard QR is a strong second reference for every field it carries.
 - A QR payload that contradicts the printed card face is a flag (use field 'qr', or the specific contact field when it is one).
 - For hosted vCard QRs (qcrd.uk short URLs) the payload is only the URL; use the provided contact snapshot when present, and treat a missing snapshot as a reference gap.
+- A SHORT LINK (qcrd.uk, bit.ly and the like) hides its destination — the payload is a token, not an address. When a WHERE SHORT LINKS LEAD block gives one, that destination was resolved programmatically and is EXACT: treat it like a decoded payload, do NOT re-judge or guess it, and compare THAT against what the customer supplied. The short URL itself will never appear in the thread, and its absence is not a finding.
+- Comparing a supplied web address against a resolved destination: the host, the path and the meaningful query (a search term, a profile id) are what identify it. Tracking and session parameters — utm_*, gclid/fbclid, and a search engine's own ved, lei, ictx, sxsrf, sca_esv, biw/bih, si, uds, sa, stq, cs — differ routinely between two copies of the SAME link and are never grounds for a flag on their own. A different host is a defect; a different path or search term is a flag at severity review.
+- A short link that could not be resolved is a reference gap, not a flag — say plainly that its destination could not be confirmed. But where the note says no card exists for that code, flag it at severity defect: scanning it reaches a "not found" page.
 - QR payloads may come from TWO sources: those stored on the proof version, AND those decoded straight from the approved artwork (listed A1, A2…). Both are exact programmatic decodes — use either as authoritative text, cross-check them against the card face and the thread, and flag any disagreement between them.
 - Only raise the no-payload flag (field 'qr') when a QR is visibly printed on the card AND neither source yielded its payload — i.e. the artwork was scanned and nothing decoded (or there was no artwork to scan). If a payload was decoded from the artwork, the QR IS verified: do NOT flag it merely for being unregistered on the proof. One flag per distinct code, not one per recipient sharing it.
 
@@ -153,6 +156,9 @@ QR RULES
 - Cross-check QR contact fields against the card face AND the thread — a vCard QR is a strong second reference for every field it carries.
 - A QR payload that contradicts the card face is a flag (use field 'qr', or the specific contact field when it is one).
 - For hosted vCard QRs (qcrd.uk short URLs) the payload is only the URL; use the provided contact snapshot when present, and treat a missing snapshot as a reference gap.
+- A SHORT LINK (qcrd.uk, bit.ly and the like) hides its destination — the payload is a token, not an address. When a WHERE SHORT LINKS LEAD block gives one, that destination was resolved programmatically and is EXACT: treat it like a decoded payload, do NOT re-judge or guess it, and compare THAT against what the customer supplied. The short URL itself will never appear in the thread, and its absence is not a finding.
+- Comparing a supplied web address against a resolved destination: the host, the path and the meaningful query (a search term, a profile id) are what identify it. Tracking and session parameters — utm_*, gclid/fbclid, and a search engine's own ved, lei, ictx, sxsrf, sca_esv, biw/bih, si, uds, sa, stq, cs — differ routinely between two copies of the SAME link and are never grounds for a flag on their own. A different host is a defect; a different path or search term is a flag at severity review.
+- A short link that could not be resolved is a reference gap, not a flag — say plainly that its destination could not be confirmed. But where the note says no card exists for that code, flag it at severity defect: scanning it reaches a "not found" page.
 - QR payloads may come from TWO sources: those stored on this proof version, AND those decoded straight from the proof images (listed A1, A2…). Both are exact programmatic decodes — use either as authoritative text, cross-check them against the card face and the thread, and flag any disagreement between them.
 - Only raise the no-payload flag (field 'qr') when a QR is visibly on the card AND neither source yielded its payload. If a payload was decoded from the images, the QR IS verified: do NOT flag it merely for being unregistered on the proof. One flag per distinct code, not one per recipient sharing it.
 
@@ -209,6 +215,10 @@ export interface CheckContext {
   // alongside ctx.qrs, and the one that closes the "printed but never
   // registered on the proof" gap.
   artworkDecodedQrs: string[]
+  // Where any short-link QR actually leads (resolveQrDestination.ts). A short
+  // link's payload is a token, not an address, so without this the model has
+  // nothing to compare against the thread — and must never guess.
+  shortLinkDestinations: ShortLinkDestination[]
   threadText: string
   threadGapNote: string | null
   printFileNames: string[]
@@ -221,6 +231,40 @@ export interface CheckContext {
   // (labels matching the review-page gallery), and the ones passed over.
   approvedRead: string[]
   approvedSkipped: { name: string; reason: string }[]
+}
+
+/**
+ * Where each short-link QR actually leads.
+ *
+ * Both the full destination and a short readable form are given: the full URL
+ * is the fact to compare against the thread, and the short form is what makes
+ * a 1,000-character search URL legible enough to compare at all. An
+ * unresolved link is stated as unresolved — never omitted, since a silently
+ * missing line would read as "no short links here".
+ *
+ * Shared by both builders so the order check and the pre-send proof check
+ * cannot drift in what they are told about a destination.
+ */
+function shortLinkLines(dests: ShortLinkDestination[] | undefined): string[] {
+  // Tolerates the field being absent, not just empty: a caller that forgets it
+  // should cost the check this one block, never the whole run. The check
+  // failing outright is far worse than it running without a destination line.
+  if (!dests || dests.length === 0) return []
+  const lines: string[] = ['']
+  lines.push(
+    `WHERE SHORT LINKS LEAD (${dests.length} — resolved programmatically, EXACT; the QR payload alone does not say):`,
+  )
+  for (const d of dests) {
+    if (d.destination) {
+      lines.push(`- ${d.shortUrl} leads to:`)
+      lines.push(`  ${d.destination}`)
+      if (d.label) lines.push(`  In short: ${d.label}`)
+    } else {
+      lines.push(`- ${d.shortUrl} — destination NOT confirmed`)
+    }
+    if (d.note) lines.push(`  Note: ${d.note}`)
+  }
+  return lines
 }
 
 // The first user text block: everything the model needs BEFORE the documents.
@@ -268,6 +312,7 @@ export function buildContextText(ctx: CheckContext): string {
   } else if (ctx.approvedRead.length > 0) {
     lines.push('The approved artwork was scanned for QR codes and none decoded — so any QR visibly printed on it is UNVERIFIED.')
   }
+  lines.push(...shortLinkLines(ctx.shortLinkDestinations))
 
   lines.push('')
   if (ctx.threadText) {
@@ -356,6 +401,8 @@ export interface ProofCheckContext {
   // Payloads decoded straight from this version's proof images (qrDecode.ts) —
   // the second authoritative source alongside ctx.qrs.
   artworkDecodedQrs: string[]
+  // Where any short-link QR actually leads — see the note on CheckContext.
+  shortLinkDestinations: ShortLinkDestination[]
   threadText: string
   threadGapNote: string | null
   // The proof images provided as the card side, labelled like the review-page
@@ -406,6 +453,7 @@ export function buildProofContextText(ctx: ProofCheckContext): string {
   } else if (ctx.proofImagesRead.length > 0) {
     lines.push('The proof images were scanned for QR codes and none decoded — so any QR visibly shown on them is UNVERIFIED.')
   }
+  lines.push(...shortLinkLines(ctx.shortLinkDestinations))
 
   lines.push('')
   if (ctx.threadText) {

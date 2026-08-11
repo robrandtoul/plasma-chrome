@@ -22,8 +22,11 @@ function mockDataLayer(): Plugin {
     async resolveId(source, importer) {
       if (!importer || importer.includes('verify-harness')) return null
       // Match '../lib/supabase', './supabase' (sibling imports inside lib/),
-      // './auth' etc. — anything whose basename is supabase or auth.
-      if (!/(^|\/)(supabase|auth)(\.tsx?)?$/.test(source)) return null
+      // './auth' etc. — anything whose basename is supabase, auth or
+      // vcardClient. vcardClient is here because it talks to the vCard app on
+      // another origin with a plain fetch: offline, that throws before the
+      // hosted-vCard QR panel renders anything at all.
+      if (!/(^|\/)(supabase|auth|vcardClient)(\.tsx?)?$/.test(source)) return null
       const resolved = await this.resolve(source, importer, { skipSelf: true })
       if (!resolved) return null
       if (resolved.id.endsWith(path.join('src', 'lib', 'supabase.ts'))) {
@@ -31,6 +34,9 @@ function mockDataLayer(): Plugin {
       }
       if (resolved.id.endsWith(path.join('src', 'lib', 'auth.tsx'))) {
         return path.resolve(ROOT, 'verify-harness/mock-auth.tsx')
+      }
+      if (resolved.id.endsWith(path.join('src', 'lib', 'vcardClient.ts'))) {
+        return path.resolve(ROOT, 'verify-harness/mock-vcard.ts')
       }
       return null
     },

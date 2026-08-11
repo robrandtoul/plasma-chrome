@@ -31,6 +31,7 @@ import FlaggedPage from '../src/pages/FlaggedPage'
 import FeedbackPage from '../src/pages/FeedbackPage'
 import { TeamChatProvider } from '../src/lib/teamChatStore'
 import DesignerSearch from '../src/components/DesignerSearch'
+import { QrCodePanel } from '../src/components/QrCodePanel'
 import AdminLayout from '../src/pages/admin/AdminLayout'
 import AdminHomePage from '../src/pages/admin/AdminHomePage'
 import AdminCatalogueDataPage from '../src/pages/admin/AdminCatalogueDataPage'
@@ -1003,9 +1004,57 @@ const extraQuery = (() => {
   return qs ? `?${qs}` : ''
 })()
 
+// ?path=/qr-destination — the customer-page QR panel for qcrd.uk codes, in
+// every state that renders differently. A short-link QR encodes a token, not
+// an address, so this panel is the only place the customer can see where the
+// code on their card actually points; the vCard client is mocked (see
+// mock-vcard.ts) because the real one calls another origin and the harness is
+// offline, which is why none of this was checkable before.
+function QrDestinationRig() {
+  const qr = (id: string, slug: string, label: string) => ({
+    id,
+    signed_url:
+      'data:image/svg+xml;utf8,' +
+      encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120">' +
+          '<rect width="120" height="120" fill="#fff"/>' +
+          '<rect x="12" y="12" width="28" height="28" fill="#14130f"/>' +
+          '<rect x="80" y="12" width="28" height="28" fill="#14130f"/>' +
+          '<rect x="12" y="80" width="28" height="28" fill="#14130f"/>' +
+          '<rect x="56" y="56" width="12" height="12" fill="#14130f"/>' +
+          '</svg>',
+      ),
+    label,
+    is_qr_code: true,
+    qr_kind: 'hosted_vcard',
+    qr_decoded_data: `https://qcrd.uk/${slug}`,
+    qr_vcard_slug: slug,
+    associated_name: null,
+    side: null as null,
+  })
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-8 p-6">
+      <QrCodePanel
+        qrImages={[
+          qr('q-redirect', 'qr-redirect', 'Redirect — a long tracking-laden URL'),
+          qr('q-vcard', 'qr-vcard', 'Hosted vCard — contact fields'),
+          qr('q-draft', 'qr-draft', 'Redirect — card not live yet'),
+          qr('q-noaddress', 'qr-noaddress', 'Redirect — no address set'),
+          qr('q-missing', 'qr-missing', 'No such card'),
+        ]}
+        names={[]}
+        isVariantRound={false}
+      />
+    </div>
+  )
+}
+
 // ?path=/palette mounts the ⌘K designer command palette on its own, open, so
 // its layout and the fixture-backed proof search can be checked headlessly.
-const tree = requestedPath === '/order-builder' ? (
+const tree = requestedPath === '/qr-destination' ? (
+  <QrDestinationRig />
+) : requestedPath === '/order-builder' ? (
   <OrderBuilderRig />
 ) : requestedPath === '/reorder-panel' ? (
   <ReorderPanelRig />

@@ -39,6 +39,7 @@ import {
   type VcardBundle,
   VcardConfigError,
 } from '../lib/vcardClient'
+import { summariseDestination } from '../lib/qrDestination'
 import { PanelShell, tokens } from '../design'
 import {
   QR_PANEL_INTRO_COPY_DEFAULT,
@@ -494,6 +495,54 @@ function HostedVcardView({ slug, url }: { slug: string | null; url: string }) {
   }
 
   const { card, links, contactMethods } = state.bundle
+
+  // A qcrd.uk link can be a hosted vCard OR a plain redirect — one slug space
+  // serves both, and only the card row says which. A redirect has no contact
+  // details to check, so rendering the vCard view here would show a panel of
+  // empty fields. What the customer actually needs to verify is where it lands:
+  // the printed code is an opaque token, so this is the only place they can
+  // see that it points at their review page and not somebody else's.
+  if (card.target_type === 'external_url') {
+    const dest = (card.external_url ?? '').trim()
+    if (!dest) {
+      return (
+        <div className="space-y-3">
+          {urlLine}
+          <div className="text-[13px] text-ink-mute">
+            This QR opens a web page, but no address has been set for it yet.
+          </div>
+        </div>
+      )
+    }
+    const summary = summariseDestination(dest)
+    return (
+      <div className="space-y-3">
+        {urlLine}
+        <FieldGroup label="Goes to">
+          <span className="text-ink break-words">{summary.label}</span>
+          {summary.droppedVolatile > 0 && (
+            <div className="text-[12px] text-ink-mute">
+              plus {summary.droppedVolatile} tracking{' '}
+              {summary.droppedVolatile === 1 ? 'parameter' : 'parameters'}
+            </div>
+          )}
+        </FieldGroup>
+        {/* The full address is available but folded away — these links routinely
+            run to a thousand characters of tracking, and pasting that wall in
+            front of someone makes the destination harder to check, not easier. */}
+        <details className="text-[12px] text-ink-mute">
+          <summary className="cursor-pointer select-none">Show the full web address</summary>
+          <span className="mt-1 block break-all font-mono text-ink-soft">{summary.full}</span>
+        </details>
+        {card.status !== 'live' && (
+          <div className="text-[13px] text-ink-mute">
+            This link isn't live yet — it will start working once the card is published.
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const formattedName =
     [card.first_name, card.last_name].filter(Boolean).join(' ').trim() ||
     card.nickname ||
@@ -611,7 +660,14 @@ function FieldGroup({
 }) {
   return (
     <div className="grid grid-cols-[80px_1fr] gap-x-3 gap-y-1 text-[14px] leading-[1.55]">
-      <div className="eyebrow pt-1" style={{ letterSpacing: '0.14em' }}>
+      {/* The label column is a fixed 80px and `.eyebrow` sets white-space:
+          nowrap, so a label wider than 80px cannot wrap — it overflows its cell
+          and paints straight over the value beside it, which reads as
+          corruption rather than as a layout bug. Overriding to normal (and
+          allowing mid-word breaks) makes it take a second line instead. Note
+          `break-words` alone does nothing here: nowrap forbids breaking at all,
+          so the whitespace override is the load-bearing half. */}
+      <div className="eyebrow pt-1 whitespace-normal break-words" style={{ letterSpacing: '0.14em' }}>
         {label}
       </div>
       <div className="text-ink min-w-0 break-words">{children}</div>

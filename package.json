@@ -79,6 +79,7 @@
     "test:set-consistency": "tsx src/lib/setConsistency.test.ts",
     "test:vcard-client": "tsx src/lib/vcardClient.test.ts",
     "test:vcard-qr": "tsx src/lib/vcardQr.test.ts",
+    "test:qr-destination": "tsx src/lib/qrDestination.test.ts",
     "test": "tsx scripts/run-tests.ts",
     "test:e2e": "playwright test",
     "test:e2e:customer": "playwright test --project=customer",

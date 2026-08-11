@@ -42,6 +42,7 @@ import {
   type ArtworkSource,
 } from '../lib/qrArtworkScan'
 import { lookupCardBySlug, VcardConfigError } from '../lib/vcardClient'
+import { describeDestination, summariseDestination } from '../lib/qrDestination'
 import { generateVcardQrSvg, parseVcardSlugInput, vcardUrlForSlug } from '../lib/vcardQr'
 import { allSharedQrWarning, recipientChoiceApplies } from '../lib/qrRecipients'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
@@ -415,10 +416,24 @@ export function QrCodeUploadSection({
       }
 
       const card = lookup.data
+      // One qcrd.uk slug space serves two things: hosted vCards and plain
+      // redirects. For a redirect there is no name to read back, and the old
+      // fallback showed the slug — "Found: dgceFH7" — which tells the designer
+      // nothing about where the code they are about to print actually goes.
+      // Naming the destination is the whole point of the read-back.
+      //
+      // Note the QR itself is identical either way (it encodes the qcrd.uk
+      // URL), so this path generates the printable code for a redirect too —
+      // which is worth preferring over pasting one in from an external
+      // generator, because a generated QR is provably the one that prints.
+      // It is still stored as kind 'hosted_vcard': that means "a hosted qcrd.uk
+      // card", and the card's own target_type says which flavour it is.
       const cardName =
-        [card.first_name, card.last_name].filter(Boolean).join(' ').trim() ||
-        card.company ||
-        slug
+        card.target_type === 'external_url'
+          ? `redirect → ${describeDestination(summariseDestination(card.external_url ?? ''))}`
+          : [card.first_name, card.last_name].filter(Boolean).join(' ').trim() ||
+            card.company ||
+            slug
 
       // Generate the QR SVG once and stash both the markup and a
       // File ready for the parent's save path. The File is the same

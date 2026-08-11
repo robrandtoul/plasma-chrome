@@ -165,3 +165,27 @@ export interface ArtworkCheckReport extends ModelReport {
   // claiming an old run was checked or wasn't.
   checks?: CheckSummary[]
 }
+
+// ── Short-link QR destinations ───────────────────────────────────────────────
+//
+// A QR encoding a full URL says where it goes; a QR encoding a SHORT link does
+// not. `https://qcrd.uk/dgceFH7` is an opaque token — a slug typo or the wrong
+// customer's slug decodes perfectly and points somewhere entirely wrong, and
+// nobody downstream can see it. So short links are resolved BEFORE the model
+// runs (resolveQrDestination.ts) and the destination handed over as a fact.
+//
+// Lives here rather than beside the resolver so prompts.ts can reference it
+// without pulling the resolver's `jsr:` Supabase import into the node test
+// runner, which cannot load jsr specifiers.
+export interface ShortLinkDestination {
+  /** The short URL exactly as the QR encodes it. */
+  shortUrl: string
+  /** Where it leads, verbatim, or null if we could not find out. */
+  destination: string | null
+  /** Short readable form of the destination (host, path, meaningful params). */
+  label: string | null
+  /** How it was resolved, or that it wasn't. */
+  via: 'plasma_card' | 'redirect' | 'unresolved'
+  /** Plain-English note when there is more to say than the destination. */
+  note: string | null
+}

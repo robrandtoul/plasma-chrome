@@ -29,6 +29,7 @@ import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { fetchAllConversationThreads, fetchAttachmentData, getAccessToken, HsError, type HsThreadWithAttachments } from '../_shared/helpscout.ts'
 import { downloadSharedLinkFile, getDropboxAccessToken, listSharedLinkEntries } from '../_shared/dropbox.ts'
 import { isCutThroughMaterial, looksLikePdf, pickPrintFiles } from '../_shared/artworkCheck/printFiles.ts'
+import { resolveQrDestinations } from '../_shared/artworkCheck/resolveQrDestination.ts'
 import {
   analyseOrderArtwork,
   applyCutThroughFindings,
@@ -833,6 +834,7 @@ Deno.serve(async (req) => {
       },
       qrs,
       artworkDecodedQrs: [],
+      shortLinkDestinations: [],
       threadText: '',
       threadGapNote: null,
       proofImagesRead: [],
@@ -984,6 +986,20 @@ Deno.serve(async (req) => {
       }
       const attachmentBlocks = routedToBlocks(routedAttachments)
 
+      // A short-link QR encodes a token, not an address, so resolve where each
+      // one leads before the model sees it — otherwise it has nothing to
+      // compare against the thread and would be left guessing about the one
+      // field on the card nobody downstream can check by eye. Best-effort by
+      // construction: an unresolved link is stated as unresolved, never a flag.
+      try {
+        proofCtx.shortLinkDestinations = await resolveQrDestinations(admin, [
+          ...proofCtx.qrs.map((q) => q.decoded),
+          ...proofCtx.artworkDecodedQrs,
+        ])
+      } catch (err) {
+        console.error('[artwork-check] short-link resolution failed:', (err as Error).message)
+      }
+
       const content: ContentBlock[] = [
         { type: 'text', text: buildProofContextText(proofCtx) },
         { type: 'text', text: 'PROOF IMAGES (the artwork being checked, labelled per card):' },
@@ -1028,6 +1044,7 @@ Deno.serve(async (req) => {
     },
     qrs,
     artworkDecodedQrs: [],
+    shortLinkDestinations: [],
     threadText: '',
     threadGapNote: null,
     printFileNames: [],
@@ -1263,6 +1280,18 @@ Deno.serve(async (req) => {
           baseCtx.approvedSkipped.push({ name: pick.label, reason: 'download failed' })
         }
       }
+    }
+
+    // Resolve short-link QRs before the call — see the note on the pre-send
+    // branch above. Runs here, after the artwork scan, so codes found only in
+    // the artwork are covered as well as those registered on the proof.
+    try {
+      baseCtx.shortLinkDestinations = await resolveQrDestinations(admin, [
+        ...baseCtx.qrs.map((q) => q.decoded),
+        ...baseCtx.artworkDecodedQrs,
+      ])
+    } catch (err) {
+      console.error('[artwork-check] short-link resolution failed:', (err as Error).message)
     }
 
     // ── One multimodal call ─────────────────────────────────────────────────

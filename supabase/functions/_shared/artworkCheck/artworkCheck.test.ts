@@ -271,6 +271,7 @@ const ctx: CheckContext = {
   accountContact: { name: 'Parissa Mobasher', email: 'pm@gmail.com', company: 'Plak8.com' },
   qrs: [{ kind: 'vcard', decoded: 'BEGIN:VCARD…', associatedName: null, side: 'back' }],
   artworkDecodedQrs: [],
+  shortLinkDestinations: [],
   threadText: '— 2026-06-01 · Customer (Jo):\n125 for: Dave Allen',
   threadGapNote: null,
   printFileNames: ['01_Front.ai'],
@@ -340,6 +341,74 @@ const ctx: CheckContext = {
   check('artwork-decoded QRs listed', text.includes('decoded straight from the approved artwork (2') && text.includes('A1. https://qcrd.uk/abc'))
   check('decode signal replaces the none-decoded line', !text.includes('none decoded'))
 }
+
+// ── Short-link destinations in the context ───────────────────────────────────
+// A short-link QR encodes a token, not an address. Without these lines the
+// model has nothing to compare against the thread, and the rule it is given is
+// that it must never guess. So: resolved destinations must appear verbatim,
+// unresolved ones must be stated rather than quietly omitted, and the block
+// must be identical on both the order and pre-send prompts.
+
+{
+  const withDest: CheckContext = {
+    ...ctx,
+    shortLinkDestinations: [
+      {
+        shortUrl: 'https://qcrd.uk/dgceFH7',
+        destination: 'https://www.google.com/search?q=skywalkersepticllc+com+reviews&ved=abc#ebo=1',
+        label: 'google.com/search#ebo=1 — q=skywalkersepticllc com reviews',
+        via: 'plasma_card',
+        note: null,
+      },
+    ],
+  }
+  const text = buildContextText(withDest)
+  check('short-link block appears', text.includes('WHERE SHORT LINKS LEAD (1'))
+  check('block is labelled exact so the model does not re-judge it', text.includes('EXACT'))
+  check(
+    'destination given verbatim, not just summarised',
+    text.includes('https://www.google.com/search?q=skywalkersepticllc+com+reviews&ved=abc#ebo=1'),
+  )
+  check('readable summary given alongside', text.includes('In short: google.com/search#ebo=1'))
+}
+
+{
+  // The failure that must never look like a pass: nothing resolved. If this
+  // line went missing, the absent block would read as "no short links here".
+  const unresolved: CheckContext = {
+    ...ctx,
+    shortLinkDestinations: [
+      {
+        shortUrl: 'https://qcrd.uk/nope123',
+        destination: null,
+        label: null,
+        via: 'unresolved',
+        note: 'no card exists with this code — scanning it would reach a "not found" page',
+      },
+    ],
+  }
+  const text = buildContextText(unresolved)
+  check('unresolved link is stated, not omitted', text.includes('destination NOT confirmed'))
+  check('the reason is carried through', text.includes('no card exists with this code'))
+}
+
+{
+  // Absent (not merely empty) must degrade to no block rather than throwing —
+  // a forgotten field should never cost the whole check.
+  const missing = { ...ctx } as CheckContext
+  delete (missing as { shortLinkDestinations?: unknown }).shortLinkDestinations
+  let threw = false
+  let text = ''
+  try {
+    text = buildContextText(missing)
+  } catch {
+    threw = true
+  }
+  check('a missing field does not throw', !threw)
+  check('and simply omits the block', !text.includes('WHERE SHORT LINKS LEAD'))
+}
+
+// The order-vs-pre-send parity case lives further down, once proofCtx exists.
 
 // ── QR payload classifier (qrDecode) ─────────────────────────────────────────
 
@@ -673,6 +742,7 @@ const proofCtx: ProofCheckContext = {
   accountContact: { name: 'Chris Azevedo', email: 'chrisazevedo8@gmail.com', company: 'The Boat Shack' },
   qrs: [{ kind: 'url', decoded: 'https://qcrd.uk/abc', associatedName: null, side: 'back' }],
   artworkDecodedQrs: [],
+  shortLinkDestinations: [],
   threadText: '— 2026-07-10 · Customer:\nPlease keep the full card intact.',
   threadGapNote: null,
   proofImagesRead: ['Chris Azevedo — front', 'Chris Azevedo — back'],
@@ -705,6 +775,25 @@ const proofCtx: ProofCheckContext = {
   const gap = buildProofContextText({ ...proofCtx, threadText: '', threadGapNote: 'this proof has no linked Help Scout conversation', recipients: [], qrs: [], proofImagesRead: [], proofImagesSkipped: [], attachmentsRead: [] })
   check('proof ctx: gap note rendered', gap.includes('this proof has no linked Help Scout conversation') && gap.includes('not as evidence of error'))
   check('proof ctx: no recipients line', gap.includes('No named recipients'))
+}
+
+{
+  // Both prompts must say the same thing about a destination. The pre-send
+  // check and the order check look at the same QR at two different moments;
+  // if they described where it goes differently, one of them would be wrong.
+  const dest = {
+    shortUrl: 'https://bit.ly/xyz',
+    destination: 'https://plasmadesign.co.uk/cards',
+    label: 'plasmadesign.co.uk/cards',
+    via: 'redirect' as const,
+    note: null,
+  }
+  const orderText = buildContextText({ ...ctx, shortLinkDestinations: [dest] })
+  const proofText = buildProofContextText({ ...proofCtx, shortLinkDestinations: [dest] })
+  const block = (t: string) => t.slice(t.indexOf('WHERE SHORT LINKS LEAD')).split('\n\n')[0]
+  check('order prompt carries the short-link block', orderText.includes('WHERE SHORT LINKS LEAD'))
+  check('pre-send prompt carries the short-link block', proofText.includes('WHERE SHORT LINKS LEAD'))
+  check('both prompts render the block identically', block(orderText) === block(proofText))
 }
 
 {
