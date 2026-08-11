@@ -15,6 +15,7 @@ import RequireAuth from './components/RequireAuth'
 import RequireAdmin from './components/RequireAdmin'
 import ErrorBoundary from './components/ErrorBoundary'
 import DesignerSearch from './components/DesignerSearch'
+import ChatPopoutHost from './components/ChatPopoutHost'
 
 // Eager imports — the auth-critical path. LoginPage and SetNewPasswordPage
 // stay in the entry chunk so the sign-in / password-recovery flow renders
@@ -131,6 +132,10 @@ function AppShell() {
   return (
     <TeamChatProvider>
       <ScrollToTopOnNavigate />
+      {/* Chat popped out into a picture-in-picture window renders through here.
+          Outside <Routes> on purpose: the window has to survive navigating the
+          app underneath it. Renders nothing unless that window is open. */}
+      {session && <ChatPopoutHost />}
       {session && <DesignerSearch open={paletteOpen} onClose={() => setPaletteOpen(false)} />}
       <RouteErrorBoundary>
       <Suspense fallback={<RouteFallback />}>

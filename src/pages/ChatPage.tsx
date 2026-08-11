@@ -1,9 +1,10 @@
 import { useNavigate } from 'react-router-dom'
-import { MessagesSquare, Minimize2 } from 'lucide-react'
+import { MessagesSquare, Minimize2, PictureInPicture2, CornerUpLeft } from 'lucide-react'
 import DesignerChrome from '../design/DesignerChrome'
 import { ButtonGhost } from '../design'
 import TeamChatPanel from '../components/TeamChatPanel'
 import { useTeamChat } from '../lib/teamChatStore'
+import { isPopoutWindow } from '../lib/chatPopout'
 
 // The full-page team chat. A thin shell around the shared TeamChatPanel (the
 // same body the header dropdown uses) — all the state lives in the
@@ -12,7 +13,7 @@ import { useTeamChat } from '../lib/teamChatStore'
 
 export default function ChatPage() {
   const navigate = useNavigate()
-  const { activeThread, members } = useTeamChat()
+  const { activeThread, members, openPopout } = useTeamChat()
   // The open thread's peer, so the header describes what you're actually
   // looking at instead of always claiming the shared channel.
   const peer = activeThread === 'team' ? null : members.find((m) => m.id === activeThread) ?? null
@@ -41,6 +42,34 @@ export default function ChatPage() {
         : 0
     if (idx > 0) navigate(-1)
     else navigate('/')
+  }
+
+  // The second-window route (Safari, Firefox, or a blocked picture-in-picture):
+  // this whole window IS the chat, so it drops the app chrome and the panel
+  // fills it. The picture-in-picture route never lands here — that one moves
+  // the existing panel into its window instead (ChatPopoutHost).
+  if (isPopoutWindow()) {
+    return (
+      <div className="flex h-dvh flex-col bg-surface text-ink">
+        <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-line-soft px-3 py-2">
+          <span className="text-[13px] font-semibold text-ink">
+            {peer ? peerFirstName : 'Team chat'}
+          </span>
+          <button
+            type="button"
+            onClick={() => window.close()}
+            title="Close this window and put chat back in the app"
+            className="inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-semibold text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
+          >
+            <CornerUpLeft size={14} aria-hidden="true" />
+            Back in app
+          </button>
+        </div>
+        <div className="min-h-0 flex-1">
+          <TeamChatPanel variant="popout" />
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -72,9 +101,14 @@ export default function ChatPage() {
             {/* Desktop-only: "minimise back to the dropdown" means nothing on
                 a phone, where this page IS the chat and the tab bar is the way
                 out. */}
-            <ButtonGhost size="sm" icon={Minimize2} onClick={minimise} className="max-md:hidden">
-              Minimise
-            </ButtonGhost>
+            <div className="flex items-center gap-1 max-md:hidden">
+              <ButtonGhost size="sm" icon={PictureInPicture2} onClick={openPopout}>
+                Pop out
+              </ButtonGhost>
+              <ButtonGhost size="sm" icon={Minimize2} onClick={minimise}>
+                Minimise
+              </ButtonGhost>
+            </div>
           </div>
           <div className="min-h-0 flex-1">
             <TeamChatPanel variant="page" />

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { DesignerChrome, useDesignerProfile, useIsMobile, Sheet, ButtonCoral, ButtonGhost, ButtonInk, ProofStatusPill, HelpTip } from '../design'
-import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Layers, Link as LinkIcon, Repeat, ThumbsDown, PictureInPicture2, Banknote, HelpCircle, RotateCcw } from 'lucide-react'
+import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Layers, Link as LinkIcon, Repeat, ThumbsDown, PictureInPicture2, PanelRightClose, Banknote, HelpCircle, RotateCcw } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -5093,7 +5093,7 @@ function readDockHeight(): number | null {
 function DockedChat() {
   const navigate = useNavigate()
   const isLarge = useIsLargeScreen()
-  const { placement, setPlacement } = useTeamChat()
+  const { placement, setPlacement, openPopout } = useTeamChat()
   const [dockH, setDockH] = useState<number | null>(readDockHeight)
   const dockHRef = useRef(dockH)
   dockHRef.current = dockH
@@ -5158,12 +5158,24 @@ function DockedChat() {
             </button>
             <button
               type="button"
-              onClick={() => setPlacement('floating')}
-              aria-label="Pop chat out to a floating window"
-              title="Pop out to floating window"
+              onClick={openPopout}
+              aria-label="Pop chat out into its own window"
+              title="Pop out into its own window"
               className="flex h-7 w-7 items-center justify-center rounded-full text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
             >
               <PictureInPicture2 size={15} aria-hidden="true" />
+            </button>
+            {/* Undock — back to the header dropdown. Renamed from "pop out to a
+                floating window" now that popping out means a real window; this
+                one has always just returned chat to the header. */}
+            <button
+              type="button"
+              onClick={() => setPlacement('floating')}
+              aria-label="Undock chat back to the header"
+              title="Undock — back to the header"
+              className="flex h-7 w-7 items-center justify-center rounded-full text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
+            >
+              <PanelRightClose size={15} aria-hidden="true" />
             </button>
           </div>
         </div>

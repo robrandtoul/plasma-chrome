@@ -60,13 +60,53 @@ export interface ReorderProspect {
   matched_contact_id: string | null
   outcome_note: string | null
   suppressed_until: string | null
+  /** How many of their invoices were split between several recipients (000408).
+   *  ⚠ NULL means not yet measured, which is NOT zero — never render it as
+   *  "never splits". */
+  split_orders: number | null
+  /** Largest recipient count on any one order, from the tooling line's
+   *  quantity + 1. 1 means every order we have seen went to one person. */
+  max_recipients: number | null
+  split_signal_at: string | null
 }
 
 export const PROSPECT_COLUMNS =
   'id, xero_contact_id, customer_name, email, currency, first_order_on, last_order_on, ' +
   'orders_count, lifetime_value, avg_order_value, cadence_days, last_spec, score, score_reasons, ' +
   'state, queued_on, contacted_at, follow_up_due_on, followed_up_at, proof_id, ' +
-  'matched_contact_id, outcome_note, suppressed_until'
+  'matched_contact_id, outcome_note, suppressed_until, ' +
+  'split_orders, max_recipients, split_signal_at'
+
+/**
+ * A short note for accounts that order cards for more than one person.
+ *
+ * This exists because of what the consumption analysis found: customers do not
+ * reorder when they run out, they reorder when they HIRE. Order size predicts
+ * nothing (across 670 repeat customers, ten times the cards buys the same wait,
+ * and the 501–1,000 band waits the shortest of all). An account that prints for
+ * several people is an account that adds people, and that is the closest thing
+ * to a real signal the invoices carry.
+ *
+ * ⚠ Returns null for BOTH "we have not measured this" and "they order for one
+ * person", and those must not be told apart in the UI by inventing copy for the
+ * second. Saying "orders for 1 person" on a customer whose signal simply has
+ * not been scraped yet would be a confident statement about something unknown.
+ * Silence is right for both.
+ *
+ * ⚠ It counts batches, not headcount — occasionally an order is split by DESIGN
+ * rather than by person. The wording says "people" because that is what it
+ * nearly always is and the desk needs a sentence it can act on, but do not build
+ * anything downstream that treats this as a roster size.
+ */
+export function multiRecipientNote(p: ReorderProspect): string | null {
+  const max = p.max_recipients
+  if (max == null || max < 2) return null
+  const often =
+    p.split_orders != null && p.orders_count > 1 && p.split_orders < p.orders_count
+      ? `${p.split_orders} of ${p.orders_count} orders`
+      : null
+  return often ? `Orders for up to ${max} people · ${often}` : `Orders for up to ${max} people`
+}
 
 // The chase rules the desk snoozes on an outreach proof, and for how long.
 // 60 days covers the outreach → follow-up → quiet-close arc with room to

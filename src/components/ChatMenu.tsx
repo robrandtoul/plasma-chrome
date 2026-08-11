@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { MessagesSquare, Maximize2, X, Pin, AtSign, PanelRight } from 'lucide-react'
+import {
+  MessagesSquare,
+  Maximize2,
+  X,
+  Pin,
+  AtSign,
+  PanelRight,
+  PictureInPicture2,
+} from 'lucide-react'
 import { useTeamChat } from '../lib/teamChatStore'
 import TeamChatPanel from './TeamChatPanel'
 
@@ -63,8 +71,18 @@ function useIsLarge() {
 }
 
 export default function ChatMenu({ active = false }: { active?: boolean }) {
-  const { unread, mentionUnread, dmUnread, dropdownPinned, setDropdownPinned, placement, setPlacement } =
-    useTeamChat()
+  const {
+    unread,
+    mentionUnread,
+    dmUnread,
+    dropdownPinned,
+    setDropdownPinned,
+    placement,
+    setPlacement,
+    openPopout,
+    closePopout,
+    focusPopout,
+  } = useTeamChat()
   const isDesktop = useIsDesktop()
   const isLarge = useIsLarge()
   const location = useLocation()
@@ -74,10 +92,14 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
   // offered while chat is still floating.
   const dockVisible = placement === 'docked' && onDashboard && isLarge
   const canDock = placement === 'floating' && onDashboard && isLarge
+  // Chat is living in a window of its own. The dropdown stays shut — a second
+  // copy of the same conversation in the header would be baffling — and the
+  // header button becomes the way back to that window.
+  const poppedOut = placement === 'popout'
   // Seed open from the pinned preference so a pinned panel is already open on
   // every page (no closed→open flicker as this remounts on navigation). Never
-  // auto-open on the /chat page itself, nor when the docked panel is visible.
-  const [open, setOpen] = useState(() => dropdownPinned && !active && !dockVisible)
+  // auto-open on the /chat page itself, nor when chat is showing elsewhere.
+  const [open, setOpen] = useState(() => dropdownPinned && !active && !dockVisible && !poppedOut)
   const ref = useRef<HTMLDivElement>(null)
   // User-resizable dropdown. `size` drives the box; `sizeRef` lets the drag's
   // pointerup persist the latest size without re-subscribing listeners.
@@ -98,16 +120,16 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // React to docking: close the floating dropdown when chat moves to the rail,
-  // and re-open it when chat pops back out (so it doesn't vanish). Guarded on a
-  // real transition so the initial mount doesn't force anything.
+  // React to chat moving: close the floating dropdown when it goes to the rail
+  // or into its own window, and re-open it when it comes back (so it doesn't
+  // vanish). Guarded on a real transition so the initial mount forces nothing.
   const prevPlacementRef = useRef(placement)
   useEffect(() => {
     const prev = prevPlacementRef.current
     prevPlacementRef.current = placement
     if (prev === placement) return
-    if (placement === 'docked') setOpen(false)
-    else if (prev === 'docked') setOpen(true)
+    if (placement === 'docked' || placement === 'popout') setOpen(false)
+    else if (prev === 'docked' || prev === 'popout') setOpen(true)
   }, [placement])
 
   // Outside-click / Escape close — only when NOT pinned. A pinned panel is meant
@@ -179,7 +201,8 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
     handle.addEventListener('pointercancel', onEnd)
   }
 
-  const current = open || active
+  // Popped out counts as "chat is on" even though nothing is showing here.
+  const current = open || active || poppedOut
   const hasUnread = unread > 0
   // DMs are personal, so they get the same loud coral treatment as @mentions.
   const hasMention = mentionUnread > 0 || dmUnread > 0
@@ -189,6 +212,14 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
       <button
         type="button"
         onClick={() => {
+          if (poppedOut) {
+            // Bring the chat window to the front. If it can't be reached —
+            // closed by the operating system, or gone since this window
+            // reloaded — put chat back in the app rather than leave a button
+            // that appears to do nothing.
+            if (!focusPopout()) closePopout()
+            return
+          }
           if (dockVisible) {
             // Chat already lives in the dashboard rail as a sticky card that
             // stays in view while the list scrolls, so there is nothing to
@@ -205,18 +236,21 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
           }
           open ? close() : setOpen(true)
         }}
-        aria-label={
+        aria-label={[
           dmUnread > 0
             ? `Team chat — ${unread} new, including a private message for you`
             : hasMention
               ? `Team chat — ${unread} new, you were mentioned`
               : hasUnread
                 ? `Team chat — ${unread} new`
-                : 'Team chat'
-        }
+                : 'Team chat',
+          poppedOut ? '(open in its own window)' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
         aria-haspopup="dialog"
-        aria-expanded={open}
-        title="Team chat"
+        aria-expanded={open && !poppedOut}
+        title={poppedOut ? 'Chat is in its own window — click to bring it forward' : 'Team chat'}
         className={[
           'relative inline-flex h-9 items-center justify-center rounded-full border text-[13px] font-semibold transition-colors',
           // Icon-only on tablets; grows a "Chat" label at lg+ where there's room.
@@ -247,7 +281,7 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
         )}
       </button>
 
-      {open && (
+      {open && !poppedOut && (
         <div
           role="dialog"
           aria-label="Team chat"
@@ -262,6 +296,19 @@ export default function ChatMenu({ active = false }: { active?: boolean }) {
           <div className="flex flex-shrink-0 items-center justify-between border-b border-line-soft px-3 py-2">
             <span className="text-[13px] font-semibold text-ink">Team chat</span>
             <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  openPopout()
+                  setDropdownPinned(false)
+                  setOpen(false)
+                }}
+                aria-label="Pop chat out into its own window"
+                title="Pop out into its own window"
+                className="flex h-7 w-7 items-center justify-center rounded-full text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
+              >
+                <PictureInPicture2 size={15} aria-hidden="true" />
+              </button>
               {canDock && (
                 <button
                   type="button"

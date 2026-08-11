@@ -42,7 +42,7 @@ registerHooks({
   },
 })
 
-const { planDesk, todayIsoLocal, scoreReasonsWorthShowing } = await import('./reorderDesk.ts')
+const { planDesk, todayIsoLocal, scoreReasonsWorthShowing, multiRecipientNote } = await import('./reorderDesk.ts')
 type ReorderProspect = import('./reorderDesk.ts').ReorderProspect
 type OutreachProofFacts = import('./reorderDesk.ts').OutreachProofFacts
 
@@ -112,6 +112,12 @@ function mk(overrides: Partial<ReorderProspect> = {}): ReorderProspect {
     matched_contact_id: null,
     outcome_note: null,
     suppressed_until: null,
+    // Unmeasured by default — which is what most of the register looks like
+    // until the tooling-line scrape has run, and is deliberately distinct from
+    // "orders for one person".
+    split_orders: null,
+    max_recipients: null,
+    split_signal_at: null,
     ...overrides,
   }
 }
@@ -692,6 +698,46 @@ test('todayIsoLocal is a local-clock YYYY-MM-DD (what queued_on is compared agai
 })
 
 // ── Summary ─────────────────────────────────────────────────────────────────
+
+
+// ── The multi-recipient note (000408) ───────────────────────────────────────
+// This exists because the consumption analysis found customers reorder when
+// they HIRE, not when they run out. The note is the only place that finding
+// reaches the desk, and its null handling is the whole substance: an unmeasured
+// customer and a genuinely single-recipient one must both stay silent.
+
+test('names the largest roster we have printed for them', () => {
+  const note = multiRecipientNote(mk({ max_recipients: 4, split_orders: 2, orders_count: 5 }))
+  assert(note != null && note.includes('4 people'), `expected a 4-people note, got ${note}`)
+})
+
+test('says nothing when the signal has not been measured', () => {
+  // NULL is the state of most of the register until the scrape runs. Rendering
+  // "orders for 1 person" here would be a confident claim about something we
+  // have not looked at.
+  assertEqual(multiRecipientNote(mk({ max_recipients: null, split_orders: null })), null)
+})
+
+test('says nothing when they genuinely order for one person', () => {
+  // Measured and single. Still silent — a chip on every card is not a signal.
+  assertEqual(multiRecipientNote(mk({ max_recipients: 1, split_orders: 0, orders_count: 3 })), null)
+})
+
+test('adds how often only when it is not every order', () => {
+  const sometimes = multiRecipientNote(mk({ max_recipients: 3, split_orders: 2, orders_count: 5 }))
+  assert(sometimes != null && sometimes.includes('2 of 5 orders'), `got ${sometimes}`)
+  // Every order split — the fraction would say nothing the headline does not.
+  const always = multiRecipientNote(mk({ max_recipients: 3, split_orders: 4, orders_count: 4 }))
+  assertEqual(always, 'Orders for up to 3 people')
+})
+
+test('a single-order customer gets no fraction', () => {
+  // "1 of 1 orders" is noise.
+  assertEqual(
+    multiRecipientNote(mk({ max_recipients: 2, split_orders: 1, orders_count: 1 })),
+    'Orders for up to 2 people',
+  )
+})
 
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed\n`)
 if (failed > 0) process.exit(1)

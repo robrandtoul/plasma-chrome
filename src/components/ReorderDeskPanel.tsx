@@ -14,6 +14,7 @@ import {
   markProspectContactedManually,
   planDesk,
   promoteProspects,
+  multiRecipientNote,
   putBackProspect,
   recordFollowUpSent,
   skipProspect,
@@ -241,6 +242,17 @@ export default function ReorderDeskPanel() {
                       up builds the right thing without going to Xero for it. */}
                   {p.last_spec && (
                     <p className="mt-0.5 text-[12px] text-ink-soft">Last order: {p.last_spec}</p>
+                  )}
+                  {/* Accounts that print for several people (000408). Shown as a
+                      fact, NOT folded into the score: customers reorder because
+                      they hire, not because they run out, and this is the closest
+                      the invoices come to saying "this account adds people". It
+                      changes the opening question from "are you due?" to "has
+                      anyone joined?", which is the one the evidence supports.
+                      Absent — rather than "1 person" — when the signal is either
+                      unmeasured or genuinely single. */}
+                  {multiRecipientNote(p) && (
+                    <p className="mt-0.5 text-[12px] font-medium text-brand">{multiRecipientNote(p)}</p>
                   )}
                   {emailPromptId === p.id && !p.email && (
                     <div className="mt-2">

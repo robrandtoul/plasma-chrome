@@ -1,6 +1,7 @@
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { TrialModeBanner } from './TrialModeBanner'
+import { isPopoutWindow } from '../lib/chatPopout'
 
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
@@ -25,6 +26,12 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
   // common path costs zero pixels. When the feature is paused
   // (default migration state, plus any kill-switch flip), the
   // banner shows on every authenticated page.
+  // ...except in the popped-out chat window, which is a small window holding
+  // one thing. The banner is about customer replies — nothing to do with
+  // talking to the team — and at that size it costs a real share of the
+  // conversation to say something the app itself is already saying.
+  if (isPopoutWindow()) return <>{children}</>
+
   return (
     <>
       <TrialModeBanner />

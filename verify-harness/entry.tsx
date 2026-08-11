@@ -30,6 +30,7 @@ import DashboardPage from '../src/pages/DashboardPage'
 import FlaggedPage from '../src/pages/FlaggedPage'
 import FeedbackPage from '../src/pages/FeedbackPage'
 import { TeamChatProvider } from '../src/lib/teamChatStore'
+import ChatPopoutHost from '../src/components/ChatPopoutHost'
 import DesignerSearch from '../src/components/DesignerSearch'
 import { QrCodePanel } from '../src/components/QrCodePanel'
 import AdminLayout from '../src/pages/admin/AdminLayout'
@@ -1144,6 +1145,9 @@ const tree = requestedPath === '/qr-destination' ? (
   // bookmarked. Landing straight on ?q=… is also the only way to test a
   // searched FIRST load, with no debounce race between typing and the refetch.
   <TeamChatProvider>
+    {/* Mirrors App.tsx: chat popped out into a picture-in-picture window
+        renders through here, so that route is click-testable too. */}
+    <ChatPopoutHost />
     <MemoryRouter initialEntries={[`/${extraQuery}`]}>
       <Routes>
         <Route path="/" element={<DashboardPage />} />

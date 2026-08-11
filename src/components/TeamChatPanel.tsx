@@ -214,17 +214,21 @@ function ReactButton({
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!open) return
+    // Bind to the document this menu is actually in, not the app's: popped out
+    // into a picture-in-picture window the panel lives in a second document,
+    // where a listener on the main one never sees the click or the Escape.
+    const doc = ref.current?.ownerDocument ?? document
     function onDoc(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') setOpen(false)
     }
-    document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKey)
+    doc.addEventListener('mousedown', onDoc)
+    doc.addEventListener('keydown', onKey)
     return () => {
-      document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKey)
+      doc.removeEventListener('mousedown', onDoc)
+      doc.removeEventListener('keydown', onKey)
     }
   }, [open])
 
@@ -326,7 +330,7 @@ function ThreadPill({
 // in sync (including which thread is open). The parent sizes it.
 
 interface TeamChatPanelProps {
-  variant: 'dropdown' | 'page' | 'docked'
+  variant: 'dropdown' | 'page' | 'docked' | 'popout'
 }
 
 const SETTABLE: { value: 'online' | 'away' | 'busy'; label: string }[] = [
@@ -373,17 +377,21 @@ function StatusPicker() {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!open) return
+    // Bind to the document this menu is actually in, not the app's: popped out
+    // into a picture-in-picture window the panel lives in a second document,
+    // where a listener on the main one never sees the click or the Escape.
+    const doc = ref.current?.ownerDocument ?? document
     function onDoc(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') setOpen(false)
     }
-    document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKey)
+    doc.addEventListener('mousedown', onDoc)
+    doc.addEventListener('keydown', onKey)
     return () => {
-      document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKey)
+      doc.removeEventListener('mousedown', onDoc)
+      doc.removeEventListener('keydown', onKey)
     }
   }, [open])
 
@@ -1338,7 +1346,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             onChange={onDraftChange}
             onKeyDown={onKeyDown}
             onPaste={handlePaste}
-            rows={variant === 'page' ? 2 : 1}
+            rows={variant === 'page' || variant === 'popout' ? 2 : 1}
             placeholder={activePeer ? `Message ${firstName(activePeer.name)}…` : 'Message the team…'}
             // 16px on phones: anything smaller makes iOS Safari zoom the whole
             // page when the composer is focused. (! outranks the component's

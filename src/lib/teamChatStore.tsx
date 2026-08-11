@@ -10,6 +10,19 @@ import { supabase } from './supabase'
 import { useAuth } from './auth'
 import type { TeamMessage, ChatAttachment } from './teamChat'
 import { playChatSound } from './chatSound'
+import {
+  CHAT_SYNC_CHANNEL,
+  POPOUT_HEARTBEAT_MS,
+  POPOUT_PATH,
+  POPOUT_WINDOW_NAME,
+  isPopoutWindow,
+  popoutIsAlive,
+  preparePopoutDocument,
+  readPopoutSize,
+  windowFeatures,
+  writePopoutSize,
+  type ChatSyncMessage,
+} from './chatPopout'
 
 // Shared "engine" for the team chat: one live connection (message realtime +
 // presence) mounted once near the app root, so the header badge, the dropdown
@@ -19,9 +32,17 @@ import { playChatSound } from './chatSound'
 
 export type ChatStatus = 'online' | 'idle' | 'away' | 'busy'
 
-// Where the chat lives: the header dropdown (floating) or docked into the
-// dashboard right rail. Persisted per browser.
-export type ChatPlacement = 'floating' | 'docked'
+// Where the chat lives: the header dropdown (floating), docked into the
+// dashboard right rail, or popped out into a window of its own.
+//
+// 'floating' and 'docked' are persisted per browser; 'popout' deliberately is
+// NOT. A popped-out window cannot survive a reload of the app that opened it
+// (the picture-in-picture route) or can only be re-found by hearing from it
+// (the second-window route), so remembering the choice across a reload would
+// mean starting up claiming a window that may not be there. Instead the app
+// starts back at its saved floating/docked placement and the popout announces
+// itself if it is still open — see chatPopout.ts.
+export type ChatPlacement = 'floating' | 'docked' | 'popout'
 
 // Which conversation is showing: the shared team room, or a private
 // person-to-person thread keyed by the peer's user id (000324).
@@ -149,6 +170,18 @@ interface TeamChatValue {
    *  floating dropdown stays available everywhere. Persisted. */
   placement: ChatPlacement
   setPlacement: (placement: ChatPlacement) => void
+  /** Move chat into a window of its own — a floating always-on-top window
+   *  where the browser supports it, otherwise a plain second window. */
+  openPopout: () => void
+  /** Bring a popped-out chat back into the app. */
+  closePopout: () => void
+  /** Bring the popped-out window to the front. False means it has gone (or was
+   *  never reachable), so the caller should fall back to showing chat in-app. */
+  focusPopout: () => boolean
+  /** The picture-in-picture window the panel is rendered into, when that route
+   *  is in use. Null on the second-window route, which renders itself.
+   *  ChatPopoutHost is the only thing that should need this. */
+  popoutWindow: Window | null
   /** Other people currently typing a message (auto-expires ~4.5s after their
    *  last keystroke). Never includes yourself. */
   typingUsers: { userId: string; name: string | null }[]
@@ -238,6 +271,10 @@ const DEFAULT: TeamChatValue = {
   setSoundEnabled: () => {},
   placement: 'floating',
   setPlacement: () => {},
+  openPopout: () => {},
+  closePopout: () => {},
+  focusPopout: () => false,
+  popoutWindow: null,
   typingUsers: [],
   notifyTyping: () => {},
 }
@@ -302,6 +339,9 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
   const [soundEnabled, setSoundEnabledState] = useState<boolean>(readSound)
   const [placement, setPlacementState] = useState<ChatPlacement>(readPlacement)
   const [typingUsers, setTypingUsers] = useState<{ userId: string; name: string | null }[]>([])
+  // The picture-in-picture window, when chat has been popped out that way. It
+  // is state (not just a ref) because ChatPopoutHost renders the panel into it.
+  const [popoutWindow, setPopoutWindow] = useState<Window | null>(null)
 
   // Refs the realtime handlers / timers read so the channel never has to be torn
   // down and rebuilt just to see fresh values.
@@ -349,6 +389,39 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     avatarUrl: null,
   })
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
+
+  // ── Popout plumbing ───────────────────────────────────────────────────────
+  // The two routes are tracked separately because they need different handling:
+  // the picture-in-picture window is rendered INTO (same React tree, so nothing
+  // to synchronise), while the plain second window is a separate copy of the
+  // app that can only be talked to.
+  const pipWindowRef = useRef<Window | null>(null)
+  const plainWindowRef = useRef<Window | null>(null)
+  // Fixed for the life of this window: am I the popped-out copy?
+  const [amPopout] = useState(() => isPopoutWindow())
+  const syncChannelRef = useRef<BroadcastChannel | null>(null)
+  // When another window last announced itself as the popout. Drives both "chat
+  // lives over there" in the header and this window keeping quiet.
+  const remoteBeatRef = useRef(0)
+  const placementRef = useRef<ChatPlacement>(placement)
+  placementRef.current = placement
+
+  // Only one window should make a noise for an incoming message. On the second
+  // window route two copies of the app are listening, so the popped-out one —
+  // the window the user is actually looking at chat in — wins and everything
+  // else stays quiet. The picture-in-picture route never reaches this: there is
+  // only one copy of the app, so nothing is broadcasting and nothing is muted.
+  function anotherWindowOwnsSound(): boolean {
+    return !amPopout && popoutIsAlive(remoteBeatRef.current, Date.now())
+  }
+
+  function postSync(msg: ChatSyncMessage) {
+    try {
+      syncChannelRef.current?.postMessage(msg)
+    } catch {
+      /* channel closed mid-teardown — nothing to co-ordinate */
+    }
+  }
 
   function computeStatus(): ChatStatus {
     if (manualRef.current === 'away') return 'away'
@@ -407,6 +480,30 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
         .then(({ error }) => {
           if (error) console.error('[chat] DM read stamp failed:', error.message)
         })
+    }
+    setThreadUnread((prev) => {
+      if (!prev[thread]) return prev
+      const next = { ...prev }
+      delete next[thread]
+      return next
+    })
+    // Tell any other window of this app (a second tab, or the popped-out chat)
+    // that this thread has been read, so its badge clears too. Without this,
+    // reading in the popout leaves the main window's header still claiming
+    // unread messages until its next resync.
+    postSync({ kind: 'seen', thread, at: nowIso })
+  }
+
+  // The other half of the above: another window read a thread, so clear it
+  // here. The seen stamps are updated as well as the counts — a resync
+  // recomputes unread from those stamps, so skipping them would resurrect the
+  // badge seconds later.
+  function applyRemoteSeen(thread: ChatThread, at: string) {
+    if (thread === 'team') {
+      seenAtRef.current = at
+      setMentionUnread(0)
+    } else {
+      dmReadsRef.current[thread] = at
     }
     setThreadUnread((prev) => {
       if (!prev[thread]) return prev
@@ -651,8 +748,10 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
                 if (mentioned) setMentionUnread((n) => n + 1)
               }
               // Audio cue: a brighter chime for a DM or an @mention, else a
-              // subtle blip (throttled so a burst doesn't machine-gun).
-              if (soundEnabledRef.current) {
+              // subtle blip (throttled so a burst doesn't machine-gun). Muted
+              // while chat is popped out into a window of its own — that window
+              // is listening too, and two copies of the app would chime at once.
+              if (soundEnabledRef.current && !anotherWindowOwnsSound()) {
                 if (mentioned || isDm) {
                   playChatSound('mention')
                 } else {
@@ -770,6 +869,92 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId])
 
+  // Keep this app's windows in step: which one owns the notification sound,
+  // what has been read, and whether a popped-out window is still open.
+  //
+  // Only the second-window route needs any of this. Picture-in-picture moves
+  // the existing panel rather than starting a second copy of the app, so there
+  // is no second listener to co-ordinate with and nothing below ever fires.
+  // It also quietly fixes two ordinary tabs of the app double-chiming and
+  // disagreeing about unread counts, which was true before any of this.
+  useEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') return
+    let channel: BroadcastChannel
+    try {
+      channel = new BroadcastChannel(CHAT_SYNC_CHANNEL)
+    } catch {
+      return /* unavailable — each window simply behaves independently */
+    }
+    syncChannelRef.current = channel
+
+    channel.onmessage = (e: MessageEvent<ChatSyncMessage>) => {
+      const msg = e.data
+      if (!msg || typeof msg !== 'object') return
+      switch (msg.kind) {
+        case 'seen':
+          applyRemoteSeen(msg.thread, msg.at)
+          break
+        case 'popout-alive':
+          if (amPopout) break
+          remoteBeatRef.current = Date.now()
+          // Guarded, or a heartbeat every couple of seconds re-renders the app.
+          if (placementRef.current !== 'popout') setPlacementState('popout')
+          break
+        case 'popout-closed':
+          if (amPopout) break
+          remoteBeatRef.current = 0
+          plainWindowRef.current = null
+          // Back to whatever placement was saved, not a hardcoded 'floating' —
+          // someone who had chat docked should find it docked again.
+          if (placementRef.current === 'popout') setPlacementState(readPlacement())
+          break
+        case 'popout-close-request':
+          // "Bring chat back", pressed in an app window that no longer holds a
+          // handle on this one (it has reloaded since opening it).
+          if (amPopout) window.close()
+          break
+      }
+    }
+
+    let beat: number | undefined
+    let watchdog: number | undefined
+    if (amPopout) {
+      const announce = () => postSync({ kind: 'popout-alive' })
+      announce()
+      beat = window.setInterval(announce, POPOUT_HEARTBEAT_MS)
+    } else {
+      // A force-quit sends no farewell, so notice the silence instead —
+      // otherwise the header goes on pointing at a window that has gone and
+      // chat becomes unreachable from the app.
+      watchdog = window.setInterval(() => {
+        if (placementRef.current !== 'popout') return
+        if (pipWindowRef.current) return /* that route resets on its own pagehide */
+        const handle = plainWindowRef.current
+        // A handle we still hold is the authoritative answer, and it covers the
+        // second or so before a freshly opened window starts its heartbeat.
+        if (handle && !handle.closed) return
+        if (popoutIsAlive(remoteBeatRef.current, Date.now())) return
+        remoteBeatRef.current = 0
+        plainWindowRef.current = null
+        setPlacementState(readPlacement())
+      }, POPOUT_HEARTBEAT_MS)
+    }
+
+    function farewell() {
+      if (amPopout) postSync({ kind: 'popout-closed' })
+    }
+    window.addEventListener('pagehide', farewell)
+
+    return () => {
+      window.removeEventListener('pagehide', farewell)
+      if (beat) window.clearInterval(beat)
+      if (watchdog) window.clearInterval(watchdog)
+      syncChannelRef.current = null
+      channel.close()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [amPopout])
+
   // Activity + idle tracking. A throttled "bump" records the last activity; a
   // slow tick (and visibility changes) flips online↔idle and re-broadcasts.
   useEffect(() => {
@@ -805,6 +990,115 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
     return () => window.clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId])
+
+  // ── Popout actions ────────────────────────────────────────────────────────
+
+  function focusPopout(): boolean {
+    const win = pipWindowRef.current ?? plainWindowRef.current
+    if (win && !win.closed) {
+      try {
+        win.focus()
+        return true
+      } catch {
+        return false
+      }
+    }
+    // No handle: this window has reloaded since opening the popout. A named
+    // window can be re-found by name — and passing an empty URL re-uses it
+    // without navigating it. Only attempted while it is still heartbeating, so
+    // this can never conjure a blank popup for a window that has gone.
+    if (!popoutIsAlive(remoteBeatRef.current, Date.now())) return false
+    try {
+      const found = window.open('', POPOUT_WINDOW_NAME)
+      if (!found || found.closed) return false
+      plainWindowRef.current = found
+      found.focus()
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async function openPopout() {
+    // Already open — bring it forward rather than opening a second one.
+    if (focusPopout()) return
+
+    const size = readPopoutSize()
+    // Everything up to requestWindow stays synchronous: it may only be called
+    // while the click that asked for it is still being handled.
+    const pip = window.documentPictureInPicture
+    if (pip) {
+      let win: Window | null = null
+      try {
+        win = await pip.requestWindow({ width: size.w, height: size.h })
+      } catch {
+        // Refused: no user gesture left, one is already open, or there is no
+        // real browser window to attach it to (an embedded web view answers
+        // "InvalidStateError: no window"). A plain window works everywhere, so
+        // fall through rather than doing nothing at all.
+        win = null
+      }
+      if (win) {
+        try {
+          preparePopoutDocument(win)
+        } catch {
+          // Never leave an empty window sitting on screen: close it and take
+          // the ordinary route instead.
+          try {
+            win.close()
+          } catch {
+            /* already gone */
+          }
+          win = null
+        }
+      }
+      if (win) {
+        const opened = win
+        // Remember the size it's left at, and put chat back in the app the
+        // moment the window goes — including when the browser closes it for us.
+        opened.addEventListener('pagehide', () => {
+          writePopoutSize({ w: opened.innerWidth, h: opened.innerHeight })
+          pipWindowRef.current = null
+          setPopoutWindow(null)
+          setPlacementState(readPlacement())
+        })
+        pipWindowRef.current = opened
+        setPopoutWindow(opened)
+        setPlacementState('popout')
+        return
+      }
+    }
+
+    const win = window.open(
+      POPOUT_PATH,
+      POPOUT_WINDOW_NAME,
+      windowFeatures(size, { x: window.screenX, y: window.screenY, width: window.outerWidth }),
+    )
+    // Blocked by the browser: leave chat exactly where it was, so the panel
+    // being looked at isn't traded for nothing.
+    if (!win) return
+    plainWindowRef.current = win
+    setPlacementState('popout')
+  }
+
+  function closePopout() {
+    const pip = pipWindowRef.current
+    const plain = plainWindowRef.current
+    try {
+      if (pip && !pip.closed) pip.close()
+      else if (plain && !plain.closed) plain.close()
+      // No handle to it: this window has reloaded since opening the popout, so
+      // ask the popout to close itself instead.
+      else postSync({ kind: 'popout-close-request' })
+    } catch {
+      postSync({ kind: 'popout-close-request' })
+    }
+    pipWindowRef.current = null
+    plainWindowRef.current = null
+    remoteBeatRef.current = 0
+    setPopoutWindow(null)
+    setPlacementState(readPlacement())
+  }
 
   // Totals derived from the per-thread map (tiny arrays; no memo needed).
   const unread = Object.values(threadUnread).reduce((a, b) => a + b, 0)
@@ -1025,6 +1319,12 @@ export function TeamChatProvider({ children }: { children: ReactNode }) {
         /* localStorage unavailable — still works for this session */
       }
     },
+    openPopout: () => {
+      void openPopout()
+    },
+    closePopout,
+    focusPopout,
+    popoutWindow,
     typingUsers,
     notifyTyping: () => {
       const now = Date.now()
