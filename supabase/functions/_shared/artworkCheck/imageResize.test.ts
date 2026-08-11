@@ -18,6 +18,7 @@ import {
   MAX_DECODE_PIXELS,
   MODEL_MAX_LONG_EDGE,
   readImageSize,
+  sniffImageMediaType,
   targetSize,
 } from './imageResize.ts'
 
@@ -231,6 +232,69 @@ console.log('\nfitting real images')
   const junk = new Uint8Array([9, 9, 9, 9, 9, 9, 9, 9])
   const junkFit = await fitImageForModel(junk, 'image/png')
   check('unmeasurable bytes pass through untouched', junkFit.ok === true && junkFit.bytes === junk)
+}
+
+// ── media type: the bytes, not the filename ──────────────────────────────────
+// The regression guard for KT Pumps (proof 171161fc, 10-11 Aug): a Help Scout
+// attachment named "image.png" whose bytes are a JPEG. Every picker in this
+// check types an image by its file extension, so the request went out claiming
+// PNG, the API validated the bytes, and the WHOLE call 400'd — all three
+// versions of the proof check, every re-run, with nothing about the file ever
+// going to change.
+
+console.log('\nmedia type is read from the bytes')
+{
+  const png = await new Image(40, 40).encode(1)
+  const jpeg = await new Image(40, 40).encodeJPEG(85)
+  const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0])
+  const webp = new Uint8Array(32)
+  webp.set([0x52, 0x49, 0x46, 0x46], 0)
+  webp.set([0x57, 0x45, 0x42, 0x50], 8)
+  webp.set([0x56, 0x50, 0x38, 0x58], 12)
+
+  eq('PNG signature is recognised', sniffImageMediaType(png), 'image/png')
+  eq('JPEG signature is recognised', sniffImageMediaType(jpeg), 'image/jpeg')
+  eq('GIF signature is recognised', sniffImageMediaType(gif), 'image/gif')
+  eq('WebP signature is recognised', sniffImageMediaType(webp), 'image/webp')
+  eq('unrecognised bytes sniff as null', sniffImageMediaType(new Uint8Array([9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9])), null)
+  eq('a truncated PNG signature is not a PNG', sniffImageMediaType(new Uint8Array([0x89, 0x50, 0x4e])), null)
+
+  // THE case. In-limit, so it takes the passthrough path — exactly where the
+  // KT Pumps attachment went, and why no resize happened to quietly fix it.
+  const mislabelled = await fitImageForModel(jpeg, 'image/png')
+  check('a JPEG named .png still passes through', mislabelled.ok === true && mislabelled.bytes === jpeg)
+  check('…but is labelled as the JPEG it is', mislabelled.ok === true && mislabelled.mediaType === 'image/jpeg')
+
+  // The honest cases are unchanged — a correctly-named file keeps its type,
+  // which is what the PNG-in-PNG-out transparency rule above depends on.
+  const honestPng = await fitImageForModel(png, 'image/png')
+  check('a real PNG stays a PNG', honestPng.ok === true && honestPng.mediaType === 'image/png')
+  const honestJpeg = await fitImageForModel(jpeg, 'image/jpeg')
+  check('a real JPEG stays a JPEG', honestJpeg.ok === true && honestJpeg.mediaType === 'image/jpeg')
+
+  // Sniffing also drives the RE-ENCODE, so a mislabelled file that needs a
+  // downscale comes back as its true format rather than being handed to the
+  // PNG encoder on the strength of its filename.
+  const bigMislabelled = await fitImageForModel(await new Image(9000, 300).encodeJPEG(85), 'image/png')
+  check('an oversized mislabelled JPEG is fitted', bigMislabelled.ok === true)
+  if (bigMislabelled.ok) {
+    eq('…re-encoded as a JPEG', sniffImageMediaType(bigMislabelled.bytes), 'image/jpeg')
+    eq('…and labelled to match', bigMislabelled.mediaType, 'image/jpeg')
+  }
+
+  // Nothing to sniff: keep the declared type, since guessing would be worse
+  // than the caller's own best information.
+  const junk = new Uint8Array([9, 9, 9, 9, 9, 9, 9, 9])
+  const junkFit = await fitImageForModel(junk, 'image/webp')
+  check('unsniffable bytes keep the declared type', junkFit.ok === true && junkFit.mediaType === 'image/webp')
+
+  // The invariant the API actually enforces: whenever we can read the bytes,
+  // the label we send agrees with them.
+  const everyFit = [mislabelled, honestPng, honestJpeg, bigMislabelled]
+  check(
+    'every fitted image is labelled as what its bytes are',
+    everyFit.every((f) => !f.ok || sniffImageMediaType(f.bytes) === null || sniffImageMediaType(f.bytes) === f.mediaType),
+  )
 }
 
 // ── summary ──────────────────────────────────────────────────────────────────

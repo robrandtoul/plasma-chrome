@@ -223,6 +223,11 @@ export async function routeAttachment(
   const ext = lower.match(/\.([a-z0-9]+)$/)?.[1] ?? ''
   const mediaType = IMAGE_MEDIA[ext]
   if (mediaType) {
+    // The extension routes the file; it does NOT settle the media type. A
+    // renamed or re-saved image (ordinary in a mail thread) would otherwise be
+    // sent under a type its bytes contradict, which 400s the whole request.
+    // fitImageForModel sniffs the real one and the caller labels the block
+    // with that — see sniffImageMediaType in imageResize.ts.
     return { kind: 'image', name: meta.filename, at: meta.at, mediaType, bytes }
   }
   return null

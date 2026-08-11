@@ -567,7 +567,7 @@ Deno.serve(async (req) => {
           total += bytes.length
           included.push(pick.label)
           blocks.push({ type: 'text', text: `${pick.label}:` })
-          blocks.push({ type: 'image', source: { type: 'base64', media_type: pick.mediaType, data: bytesToBase64(bytes) } })
+          blocks.push({ type: 'image', source: { type: 'base64', media_type: fitted.mediaType, data: bytesToBase64(bytes) } })
         }
         if (included.length === 0) return json({ ok: false, error: 'The version artwork could not be downloaded — try again.' }, 502)
         blocks.push({ type: 'text', text: INVESTIGATION_FINAL_INSTRUCTION })
@@ -934,7 +934,7 @@ Deno.serve(async (req) => {
             imagesRawTotal += bytes.length
             proofCtx.proofImagesRead.push(pick.label)
             imageBlocks.push({ type: 'text', text: `Proof image ${proofCtx.proofImagesRead.length}: ${pick.label}:` })
-            imageBlocks.push({ type: 'image', source: { type: 'base64', media_type: pick.mediaType, data: bytesToBase64(bytes) } })
+            imageBlocks.push({ type: 'image', source: { type: 'base64', media_type: fitted.mediaType, data: bytesToBase64(bytes) } })
           } catch {
             proofCtx.proofImagesSkipped.push({ name: pick.label, reason: 'download failed' })
           }
@@ -975,7 +975,9 @@ Deno.serve(async (req) => {
                 proofCtx.attachmentsSkipped.push({ name: meta.filename, reason: fitted.reason })
                 continue
               }
-              toSend = { ...routed, bytes: fitted.bytes }
+              // mediaType too: routeAttachment took it from the filename, and
+              // a mail thread is full of renamed images — the bytes decide.
+              toSend = { ...routed, bytes: fitted.bytes, mediaType: fitted.mediaType }
             }
             routedAttachments.push(toSend)
             proofCtx.attachmentsRead.push({ name: meta.filename, at: attachmentDateLabel(meta.at) })
@@ -1210,7 +1212,9 @@ Deno.serve(async (req) => {
               baseCtx.attachmentsSkipped.push({ name: meta.filename, reason: fitted.reason })
               continue
             }
-            toSend = { ...routed, bytes: fitted.bytes }
+            // mediaType too: routeAttachment took it from the filename, and
+            // a mail thread is full of renamed images — the bytes decide.
+            toSend = { ...routed, bytes: fitted.bytes, mediaType: fitted.mediaType }
           }
           routedAttachments.push(toSend)
           attachmentsRawTotal += bytes.length
@@ -1274,7 +1278,7 @@ Deno.serve(async (req) => {
           approvedBlocks.push({ type: 'text', text: `Approved proof ${baseCtx.approvedRead.length}: ${pick.label} (customer-approved artwork):` })
           approvedBlocks.push({
             type: 'image',
-            source: { type: 'base64', media_type: pick.mediaType, data: bytesToBase64(bytes) },
+            source: { type: 'base64', media_type: fitted.mediaType, data: bytesToBase64(bytes) },
           })
         } catch {
           baseCtx.approvedSkipped.push({ name: pick.label, reason: 'download failed' })

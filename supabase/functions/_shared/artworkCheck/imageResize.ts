@@ -169,6 +169,41 @@ function webpSize(b: Uint8Array): ImageSize | null {
   return null
 }
 
+// ── format sniffing ─────────────────────────────────────────────────────────
+// What the bytes ARE, whatever the filename claims.
+//
+// Every picker in this check derives an image's media type from its file
+// EXTENSION, and the API validates the bytes against the media_type we send.
+// So one mislabelled file 400s the ENTIRE request, taking down a run that had
+// already read a dozen perfectly good images — the same all-or-nothing
+// failure mode as the oversized image this module was written for.
+//
+// That is what happened to KT Pumps (proof 171161fc) on 10-11 Aug: a customer
+// attachment on the Help Scout thread named "image.png" whose bytes are a
+// JPEG. It failed all three versions of the pre-send proof check, at three
+// different block positions, and would have failed every re-run forever —
+// there is nothing wrong with the file, so nothing about it was going to
+// change. Renaming and re-saving images is ordinary in a mail thread, so the
+// filename is a hint and the header is the fact.
+//
+// Signatures only — deliberately independent of the size probes above, so a
+// file whose dimensions we cannot parse still gets labelled correctly (that
+// unmeasurable passthrough is exactly where the KT Pumps attachment went).
+export function sniffImageMediaType(b: Uint8Array): string | null {
+  if (
+    b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 &&
+    b[4] === 0x0d && b[5] === 0x0a && b[6] === 0x1a && b[7] === 0x0a
+  ) return 'image/png'
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg'
+  // "GIF8" covers both 87a and 89a.
+  if (b.length >= 4 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return 'image/gif'
+  if (
+    b.length >= 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && // "RIFF"
+    b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50 // "WEBP"
+  ) return 'image/webp'
+  return null
+}
+
 // Dimensions without decoding. Null = unrecognised header.
 export function readImageSize(bytes: Uint8Array): ImageSize | null {
   const size = pngSize(bytes) ?? jpegSize(bytes) ?? gifSize(bytes) ?? webpSize(bytes)
@@ -307,24 +342,41 @@ function isResizableType(mediaType: string): boolean {
 }
 
 export type FitResult =
-  | { ok: true; bytes: Uint8Array; resizedFrom: ImageSize | null; size: ImageSize | null }
+  | {
+    ok: true
+    bytes: Uint8Array
+    // The media_type the caller must send. Sniffed from the bytes, so it can
+    // differ from the one passed in — see sniffImageMediaType.
+    mediaType: string
+    resizedFrom: ImageSize | null
+    size: ImageSize | null
+  }
   | { ok: false; reason: string }
 
 // Make one image safe to send. Returns the original bytes untouched unless a
 // downscale is genuinely needed.
+//
+// This is the single choke point every image block in the check passes
+// through, which is why the media-type correction lives here rather than in
+// each of the four pickers that guess a type from a file extension. Callers
+// must label the block with the returned `mediaType`, not the one they passed.
 export async function fitImageForModel(bytes: Uint8Array, mediaType: string): Promise<FitResult> {
+  // The filename lied if these disagree, and the bytes win. Everything below
+  // follows what the file actually is: the resizable-format gate, the format
+  // it is re-encoded to, and the media_type the caller sends.
+  const realType = sniffImageMediaType(bytes) ?? mediaType
   const size = readImageSize(bytes)
 
   // Unmeasurable: pass through exactly as before. We have no evidence it's a
   // problem, and this is the path 310 of 312 recorded runs took successfully.
-  if (!size) return { ok: true, bytes, resizedFrom: null, size: null }
+  if (!size) return { ok: true, bytes, mediaType: realType, resizedFrom: null, size: null }
 
   const target = targetSize(size)
-  if (!target) return { ok: true, bytes, resizedFrom: null, size }
+  if (!target) return { ok: true, bytes, mediaType: realType, resizedFrom: null, size }
 
   const dimensions = `${size.width}x${size.height}px`
 
-  if (!isResizableType(mediaType)) {
+  if (!isResizableType(realType)) {
     return { ok: false, reason: `too large to send (${dimensions}) and not a resizable format` }
   }
   if (size.width * size.height > MAX_DECODE_PIXELS) {
@@ -341,7 +393,7 @@ export async function fitImageForModel(bytes: Uint8Array, mediaType: string): Pr
     // output. Re-derive the target from what we really got.
     const realSize = { width: decoded.width, height: decoded.height }
     const realTarget = targetSize(realSize)
-    if (!realTarget) return { ok: true, bytes, resizedFrom: null, size: realSize }
+    if (!realTarget) return { ok: true, bytes, mediaType: realType, resizedFrom: null, size: realSize }
 
     const resampled = areaAverage(
       decoded.bitmap,
@@ -353,8 +405,11 @@ export async function fitImageForModel(bytes: Uint8Array, mediaType: string): Pr
     const out = new codec.Image(realTarget.width, realTarget.height)
     out.bitmap.set(resampled)
     // Same format in, same format out — see the transparency note at the top.
-    const encoded = mediaType === 'image/png' ? await out.encode(1) : await out.encodeJPEG(88)
-    return { ok: true, bytes: encoded, resizedFrom: realSize, size: realTarget }
+    // Keyed on the SNIFFED type, so a JPEG named .png is re-encoded as a JPEG
+    // and labelled as one, rather than being handed to the PNG encoder on the
+    // strength of its filename.
+    const encoded = realType === 'image/png' ? await out.encode(1) : await out.encodeJPEG(88)
+    return { ok: true, bytes: encoded, mediaType: realType, resizedFrom: realSize, size: realTarget }
   } catch (err) {
     console.error('[artwork-check] resize failed:', (err as Error)?.message)
     return { ok: false, reason: `too large to send (${dimensions})` }
