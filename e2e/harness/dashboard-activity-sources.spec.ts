@@ -74,7 +74,13 @@ test.describe('latest activity — sources', () => {
     // the card at all proves the order_groups source is read — the open is
     // stamped on the GROUP, never on a member, so an implementation that reads
     // only the orders table shows a combined payment as nothing whatsoever.
-    await expect(page.locator(FEED_ROW).filter({ hasText: 'Wonka Industries' })).toHaveCount(1)
+    //
+    // Pinned to the pay-link-open row rather than to Wonka's row count, which
+    // is no longer 1: the same group now also carries a confirmation stamp, and
+    // counting the customer's rows would make this test fail every time the
+    // group grows a source rather than when the one it is about breaks.
+    await expect(page.locator(`${FEED_ROW}[data-event-type="pay_link_opened"]`)
+      .filter({ hasText: 'Wonka Industries' })).toHaveCount(1)
 
     // Leccy.Tech's reorder request (p-x1) is the only row that comes from the
     // projects array rather than a query of its own.
@@ -100,5 +106,84 @@ test.describe('latest activity — sources', () => {
     // bundle case above.
     await page.locator(FEED_ROW).first().click()
     await expect(page.locator('[data-nav-target]')).toHaveAttribute('data-nav-path', /^\/proofs\//)
+  })
+})
+
+// ── The outbound family ───────────────────────────────────────────────────────
+//
+// Everything we send reaches the customer as a Help Scout agent reply and stamps
+// one column, so the card called all of it "was sent a reply": a hand-typed note,
+// an automated chase and an order confirmation were one indistinguishable row.
+// Each type below reads the record that kind of message left on its own way out.
+//
+// These assert on data-event-type rather than copy, deliberately. The outbound
+// rows differ from one another in WORDING alone — every one is a muted row about
+// a message we sent — so matching on text would be the one thing this suite's
+// conventions forbid, and matching on the icon or tint could not tell a
+// follow-up reminder from a payment reminder at all.
+test.describe('latest activity — naming what we sent', () => {
+  const typed = (page: Page, type: string) => page.locator(`${FEED_ROW}[data-event-type="${type}"]`)
+
+  test('a designer message names its sender instead of reading as "a reply"', async ({ page }) => {
+    await openDashboard(page)
+
+    // ver-a1: Donna Lambe sent v2 of p-a1 six hours ago. The row exists at all
+    // only because proof_versions.last_reply_sent_by is read — the proof detail
+    // timeline has named senders from that column for months while this card
+    // threw it away.
+    await expect(typed(page, 'designer_message').filter({ hasText: 'Donna Lambe' })).toHaveCount(1)
+  })
+
+  // The rule that keeps the automation honest. send-nudges stamps
+  // last_reply_sent_at exactly as a human sender does but leaves
+  // last_reply_sent_by NULL on purpose, so the NULL is what marks a message no
+  // person wrote. ver-x1 is that shape; crediting it to a designer would have
+  // the card report human contact that never happened.
+  test('an automated chase is never dressed up as a designer message', async ({ page }) => {
+    await openDashboard(page)
+
+    await expect(typed(page, 'followup_reminder')).toHaveCount(1)
+    // Nobody is credited: the actor is the customer, so the row carries no
+    // designer name at all. Christopher is the sender of the OTHER Leccy.Tech
+    // row (ver-x1b), which is what makes this a real distinction rather than an
+    // absence of names on the page.
+    await expect(typed(page, 'followup_reminder').filter({ hasText: 'Christopher' })).toHaveCount(0)
+  })
+
+  // Three sends to ONE project in the fixtures. send-nudges runs as a batch
+  // twice a day and put 93 reminders on live in 7 days; at a row each they would
+  // take the top of this 20-row card every morning and push out the views,
+  // approvals and payments it exists to show.
+  test('a project chased three times still spends one row on it', async ({ page }) => {
+    await openDashboard(page)
+    await expect(typed(page, 'followup_reminder')).toHaveCount(1)
+  })
+
+  test('the order acknowledgement says what it is', async ({ page }) => {
+    await openDashboard(page)
+
+    // Stamped on the GROUP for a combined payment (g2) — one payment, one
+    // confirmation. Reading the orders table alone shows it nowhere, since no
+    // member carries the stamp.
+    await expect(typed(page, 'order_confirmation_sent').filter({ hasText: 'Wonka Industries' })).toHaveCount(1)
+  })
+
+  // ONE MESSAGE, ONE ROW. p-x1 carries both records of a single email: the
+  // version stamp the edge function wrote (ver-x1b) and the proof stamp Help
+  // Scout's webhook wrote, pinned to the same instant. Before supersedeOutbound
+  // both reached the card, so the same message printed twice — once named and
+  // once anonymously.
+  test('one message does not print twice under two names', async ({ page }) => {
+    await openDashboard(page)
+
+    const leccyRows = page.locator(FEED_ROW).filter({ hasText: 'Leccy.Tech' })
+    const named = leccyRows.filter({ hasText: 'Christopher Jackson-Whitmore' })
+    await expect(named).toHaveCount(1)
+    // The generic row describing that same send is gone — asserted for THIS
+    // project rather than globally, because staff_reply is still the right
+    // answer elsewhere (a reply typed straight into Help Scout leaves no record
+    // of what it was, and the card should keep saying so).
+    await expect(leccyRows.filter({ has: page.locator('[data-event-type="staff_reply"]') })).toHaveCount(0)
+    await expect(typed(page, 'staff_reply').first()).toBeVisible()
   })
 })

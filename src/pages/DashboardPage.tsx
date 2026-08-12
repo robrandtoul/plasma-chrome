@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { DesignerChrome, useDesignerProfile, useIsMobile, Sheet, ButtonCoral, ButtonGhost, ButtonInk, ProofStatusPill, HelpTip } from '../design'
-import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Layers, Link as LinkIcon, Repeat, ThumbsDown, PictureInPicture2, PanelRightClose, Banknote, HelpCircle, RotateCcw } from 'lucide-react'
+import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Layers, Link as LinkIcon, Repeat, ThumbsDown, PictureInPicture2, PanelRightClose, Banknote, HelpCircle, RotateCcw, Receipt } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -64,6 +64,12 @@ import {
   checkoutHelpEvents,
   reorderRequestedEvents,
   bundleOpenedEvents,
+  designerMessageEvents,
+  followupReminderEvents,
+  orderConfirmationEvents,
+  orderGroupConfirmationEvents,
+  bundleSentEvents,
+  supersedeOutbound,
   type PayLinkOpenRow,
   type PayLinkSentRow,
   type OrderReminderRow,
@@ -72,6 +78,11 @@ import {
   type GroupPayLinkOpenRow,
   type CheckoutHelpRow,
   type BundleOpenRow,
+  type DesignerMessageRow,
+  type FollowupReminderRow,
+  type OrderConfirmationRow,
+  type OrderGroupConfirmationRow,
+  type BundleSentRow,
   type DashboardLatestEvent,
   type DashboardProject,
   type NeedsAttentionRule,
@@ -2408,7 +2419,48 @@ const ACTIVITY_VISUAL: Record<DashboardLatestEvent['event_type'], ActivityVisual
     // Outbound: the company is the recipient, not the sender, so this must
     // read differently from customer_reply's "replied by email" — otherwise
     // a reply we send looks like the customer replying to us.
+    //
+    // Now the fallback of the outbound family rather than the whole of it: it
+    // means "a message went out and its own record says nothing more", which on
+    // live is a reply typed straight into Help Scout. Everything we send from
+    // the app names itself through one of the four types below.
     verbCopy: () => 'was sent a reply',
+  },
+  // A designer's own message, sent from the app — the only outbound row that
+  // can name the person, so it keeps the customer as the bold label and puts
+  // the sender on the actor subline exactly as staff_reply does.
+  designer_message: {
+    icon: Send,
+    tint: 'var(--c-ink-mute)',
+    // Names the version, which is what the message almost always was: "here is
+    // v3". A bundle send covering cards on different versions has no single
+    // version to claim and falls back to the plain wording.
+    verbCopy: (v) => (v ? `was sent v${v}` : 'was sent a message'),
+  },
+  // An automated follow-up chase. Passive and nameless on purpose — nobody sent
+  // it, and the reason this row exists is that "was sent a reply" said somebody
+  // had. Shares the Bell with order_reminder_sent (both are reminders); the copy
+  // carries the difference between chasing a proof and chasing a payment.
+  followup_reminder: {
+    icon: Bell,
+    tint: 'var(--c-ink-mute)',
+    verbCopy: () => 'was sent a follow-up reminder',
+  },
+  // The acknowledgement that goes out when a payment lands. Muted with the rest
+  // of the outbound family rather than green with order_paid: the money arriving
+  // is the event worth the colour, and this is the letter that follows it.
+  order_confirmation_sent: {
+    icon: Receipt,
+    tint: 'var(--c-ink-mute)',
+    verbCopy: () => 'was sent their order confirmation',
+  },
+  // The bundle review link going out. Layers matches bundle_opened, so a bundle
+  // reads as a bundle whichever direction it's travelling; the muted tint is
+  // what says this one was us.
+  bundle_sent: {
+    icon: Layers,
+    tint: 'var(--c-ink-mute)',
+    verbCopy: () => 'was sent their bundle to review',
   },
   // Synthetic row from the order's pay_link_opened_at (000262) — the customer
   // opened the payment link. Same "customer opened something" hue as a view.
@@ -2542,17 +2594,23 @@ function LatestActivityPanel({
             // actor line so it doesn't read as "Clayton Furry / Clayton
             // Furry".
             //
-            // Staff replies are the exception: their actor is "You" (us, the
-            // sender), not the customer — so it must never become the bold
-            // primary label, which produces "You was sent a reply" on a
-            // proof with no company. Lead with the customer (company, then
-            // contact) and keep "You" on the actor subline, matching the
-            // with-company rendering.
-            const isStaffReply = e.event_type === 'staff_reply'
-            const primaryLabel = isStaffReply
+            // The two rows whose actor is the SENDER rather than the customer
+            // are the exception: staff_reply's actor is "You" and
+            // designer_message's is the designer who sent it, so neither may
+            // become the bold primary label — that produces "You was sent a
+            // reply" on a proof with no company. Lead with the customer
+            // (company, then contact) and keep the sender on the actor subline,
+            // matching the with-company rendering.
+            //
+            // Every other outbound row (a reminder, a confirmation, a pay link,
+            // a bundle) sets its actor to the customer precisely so it needs no
+            // special case: nobody sent those personally, and the passive verb
+            // leaves the subline to suppress itself.
+            const leadsWithCustomer = e.event_type === 'staff_reply' || e.event_type === 'designer_message'
+            const primaryLabel = leadsWithCustomer
               ? e.company_name || e.contact_name || 'Customer'
               : e.company_name || e.actor_name
-            const showActor = isStaffReply
+            const showActor = leadsWithCustomer
               ? e.actor_name !== primaryLabel
               : Boolean(e.company_name) && e.actor_name !== primaryLabel
             // "Notification failed" only makes sense for the customer-side
@@ -2573,6 +2631,14 @@ function LatestActivityPanel({
                 key={e.id}
                 role="button"
                 tabIndex={0}
+                // A test seam, and the only one that lets the regression specs
+                // assert WHICH kind of row rendered. The house rule is to assert
+                // structure and never wording, but the outbound rows differ from
+                // one another in wording alone — every one of them is a muted
+                // row about a message we sent — so without this a spec pinning
+                // "the automated chase no longer reads as a colleague's reply"
+                // could only match on the copy it must not depend on.
+                data-event-type={e.event_type}
                 onClick={() => navigate(href)}
                 onKeyDown={(ev) => {
                   if (ev.key === 'Enter' || ev.key === ' ') {
@@ -3022,6 +3088,16 @@ interface ActivitySources {
   groupPayLinkOpens: GroupPayLinkOpenRow[]
   checkoutHelp: CheckoutHelpRow[]
   bundleOpens: BundleOpenRow[]
+  // The outbound family — the records each kind of message we send leaves
+  // behind, so the feed can say which one it was instead of "a reply".
+  designerMessages: DesignerMessageRow[]
+  followupReminders: FollowupReminderRow[]
+  orderConfirmations: OrderConfirmationRow[]
+  groupConfirmations: OrderGroupConfirmationRow[]
+  bundleSends: BundleSentRow[]
+  // profile id → full name (team_roster). Empty when the RPC failed, which
+  // costs the sender's name on a designer_message row and nothing else.
+  senderNames: Map<string, string>
 }
 
 /**
@@ -3064,9 +3140,15 @@ async function fetchActivitySources(): Promise<ActivitySources | null> {
   //
   // Fetched at twice the cap because a combined payment collapses many member
   // rows into one feed row (10 groups = 22 member orders on live).
+  //
+  // confirmation_sent_at rides along rather than costing a query of its own: a
+  // confirmation only exists on a paid order and is stamped seconds after the
+  // payment, so these same rows carry the recent ones. (A confirmation on an
+  // order cancelled afterwards is filtered out with its payment, which is right
+  // — the feed shouldn't announce the paperwork of a refunded sale.)
   const orderPaidPromise = supabase
     .from('orders')
-    .select(`id, proof_id, paid_at, order_group_id, status, order_kind, ${ORDER_CUSTOMER}`)
+    .select(`id, proof_id, paid_at, confirmation_sent_at, order_group_id, status, order_kind, ${ORDER_CUSTOMER}`)
     .not('paid_at', 'is', null)
     .neq('status', 'cancelled')
     .neq('order_kind', 'reprint')
@@ -3132,6 +3214,57 @@ async function fetchActivitySources(): Promise<ActivitySources | null> {
     .select('id, proof_id, reason_code, actor_name, created_at')
     .order('created_at', { ascending: false })
     .limit(50)
+  // ── The outbound family ────────────────────────────────────────────────────
+  // Each of these is the record one kind of outgoing message leaves behind. See
+  // the block comment above designerMessageEvents for why the feed needs them.
+  //
+  // A designer's own message (proof_versions, 000103/000215). Filtered on a
+  // non-null sender in the query as well as the builder: a NULL sender is how
+  // send-nudges marks a message no person wrote, and those belong to the
+  // reminder row below. Fetched at twice the cap because a bundle send stamps
+  // every card it announces and those collapse to one row.
+  const designerMessagesPromise = supabase
+    .from('proof_versions')
+    .select('id, proof_id, version_number, last_reply_sent_at, last_reply_sent_by, proofs(helpscout_conversation_id, contacts(full_name, companies(name)))')
+    .not('last_reply_sent_at', 'is', null)
+    .not('last_reply_sent_by', 'is', null)
+    .order('last_reply_sent_at', { ascending: false })
+    .limit(ACTIVITY_FEED_CAP * 2)
+  // Automated follow-up chases (proof_nudges, 000214). Only real sends —
+  // 'skipped' and 'dry_run' rows are the automation explaining itself, not
+  // messages anybody received. Fetched deep because the builder keeps only the
+  // most recent per project (see followupReminderEvents on why), so a batch run
+  // can spend many rows on few projects.
+  const followupRemindersPromise = supabase
+    .from('proof_nudges')
+    .select(`id, proof_id, created_at, ${ORDER_CUSTOMER}`)
+    .eq('state', 'sent')
+    .order('created_at', { ascending: false })
+    .limit(ACTIVITY_FEED_CAP * 3)
+  // A combined payment's confirmation lives on the group row, never a member's
+  // (000309) — one payment, one confirmation. The embed is the member orders,
+  // to name the customer and give the row somewhere to go.
+  const groupConfirmationsPromise = supabase
+    .from('order_groups')
+    .select(`id, confirmation_sent_at, orders(proof_id, ${ORDER_CUSTOMER})`)
+    .not('confirmation_sent_at', 'is', null)
+    .order('confirmation_sent_at', { ascending: false })
+    .limit(ACTIVITY_FEED_CAP)
+  // Bundle review links going out (proof_sets.sent_at, 000311). Its own query
+  // rather than a column on the bundle-opens read above, for the reason spelled
+  // out on the two checkout-help queries: one query can only be ordered by one
+  // of two stamps, and the loser gets silently truncated away by the winner —
+  // here that would be exactly the bundles sent and not yet opened.
+  const bundleSendsPromise = supabase
+    .from('proof_sets')
+    .select('id, sent_at, proofs(id), contacts(full_name, companies(name))')
+    .not('sent_at', 'is', null)
+    .order('sent_at', { ascending: false })
+    .limit(ACTIVITY_FEED_CAP)
+  // Who sent a designer_message. profiles is self-or-admin only under RLS, so
+  // this SECURITY DEFINER RPC (000329) is the designer-visible way to turn the
+  // stored uuid into a name — a plain join would name nobody for most of the team.
+  const rosterPromise = supabase.rpc('team_roster')
 
   const [
     { data: events, error: eventsError },
@@ -3144,6 +3277,11 @@ async function fetchActivitySources(): Promise<ActivitySources | null> {
     { data: checkoutHelpRows, error: checkoutHelpError },
     { data: checkoutResendRows, error: checkoutResendError },
     { data: bundleOpenRows, error: bundleOpensError },
+    { data: designerMessageRows, error: designerMessagesError },
+    { data: followupReminderRows, error: followupRemindersError },
+    { data: groupConfirmationRows, error: groupConfirmationsError },
+    { data: bundleSendRows, error: bundleSendsError },
+    { data: rosterRows, error: rosterError },
   ] = await Promise.all([
     eventsPromise,
     payLinkOpensPromise,
@@ -3155,6 +3293,11 @@ async function fetchActivitySources(): Promise<ActivitySources | null> {
     checkoutHelpPromise,
     checkoutResendPromise,
     bundleOpensPromise,
+    designerMessagesPromise,
+    followupRemindersPromise,
+    groupConfirmationsPromise,
+    bundleSendsPromise,
+    rosterPromise,
   ])
 
   // dashboard_latest_events is the backbone — every page view, approval and
@@ -3179,6 +3322,13 @@ async function fetchActivitySources(): Promise<ActivitySources | null> {
     ['checkout help', checkoutHelpError],
     ['pay-link resend requests', checkoutResendError],
     ['bundle opens', bundleOpensError],
+    ['designer messages', designerMessagesError],
+    ['follow-up reminders', followupRemindersError],
+    ['combined payment confirmations', groupConfirmationsError],
+    ['bundle sends', bundleSendsError],
+    // Losing the roster costs the sender's name, not the row: a
+    // designer_message with nobody to credit still says what went out.
+    ['team roster', rosterError],
   ] as const) {
     if (err) console.warn(`[DashboardPage] activity source "${label}" failed`, err)
   }
@@ -3218,6 +3368,18 @@ async function fetchActivitySources(): Promise<ActivitySources | null> {
       ...((checkoutResendRows ?? []) as CheckoutHelpRow[]),
     ],
     bundleOpens: (bundleOpenRows ?? []) as BundleOpenRow[],
+    designerMessages: (designerMessageRows ?? []) as unknown as DesignerMessageRow[],
+    followupReminders: (followupReminderRows ?? []) as unknown as FollowupReminderRow[],
+    // Single-order confirmations ride the payments read (see its note), so they
+    // are the same rows filtered by the builder rather than a fetch of their own.
+    orderConfirmations: (orderPaidRows ?? []) as unknown as OrderConfirmationRow[],
+    groupConfirmations: (groupConfirmationRows ?? []) as unknown as OrderGroupConfirmationRow[],
+    bundleSends: (bundleSendRows ?? []) as unknown as BundleSentRow[],
+    senderNames: new Map(
+      ((rosterRows ?? []) as Array<{ id?: string | null; full_name?: string | null }>)
+        .filter((r): r is { id: string; full_name: string } => Boolean(r.id && r.full_name))
+        .map((r) => [r.id, r.full_name]),
+    ),
   }
 }
 
@@ -3238,19 +3400,30 @@ function buildActivityFeed(
   projects: DashboardProject[],
   bundleIndex: BundleIndex,
 ): DashboardLatestEvent[] {
-  return [
-    ...sources.events,
-    ...helpscoutReplyEvents(projects, bundleIndex.byProof),
-    ...payLinkOpenEvents(sources.payLinkOpens, projects),
-    ...payLinkSentEvents(sources.payLinkSents, projects),
-    ...orderReminderEvents(sources.orderReminders, projects),
-    ...proofFeedbackEvents(sources.feedback, projects),
-    ...orderPaidEvents(sources.orderPaid, projects, bundleIndex.byProof),
-    ...groupPayLinkOpenEvents(sources.groupPayLinkOpens, projects, bundleIndex.byProof),
-    ...checkoutHelpEvents(sources.checkoutHelp, projects),
-    ...reorderRequestedEvents(projects),
-    ...bundleOpenedEvents(sources.bundleOpens, projects),
-  ]
+  return supersedeOutbound(
+    [
+      ...sources.events,
+      ...helpscoutReplyEvents(projects, bundleIndex.byProof),
+      ...payLinkOpenEvents(sources.payLinkOpens, projects),
+      ...payLinkSentEvents(sources.payLinkSents, projects),
+      ...orderReminderEvents(sources.orderReminders, projects),
+      ...proofFeedbackEvents(sources.feedback, projects),
+      ...orderPaidEvents(sources.orderPaid, projects, bundleIndex.byProof),
+      ...groupPayLinkOpenEvents(sources.groupPayLinkOpens, projects, bundleIndex.byProof),
+      ...checkoutHelpEvents(sources.checkoutHelp, projects),
+      ...reorderRequestedEvents(projects),
+      ...bundleOpenedEvents(sources.bundleOpens, projects),
+      ...designerMessageEvents(sources.designerMessages, projects, sources.senderNames, bundleIndex.byProof),
+      ...followupReminderEvents(sources.followupReminders, projects),
+      ...orderConfirmationEvents(sources.orderConfirmations, projects),
+      ...orderGroupConfirmationEvents(sources.groupConfirmations, projects, bundleIndex.byProof),
+      ...bundleSentEvents(sources.bundleSends, projects),
+    ],
+    // Several of the sources above are different records of the SAME outgoing
+    // message, so this runs BEFORE the sort and cap: a superseded row must not
+    // be allowed to occupy one of the twenty places on its way to being dropped.
+    bundleIndex.byProof,
+  )
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .slice(0, ACTIVITY_FEED_CAP)
 }

@@ -5,8 +5,8 @@
 // determines where a proof appears in the time-bucketed list after a
 // snooze expires.
 
-import { recentlyAwakened, isCurrentlySnoozed, groupByTime, activityTimestamp, buildSnoozedSection, proofBucket, recentHelpscoutActivity, helpscoutReplyEvents, resolveCustomer, orderPaidEvents, groupPayLinkOpenEvents, checkoutHelpEvents, reorderRequestedEvents, bundleOpenedEvents } from './dashboardGrouping'
-import type { DashboardProject, OrderPaidRow, GroupPayLinkOpenRow, CheckoutHelpRow, BundleOpenRow } from './dashboardGrouping'
+import { recentlyAwakened, isCurrentlySnoozed, groupByTime, activityTimestamp, buildSnoozedSection, proofBucket, recentHelpscoutActivity, helpscoutReplyEvents, resolveCustomer, orderPaidEvents, groupPayLinkOpenEvents, checkoutHelpEvents, reorderRequestedEvents, bundleOpenedEvents, designerMessageEvents, followupReminderEvents, orderConfirmationEvents, orderGroupConfirmationEvents, bundleSentEvents, supersedeOutbound } from './dashboardGrouping'
+import type { DashboardProject, OrderPaidRow, GroupPayLinkOpenRow, CheckoutHelpRow, BundleOpenRow, DesignerMessageRow, DashboardLatestEvent } from './dashboardGrouping'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1091,6 +1091,293 @@ test('a second open moves the same row rather than adding one', () => {
   const second = bundleOpenedEvents([{ ...bundleRow, last_opened_at: hoursAgo(0.5) }], paidProjects, NOW)
   assertEqual(first[0].id, second[0].id)
   assert(second[0].created_at > first[0].created_at, 'the clock moved')
+})
+
+// ── The outbound family ───────────────────────────────────────────────────────
+//
+// Every message we send stamps the same Help Scout column, so the feed used to
+// call all of them "was sent a reply". These builders read the record each kind
+// of message leaves behind instead; supersedeOutbound keeps one row per message
+// when several of them describe the same send.
+
+console.log('\ndesignerMessageEvents()')
+
+const ROSTER = new Map([['u-donna', 'Donna Lambe'], ['u-chris', 'Chris Jackson']])
+
+function versionRow(overrides: Partial<DesignerMessageRow> = {}): DesignerMessageRow {
+  return {
+    id: 'v-1',
+    proof_id: 'p1',
+    version_number: 3,
+    last_reply_sent_at: hoursAgo(2),
+    last_reply_sent_by: 'u-donna',
+    proofs: { helpscout_conversation_id: 'convo-1', contacts: null },
+    ...overrides,
+  }
+}
+
+test('a designer message names the sender and the version', () => {
+  const events = designerMessageEvents([versionRow()], paidProjects, ROSTER, undefined, NOW)
+  assertEqual(events.length, 1)
+  assertEqual(events[0].event_type, 'designer_message')
+  assertEqual(events[0].actor_name, 'Donna Lambe')
+  assertEqual(events[0].version_number, 3)
+  assertEqual(events[0].company_name, 'Analytical Engines')
+})
+
+// The load-bearing rule. send-nudges stamps last_reply_sent_at exactly like a
+// human sender but leaves last_reply_sent_by NULL on purpose (000215), so the
+// NULL is the automation's own marker — 31 of these landed in 30 days on live.
+// Treating one as a designer message would credit a person for a robot's chase.
+test('a NULL sender is the automation, not a designer — no row', () => {
+  const events = designerMessageEvents(
+    [versionRow({ last_reply_sent_by: null })], paidProjects, ROSTER, undefined, NOW)
+  assertEqual(events.length, 0)
+})
+
+// A bundle send posts ONE message and stamps every card it announces
+// (SetWorkspacePage), the anchor by the edge function and the rest by the
+// browser a moment later. Row-per-stamp would print the same email three times.
+test('one bundle send stamping three cards becomes one row', () => {
+  const at = hoursAgo(2)
+  const bundles = new Map([['p1', { setId: 's1' }], ['p2', { setId: 's1' }], ['p3', { setId: 's1' }]])
+  const events = designerMessageEvents([
+    versionRow({ id: 'v-1', proof_id: 'p1', last_reply_sent_at: at, proofs: null }),
+    versionRow({ id: 'v-2', proof_id: 'p2', last_reply_sent_at: new Date(Date.parse(at) + 1200).toISOString(), proofs: null }),
+    versionRow({ id: 'v-3', proof_id: 'p3', last_reply_sent_at: new Date(Date.parse(at) + 1500).toISOString(), proofs: null }),
+  ], paidProjects, ROSTER, bundles, NOW)
+  assertEqual(events.length, 1)
+  assertEqual(events[0].collapsed?.count, 3)
+  assertEqual(events[0].collapsed?.bundle, true)
+})
+
+// The clustering must not swallow genuinely separate sends. Two versions of one
+// project, a week apart, are two things that happened.
+test('two sends a week apart on one conversation stay two rows', () => {
+  const events = designerMessageEvents([
+    versionRow({ id: 'v-1', version_number: 2, last_reply_sent_at: daysAgo(8) }),
+    versionRow({ id: 'v-2', version_number: 3, last_reply_sent_at: daysAgo(1) }),
+  ], paidProjects, ROSTER, undefined, NOW)
+  assertEqual(events.length, 2)
+  assert(events.every((e) => e.collapsed === undefined), 'neither claims to cover the other')
+})
+
+// team_roster() lists only active profiles, so a message from someone who has
+// since left resolves to no name. The row still says what went out — it just
+// doesn't invent who by, and matching the customer label suppresses the subline.
+test('an unknown sender keeps the row and claims nobody', () => {
+  const events = designerMessageEvents(
+    [versionRow({ last_reply_sent_by: 'u-departed' })], paidProjects, ROSTER, undefined, NOW)
+  assertEqual(events.length, 1)
+  assertEqual(events[0].actor_name, 'Analytical Engines', 'falls back to the customer label')
+})
+
+// A bundle send can cover cards sitting on different versions. "was sent v2" is
+// then false for two thirds of them, so the copy has to drop the number.
+test('a cluster spanning versions names no version', () => {
+  const at = hoursAgo(2)
+  const bundles = new Map([['p1', { setId: 's1' }], ['p2', { setId: 's1' }]])
+  const events = designerMessageEvents([
+    versionRow({ id: 'v-1', proof_id: 'p1', version_number: 2, last_reply_sent_at: at, proofs: null }),
+    versionRow({ id: 'v-2', proof_id: 'p2', version_number: 4, last_reply_sent_at: at, proofs: null }),
+  ], paidProjects, ROSTER, bundles, NOW)
+  assertEqual(events.length, 1)
+  assertEqual(events[0].version_number, 0, 'no single version to claim')
+})
+
+test('a message older than the 30-day window is excluded', () => {
+  const events = designerMessageEvents(
+    [versionRow({ last_reply_sent_at: daysAgo(31) })], paidProjects, ROSTER, undefined, NOW)
+  assertEqual(events.length, 0)
+})
+
+console.log('\nfollowupReminderEvents()')
+
+// ONE ROW PER PROJECT, not per ledger row. send-nudges sent 93 reminders in 7
+// days on live; at a row each they would take the top of a 20-row feed every
+// morning and push out the views, approvals and payments it exists to show.
+test('several reminders to one project collapse to its most recent', () => {
+  const events = followupReminderEvents([
+    { id: 'n1', proof_id: 'p1', created_at: daysAgo(6) },
+    { id: 'n2', proof_id: 'p1', created_at: daysAgo(3) },
+    { id: 'n3', proof_id: 'p1', created_at: hoursAgo(2) },
+  ], paidProjects, NOW)
+  assertEqual(events.length, 1)
+  assertEqual(events[0].id, 'followup-n3', 'kept the newest')
+  assertEqual(events[0].event_type, 'followup_reminder')
+})
+
+// The row that most needed this: nobody sent it, so its actor must be the
+// CUSTOMER — the same convention pay_link_sent and order_reminder_sent follow,
+// which is what leaves the panel with no sender to put on the subline. (The
+// actor is the contact, per resolveCustomer; the panel leads with the company.)
+test('a reminder names the customer as its actor, never a sender', () => {
+  const events = followupReminderEvents(
+    [{ id: 'n1', proof_id: 'p1', created_at: hoursAgo(1) }], paidProjects, NOW)
+  assertEqual(events[0].actor_name, 'Ada Lovelace')
+  assertEqual(events[0].company_name, 'Analytical Engines')
+})
+
+test('reminders to different projects stay separate rows', () => {
+  const events = followupReminderEvents([
+    { id: 'n1', proof_id: 'p1', created_at: hoursAgo(1) },
+    { id: 'n2', proof_id: 'p2', created_at: hoursAgo(1) },
+  ], paidProjects, NOW)
+  assertEqual(events.length, 2)
+})
+
+console.log('\norderConfirmationEvents()')
+
+test('an order confirmation names itself', () => {
+  const events = orderConfirmationEvents([{
+    id: 'o1', proof_id: 'p1', confirmation_sent_at: hoursAgo(1), order_group_id: null,
+  }], paidProjects, NOW)
+  assertEqual(events.length, 1)
+  assertEqual(events[0].event_type, 'order_confirmation_sent')
+  assertEqual(events[0].company_name, 'Analytical Engines')
+})
+
+// One payment, one confirmation, stamped on the group row (000309) — a member
+// row would double-count the same email.
+test('a member of a combined payment is left to the group row', () => {
+  const events = orderConfirmationEvents([{
+    id: 'o1', proof_id: 'p1', confirmation_sent_at: hoursAgo(1), order_group_id: 'g1',
+  }], paidProjects, NOW)
+  assertEqual(events.length, 0)
+})
+
+test('a combined payment confirmation collapses its members', () => {
+  const events = orderGroupConfirmationEvents([{
+    id: 'g1',
+    confirmation_sent_at: hoursAgo(1),
+    orders: [{ proof_id: 'p1' }, { proof_id: 'p2' }],
+  }], paidProjects, undefined, NOW)
+  assertEqual(events.length, 1)
+  assertEqual(events[0].collapsed?.count, 2)
+})
+
+console.log('\nbundleSentEvents()')
+
+test('a bundle send links to the bundle and carries its set id', () => {
+  const events = bundleSentEvents([{
+    id: 'set-a', sent_at: hoursAgo(1), proofs: [{ id: 'p2' }, { id: 'p1' }],
+  }], paidProjects, NOW)
+  assertEqual(events.length, 1)
+  assertEqual(events[0].event_type, 'bundle_sent')
+  assertEqual(events[0].link, '/bundles/set-a')
+  // Load-bearing: the per-card rows underneath share no proof_id with this row,
+  // so the set id is the only thing that can tell supersedeOutbound they are
+  // one message.
+  assertEqual(events[0].set_id, 'set-a')
+})
+
+console.log('\nsupersedeOutbound() — one message, one row')
+
+function outboundRow(
+  type: DashboardLatestEvent['event_type'],
+  overrides: Partial<DashboardLatestEvent> = {},
+): DashboardLatestEvent {
+  return {
+    id: `${type}-1`,
+    created_at: hoursAgo(1),
+    event_type: type,
+    actor_name: 'Analytical Engines',
+    recipient_name: null,
+    helpscout_thread_id: null,
+    proof_id: 'p1',
+    version_number: 1,
+    contact_name: 'Ada Lovelace',
+    company_name: 'Analytical Engines',
+    ...overrides,
+  }
+}
+
+test('a named row supersedes the generic reply describing the same message', () => {
+  const at = hoursAgo(1)
+  const kept = supersedeOutbound([
+    outboundRow('staff_reply', { created_at: at }),
+    outboundRow('order_confirmation_sent', { created_at: new Date(Date.parse(at) + 2000).toISOString() }),
+  ])
+  assertEqual(kept.length, 1)
+  assertEqual(kept[0].event_type, 'order_confirmation_sent')
+})
+
+// This one has double-printed since the pay-link row shipped: sending a pay link
+// goes through send-helpscout-reply, so it stamps the Help Scout column too.
+test('a pay-link send supersedes its own "was sent a reply"', () => {
+  const kept = supersedeOutbound([
+    outboundRow('staff_reply'),
+    outboundRow('pay_link_sent'),
+  ])
+  assertEqual(kept.length, 1)
+  assertEqual(kept[0].event_type, 'pay_link_sent')
+})
+
+// Same project, but hours apart: two messages, and the feed should say so.
+test('rows outside the window are two messages, not one', () => {
+  const kept = supersedeOutbound([
+    outboundRow('staff_reply', { created_at: hoursAgo(1) }),
+    outboundRow('order_confirmation_sent', { created_at: hoursAgo(6) }),
+  ])
+  assertEqual(kept.length, 2)
+})
+
+test('rows on different projects never supersede each other', () => {
+  const kept = supersedeOutbound([
+    outboundRow('staff_reply', { proof_id: 'p1' }),
+    outboundRow('order_confirmation_sent', { proof_id: 'p2' }),
+  ])
+  assertEqual(kept.length, 2)
+})
+
+// The bundle case: the announcement is keyed to the SET and the per-card rows to
+// their own projects, so they share no proof_id and only the bundle index can
+// tell they are one send.
+test('a bundle announcement supersedes the per-card rows beneath it', () => {
+  const bundles = new Map([['p1', { setId: 's1' }], ['p2', { setId: 's1' }]])
+  const kept = supersedeOutbound([
+    outboundRow('designer_message', { id: 'dm-1', proof_id: 'p1' }),
+    outboundRow('designer_message', { id: 'dm-2', proof_id: 'p2' }),
+    outboundRow('bundle_sent', { id: 'bs-1', proof_id: 'p1', set_id: 's1' }),
+  ], bundles)
+  assertEqual(kept.length, 1)
+  assertEqual(kept[0].event_type, 'bundle_sent')
+})
+
+// Rank is specificity, not importance — two sends of the same kind are two
+// separate things and must both survive, however close together they land.
+test('equal ranks never displace each other', () => {
+  const kept = supersedeOutbound([
+    outboundRow('designer_message', { id: 'dm-1' }),
+    outboundRow('designer_message', { id: 'dm-2' }),
+  ])
+  assertEqual(kept.length, 2)
+})
+
+// Only the outbound family takes part. A customer opening the proof a second
+// after we emailed them is the most interesting coincidence on the card.
+test('inbound and customer rows are never touched', () => {
+  const kept = supersedeOutbound([
+    outboundRow('view'),
+    outboundRow('approve'),
+    outboundRow('customer_reply'),
+    outboundRow('staff_reply'),
+    outboundRow('order_confirmation_sent'),
+  ])
+  assertEqual(kept.length, 4, 'only the staff_reply went')
+  assert(!kept.some((e) => e.event_type === 'staff_reply'), 'and it was the staff_reply')
+})
+
+// A three-deep pile from one payment on a bundled project: the reply stamp, the
+// version stamp its sender wrote, and the confirmation itself.
+test('a pile of records for one message reduces to the most specific', () => {
+  const kept = supersedeOutbound([
+    outboundRow('staff_reply', { id: 'sr-1' }),
+    outboundRow('designer_message', { id: 'dm-1' }),
+    outboundRow('order_confirmation_sent', { id: 'oc-1' }),
+  ])
+  assertEqual(kept.length, 1)
+  assertEqual(kept[0].id, 'oc-1')
 })
 
 // ── Summary ───────────────────────────────────────────────────────────────────

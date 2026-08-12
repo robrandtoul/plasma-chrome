@@ -139,7 +139,24 @@ export default function RecordOfflinePaymentModal({
         'send-helpscout-reply',
         { body: { proof_id: order.proof_id, version_id: version.id, body } },
       )
-      return !(fnErr || !data || 'error' in data)
+      if (fnErr || !data || 'error' in data) return false
+
+      // Record that the confirmation went out, exactly as the Stripe webhook
+      // does for an online payment (000248). Without this, a hand-recorded
+      // payment's confirmation is the one message we send that leaves no trace
+      // of what it was — so the dashboard's activity feed can only call it "was
+      // sent a reply", while the identical message on an online order names
+      // itself. Awaited, not fired and forgotten: a bare `void supabase…` never
+      // sends the request at all (see the lazy-builder rule in CLAUDE.md).
+      //
+      // Best-effort like the send itself — the customer has the message either
+      // way, so a failed stamp costs the feed its label and nothing more.
+      const { error: stampErr } = await supabase
+        .from('orders')
+        .update({ confirmation_sent_at: new Date().toISOString() })
+        .eq('id', order.id)
+      if (stampErr) console.error('[offline-payment] confirmation stamp failed', stampErr)
+      return true
     } catch {
       return false
     }

@@ -170,6 +170,26 @@ export interface DashboardLatestEvent {
     | 'pay_link_sent'
     | 'order_reminder_sent'
     | 'declined'
+    // ── The outbound family, named ───────────────────────────────────────────
+    // Every message we send lands on the Help Scout thread as an agent reply,
+    // so it stamps proofs.helpscout_last_reply_at and the feed could only ever
+    // call it "was sent a reply" — a hand-typed note, an automated chase and an
+    // order confirmation all reading identically. Each type below is a message
+    // that left its OWN record on the way out, so the feed can say which it was.
+    // Whatever leaves no such record stays staff_reply, which is honest: a
+    // designer replying straight from Help Scout tells us nothing but that they
+    // replied. See supersedeOutbound for how the two are kept to one row.
+    //
+    // A designer's own message, sent from the app (proof_versions
+    // .last_reply_sent_at) — the only one that can name the person who sent it.
+    | 'designer_message'
+    // An automated follow-up chase (proof_nudges) — the row that most needed
+    // this, since "was sent a reply" claimed a colleague had been in touch.
+    | 'followup_reminder'
+    // The order acknowledgement after a payment (orders.confirmation_sent_at).
+    | 'order_confirmation_sent'
+    // The bundle review link going out (proof_sets.sent_at).
+    | 'bundle_sent'
     // The customer bought (orders.paid_at / a combined payment).
     | 'order_paid'
     // They reached the checkout and got stuck — asked us a question, or asked
@@ -206,6 +226,11 @@ export interface DashboardLatestEvent {
   // every row keyed to one project; a bundle-opened row overrides it with the
   // bundle workspace, because the bundle is the thing that was opened.
   link?: string
+  // The bundle this row is about, when it is about one. Set by the bundle rows
+  // so supersedeOutbound can tell that a bundle-wide announcement and the
+  // per-card rows underneath it are one message — they share no proof_id, since
+  // the bundle row is keyed to the set and the card rows to their own proofs.
+  set_id?: string
 }
 
 // Shared by the collapsing builders: several proofs may only be CALLED a bundle
@@ -820,6 +845,426 @@ export function bundleOpenedEvents(
     })
   }
   return out
+}
+
+// ── The outbound family: saying which message went out ───────────────────────
+//
+// Every message we send reaches the customer as a Help Scout agent reply, which
+// stamps proofs.helpscout_last_reply_at and nothing else. Read that column alone
+// — as this feed did — and a designer's hand-typed note, an automated chase and
+// an order confirmation are one indistinguishable row: "was sent a reply".
+//
+// But each of those leaves its own record on the way out, because something
+// else needed it: send-helpscout-reply stamps the version it replied for,
+// send-nudges writes a ledger row, the Stripe webhook stamps the order it
+// confirmed. The builders below turn those records into rows that say what the
+// message actually was. Measured on live over 30 days, they name 176 of the 412
+// projects whose latest staff message is recent enough to show.
+//
+// The remaining 238 stay `staff_reply`, and should: they are replies typed
+// straight into Help Scout, where the only thing we know is that somebody
+// replied. "Was sent a reply" is the whole truth about those.
+
+/**
+ * How far apart two stamps can be and still describe the same message.
+ *
+ * They are never identical. Help Scout stamps its column from the message's own
+ * thread time, while our stamps are written just after the POST returns, so ours
+ * land a beat later. A bundle send is looser still: the anchor card is stamped
+ * by the edge function and its siblings by the browser a moment afterwards.
+ *
+ * Five minutes is deliberately generous, because the two ways of being wrong
+ * are not symmetrical. Too wide, and of two rows describing one message we show
+ * the more specific one — which is what we wanted anyway. Too narrow, and "was
+ * sent a reply" reappears underneath every named row, which is the exact thing
+ * this change exists to remove.
+ */
+export const SAME_MESSAGE_WINDOW_MS = 5 * 60_000
+
+// The proofs embed on a version row: the customer (to name the row) plus the
+// conversation the message went out on (to group a bundle send's cards).
+export interface EmbeddedMessageProof extends EmbeddedProofCustomer {
+  helpscout_conversation_id?: string | null
+}
+
+/**
+ * A designer's own message, sent from the app (proof_versions.last_reply_sent_at
+ * + last_reply_sent_by, 000103/000215). The biggest slice of the outbound
+ * family, and the only one that can name a person — the proof detail timeline
+ * has said "Donna sent a reply for v2" from these two columns for months while
+ * the dashboard threw both away and said "was sent a reply", attributed to "You".
+ *
+ * ⚠ A NULL sender is the signal that no person sent it. send-nudges stamps
+ * last_reply_sent_at like any other sender but sets last_reply_sent_by to NULL
+ * on purpose (000215), precisely so an automated reminder can't inherit the last
+ * human's name. Requiring a sender here is what keeps those 31-in-30-days rows
+ * out of this builder and in followupReminderEvents where they belong — no
+ * precedence rule needed.
+ *
+ * ONE MESSAGE, ONE ROW, twice over. A bundle send posts once and stamps every
+ * card it announces (SetWorkspacePage), so N cards would print N identical rows
+ * for one email; and two projects raised off the same thread share a
+ * conversation. Rows are therefore clustered on (conversation or bundle) and
+ * time, the same "one reply, one row" rule helpscoutReplyEvents applies, loosened
+ * from exact-timestamp equality because these stamps are written seconds apart
+ * rather than copied.
+ */
+export interface DesignerMessageRow {
+  // The proof_version id — a project can appear several times over as its
+  // versions go out, which is the point: unlike helpscout_last_reply_at, this
+  // is not a single "last message" that overwrites itself.
+  id: string
+  proof_id: string
+  version_number: number | null
+  last_reply_sent_at: string | null
+  last_reply_sent_by: string | null
+  proofs?: EmbeddedMessageProof | EmbeddedMessageProof[] | null
+}
+
+export function designerMessageEvents(
+  rows: DesignerMessageRow[],
+  projects: DashboardProject[],
+  // profile id → full name, from the team_roster() RPC. profiles is self-or-admin
+  // only under RLS (which is why 000329 added that RPC), so a plain join here
+  // would silently name nobody for every designer.
+  senderNames: ReadonlyMap<string, string>,
+  bundleByProof?: ReadonlyMap<string, { setId: string }>,
+  now: number = Date.now(),
+): DashboardLatestEvent[] {
+  const cutoff = now - HELPSCOUT_REPLY_WINDOW_MS
+  const byProof = new Map(projects.map((p) => [p.proof_id, p]))
+  // Group key → its rows. A message with nothing to share (no conversation, no
+  // bundle) keys on its own proof, so it can never fold into another project's.
+  const groups = new Map<string, DesignerMessageRow[]>()
+  for (const r of rows) {
+    const at = r.last_reply_sent_at
+    if (!at || new Date(at).getTime() < cutoff) continue
+    if (!r.last_reply_sent_by) continue
+    const convo = unwrapOne(r.proofs)?.helpscout_conversation_id
+    const setId = bundleByProof?.get(r.proof_id)?.setId
+    const key = convo ? `c:${convo}` : setId ? `b:${setId}` : `p:${r.proof_id}`
+    const existing = groups.get(key)
+    if (existing) existing.push(r)
+    else groups.set(key, [r])
+  }
+
+  const out: DashboardLatestEvent[] = []
+  for (const groupRows of groups.values()) {
+    // Oldest first, then take everything within one window of the cluster's
+    // first row. Two sends days apart on one conversation stay two rows; the
+    // handful of cards a single bundle send stamped become one.
+    const sorted = [...groupRows].sort((a, b) =>
+      (a.last_reply_sent_at as string).localeCompare(b.last_reply_sent_at as string))
+    let cluster: DesignerMessageRow[] = []
+    const flush = () => {
+      if (cluster.length === 0) return
+      // Survivor picked by proof id, not input order, so the row's React key and
+      // the project it opens are the same on every load.
+      const members = [...cluster].sort((a, b) => a.proof_id.localeCompare(b.proof_id))
+      const lead = members[0]
+      const proofIds = [...new Set(members.map((m) => m.proof_id))]
+      const who = members
+        .map((m) => resolveCustomer(byProof.get(m.proof_id), m.proofs))
+        .find((r) => r.actorName !== 'Customer') ?? resolveCustomer(byProof.get(lead.proof_id), lead.proofs)
+      // Name the version only when the whole cluster agrees on one. A bundle
+      // send covering a v2 and a v4 has no single version to claim, so the copy
+      // falls back to naming no version rather than picking the lead's.
+      const versions = new Set(members.map((m) => m.version_number ?? 0))
+      const versionNumber = versions.size === 1 ? (members[0].version_number ?? 0) : 0
+      const senderName = senderNames.get(lead.last_reply_sent_by as string)
+      out.push({
+        id: `designer-msg-${lead.id}`,
+        created_at: lead.last_reply_sent_at as string,
+        event_type: 'designer_message',
+        // The sender's name when we hold it. When we don't — a designer since
+        // deactivated, so team_roster() no longer lists them — fall back to the
+        // customer's own label, which the panel renders as no actor subline at
+        // all. The row still says what went out; it just doesn't invent who by.
+        actor_name: senderName ?? (who.companyName || who.contactName || 'Customer'),
+        recipient_name: null,
+        helpscout_thread_id: null,
+        proof_id: lead.proof_id,
+        version_number: versionNumber,
+        contact_name: who.contactName,
+        company_name: who.companyName,
+        ...(proofIds.length > 1
+          ? { collapsed: { count: proofIds.length, bundle: isOneBundle(proofIds, bundleByProof) } }
+          : {}),
+      })
+      cluster = []
+    }
+    for (const r of sorted) {
+      const at = new Date(r.last_reply_sent_at as string).getTime()
+      const clusterStart = cluster.length
+        ? new Date(cluster[0].last_reply_sent_at as string).getTime()
+        : null
+      if (clusterStart !== null && at - clusterStart > SAME_MESSAGE_WINDOW_MS) flush()
+      cluster.push(r)
+    }
+    flush()
+  }
+  return out
+}
+
+/**
+ * An automated follow-up chase (proof_nudges, 000214 — the reminder send-nudges
+ * posts when a proof goes unopened or unanswered).
+ *
+ * The row that most needed naming. A chase is the system acting on its own, and
+ * "was sent a reply" said a colleague had been in touch with that customer — so
+ * the feed reported human contact that never happened. The verb stays passive
+ * and names nobody, which is true whether the reminder went out automatically or
+ * a designer pressed send from the resolve popover (the ledger holds both).
+ *
+ * ⚠ ONE ROW PER PROJECT, its most recent — deliberately NOT one per ledger row,
+ * even though the ledger is a real per-send record and rendering all of it would
+ * be easy. send-nudges runs as a batch twice a day and sent 93 reminders in the
+ * last 7 days on live; at one row each they would take the top of a 20-row feed
+ * every morning and push out the views, approvals and payments the card exists
+ * for. Per project matches the density the feed already had, since
+ * helpscout_last_reply_at only ever held one. The Outbox panel on this same page
+ * is where the full send history belongs, and already shows it.
+ */
+export interface FollowupReminderRow {
+  id: string
+  proof_id: string
+  created_at: string | null
+  proofs?: EmbeddedProofCustomer | EmbeddedProofCustomer[] | null
+}
+
+export function followupReminderEvents(
+  rows: FollowupReminderRow[],
+  projects: DashboardProject[],
+  now: number = Date.now(),
+): DashboardLatestEvent[] {
+  const cutoff = now - HELPSCOUT_REPLY_WINDOW_MS
+  const byProof = new Map(projects.map((p) => [p.proof_id, p]))
+  const latest = new Map<string, FollowupReminderRow>()
+  for (const r of rows) {
+    if (!r.created_at || new Date(r.created_at).getTime() < cutoff) continue
+    const held = latest.get(r.proof_id)
+    if (!held || (held.created_at as string) < r.created_at) latest.set(r.proof_id, r)
+  }
+  return [...latest.values()].map((r) => {
+    const who = resolveCustomer(byProof.get(r.proof_id), r.proofs)
+    return {
+      id: `followup-${r.id}`,
+      created_at: r.created_at as string,
+      event_type: 'followup_reminder' as const,
+      // Outbound, like pay_link_sent and order_reminder_sent: the customer is
+      // the recipient, so they lead the row and no sender is claimed.
+      actor_name: who.actorName,
+      recipient_name: null,
+      helpscout_thread_id: null,
+      proof_id: r.proof_id,
+      version_number: who.versionNumber,
+      contact_name: who.contactName,
+      company_name: who.companyName,
+    }
+  })
+}
+
+/**
+ * The order acknowledgement that goes out when a payment lands
+ * (orders.confirmation_sent_at, 000248). The message that prompted all of this:
+ * a customer paid, the system emailed them a confirmation, and the feed said
+ * only that they "were sent a reply".
+ *
+ * Members of a combined payment carry no stamp of their own — one payment gets
+ * one confirmation, stamped on the group row (000309) — so they're skipped here
+ * and covered by orderGroupConfirmationEvents below.
+ */
+export interface OrderConfirmationRow {
+  id: string
+  proof_id: string
+  confirmation_sent_at: string | null
+  order_group_id: string | null
+  proofs?: EmbeddedProofCustomer | EmbeddedProofCustomer[] | null
+}
+
+export function orderConfirmationEvents(
+  rows: OrderConfirmationRow[],
+  projects: DashboardProject[],
+  now: number = Date.now(),
+): DashboardLatestEvent[] {
+  const cutoff = now - HELPSCOUT_REPLY_WINDOW_MS
+  const byProof = new Map(projects.map((p) => [p.proof_id, p]))
+  const out: DashboardLatestEvent[] = []
+  for (const o of rows) {
+    if (!o.confirmation_sent_at || new Date(o.confirmation_sent_at).getTime() < cutoff) continue
+    if (o.order_group_id) continue
+    const who = resolveCustomer(byProof.get(o.proof_id), o.proofs)
+    out.push({
+      id: `order-confirm-${o.id}`,
+      created_at: o.confirmation_sent_at,
+      event_type: 'order_confirmation_sent',
+      actor_name: who.actorName,
+      recipient_name: null,
+      helpscout_thread_id: null,
+      proof_id: o.proof_id,
+      version_number: who.versionNumber,
+      contact_name: who.contactName,
+      company_name: who.companyName,
+    })
+  }
+  return out
+}
+
+/**
+ * A combined payment's order acknowledgement (order_groups.confirmation_sent_at).
+ * One payment, one confirmation, one row — the members are collapsed onto it the
+ * same way orderPaidEvents collapses the payment itself.
+ */
+export interface OrderGroupConfirmationRow {
+  id: string
+  confirmation_sent_at: string | null
+  orders: Array<{ proof_id: string; proofs?: EmbeddedProofCustomer | EmbeddedProofCustomer[] | null }> | null
+}
+
+export function orderGroupConfirmationEvents(
+  groups: OrderGroupConfirmationRow[],
+  projects: DashboardProject[],
+  bundleByProof?: ReadonlyMap<string, { setId: string }>,
+  now: number = Date.now(),
+): DashboardLatestEvent[] {
+  const cutoff = now - HELPSCOUT_REPLY_WINDOW_MS
+  const byProof = new Map(projects.map((p) => [p.proof_id, p]))
+  const out: DashboardLatestEvent[] = []
+  for (const g of groups) {
+    if (!g.confirmation_sent_at || new Date(g.confirmation_sent_at).getTime() < cutoff) continue
+    const members = (g.orders ?? []).filter((o) => o.proof_id)
+    const proofIds = [...new Set(members.map((o) => o.proof_id))].sort()
+    if (proofIds.length === 0) continue
+    const who = members
+      .map((m) => resolveCustomer(byProof.get(m.proof_id), m.proofs))
+      .find((r) => r.actorName !== 'Customer') ?? resolveCustomer(byProof.get(proofIds[0]))
+    out.push({
+      id: `order-confirm-group-${g.id}`,
+      created_at: g.confirmation_sent_at,
+      event_type: 'order_confirmation_sent',
+      actor_name: who.actorName,
+      recipient_name: null,
+      helpscout_thread_id: null,
+      proof_id: proofIds[0],
+      version_number: who.versionNumber,
+      contact_name: who.contactName,
+      company_name: who.companyName,
+      ...(proofIds.length > 1
+        ? { collapsed: { count: proofIds.length, bundle: isOneBundle(proofIds, bundleByProof) } }
+        : {}),
+    })
+  }
+  return out
+}
+
+/**
+ * The bundle review link going out (proof_sets.sent_at, 000311) — the customer
+ * being handed one page covering every card in the bundle.
+ *
+ * The stamp was already fetched by the dashboard and only its sibling
+ * (last_opened_at) was read, so this row costs a filter rather than a discovery.
+ * It carries set_id so supersedeOutbound can recognise the per-card rows
+ * underneath it as the same message: they share no proof_id with it, since this
+ * row is keyed to the set and theirs to their own projects.
+ */
+export interface BundleSentRow {
+  id: string
+  sent_at: string | null
+  proofs: Array<{ id: string }> | null
+  contacts?: EmbeddedContact | EmbeddedContact[] | null
+}
+
+export function bundleSentEvents(
+  sets: BundleSentRow[],
+  projects: DashboardProject[],
+  now: number = Date.now(),
+): DashboardLatestEvent[] {
+  const cutoff = now - HELPSCOUT_REPLY_WINDOW_MS
+  const byProof = new Map(projects.map((p) => [p.proof_id, p]))
+  const out: DashboardLatestEvent[] = []
+  for (const s of sets) {
+    if (!s.sent_at || new Date(s.sent_at).getTime() < cutoff) continue
+    const memberIds = [...new Set((s.proofs ?? []).map((p) => p.id).filter(Boolean))].sort()
+    const who = resolveCustomer(
+      memberIds.map((id) => byProof.get(id)).find(Boolean),
+      { contacts: s.contacts },
+    )
+    out.push({
+      id: `bundle-sent-${s.id}`,
+      created_at: s.sent_at,
+      event_type: 'bundle_sent',
+      actor_name: who.actorName,
+      recipient_name: null,
+      helpscout_thread_id: null,
+      proof_id: memberIds[0] ?? s.id,
+      version_number: who.versionNumber,
+      contact_name: who.contactName,
+      company_name: who.companyName,
+      link: `/bundles/${s.id}`,
+      set_id: s.id,
+      ...(memberIds.length > 1 ? { collapsed: { count: memberIds.length, bundle: true } } : {}),
+    })
+  }
+  return out
+}
+
+/**
+ * One message, one row.
+ *
+ * Every builder above reads a different record of the SAME outbound message, so
+ * without this a paid order prints "was sent their order confirmation" and "was
+ * sent a reply" a second apart, and a pay-link send prints "was sent a payment
+ * link" beside "was sent a reply" — which it has done since the pay-link row
+ * shipped. Rows that describe one message are reduced to the one that says the
+ * most about it.
+ *
+ * Rank is "how specific is this record", not importance. A bundle announcement
+ * explains its own cards' stamps; a confirmation and a chase both explain the
+ * version stamp their sender happened to write; and staff_reply, which knows
+ * only that something went out, always loses.
+ *
+ * Two rows match when they share a project — or a bundle, since a bundle-wide
+ * row shares no project with the cards under it — and sit within one
+ * SAME_MESSAGE_WINDOW_MS of each other. Equal ranks never displace each other,
+ * so two genuinely separate sends of the same kind both survive.
+ */
+const OUTBOUND_RANK: Partial<Record<DashboardLatestEvent['event_type'], number>> = {
+  bundle_sent: 5,
+  order_confirmation_sent: 4,
+  followup_reminder: 3,
+  order_reminder_sent: 3,
+  pay_link_sent: 2,
+  designer_message: 1,
+  staff_reply: 0,
+}
+
+export function supersedeOutbound(
+  events: DashboardLatestEvent[],
+  bundleByProof?: ReadonlyMap<string, { setId: string }>,
+): DashboardLatestEvent[] {
+  const outbound = events.filter((e) => OUTBOUND_RANK[e.event_type] !== undefined)
+  if (outbound.length < 2) return events
+  // What a row can be matched on: its project, and its bundle — its own when it
+  // is a bundle-wide row, otherwise the one its project belongs to.
+  const keysFor = (e: DashboardLatestEvent): string[] => {
+    const setId = e.set_id ?? bundleByProof?.get(e.proof_id)?.setId
+    return setId ? [`p:${e.proof_id}`, `b:${setId}`] : [`p:${e.proof_id}`]
+  }
+  const superseded = new Set<string>()
+  for (const row of outbound) {
+    const rank = OUTBOUND_RANK[row.event_type] as number
+    const keys = new Set(keysFor(row))
+    const at = new Date(row.created_at).getTime()
+    const beaten = outbound.some((other) => {
+      if (other === row) return false
+      if ((OUTBOUND_RANK[other.event_type] as number) <= rank) return false
+      if (!keysFor(other).some((k) => keys.has(k))) return false
+      return Math.abs(new Date(other.created_at).getTime() - at) <= SAME_MESSAGE_WINDOW_MS
+    })
+    if (beaten) superseded.add(row.id)
+  }
+  if (superseded.size === 0) return events
+  return events.filter((e) => !superseded.has(e.id))
 }
 
 // ── Date helpers ──────────────────────────────────────────────────────────────

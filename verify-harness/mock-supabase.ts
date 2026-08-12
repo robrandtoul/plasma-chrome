@@ -103,6 +103,10 @@ function order(partial: FixtureOrder): FixtureOrder {
     xero_invoice_id: null,
     xero_invoice_error: null,
     paid_at: null,
+    // The order acknowledgement that follows a payment (000248). Null by
+    // default; set on o9 below, where it becomes the Latest-activity feed's
+    // "was sent their order confirmation" row.
+    confirmation_sent_at: null,
     fulfilled_at: null,
     revised_at: null,
     // Direct hand-off to Stock Control (000332) — nothing attempted by default.
@@ -393,7 +397,12 @@ const ORDERS: FixtureOrder[] = [
     proofs: { status: 'approved', helpscout_last_reply_at: daysAgo(14), helpscout_last_customer_reply_at: daysAgo(13), helpscout_conversation_id: 'hs-16', helpscout_conversation_url: 'https://secure.helpscout.net/conversation/16', contacts: contact('Tyrell Corp', 'Eldon Tyrell') },
   }),
   // Recently ordered — placed cleanly: job in Stock Control, workshop note sent.
-  order({ id: 'o9', status: 'fulfilled', paid_at: daysAgo(8), fulfilled_at: daysAgo(5), handoff_at: daysAgo(5), production_note_posted_at: daysAgo(5), stock_order_number: '403910', artwork_check_verdict: 'clear', artwork_checked_at: daysAgo(5), artwork_check: ARTWORK_REPORT_CLEAR, proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Pied Piper', 'Richard Hendricks') } }),
+  // confirmation_sent_at is stamped a minute after the payment, as the Stripe
+  // webhook does: it drives the feed's "was sent their order confirmation" row,
+  // and — because both stamps sit on this one order — it is also the fixture
+  // that proves supersedeOutbound keeps the payment row and the confirmation
+  // row apart while collapsing the bare "was sent a reply" that shadowed it.
+  order({ id: 'o9', status: 'fulfilled', paid_at: daysAgo(8), confirmation_sent_at: daysAgo(7.999), fulfilled_at: daysAgo(5), handoff_at: daysAgo(5), production_note_posted_at: daysAgo(5), stock_order_number: '403910', artwork_check_verdict: 'clear', artwork_checked_at: daysAgo(5), artwork_check: ARTWORK_REPORT_CLEAR, proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Pied Piper', 'Richard Hendricks') } }),
   // Recently ordered — the new half-way failure: the job IS in Stock Control
   // but the workshop note never went, so nobody knows to make it.
   order({ id: 'o10', status: 'fulfilled', paid_at: daysAgo(15), fulfilled_at: daysAgo(12), handoff_at: daysAgo(12), production_note_posted_at: null, stock_order_number: '403912', proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact(null, 'Jian Yang') } }),
@@ -1220,6 +1229,37 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
         shape: 'recipients',
         is_variant_round: false,
       }]
+    } else if (select.replace(/\s/g, '') === 'id,proof_id,version_number,last_reply_sent_at,last_reply_sent_by,proofs(helpscout_conversation_id,contacts(full_name,companies(name)))') {
+      // The Latest-activity feed's designer-message read (000103/000215) — the
+      // biggest slice of the outbound family, and the only one that can name
+      // the person who sent it.
+      //
+      // Three rows, each pinning a different rule:
+      //  • ver-a1 is an ordinary send, so the card reads "was sent v2 · Donna
+      //    Lambe" instead of the anonymous "was sent a reply" it read before.
+      //  • the three ver-b* rows are ONE bundle send stamping every card it
+      //    announces, seconds apart — they must collapse to a single row, and
+      //    that row is then superseded by the bundle_sent row on the same
+      //    instant, since the bundle announcement is the better description of
+      //    the same email.
+      //  • ver-x1 carries a NULL sender, which is how send-nudges marks a
+      //    message no person wrote: it must produce no designer row at all,
+      //    leaving the automated-reminder row to speak for it. The query
+      //    filters these out in production; the fixture keeps one to prove the
+      //    builder does too.
+      rows = [
+        { id: 'ver-a1', proof_id: 'p-a1', version_number: 2, last_reply_sent_at: hoursAgo(6), last_reply_sent_by: 'user-donna', proofs: { helpscout_conversation_id: 'hs-1', contacts: contact('Sweet Beats', 'Valentina Ring') } },
+        { id: 'ver-b1', proof_id: 'p-b1', version_number: 1, last_reply_sent_at: daysAgo(3), last_reply_sent_by: 'user-jack', proofs: { helpscout_conversation_id: 'hs-7', contacts: contact('Atlus Consulting Engineers', 'Saba') } },
+        { id: 'ver-b2', proof_id: 'p-b2', version_number: 1, last_reply_sent_at: daysAgo(2.9999), last_reply_sent_by: 'user-jack', proofs: { helpscout_conversation_id: 'hs-7', contacts: contact('Atlus Consulting Engineers', 'Saba') } },
+        { id: 'ver-b3', proof_id: 'p-b3', version_number: 1, last_reply_sent_at: daysAgo(2.9998), last_reply_sent_by: 'user-jack', proofs: { helpscout_conversation_id: 'hs-7', contacts: contact('Atlus Consulting Engineers', 'Saba') } },
+        { id: 'ver-x1', proof_id: 'p-x1', version_number: 1, last_reply_sent_at: hoursAgo(4), last_reply_sent_by: null, proofs: { helpscout_conversation_id: 'hs-9', contacts: contact('Leccy.Tech', 'Laurence Phillips') } },
+        // Stamped at the SAME instant as p-x1's helpscout_last_reply_at, which
+        // is what a designer sending from the app really produces: the edge
+        // function stamps the version, Help Scout's webhook stamps the proof,
+        // and both describe one email. The two rows must reduce to this one —
+        // the double-print supersedeOutbound exists to stop.
+        { id: 'ver-x1b', proof_id: 'p-x1', version_number: 2, last_reply_sent_at: daysAgo(0.04), last_reply_sent_by: 'user-chris', proofs: { helpscout_conversation_id: 'hs-9', contacts: contact('Leccy.Tech', 'Laurence Phillips') } },
+      ]
     } else if (select.includes('materials(display_quantities)')) {
       // ProofDetailPage's versions list — one current v1 for the fixture
       // project above.
@@ -1399,7 +1439,15 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
       },
     ]
   } else if (table === 'proof_sets') {
-    rows = BUNDLE_SETS
+    // The dashboard reads this table twice for the activity feed — once for
+    // bundles opened, once for bundles sent — and this branch ignores filters,
+    // so both reads see every row. Exact-select match (the house rule at the
+    // top of the proof_versions branch) narrows the sends read to the set that
+    // has members: set-1 has none, and a memberless bundle would render as an
+    // anonymous "Customer was sent their bundle to review".
+    rows = select.replace(/\s/g, '') === 'id,sent_at,proofs(id),contacts(full_name,companies(name))'
+      ? BUNDLE_SETS.filter((s) => Array.isArray((s as { proofs?: unknown[] }).proofs))
+      : BUNDLE_SETS
   } else if (table === 'nudge_runs') {
     // The Outbox's heartbeat (000214). Matched on the select, not on
     // includes(): the panel reads this table TWICE, and its second read —
@@ -1422,6 +1470,17 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
           { id: 'n-1', proof_id: 'p-x1', rule_code: 'sent_never_viewed', source: 'auto', state: 'sent', outcome: 'sent', detail: null, rendered_body: 'Just checking you saw the proof.', created_at: hoursAgo(2) },
           { id: 'n-2', proof_id: 'p-r1', rule_code: 'viewed_not_actioned', source: 'auto', state: 'skipped', outcome: 'skipped_conversation_missing', detail: 'No Help Scout conversation is linked to this project.', created_at: hoursAgo(2) },
           { id: 'n-3', proof_id: 'p-r2', rule_code: 'sent_never_viewed', source: 'auto', state: 'skipped', outcome: 'skipped_grace_window', detail: null, created_at: hoursAgo(2) },
+        ]
+      // The Latest-activity feed's read of the same ledger — the automated
+      // chase that used to reach the card as "was sent a reply", i.e. as though
+      // a colleague had been in touch. Three sends to ONE project, because the
+      // rule worth pinning is that they collapse to that project's most recent
+      // rather than taking three of the card's twenty rows.
+      : select.replace(/\s/g, '') === 'id,proof_id,created_at,proofs(contacts(full_name,companies(name)))'
+      ? [
+          { id: 'nf-3', proof_id: 'p-x1', state: 'sent', source: 'auto', created_at: hoursAgo(4) },
+          { id: 'nf-2', proof_id: 'p-x1', state: 'sent', source: 'auto', created_at: daysAgo(4) },
+          { id: 'nf-1', proof_id: 'p-x1', state: 'sent', source: 'auto', created_at: daysAgo(9) },
         ]
       : []
     if (filters['eq:source']) rows = rows.filter((r) => r.source === filters['eq:source'])
@@ -1462,6 +1521,10 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
       {
         id: 'g2', status: 'sent', currency: 'GBP', token: 'gtok2', payment_reference: 'GRP-TEST02',
         sent_at: daysAgo(2), expires_at: daysAhead(12), pay_link_opened_at: hoursAgo(3),
+        // One payment, one confirmation, stamped on the GROUP (000309) — the
+        // members carry none, so reading the orders table alone would show a
+        // combined payment's acknowledgement nowhere at all.
+        confirmation_sent_at: hoursAgo(2),
         xero_invoice_id: null, xero_invoice_error: null,
         orders: [
           { proof_id: 'p-grp-1', proofs: { contacts: contact('Wonka Industries', 'Willy Wonka') } },
