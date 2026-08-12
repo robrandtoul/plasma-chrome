@@ -58,6 +58,11 @@ interface OrderEdit {
   order_kind: string | null
   currency: Currency
   custom_quote_total: number | null
+  // Stamped on every order since 000298. Read in preference to the variant's
+  // material so the pickers still load on an order that has no variant yet —
+  // the legacy agreed-price case, which is exactly the one most in need of a
+  // thickness. Null on orders that predate the stamp; the variant covers those.
+  material_id: string | null
   material_variant_id: string | null
   material_option_id: string | null
   quantity: number | null
@@ -126,7 +131,7 @@ export default function EditOrderModal({
       const { data, error: orderErr } = await supabase
         .from('orders')
         .select(
-          'proof_id, status, order_kind, currency, custom_quote_total, material_variant_id, material_option_id, quantity, names_count, person_quantities, card_discount_type, card_discount_value, card_discount_reason, token',
+          'proof_id, status, order_kind, currency, custom_quote_total, material_id, material_variant_id, material_option_id, quantity, names_count, person_quantities, card_discount_type, card_discount_value, card_discount_reason, token',
         )
         .eq('id', orderId)
         .maybeSingle()
@@ -184,10 +189,13 @@ export default function EditOrderModal({
         }
       }
 
-      // Variant + finish pickers (grid orders only). A custom-quote order keeps
-      // its variant for the production spec but isn't priced from tiers, so it
-      // doesn't need the picker here.
-      let materialId: string | null = null
+      // Variant + finish pickers. Both load on an agreed-price order too: the
+      // thickness sets the shipping weight + Xero item code and the finish is
+      // production spec the supplier needs, so hiding them (as this modal used
+      // to) left a wrong spec on a custom-quote order correctable only by a
+      // direct database write. Mirrors OrderBuilderModal, which shows both on an
+      // agreed price for the same reason — this is the correction path for it.
+      let materialId: string | null = o.material_id ?? null
       let currentVariantType: string | null = null
       if (o.material_variant_id) {
         const { data: v } = await supabase
@@ -195,18 +203,15 @@ export default function EditOrderModal({
           .select('material_id, variant_type')
           .eq('id', o.material_variant_id)
           .maybeSingle()
-        materialId = (v?.material_id as string | null) ?? null
         currentVariantType = (v?.variant_type as string | null) ?? null
+        materialId = materialId ?? (v?.material_id as string | null) ?? null
       }
       setVariantId(o.material_variant_id ?? null)
       // Lock the variant read-only when it's artwork-defined (ink count / finish
       // type) — changing those would mean a different proof.
       setVariantLocked(currentVariantType === 'ink_count' || currentVariantType === 'finish')
 
-      if (!custom && materialId) {
-        // Active variants priced in this currency. A per-variant head count
-        // (no rows transferred) is exact regardless of tier volume, unlike a
-        // fetch-all that hits supabase-js's 1000-row cap (mirrors the builder).
+      if (materialId) {
         const { data: vs } = await supabase
           .from('material_variants')
           .select('id, display_name, sort_order, variant_type')
@@ -214,22 +219,32 @@ export default function EditOrderModal({
           .eq('is_active', true)
           .order('sort_order')
         const rows = (vs ?? []) as { id: string; display_name: string | null; variant_type: string | null }[]
-        const checks = await Promise.all(
-          rows.map(async (r) => {
-            const { count } = await supabase
-              .from('price_tiers')
-              .select('id', { count: 'exact', head: true })
-              .eq('material_variant_id', r.id)
-              .eq('currency', cur)
-            return { id: r.id, has: (count ?? 0) > 0 }
-          }),
-        )
+        // A grid order prices from tiers, so it lists only variants that HAVE a
+        // tier in this currency — a per-variant head count (no rows transferred)
+        // is exact regardless of tier volume, unlike a fetch-all that hits
+        // supabase-js's 1000-row cap. An agreed price does no tier lookup at
+        // all, so it lists every active variant (same rule as the builder):
+        // filtering by price would hide the real thickness of a material that
+        // was quoted precisely because it isn't in the grid.
+        let listed = rows
+        if (!custom) {
+          const checks = await Promise.all(
+            rows.map(async (r) => {
+              const { count } = await supabase
+                .from('price_tiers')
+                .select('id', { count: 'exact', head: true })
+                .eq('material_variant_id', r.id)
+                .eq('currency', cur)
+              return { id: r.id, has: (count ?? 0) > 0 }
+            }),
+          )
+          if (cancelled) return
+          const priced = new Set(checks.filter((c) => c.has).map((c) => c.id))
+          listed = rows.filter((r) => priced.has(r.id))
+        }
         if (cancelled) return
-        const priced = new Set(checks.filter((c) => c.has).map((c) => c.id))
         setVariants(
-          rows
-            .filter((r) => priced.has(r.id))
-            .map((r) => ({ id: r.id, display_name: r.display_name ?? 'Option', variant_type: r.variant_type })),
+          listed.map((r) => ({ id: r.id, display_name: r.display_name ?? 'Option', variant_type: r.variant_type })),
         )
 
         // Finish options (metal Natural/Brushed/Mirror etc.) + the picker label.
@@ -293,8 +308,19 @@ export default function EditOrderModal({
         return
       }
       customQuoteValue = c
-    } else if (!variantId) {
-      setError('Choose which option (thickness) this order is for.')
+    }
+
+    // The variant is required whenever there's a picker to satisfy. On a grid
+    // order that's because the price keys on it; on an agreed price it's
+    // because update-order writes material_variant_id unconditionally, so
+    // saving on the select's unresolved "Choose…" would NULL the thickness and
+    // take the shipping weight + Xero item code with it. Skipped when the
+    // material has no variants at all (nothing to choose), which is the only
+    // shape where a variant-less order is legitimate.
+    if (!variantId && variants.length > 0) {
+      setError(isCustomQuote
+        ? 'Choose which option (thickness) these cards are — it sets the shipping weight and the production spec.'
+        : 'Choose which option (thickness) this order is for.')
       return
     }
 
@@ -412,40 +438,62 @@ export default function EditOrderModal({
               <div className="rounded-lg border border-out bg-out-soft px-3 py-2.5 text-[13px] text-out">{loadError}</div>
             ) : (
               <div className="space-y-5">
-                {/* Variant / thickness — grid orders only. */}
-                {!isCustomQuote && (
-                  <Field label="Option" htmlFor="edit-order-variant" hint="Which variant (e.g. thickness) this order is for — sets the price used at checkout.">
-                    {variants.length === 0 ? (
-                      <p className="text-sm text-ink-mute">No priced options found for this material/currency.</p>
-                    ) : variantLocked ? (
-                      <p className="text-sm text-ink">
-                        {variants.find((v) => v.id === variantId)?.display_name ?? '—'}
-                        <span className="text-ink-mute"> · fixed by the approved artwork</span>
-                      </p>
-                    ) : (
-                      // Always a select (even for a single option) so the shown
-                      // choice can't drift from variantId — e.g. when the order's
-                      // original variant was deactivated and a different one is now
-                      // the only priced option, the value falls to "Choose…" and the
-                      // designer must re-pick rather than be shown the wrong variant.
-                      <select
-                        id="edit-order-variant"
-                        value={variantId ?? ''}
-                        onChange={(e) => { setVariantId(e.target.value || null); setDirty(true) }}
-                        className={selectClass}
-                      >
-                        <option value="">Choose…</option>
-                        {variants.map((v) => (
-                          <option key={v.id} value={v.id}>{v.display_name}</option>
-                        ))}
-                      </select>
-                    )}
-                  </Field>
-                )}
+                {/* Variant / thickness. Shown on an agreed price too — the
+                    total is fixed, but the thickness still sets the shipping
+                    weight and the production spec, so a wrong one has to be
+                    correctable here rather than in the database. */}
+                <Field
+                  label="Option"
+                  htmlFor="edit-order-variant"
+                  hint={isCustomQuote
+                    ? 'Which thickness these cards are — sets the shipping weight and production spec. The agreed total is unchanged.'
+                    : 'Which variant (e.g. thickness) this order is for — sets the price used at checkout.'}
+                >
+                  {variants.length === 0 ? (
+                    <p className="text-sm text-ink-mute">
+                      {isCustomQuote
+                        ? 'No options found for this material.'
+                        : 'No priced options found for this material/currency.'}
+                    </p>
+                  ) : variantLocked ? (
+                    <p className="text-sm text-ink">
+                      {variants.find((v) => v.id === variantId)?.display_name ?? '—'}
+                      <span className="text-ink-mute"> · fixed by the approved artwork</span>
+                    </p>
+                  ) : (
+                    // Always a select (even for a single option) so the shown
+                    // choice can't drift from variantId — e.g. when the order's
+                    // original variant was deactivated and a different one is now
+                    // the only priced option, the value falls to "Choose…" and the
+                    // designer must re-pick rather than be shown the wrong variant.
+                    <select
+                      id="edit-order-variant"
+                      value={variantId ?? ''}
+                      onChange={(e) => { setVariantId(e.target.value || null); setDirty(true) }}
+                      className={selectClass}
+                    >
+                      <option value="">Choose…</option>
+                      {variants.map((v) => (
+                        <option key={v.id} value={v.id}>{v.display_name}</option>
+                      ))}
+                    </select>
+                  )}
+                </Field>
 
-                {/* Finish (material option) — metals etc. */}
-                {!isCustomQuote && materialOptions.length > 0 && (
-                  <Field label={optionLabel} asLabel={false} hint={`Which ${optionLabel.toLowerCase()} the customer is ordering — the price includes any surcharge at checkout.`}>
+                {/* Finish (material option) — metals etc. Shown on an agreed
+                    price too: the finish was always CAPTURED on a custom-quote
+                    order (create-order applies the offered/base one), it was
+                    just invisible and uncorrectable here, which bit for real on
+                    a Full Colour Plastic order whose finish had to be fixed with
+                    a direct database write. Same reasoning as OrderBuilderModal. */}
+                {materialOptions.length > 0 && (
+                  <Field
+                    label={optionLabel}
+                    asLabel={false}
+                    hint={isCustomQuote
+                      ? `Which ${optionLabel.toLowerCase()} these cards are — part of the production spec. The agreed total is unchanged.`
+                      : `Which ${optionLabel.toLowerCase()} the customer is ordering — the price includes any surcharge at checkout.`}
+                  >
                     <div className="flex flex-wrap gap-2">
                       {materialOptions.map((o) => (
                         <button

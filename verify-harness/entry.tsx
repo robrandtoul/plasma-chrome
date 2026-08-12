@@ -57,6 +57,7 @@ import { buildBundleCheckpoint, type CheckpointMember, type CheckpointVersion } 
 import EditCustomerDialog from '../src/components/EditCustomerDialog'
 import ApprovedOrderStatus from '../src/components/ApprovedOrderStatus'
 import OrderBuilderModal from '../src/components/OrderBuilderModal'
+import EditOrderModal from '../src/components/EditOrderModal'
 import { StatusRule } from '../src/design'
 import { orderStatusLine, reorderForwardLink, type OrderStatusLine, type ProofOrderStatePayload } from '../src/lib/proofOrderState'
 import { ReorderForwardPanel, ReorderPanel, type ReorderState } from '../src/components/ReorderPanel'
@@ -998,6 +999,30 @@ function OrderBuilderRig() {
   )
 }
 
+// ?path=/order-edit — the Edit-order modal, mounted on a fixture Full Colour
+// Plastic order (GBP, three thicknesses of which one is unpriced, gloss/matte
+// finish). ?state= picks which fixture order:
+//   * agreed (default) — an AGREED-PRICE order. Both the Option and Finish
+//     pickers must be here: this modal used to hide both on a custom quote, so
+//     a wrong finish was correctable only by a direct database write.
+//   * grid — the ordinary catalogue-priced order, unchanged. Its Option list
+//     is one shorter, because a grid order still lists only variants that carry
+//     a price tier in this currency.
+//   * agreed-novariants — an agreed price on a material with no variants at
+//     all, the one shape where a variant-less order is legitimate.
+function EditOrderRig() {
+  const state = new URLSearchParams(window.location.search).get('state') ?? 'agreed'
+  const orderId = state === 'grid' ? 'oe-grid' : state === 'agreed-novariants' ? 'oe-agreed-novariants' : 'oe-agreed'
+  return (
+    <EditOrderModal
+      orderId={orderId}
+      customerLabel="The Rowborough Estate"
+      materialDisplay="Full Colour Plastic"
+      onClose={() => {}}
+    />
+  )
+}
+
 // ?path=/… is the canonical form, but some embedded preview panes strip the
 // query string on navigation, so #/… is accepted as an equivalent fallback.
 const requestedPath =
@@ -1087,6 +1112,8 @@ const tree = requestedPath === '/qr-destination' ? (
   <QrDestinationRig />
 ) : requestedPath === '/order-builder' ? (
   <OrderBuilderRig />
+) : requestedPath === '/order-edit' ? (
+  <EditOrderRig />
 ) : requestedPath === '/reorder-panel' ? (
   <ReorderPanelRig />
 ) : requestedPath === '/reorder-desk' ? (

@@ -18,6 +18,7 @@ import { customerProofQuery, customerProofRpc, customerProofInvoke } from './fix
 import { payPagesQuery, payPagesRpc, payPagesInvoke } from './fixtures/pay-pages'
 import { versionFormQuery, versionFormRpc, versionFormInvoke } from './fixtures/version-form'
 import { reorderDeskQuery, reorderDeskRpc, reorderDeskInvoke } from './fixtures/reorder-desk'
+import { orderEditQuery } from './fixtures/order-edit'
 import { dropboxImportInvoke } from './fixtures/dropbox-import'
 
 const now = Date.now()
@@ -839,7 +840,8 @@ const FEEDBACK_ITEMS = [
 
 function resolveQuery(state: QueryState): { data: any; error: null; count?: number } {
   const hooked =
-    customerProofQuery(state) ?? payPagesQuery(state) ?? versionFormQuery(state) ?? reorderDeskQuery(state)
+    customerProofQuery(state) ?? payPagesQuery(state) ?? versionFormQuery(state) ?? reorderDeskQuery(state) ??
+    orderEditQuery(state)
   if (hooked) return hooked
 
   const { table, select, single, filters } = state
