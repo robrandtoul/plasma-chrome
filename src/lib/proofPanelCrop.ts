@@ -407,14 +407,69 @@ export async function detectProofPanel(blob: Blob): Promise<PanelDetection> {
 }
 
 /**
+ * Quality the crop is re-encoded at.
+ *
+ * High, because the QR scanner reads these same images afterwards and
+ * generational JPEG artefacts are what stop a dense code decoding. At 0.95 on a
+ * pure crop — no resize, no resample — the difference is negligible.
+ */
+const JPEG_QUALITY = 0.95
+
+/**
+ * Hand back an image the artwork drop zone will accept.
+ *
+ * A JPEG passes through untouched — the overwhelmingly common case, and
+ * re-encoding it would cost a generation for nothing. Anything else is
+ * converted, because the drop zone takes `image/jpeg` only and would otherwise
+ * refuse it. The archive is nearly all JPEG, but the shortlist accepts .png
+ * too, so this is the difference between a rare file importing and it silently
+ * failing.
+ */
+export async function asAcceptableImage(blob: Blob, filename: string): Promise<File | null> {
+  const name = filename.replace(/\.(jpe?g|png|webp)$/i, '')
+  if (blob.type === 'image/jpeg') return new File([blob], `${name}.jpg`, { type: 'image/jpeg' })
+
+  const bitmap = await loadBitmap(blob)
+  if (!bitmap) return null
+  const canvas = document.createElement('canvas')
+  canvas.width = bitmap.width
+  canvas.height = bitmap.height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    bitmap.close?.()
+    return null
+  }
+  // White behind it: a transparent PNG flattened onto the default transparent
+  // canvas comes out BLACK in a JPEG, which would look like ruined artwork
+  // rather than a format conversion.
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.drawImage(bitmap, 0, 0)
+  bitmap.close?.()
+  const out = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob((b) => resolve(b), 'image/jpeg', JPEG_QUALITY),
+  )
+  return out ? new File([out], `${name}.jpg`, { type: 'image/jpeg' }) : null
+}
+
+/**
  * Crop everything left of `cutX` (source pixels) and return it as a File.
  *
- * PNG rather than JPEG: re-encoding a JPEG re-compresses artwork the customer
- * will scrutinise, and the QR scanner reads these same images afterwards —
- * generational JPEG artefacts are exactly what stops a dense code decoding.
- * The proof-images bucket has accepted PNG since migration 000335.
+ * ⚠ JPEG, and it must stay JPEG. The version form's artwork drop zone accepts
+ * `image/jpeg` ONLY (ACCEPTED_TYPES in NewVersionPage), so a PNG here is
+ * silently refused with "Only image files can be added" and the import appears
+ * to do nothing — which is exactly what it did on its first real use. That
+ * restriction is deliberate rather than an oversight: migration 000335 widened
+ * the storage bucket to PNG for the QR scanner's few-KB code images, and the
+ * drop zones were left JPEG-only so full-size artwork could not arrive as a
+ * multi-megabyte PNG on the customer's proof page.
+ *
+ * The re-encode costs one JPEG generation, and it is worth being precise about
+ * why that is acceptable: these images arrive from Dropbox already JPEG-
+ * compressed, so this is generation one to two, not zero to one, and every
+ * other proof image on the customer page has the same history.
  */
-export async function cropProofPanel(blob: Blob, cutX: number, filename = 'proof.png'): Promise<File | null> {
+export async function cropProofPanel(blob: Blob, cutX: number, filename = 'proof.jpg'): Promise<File | null> {
   const bitmap = await loadBitmap(blob)
   if (!bitmap) return null
   const x = Math.max(0, Math.min(bitmap.width - 1, Math.round(cutX)))
@@ -430,8 +485,10 @@ export async function cropProofPanel(blob: Blob, cutX: number, filename = 'proof
   }
   ctx.drawImage(bitmap, x, 0, w, h, 0, 0, w, h)
   bitmap.close?.()
-  const out = await new Promise<Blob | null>((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'))
+  const out = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob((b) => resolve(b), 'image/jpeg', JPEG_QUALITY),
+  )
   if (!out) return null
-  const name = filename.replace(/\.(jpe?g|png|webp)$/i, '') + '.png'
-  return new File([out], name, { type: 'image/png' })
+  const name = filename.replace(/\.(jpe?g|png|webp)$/i, '') + '.jpg'
+  return new File([out], name, { type: 'image/jpeg' })
 }

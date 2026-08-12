@@ -18,7 +18,7 @@
 //   2. Everything is a suggestion. The crop is shown next to the original so
 //      the designer can see what was taken off before they accept it.
 
-import { detectProofPanel, cropProofPanel, type PanelDetection } from './proofPanelCrop'
+import { detectProofPanel, cropProofPanel, asAcceptableImage, type PanelDetection } from './proofPanelCrop'
 import { supabase } from './supabase'
 import { extractServerError } from './edgeError'
 
@@ -118,7 +118,7 @@ async function prepare(f: ServerFile, signal?: AbortSignal): Promise<ImportCandi
     }
     return {
       ...base,
-      file: new File([blob], f.name, { type: blob.type || 'image/jpeg' }),
+      file: await asAcceptableImage(blob, f.name),
       previewUrl: originalUrl,
       originalUrl,
       panel,
@@ -128,7 +128,10 @@ async function prepare(f: ServerFile, signal?: AbortSignal): Promise<ImportCandi
 
   // No panel, or the image could not be read. detectProofPanel reports the
   // second as `unsure` precisely so it does not read as a confident "clean".
-  const asFile = new File([blob], f.name, { type: blob.type || 'image/jpeg' })
+  // Passed through, not re-encoded, when it is already a JPEG — which it
+  // almost always is. The conversion exists for the rare archive PNG, which
+  // the drop zone would otherwise refuse.
+  const asFile = await asAcceptableImage(blob, f.name)
   return {
     ...base,
     file: asFile,
