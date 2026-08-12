@@ -11,6 +11,7 @@ import { logAudit } from '../lib/audit'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
 import { keepApprovedNoOrder, invalidateApprovedNoOrderCount } from '../lib/approvedNoOrder'
 import { splitByChaseNeed, chaseReason, groupNeedsAttention, type TriageOrder } from '../lib/ordersTriage'
+import { orderAge, sortByAge, type OrderStage, type AgeSort } from '../lib/orderAge'
 import {
   splitBySupplierProof,
   supplierProofState,
@@ -484,14 +485,6 @@ function suggestedDate(o: OrderRow): string | null {
   return toISODate(addBusinessDays(new Date(), lead))
 }
 
-// Whole days since an ISO timestamp (for the "paid N days ago" ageing cue).
-function daysSince(iso: string | null): number | null {
-  if (!iso) return null
-  const ms = Date.now() - new Date(iso).getTime()
-  if (!Number.isFinite(ms)) return null
-  return Math.floor(ms / (24 * 60 * 60 * 1000))
-}
-
 // Turn the stored Xero rejection into one human-readable line. The raw value
 // is usually "<status> <JSON body>" from Xero's API; the useful part is the
 // validation message(s) buried in Elements[].ValidationErrors[].Message.
@@ -695,6 +688,50 @@ type ViewKey = 'awaiting' | 'to_order'
 // Rows that hold chips wrap, so a chip that keeps its width just moves down.
 const CHIP_BASE =
   'inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ring-1'
+
+// How long this row has been waiting, in the terms its own section cares about
+// (src/lib/orderAge.ts). Rendered as a chip rather than prose because it is a
+// COLUMN — the point is that a screenful of them compares at a glance, which
+// "paid 2 days ago" scattered mid-sentence never did.
+//
+// Silent when there is no clock to read: a Place row whose payment webhook
+// hasn't landed genuinely has no age, and "0d" would claim it arrived this
+// instant.
+function AgeChip({ stage, order }: { stage: OrderStage; order: Parameters<typeof orderAge>[1] }) {
+  const age = orderAge(stage, order)
+  if (!age) return null
+  const tone =
+    age.tone === 'urgent' ? 'bg-[var(--c-out-soft)] text-[var(--c-out)] ring-[var(--c-out)]/25'
+    : age.tone === 'warn' ? 'bg-[var(--c-low-soft)] text-[var(--c-low-ink)] ring-[var(--c-low-ink)]/20'
+    : 'bg-canvas text-ink-mute ring-line'
+  return (
+    <span className={`${CHIP_BASE} tabular-nums ${tone}`} title={age.title}>
+      {age.label}
+      <span className="sr-only"> {age.title}</span>
+    </span>
+  )
+}
+
+// Oldest-first / newest-first, shared by the sections that offer it. A plain
+// select rather than a clickable column header: the sections are card lists,
+// not a table, so there is no header row to click.
+function AgeSortSelect({ value, onChange, oldestLabel, newestLabel }: {
+  value: AgeSort; onChange: (v: AgeSort) => void; oldestLabel: string; newestLabel: string
+}) {
+  return (
+    <label className="flex items-center gap-2">
+      <span className="text-[12px] text-ink-mute">Sort</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as AgeSort)}
+        className="h-8 rounded-lg border border-line bg-surface px-2 text-[12px] text-ink-soft focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+      >
+        <option value="oldest">{oldestLabel}</option>
+        <option value="newest">{newestLabel}</option>
+      </select>
+    </label>
+  )
+}
 
 // One tick in a To-order card's readiness row: the prep steps (folder / date /
 // colour) as scannable chips, so a collapsed card still says exactly what's
@@ -959,6 +996,10 @@ export default function OrdersPage() {
   // Waiting to Fix (000409). Default mirrors the column's: measured median
   // reply lag from QX is 2 hours, so one working day is already generous.
   const [supplierProofOverdueDays, setSupplierProofOverdueDays] = useState(1)
+  // Place had no sort at all — it was hard-wired newest-paid-first, which is the
+  // opposite of the order you want to work in. Oldest first is the default here:
+  // the row that has held someone's money longest is the one to place next.
+  const [placeSort, setPlaceSort] = useState<AgeSort>('oldest')
   // Approving a supplier's proof: the order being approved, the editable
   // message, and the two busy flags (loading the preview vs sending).
   const [approveTarget, setApproveTarget] = useState<OrderRow | null>(null)
@@ -1000,7 +1041,7 @@ export default function OrdersPage() {
   const [notesByProof, setNotesByProof] = useState<Record<string, LinkNote>>({})
   // Worklist sort: oldest-approved first by default so the longest-waiting
   // customers lead the list.
-  const [linksSort, setLinksSort] = useState<'oldest' | 'newest'>('oldest')
+  const [linksSort, setLinksSort] = useState<AgeSort>('oldest')
   // The order builder, opened inline from a worklist row. Null = closed; set to
   // the hydrated props once the proof's current version has been fetched.
   const [orderBuilder, setOrderBuilder] = useState<OrderBuilderArgs | null>(null)
@@ -1995,14 +2036,12 @@ export default function OrdersPage() {
       // placed. A blocking problem (failed invoice) floats to the top;
       // otherwise newest-paid-first so the most recently paid order sits at
       // the top.
-      toOrder: filtered
-        .filter(isPlaceable)
-        .sort((a, b) => {
-          const ap = hasInvoiceProblem(a) ? 0 : 1
-          const bp = hasInvoiceProblem(b) ? 0 : 1
-          if (ap !== bp) return ap - bp
-          return new Date(b.paid_at ?? b.sent_at ?? 0).getTime() - new Date(a.paid_at ?? a.sent_at ?? 0).getTime()
-        }),
+      // A blocking problem (failed invoice) still floats to the top — it has to
+      // be dealt with before the order can be placed at all, whatever its age.
+      // Everything below that is ordered by how long we have held the customer's
+      // money, which is the question this section exists to answer.
+      toOrder: sortByAge(filtered.filter(isPlaceable), 'place', (o) => o, placeSort)
+        .sort((a, b) => (hasInvoiceProblem(a) ? 0 : 1) - (hasInvoiceProblem(b) ? 0 : 1)),
       // Recently ordered: placed AND finished with. An order still waiting on its
       // supplier's proof — or holding one nobody has approved — is not finished
       // with, and letting it land here is precisely the hole 000409 closes: the
@@ -2025,7 +2064,7 @@ export default function OrdersPage() {
       beingRevised: filtered.filter(isAwaitingReapproval),
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orders, search, supplierProofOverdueDays])
+  }, [orders, search, supplierProofOverdueDays, placeSort])
 
   // The supplier proof holding pen (000409), bucketed in ONE pass so the CHECK
   // section, the Waiting line and the Fix row cannot disagree about a card —
@@ -2067,11 +2106,9 @@ export default function OrdersPage() {
             .includes(q),
         )
       : approvedNoOrder
-    return [...matched].sort((a, b) => {
-      const at = new Date(a.approvedAt).getTime()
-      const bt = new Date(b.approvedAt).getTime()
-      return linksSort === 'oldest' ? at - bt : bt - at
-    })
+    // Same age machinery as every other section, so "oldest" means the same
+    // thing on all of them and a proof with no approval date can't lead the list.
+    return sortByAge(matched, 'send', (i) => ({ approved_at: i.approvedAt }), linksSort)
   }, [approvedNoOrder, search, linksSort, notesByProof])
 
 
@@ -2316,6 +2353,26 @@ export default function OrdersPage() {
                  ignore. The conversion-rate line moved to Admin → Analytics,
                  where the rest of the funnel figures live. */
               <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px] text-ink-soft">
+                {/* The one thing the removed right-hand rail did that nothing
+                    replaced: stay visible once you have scrolled past Fix. The
+                    section itself is the fix — this is only a way back to it —
+                    so it renders NOTHING on a good day, which is the property
+                    the Fix section already has and should keep. */}
+                {fixCount > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const el = document.getElementById('orders-fix')
+                        el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-[var(--c-out-soft)] px-2.5 py-0.5 text-[12px] font-semibold text-[var(--c-out)] ring-1 ring-[var(--c-out)]/25 hover:brightness-95 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)]"
+                    >
+                      {fixCount} need{fixCount === 1 ? 's' : ''} a person
+                    </button>
+                    <span aria-hidden="true" className="text-ink-dim">·</span>
+                  </>
+                )}
                 <span className="whitespace-nowrap">
                   <span className="font-semibold text-ink">{toDoCount}</span> to do
                 </span>
@@ -2373,7 +2430,7 @@ export default function OrdersPage() {
                 Renders nothing at all, heading included, when the list is
                 empty, so a good day opens straight onto SEND. */}
             {fixCount > 0 && (
-              <section className="mt-6">
+              <section id="orders-fix" className="mt-6 scroll-mt-24">
                 <div className={SECTION_HEADER_STICKY}>
                   <h2 className="text-sm font-semibold uppercase tracking-wide text-out">
                     Fix · {fixCount}
@@ -2565,17 +2622,12 @@ export default function OrdersPage() {
                   <h2 className="text-sm font-semibold uppercase tracking-wide text-ink">
                     Send · {filteredLinks.length}
                   </h2>
-                  <label className="flex items-center gap-2">
-                    <span className="text-[12px] text-ink-mute">Sort</span>
-                    <select
-                      value={linksSort}
-                      onChange={(e) => setLinksSort(e.target.value as 'oldest' | 'newest')}
-                      className="h-8 rounded-lg border border-line bg-surface px-2 text-[12px] text-ink-soft focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
-                    >
-                      <option value="oldest">Oldest approved first</option>
-                      <option value="newest">Newest approved first</option>
-                    </select>
-                  </label>
+                  <AgeSortSelect
+                    value={linksSort}
+                    onChange={setLinksSort}
+                    oldestLabel="Approved longest ago"
+                    newestLabel="Approved most recently"
+                  />
                 </div>
                 <p className="mt-1 text-[13px] text-ink-mute">
                   Approved proofs with no order link sent yet. Work down the list and send each customer their link.
@@ -2606,7 +2658,14 @@ export default function OrdersPage() {
                     Place · {toOrder.length}
                     {toOrder.length > 0 ? ` · ${gbpLabel(sumGbp(toOrder, rates))}` : ''}
                   </h2>
-                  {toOrder.length > 0 && <span className="text-[12px] text-ink-mute">Newest paid first</span>}
+                  {toOrder.length > 0 && (
+                    <AgeSortSelect
+                      value={placeSort}
+                      onChange={setPlaceSort}
+                      oldestLabel="Paid longest ago"
+                      newestLabel="Paid most recently"
+                    />
+                  )}
                 </div>
 
                 {/* A paid combined payment whose ONE Xero invoice failed: the
@@ -3582,7 +3641,6 @@ function OrderCard({
         .map((s) => (s ?? '').trim())
         .filter(Boolean)
     : []
-  const paidDays = daysSince(order.paid_at)
 
   // Two-state card: a compact triage row by default (customer, pills,
   // readiness ticks), expanding to the full prep form — date required, the
@@ -3831,7 +3889,7 @@ function OrderCard({
           <img
             src={thumb.thumb_url}
             alt="Proof artwork"
-            className="h-20 w-20 shrink-0 rounded-lg object-cover ring-1 ring-line"
+            className="h-10 w-10 shrink-0 rounded-md object-cover ring-1 ring-line"
           />
         )}
         <div className="min-w-0 flex-1">
@@ -3885,25 +3943,34 @@ function OrderCard({
                 {route === 'in_house' ? 'In-house' : 'Supplier'}
               </span>
             )}
+            {/* How long we have held their money. Last in the row so it reads as
+                a value rather than another state pill. */}
+            <AgeChip stage="place" order={order} />
           </div>
-          <p className="mt-0.5 text-sm text-ink-soft">
-            {specLabel(order)}
-            {' · '}
-            {order.quantity != null ? `${order.quantity.toLocaleString()} cards` : 'Quantity TBC'}
-            {order.names_count > 1 ? ` · ${order.names_count} people` : ''}
-            {order.has_personalisation ? ' · personalisation' : ''}
-          </p>
-
-          <p className="mt-0.5 text-[13px] text-ink-mute">
-            Ref {order.payment_reference}
-            {order.paid_at ? ` · paid ${paidDays === 0 ? 'today' : paidDays === 1 ? 'yesterday' : `${paidDays} days ago`}` : ''}
-            {total != null ? ` · ${formatPrice(total, order.currency)}` : ''}
-            {isRevision && order.revised_at ? ` · being revised since ${formatDate(order.revised_at)}` : ''}
+          {/* What the card IS, on one wrapped line: the spec, the quantity, the
+              reference and the money. These were three stacked blocks, which cost
+              height on every card in the tallest section of the page for
+              information that reads perfectly well across. The age is no longer
+              in this sentence; it is a chip above, where a column of them
+              compares at a glance. */}
+          <p className="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-[13px] text-ink-mute">
+            <span className="text-sm text-ink-soft">
+              {specLabel(order)}
+              {' · '}
+              {order.quantity != null ? `${order.quantity.toLocaleString()} cards` : 'Quantity TBC'}
+              {order.names_count > 1 ? ` · ${order.names_count} people` : ''}
+              {order.has_personalisation ? ' · personalisation' : ''}
+            </span>
+            <span className="whitespace-nowrap">Ref {order.payment_reference}</span>
+            {total != null && <span className="whitespace-nowrap tabular-nums">{formatPrice(total, order.currency)}</span>}
+            {isRevision && order.revised_at && (
+              <span className="whitespace-nowrap">being revised since {formatDate(order.revised_at)}</span>
+            )}
           </p>
 
           {/* Readiness at a glance — which prep steps are done, which are
               left — so a collapsed card can be triaged without opening it. */}
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             <PrepChip ok={folderVerified} label="Folder" />
             <PrepChip ok={datePersisted} label="Date" />
             {needsColour && <PrepChip ok={!!order.stock_colour} label="Colour" />}
@@ -4465,7 +4532,7 @@ function AwaitingPaymentCard({
           <img
             src={thumb.thumb_url}
             alt="Proof artwork"
-            className="h-20 w-20 shrink-0 rounded-lg object-cover ring-1 ring-line"
+            className="h-10 w-10 shrink-0 rounded-md object-cover ring-1 ring-line"
           />
         )}
         <div className="min-w-0 flex-1">
@@ -4604,7 +4671,9 @@ function LinkToSendCard({
   // Sub-line: the contact (only when a company is the headline, else it'd repeat
   // the title) plus their email.
   const sub = [item.companyName ? item.contactName : null, item.contactEmail].filter(Boolean).join(' · ')
-  const approvedAgo = item.businessDays <= 0 ? 'approved today' : `approved ${formatDate(item.approvedAt)}`
+  // The "approved 5 Aug" line this card used to carry is gone: the AgeChip in
+  // the title row says the same thing in the form the Sort control orders by,
+  // and two answers to one question is how a card gets tall.
   const designerTooltip = item.designerName
     ? (item.versionNumber != null && item.versionCreatedAt
         ? `${item.designerName} — v${item.versionNumber} created ${formatAbsoluteDateTime(item.versionCreatedAt)}`
@@ -4612,12 +4681,12 @@ function LinkToSendCard({
     : undefined
   return (
     <PanelShell>
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         {thumb && (
           <img
             src={thumb.thumb_url}
             alt="Proof artwork"
-            className="h-20 w-20 shrink-0 rounded-lg object-cover ring-1 ring-line"
+            className="h-10 w-10 shrink-0 rounded-md object-cover ring-1 ring-line"
           />
         )}
         <div className="min-w-0 flex-1">
@@ -4626,6 +4695,11 @@ function LinkToSendCard({
               {item.label}
             </Link>
             <Pill colour="in-stock">Approved</Pill>
+            {/* How long this proof has sat approved with no link sent. The
+                `overdue` pill beside it counts WORKING days against the
+                needs-attention rule; this counts plain elapsed time, and it is
+                the one the Sort control orders by. */}
+            <AgeChip stage="send" order={{ approved_at: item.approvedAt }} />
             {item.overdue && (
               <Pill colour="low" title={`No order link ${item.businessDays} working days after approval`}>
                 Overdue · {item.businessDays} working days
@@ -4637,11 +4711,14 @@ function LinkToSendCard({
               </Pill>
             )}
           </div>
-          {sub && <p className="mt-0.5 text-sm text-ink-soft">{sub}</p>}
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-ink-mute">
+          {/* Contact, card and designer on ONE wrapped line rather than two
+              stacked ones. Nothing is dropped — a row this size is read across,
+              not down, and the second line was costing height on every card in
+              the longest queue on the page. */}
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-ink-mute">
+            {sub && <span className="text-ink-soft">{sub}</span>}
             {item.materialDisplay && <span>{item.materialDisplay}</span>}
             {item.versionNumber != null && <span>v{item.versionNumber}</span>}
-            <span>{approvedAgo}</span>
             {item.designerName && (
               <span className="inline-flex items-center gap-1.5">
                 <DesignerAvatar

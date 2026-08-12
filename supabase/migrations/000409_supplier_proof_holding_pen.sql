@@ -47,7 +47,8 @@
 -- blanks-sourced order (000382), which has a supplier material but deliberately
 -- sends no supplier email, so no proof is ever coming.
 
-begin;
+-- No explicit begin/commit: apply_migration wraps the whole file in one
+-- transaction, matching every other migration in this repo.
 
 -- ── 1. The two stamps, and who signed off ───────────────────────────────────
 
@@ -263,4 +264,3 @@ update proofs.orders
    and supplier_proof_approved_at is null
    and fulfilled_at is not null;
 
-commit;

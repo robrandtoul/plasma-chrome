@@ -40,6 +40,7 @@
     "test:blanks": "tsx supabase/functions/_shared/blanksSource.test.ts",
     "test:supplier-note": "tsx supabase/functions/_shared/supplierNote.test.ts",
     "test:order-subject": "tsx supabase/functions/_shared/orderSubject.test.ts",
+    "test:order-age": "tsx src/lib/orderAge.test.ts",
     "test:inhouse-note": "tsx supabase/functions/_shared/inhouseNoteTemplate.test.ts",
     "test:stranded": "tsx src/lib/strandedApprovals.test.ts",
     "test:selection-loss": "tsx src/lib/selectionShapeLoss.test.ts",
