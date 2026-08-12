@@ -4,6 +4,8 @@ import { Field, Input, ButtonCoral, ButtonGhost } from '../design'
 import XeroContactPicker, { type XeroContact } from './XeroContactPicker'
 import { supabase } from '../lib/supabase'
 import { parseReengagementContext, previousSpecFromReengagement } from '../lib/reengagement'
+import { fetchBundleHint } from '../lib/proofSets'
+import type { BundleHint } from '../lib/bundleOrderLabels'
 import { customerOrderUrl } from '../lib/customerOrderUrl'
 import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { SHIP_COUNTRIES, REPRESENTATIVE_POSTCODES } from '../lib/shipCountries'
@@ -192,6 +194,13 @@ export default function OrderBuilderModal({
       })
     return () => { cancelled = true }
   }, [proofId])
+  // Bundle context, read once as the form opens (and again at creation, above).
+  useEffect(() => {
+    if (!proofId) return
+    let cancelled = false
+    void fetchBundleHint(proofId).then((h) => { if (!cancelled) setBundle(h) })
+    return () => { cancelled = true }
+  }, [proofId])
   const [customQuoteTotal, setCustomQuoteTotal] = useState('')
   // How THIS order is priced, independent of how the proof displayed prices:
   //   'catalogue' — priced from the material's price tiers at checkout
@@ -247,6 +256,18 @@ export default function OrderBuilderModal({
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
+
+  // Is this card one of a bundle the customer is reviewing together, and are
+  // the other cards signed off? Fetched here rather than passed in, so both
+  // entry points (the Orders worklist and the proof page) get it for free.
+  //
+  // Read TWICE, deliberately. Once when the form opens, to inform the decision
+  // to build an order at all — and again the moment the order is created, right
+  // before the send step, because the customer can act while the form is open
+  // and the last read before the link reaches them should be the fresh one. On
+  // 12 August a change request landed 3 seconds before a link went out; the
+  // second read is what would have caught that.
+  const [bundle, setBundle] = useState<BundleHint | null>(null)
 
   // Variant capture for grid-priced orders. The server prices a grid
   // order from the chosen variant's price tiers, so we must pick one.
@@ -1137,6 +1158,10 @@ export default function OrderBuilderModal({
         return
       }
       setResult({ id: data.id, token: data.token, payment_reference: data.payment_reference })
+      // Re-read the bundle NOW, not from what the form opened with. This is the
+      // last look before the send button appears, and a customer can approve or
+      // ask for changes while a designer fills the form in.
+      void fetchBundleHint(proofId).then(setBundle)
       onCreated?.()
     } catch {
       setError('Could not create the order. Please try again.')
@@ -1222,6 +1247,15 @@ export default function OrderBuilderModal({
           ) : hasHelpScoutConversation ? (
             // Send via Help Scout — editable message with the link embedded.
             <>
+              {/* The last gate. The order exists, but the customer has seen
+                  nothing until this button is pressed — and this reading of
+                  the bundle was taken when the order was created, seconds
+                  ago, not when the form was opened. */}
+              {bundle && bundle.outstanding.length > 0 && (
+                <div className="mt-4">
+                  <BundleWarning bundle={bundle} beforeSend />
+                </div>
+              )}
               <p className="mt-3 text-[13px] text-ink-soft">
                 {paymentMethod === 'offline'
                   ? 'Send an order confirmation with their order link to the customer on the linked Help Scout conversation:'
@@ -1290,6 +1324,16 @@ export default function OrderBuilderModal({
                 approved on a superseded version in a different material can't
                 be ordered from here — only the current version's card is. Warn
                 by name so the designer doesn't assume they're covered. */}
+            {/* Bundle guard. This card is one of several the customer is
+                reviewing on one link, and the others aren't signed off — so
+                this order covers one card of a set they may well expect to
+                buy together. Advisory: sometimes selling the approved card
+                now is exactly right, and the rest can join a combined
+                payment later. */}
+            {bundle && bundle.outstanding.length > 0 && (
+              <BundleWarning bundle={bundle} />
+            )}
+
             {strandedApprovals.length > 0 && (
               <div className="mb-4 rounded-lg border border-low bg-low-soft p-3 text-[13px] leading-[1.6] text-ink-soft">
                 <p className="font-semibold text-ink">Some approved cards aren’t part of this order</p>
@@ -2322,5 +2366,42 @@ export default function OrderBuilderModal({
         </div>
       )}
     </Modal>
+  )
+}
+
+// "The customer is reviewing this card alongside others, and they haven't all
+// been signed off."
+//
+// Same amber callout the Orders worklist card uses, worded for the two moments
+// it appears at: while the order is being built ("this order covers…"), and
+// once it exists with the send button beneath it ("sending now tells them…").
+// The second wording matters — by then the choice isn't whether to build an
+// order, it's whether the customer hears about it yet.
+//
+// It never blocks. Selling one card of a bundle is a real thing to do, and the
+// remaining cards can still join a combined payment afterwards; the point is
+// that it's a decision somebody made on purpose.
+function BundleWarning({ bundle, beforeSend = false }: { bundle: BundleHint; beforeSend?: boolean }) {
+  return (
+    <div className="rounded-lg border border-low bg-low-soft p-3 text-[13px] leading-[1.6] text-ink-soft">
+      <p className="font-semibold text-ink">
+        This is one card of a bundle — {bundle.progress}
+      </p>
+      <p className="mt-1">
+        The customer is reviewing these together on one link. Still outstanding:
+      </p>
+      <ul className="mt-1.5 list-disc space-y-0.5 pl-5">
+        {bundle.outstanding.map((o) => (
+          <li key={o.id}>
+            <span className="text-ink">{o.name}</span> — {o.reason}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-ink-mute">
+        {beforeSend
+          ? 'Sending now asks them to pay for this card on its own. If the rest are close, hold off and combine the payments once they’re all approved.'
+          : 'This order covers this card only. If the rest are close, it’s usually one payment for the lot — wait for them, then combine.'}
+      </p>
+    </div>
   )
 }

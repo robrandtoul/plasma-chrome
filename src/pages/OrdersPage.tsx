@@ -10,6 +10,8 @@ import { orderTotal, specLabel as specLabelShared, customerLabel as customerLabe
 import { logAudit } from '../lib/audit'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
 import { keepApprovedNoOrder, invalidateApprovedNoOrderCount } from '../lib/approvedNoOrder'
+import { bundleOrderState, type BundleCardRow } from '../lib/bundleOrderGuard'
+import { buildBundleHint, type BundleHint, type SiblingRow } from '../lib/bundleOrderLabels'
 import { splitByChaseNeed, chaseReason, groupNeedsAttention, type TriageOrder } from '../lib/ordersTriage'
 import { orderAge, sortByAge, type OrderStage, type AgeSort } from '../lib/orderAge'
 import {
@@ -1039,6 +1041,14 @@ export default function OrdersPage() {
   // proofId (migration 000296). Fetched alongside the worklist and merged into
   // each card; edits update this map in place so a save doesn't refetch the page.
   const [notesByProof, setNotesByProof] = useState<Record<string, LinkNote>>({})
+  // Bundle context for the worklist (proof_sets, 000311). Two narrow reads,
+  // mirroring the dashboard's: the membership table unfiltered (tiny — 16 sets
+  // over 35 member proofs), then a detail row per outstanding sibling so the
+  // warning can name the card and say why it's outstanding. Merged client-side
+  // like proof_pins, so no migration and no view change. Failure is quiet: an
+  // empty map means the cards render exactly as they did before.
+  const [bundleMembers, setBundleMembers] = useState<BundleCardRow[]>([])
+  const [bundleSiblings, setBundleSiblings] = useState<Record<string, SiblingRow>>({})
   // Worklist sort: oldest-approved first by default so the longest-waiting
   // customers lead the list.
   const [linksSort, setLinksSort] = useState<AgeSort>('oldest')
@@ -1158,6 +1168,55 @@ export default function OrdersPage() {
         }
       }
 
+      // Which of the worklist's projects are one card of a bundle, and what
+      // state the other cards are in.
+      //
+      // Membership is fetched unfiltered (the dashboard does the same) because
+      // the "of N" has to describe the WHOLE bundle — the siblings are by
+      // definition not approved, so they are nowhere in the worklist's own
+      // query. The second read then fetches detail only for the cards actually
+      // being warned about, which is a handful at most.
+      //
+      // Both are best-effort. A failure here must never cost the worklist: the
+      // cards go back to reading exactly as they did before this existed.
+      const loadBundleContext = async (proofIds: string[]) => {
+        if (proofIds.length === 0) {
+          setBundleMembers([])
+          setBundleSiblings({})
+          return
+        }
+        try {
+          const { data: memberRows } = await supabase
+            .from('proofs')
+            .select('id, proof_set_id, set_discarded_at, status')
+            .not('proof_set_id', 'is', null)
+          if (cancelled) return
+          const members = (memberRows ?? []) as BundleCardRow[]
+          setBundleMembers(members)
+
+          // Every outstanding sibling across the visible worklist, de-duped —
+          // two approved cards of one bundle name the same third card.
+          const wanted = new Set<string>()
+          for (const proofId of proofIds) {
+            for (const s of bundleOrderState(proofId, members)?.outstanding ?? []) wanted.add(s.id)
+          }
+          if (wanted.size === 0) {
+            setBundleSiblings({})
+            return
+          }
+          const { data: siblingRows } = await supabase
+            .from('public_dashboard_projects')
+            .select('proof_id, status, material_display, has_open_change_request, latest_non_view_event_type, latest_non_view_event_at, version_created_at')
+            .in('proof_id', Array.from(wanted))
+          if (cancelled) return
+          setBundleSiblings(
+            Object.fromEntries(((siblingRows ?? []) as SiblingRow[]).map((r) => [r.proof_id, r])),
+          )
+        } catch {
+          // ignore — cards render without their bundle line
+        }
+      }
+
       // Approved-but-not-ordered proofs. Cross-reference every proof that has
       // any order (any status), then keep approved proofs past the threshold.
       void (async () => {
@@ -1237,6 +1296,7 @@ export default function OrdersPage() {
           .sort((a, b) => new Date(a.approvedAt).getTime() - new Date(b.approvedAt).getTime())
         setApprovedNoOrder(items)
         void loadThumbs(items.map((i) => i.proofId))
+        void loadBundleContext(items.map((i) => i.proofId))
         // The shared "why is this still here" notes for the visible worklist
         // (migration 000296). Bounded — the table only holds notes for proofs
         // still awaiting a link. Replaces the whole map so a refetch (e.g. after
@@ -2111,6 +2171,18 @@ export default function OrdersPage() {
     return sortByAge(matched, 'send', (i) => ({ approved_at: i.approvedAt }), linksSort)
   }, [approvedNoOrder, search, linksSort, notesByProof])
 
+  // The bundle line for one project, or null when it isn't in a bundle worth
+  // mentioning. The shared guard decides membership; this only dresses it.
+  const bundleHintFor = useMemo(() => {
+    const cache = new Map<string, BundleHint | null>()
+    return (proofId: string): BundleHint | null => {
+      if (cache.has(proofId)) return cache.get(proofId) ?? null
+      const hint = buildBundleHint(proofId, bundleMembers, Object.values(bundleSiblings))
+      cache.set(proofId, hint)
+      return hint
+    }
+  }, [bundleMembers, bundleSiblings])
+
 
   // Combined-payment derivations (bundle orders Slice 2). Eligible = the
   // awaiting-payment orders the combine action could actually group; active
@@ -2641,6 +2713,7 @@ export default function OrdersPage() {
                       preparing={preparingProofId === item.proofId}
                       canCreateOrder={orderingEnabled === true}
                       onCreate={() => void openOrderBuilder(item)}
+                      bundle={bundleHintFor(item.proofId)}
                       note={notesByProof[item.proofId] ?? null}
                       canEditNote={userId != null}
                       onSaveNote={(text) => saveLinkNote(item.proofId, text)}
@@ -3948,11 +4021,12 @@ function OrderCard({
             <AgeChip stage="place" order={order} />
           </div>
           {/* What the card IS, on one wrapped line: the spec, the quantity, the
-              reference and the money. These were three stacked blocks, which cost
-              height on every card in the tallest section of the page for
-              information that reads perfectly well across. The age is no longer
-              in this sentence; it is a chip above, where a column of them
-              compares at a glance. */}
+              reference and the money. These were three stacked blocks — spec,
+              then ref, then chips — which cost ~44px of height on every card in
+              the tallest section of the page for information that reads
+              perfectly well across.
+              The age is no longer in this sentence; it is a chip above, where a
+              column of them compares at a glance. */}
           <p className="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-[13px] text-ink-mute">
             <span className="text-sm text-ink-soft">
               {specLabel(order)}
@@ -4653,6 +4727,7 @@ function LinkToSendCard({
   preparing,
   canCreateOrder,
   onCreate,
+  bundle,
   note,
   canEditNote,
   onSaveNote,
@@ -4663,6 +4738,7 @@ function LinkToSendCard({
   preparing: boolean
   canCreateOrder: boolean
   onCreate: () => void
+  bundle: BundleHint | null
   note: LinkNote | null
   canEditNote: boolean
   onSaveNote: (text: string) => Promise<boolean>
@@ -4754,8 +4830,58 @@ function LinkToSendCard({
           />
         </div>
       </div>
+      {bundle && <BundleLine bundle={bundle} />}
       <LinkNoteSection note={note} canEdit={canEditNote} onSave={onSaveNote} onClear={onClearNote} />
     </PanelShell>
+  )
+}
+
+// "This card is one of several the customer is reviewing together."
+//
+// Two states, because the answer is genuinely different either way. With cards
+// still outstanding it's the amber callout the note section uses — the sibling
+// named, why it's outstanding, and what sending now would actually do. With the
+// whole bundle signed off it's a quiet one-liner pointing at Combine payments,
+// which is the built answer to one customer with several cards and is otherwise
+// easy to forget until after the links have gone.
+//
+// Both link to the workspace, because "is this really ready?" is a question
+// about the bundle, and the bundle has a page.
+function BundleLine({ bundle }: { bundle: BundleHint }) {
+  const workspace = (
+    <Link to={`/bundles/${bundle.setId}`} className="font-medium text-ink underline-offset-2 hover:underline">
+      Open the bundle
+    </Link>
+  )
+
+  if (bundle.outstanding.length === 0) {
+    return (
+      <p className="mt-3 text-[13px] text-ink-mute">
+        {/* Deliberately not "combine them now": Combine payments works on
+            orders, so every card needs its link raised first. Worth saying at
+            all because this is the moment it's easy to send N links instead. */}
+        Part of a bundle · {bundle.progress} — once every card has a link, Combine payments lets
+        them pay once. {workspace}
+      </p>
+    )
+  }
+
+  return (
+    <div className="mt-3 rounded-lg border border-line border-l-4 border-l-[var(--c-low)] bg-[var(--c-low-soft)] px-3 py-2">
+      <p className="text-[13px] font-semibold text-ink">
+        Part of a bundle · {bundle.progress}
+      </p>
+      <ul className="mt-1 space-y-0.5 text-[13px] text-ink-soft">
+        {bundle.outstanding.map((o) => (
+          <li key={o.id}>
+            {o.name} — {o.reason}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1.5 text-[13px] text-ink-mute">
+        A link sent now covers this card only. {workspace}
+      </p>
+    </div>
   )
 }
 

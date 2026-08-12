@@ -1004,7 +1004,16 @@ const BUCKET_META: Record<ProofBucket, { label: string; colour: string }> = {
 // proof that already counted as Changes-requested loses the label. Exported so
 // the dashboard click-through filter reuses the exact same test, keeping the
 // tile and the list in lockstep with the SQL.
-export function isChangesRequested(p: BucketInput): boolean {
+// Typed on the four fields it actually reads rather than the whole BucketInput,
+// so a caller holding a narrower row (the bundle guard's sibling summary, which
+// fetches six columns) can reuse the rule instead of re-deriving it. Every
+// existing caller passes a full row and is unaffected.
+export function isChangesRequested(
+  p: Pick<
+    BucketInput,
+    'has_open_change_request' | 'latest_non_view_event_type' | 'latest_non_view_event_at' | 'version_created_at'
+  >,
+): boolean {
   if (p.has_open_change_request) return true
   return (
     p.latest_non_view_event_type === 'request_changes' &&

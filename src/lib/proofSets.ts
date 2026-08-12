@@ -19,6 +19,8 @@ import { supabase } from './supabase'
 import { logAudit } from './audit'
 import { customerProofPath } from './customerProofUrl'
 import type { CheckpointMember, CheckpointVersion } from './bundleCheckpoint'
+import { bundleOrderState, type BundleCardRow } from './bundleOrderGuard'
+import { buildBundleHint, type BundleHint, type SiblingRow } from './bundleOrderLabels'
 
 export type SetCurrency = 'GBP' | 'EUR' | 'USD'
 
@@ -168,6 +170,53 @@ export async function fetchBundleCheckpointMembers(setId: string): Promise<Check
 // 48 hex chars from the browser CSPRNG — same bearer-token posture as
 // orders.token / order_groups.token (those are minted by edge functions;
 // sets are created by the signed-in designer, so the token is minted here).
+/**
+ * The bundle context for ONE project — is it part of a bundle, how far along is
+ * that bundle, and which cards are still outstanding.
+ *
+ * For the surfaces that hold a single proof (the order builder, the proof page)
+ * rather than the whole worklist. The Orders page has its own list-wide read:
+ * firing this per row would be one query per card, and it needs the membership
+ * table unfiltered anyway.
+ *
+ * Structural rules come from the shared guard, so this agrees with create-order
+ * by construction. Best-effort throughout — every failure path returns null,
+ * i.e. "say nothing", never a blocked or half-drawn surface.
+ */
+export async function fetchBundleHint(proofId: string): Promise<BundleHint | null> {
+  try {
+    const { data: self } = await supabase
+      .from('proofs')
+      .select('id, proof_set_id, set_discarded_at, status')
+      .eq('id', proofId)
+      .maybeSingle()
+    const setId = (self as BundleCardRow | null)?.proof_set_id
+    if (!setId) return null
+
+    const { data: memberRows } = await supabase
+      .from('proofs')
+      .select('id, proof_set_id, set_discarded_at, status')
+      .eq('proof_set_id', setId)
+    const members = (memberRows ?? []) as BundleCardRow[]
+
+    const state = bundleOrderState(proofId, members)
+    if (!state) return null
+
+    // Detail only for the cards we're about to name — usually one.
+    let siblings: SiblingRow[] = []
+    if (state.outstanding.length > 0) {
+      const { data: siblingRows } = await supabase
+        .from('public_dashboard_projects')
+        .select('proof_id, status, material_display, has_open_change_request, latest_non_view_event_type, latest_non_view_event_at, version_created_at')
+        .in('proof_id', state.outstanding.map((o) => o.id))
+      siblings = (siblingRows ?? []) as SiblingRow[]
+    }
+    return buildBundleHint(proofId, members, siblings)
+  } catch {
+    return null
+  }
+}
+
 export function generateSetToken(): string {
   const bytes = new Uint8Array(24)
   crypto.getRandomValues(bytes)

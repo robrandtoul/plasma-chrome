@@ -48,7 +48,8 @@ import {
   type ProofAnnotation,
 } from '../lib/proofAnnotations'
 import { useCalloutsEnabled } from '../lib/useCalloutsEnabled'
-import { addCardToSet, attachProofToSet, createSetFromProof, markSetReviewLinkSent, setReviewPath } from '../lib/proofSets'
+import { addCardToSet, attachProofToSet, createSetFromProof, fetchBundleHint, markSetReviewLinkSent, setReviewPath } from '../lib/proofSets'
+import { outstandingSummary, type BundleHint } from '../lib/bundleOrderLabels'
 import { duplicateProof } from '../lib/duplicateProof'
 import ExistingProjectPicker from '../components/ExistingProjectPicker'
 import { useLiveProofViews } from '../lib/useLiveProofViews'
@@ -389,6 +390,22 @@ export default function ProofDetailPage() {
       cancelled = true
     }
   }, [proof?.proof_set_id])
+
+  // How far along the bundle is, and which cards are still outstanding — the
+  // same reading the Orders worklist and the order builder show, so the three
+  // places a designer might decide to raise an order all say the same thing.
+  // Keyed on the proof's own status too, so approving from this page updates
+  // the line without a reload.
+  const [bundleHint, setBundleHint] = useState<BundleHint | null>(null)
+  useEffect(() => {
+    if (!proof?.id || !proof.proof_set_id) {
+      setBundleHint(null)
+      return
+    }
+    let cancelled = false
+    void fetchBundleHint(proof.id).then((h) => { if (!cancelled) setBundleHint(h) })
+    return () => { cancelled = true }
+  }, [proof?.id, proof?.proof_set_id, proof?.status])
 
   // The link the CUSTOMER gets for this proof (Copy customer URL, the
   // Public URL readout, the reply modal's {url}): an active bundle member's
@@ -3049,6 +3066,20 @@ export default function ProofDetailPage() {
               </Link>
               {proof.set_discarded_at && (
                 <span className="ml-2 text-xs text-amber-700">Customer set this card aside</span>
+              )}
+              {/* How far along the bundle is. The link alone said only that
+                  other cards exist — you had to open the workspace to learn
+                  whether they were signed off, which is the one thing worth
+                  knowing before ordering this one. */}
+              {bundleHint && (
+                <span
+                  className={`ml-2 text-xs ${bundleHint.outstanding.length > 0 ? 'text-amber-700' : 'text-ink-mute'}`}
+                >
+                  {bundleHint.progress}
+                  {bundleHint.outstanding.length > 0
+                    ? ` · ${outstandingSummary(bundleHint.outstanding)}`
+                    : ''}
+                </span>
               )}
             </dd>
           </div>

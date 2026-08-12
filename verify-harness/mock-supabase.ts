@@ -606,6 +606,114 @@ const BUSY_MONTH_ORDERS: FixtureOrder[] = Array.from({ length: 105 }, (_, i) =>
   }),
 ).map((o) => ({ ...o, proof_id: `p-${o.id}` }))
 
+// Two bundles for the order-time bundle guard (lib/bundleOrderGuard.ts).
+//
+// Kept OUT of DASHBOARD_PROJECTS on purpose. They are served only to the
+// filtered reads the guard makes — the Orders worklist's status-scoped query
+// and its sibling lookup by id — because the dashboard's own scene is counted
+// row by row in its specs, and p-bo2 alone would quietly add a second
+// changes-requested project to it. The mock already answers by query shape
+// (see the eq:proof_id branch, which synthesises a row from the id), so this
+// is the existing grain, not a new trick.
+const BUNDLE_GUARD_PROJECTS = [
+  // ——— The 12 August case, as a fixture ———
+  // A bundle of two cards where the customer approved one and asked for changes
+  // on the other. The approved card lands in the Links-to-send worklist looking
+  // exactly like any other approved project — which is how a pay link for one
+  // card of a two-card bundle went out three seconds after the change request.
+  // p-bo1 is deliberately absent from ORDERS so it qualifies for the worklist.
+  {
+    proof_id: 'p-bo1',
+    status: 'approved',
+    current_version_id: 'ver-bo1',
+    current_version_number: 1,
+    version_created_at: daysAgo(0.2),
+    company_name: null,
+    contact_name: 'Michael Bogdan',
+    contact_email: 'michael@bogdan.example',
+    approved_at: daysAgo(0.02),
+    material_display: 'Matte Black Metal',
+    designer_name: 'Chris Jackson',
+    designer_initials: 'CJ',
+    designer_colour: 'teal',
+    designer_avatar_url: null,
+    helpscout_conversation_url: 'https://secure.helpscout.net/conversation/9',
+    helpscout_conversation_id: 'hs-9',
+    helpscout_last_reply_at: daysAgo(0.2),
+    helpscout_last_customer_reply_at: null,
+  },
+  {
+    // The sibling. Never reaches the worklist itself (not approved) — it is
+    // only ever seen through the approved card's bundle warning, which is the
+    // point: nothing else on the Orders page knows it exists.
+    proof_id: 'p-bo2',
+    status: 'in_progress',
+    current_version_id: 'ver-bo2',
+    current_version_number: 1,
+    version_created_at: daysAgo(0.2),
+    company_name: null,
+    contact_name: 'Michael Bogdan',
+    contact_email: 'michael@bogdan.example',
+    approved_at: null,
+    material_display: 'Letterpress',
+    has_open_change_request: true,
+    latest_non_view_event_type: 'request_changes',
+    latest_non_view_event_at: daysAgo(0.01),
+    designer_name: 'Chris Jackson',
+    designer_initials: 'CJ',
+    designer_colour: 'teal',
+    designer_avatar_url: null,
+    helpscout_conversation_url: 'https://secure.helpscout.net/conversation/9',
+    helpscout_conversation_id: 'hs-9',
+    helpscout_last_reply_at: daysAgo(0.2),
+    helpscout_last_customer_reply_at: null,
+  },
+  // The other half of the same feature: a bundle the customer has signed off
+  // completely. Both cards need a link, and the point of the quiet line on each
+  // is that Combine payments exists — it's exactly here that two links get sent
+  // instead of one combined one.
+  {
+    proof_id: 'p-bo3',
+    status: 'approved',
+    current_version_id: 'ver-bo3',
+    current_version_number: 1,
+    version_created_at: daysAgo(1),
+    company_name: 'Husbyklinikkene',
+    contact_name: 'Pål Husby',
+    contact_email: 'pal@husby.example',
+    approved_at: daysAgo(0.3),
+    material_display: 'Stainless Steel',
+    designer_name: 'Donna Lambe',
+    designer_initials: 'DL',
+    designer_colour: 'coral',
+    designer_avatar_url: null,
+    helpscout_conversation_url: 'https://secure.helpscout.net/conversation/10',
+    helpscout_conversation_id: 'hs-10',
+    helpscout_last_reply_at: daysAgo(1),
+    helpscout_last_customer_reply_at: null,
+  },
+  {
+    proof_id: 'p-bo4',
+    status: 'approved',
+    current_version_id: 'ver-bo4',
+    current_version_number: 1,
+    version_created_at: daysAgo(1),
+    company_name: 'Husbyklinikkene',
+    contact_name: 'Pål Husby',
+    contact_email: 'pal@husby.example',
+    approved_at: daysAgo(0.25),
+    material_display: 'Letterpress',
+    designer_name: 'Donna Lambe',
+    designer_initials: 'DL',
+    designer_colour: 'coral',
+    designer_avatar_url: null,
+    helpscout_conversation_url: 'https://secure.helpscout.net/conversation/10',
+    helpscout_conversation_id: 'hs-10',
+    helpscout_last_reply_at: daysAgo(1),
+    helpscout_last_customer_reply_at: null,
+  },
+]
+
 function busyMonth(): boolean {
   return new URLSearchParams(window.location.search).get('busy') === '1'
 }
@@ -835,6 +943,12 @@ const BUNDLE_MEMBERS = [
   { id: 'p-b2', proof_set_id: 'set-1', set_discarded_at: null, status: 'in_progress' },
   { id: 'p-b3', proof_set_id: 'set-1', set_discarded_at: null, status: 'in_progress' },
   { id: 'p-b4', proof_set_id: 'set-1', set_discarded_at: null, status: 'abandoned' },
+  // The order-time guard's bundle: one card approved, its sibling mid-revision.
+  { id: 'p-bo1', proof_set_id: 'set-ord', set_discarded_at: null, status: 'approved' },
+  { id: 'p-bo2', proof_set_id: 'set-ord', set_discarded_at: null, status: 'in_progress' },
+  // A bundle the customer has signed off completely — the combine-payments case.
+  { id: 'p-bo3', proof_set_id: 'set-done', set_discarded_at: null, status: 'approved' },
+  { id: 'p-bo4', proof_set_id: 'set-done', set_discarded_at: null, status: 'approved' },
 ]
 
 const BUNDLE_SETS = [
@@ -1079,10 +1193,19 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
         last_activity_at: daysAgo(0.2),
         follow_up_rule_code: null, order_status: null,
       }]
+    } else if (filters['eq:status'] || Array.isArray(filters['in:proof_id'])) {
+      // The Orders worklist (status-scoped) and the bundle guard's sibling
+      // lookup (by id) also see the bundle-guard scene. The dashboard's own
+      // unfiltered read below does not — see the note on BUNDLE_GUARD_PROJECTS.
+      rows = [...DASHBOARD_PROJECTS, ...BUNDLE_GUARD_PROJECTS]
     } else {
       rows = DASHBOARD_PROJECTS
     }
     if (filters['eq:status']) rows = rows.filter((r) => r.status === filters['eq:status'])
+    if (Array.isArray(filters['in:proof_id'])) {
+      const ids = new Set(filters['in:proof_id'] as string[])
+      rows = rows.filter((r) => ids.has(r.proof_id))
+    }
   } else if (table === 'order_link_notes') {
     rows = [{ proof_id: 'p-a1', note: 'Waiting on metal thickness — chased today.', created_by_name: 'Chris Jackson', created_by_initials: 'CJ', created_by_colour: 'teal', updated_at: daysAgo(0.1) }]
   } else if (table === 'proof_versions') {
@@ -1122,9 +1245,13 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
       // .in('proof_id', ids) — one current version per proof, in the order's
       // own material so thumbForOrder's material-first lookup resolves.
       const pids: string[] | null = Array.isArray(filters['in:proof_id']) ? filters['in:proof_id'] : null
+      // ⚠ `currency` matters on the single-proof read: it is what the Orders
+      // worklist hands the order builder, and a missing one makes the builder
+      // declare the proof unorderable and grey out Create order. A real
+      // orderable proof always has one.
       rows = pids
         ? pids.map((p) => ({ id: `ver-${p}`, proof_id: p, material_id: ORDERS.find((o) => o.proof_id === p)?.material_id ?? 'm-steel', is_current: true, version_number: 3, shape: null }))
-        : pid ? [{ id: `ver-${pid}`, proof_id: pid, material_id: ORDERS.find((o) => o.proof_id === pid)?.material_id ?? 'm-steel', is_current: true, version_number: 3, shape: null, material_options: [] }] : []
+        : pid ? [{ id: `ver-${pid}`, proof_id: pid, material_id: ORDERS.find((o) => o.proof_id === pid)?.material_id ?? 'm-steel', is_current: true, version_number: 3, shape: null, material_options: [], currency: 'GBP', names: [], has_personalisation: false, custom_quote: false, displayed_variant_ids: [] }] : []
     }
   } else if (table === 'proofs') {
     if (filters['eq:reorder_of_proof_id']) {
@@ -1136,8 +1263,15 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
         ? [{ id: 'p-a1-child' }]
         : []
     } else if (select.includes('proof_set_id') && !select.includes('contacts(')) {
-      // DashboardPage's bundle-membership read (see lib/dashboardBundles.ts).
+      // Bundle membership. Three callers share this select: the dashboard's
+      // unfiltered read (lib/dashboardBundles.ts), the Orders worklist's
+      // (equally unfiltered), and fetchBundleHint's two narrow reads — one
+      // card by id, then that card's set. The last two only work if the
+      // filters are applied: without them a single-card lookup takes rows[0]
+      // and every proof answers as though it were the first bundle member.
       rows = BUNDLE_MEMBERS
+      if (filters['eq:id']) rows = rows.filter((r) => r.id === filters['eq:id'])
+      if (filters['eq:proof_set_id']) rows = rows.filter((r) => r.proof_set_id === filters['eq:proof_set_id'])
     } else if (select.includes('contacts(')) {
       // ProofDetailPage's header select — a full approved fixture project so
       // the detail page (overflow menu, dialogs, facts rail) can be verified.
@@ -1156,7 +1290,10 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
         internal_notes: null,
         created_at: daysAgo(22),
         disclaimer_acknowledged_at: null,
-        proof_set_id: null,
+        // An id in BUNDLE_MEMBERS is a bundle card, so ?path=/proofs/p-bo1
+        // renders the facts row with its bundle progress — the approved card
+        // of the two-card bundle whose sibling is still being revised.
+        proof_set_id: BUNDLE_MEMBERS.find((m) => m.id === pid)?.proof_set_id ?? null,
         set_discarded_at: null,
         // Reorder request fixture (000372) — an id containing 'reorder'
         // renders the "Raise the reorder" path: the menu item, the
