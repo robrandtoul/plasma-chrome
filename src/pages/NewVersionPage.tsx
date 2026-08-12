@@ -17,6 +17,8 @@ import { approvalCarriesForSlot, slotsNeedingReapproval } from '../lib/approvalC
 import { useImageFileDrop } from '../lib/useImageFileDrop'
 import { PageDropOverlay } from '../components/PageDropOverlay'
 import { DropboxImportModal } from '../components/DropboxImportModal'
+import { cropProofPanel, type PanelDetection } from '../lib/proofPanelCrop'
+import { findPanelsInFiles, panelNoticeForSave } from '../lib/artworkPanelGuard'
 import MessageSendPanel from '../components/MessageSendPanel'
 import VersionPreviewGate from '../components/VersionPreviewGate'
 import { firstName } from '../lib/firstName'
@@ -705,6 +707,124 @@ export default function NewVersionPage() {
   // drops outside any per-cell zone.
   const { isZoneDragOver, isPageDragOver, zoneProps } = useImageFileDrop({ onFiles: (f) => addFilesBatch(f) })
   const [dropboxImportOpen, setDropboxImportOpen] = useState(false)
+
+  // ── Old-proof guard ───────────────────────────────────────────────────────
+  // Catches a proof that still has the price panel on it, whichever way it
+  // arrived. Watching the image state rather than patching each entry point is
+  // deliberate: files reach this page from the section drop zone, a per-slot
+  // zone, the page-wide overlay, the file picker and the Dropbox import, and a
+  // check bolted onto one of those is a check the other four walk past.
+  const [panelFlags, setPanelFlags] = useState<Map<string, PanelDetection>>(new Map())
+  const [croppingPanels, setCroppingPanels] = useState(false)
+  // Set when the designer chooses to save with a flagged image anyway. The
+  // detector is ~98% precise, so roughly one flag in fifty is wrong and there
+  // has to be a way past it.
+  const [panelAck, setPanelAck] = useState(false)
+  const panelCheckedRef = useRef<Set<string>>(new Set())
+
+  // ⚠ BOTH STORES. Fresh artwork lands in one of two places and the difference
+  // is invisible from the drop zone: on a v2+ proof a file that resolves to a
+  // slot already holding a v1 image queues in replacementByV1RowId instead of
+  // becoming an entry in imagesByOption. Watching only the latter — which is
+  // what this did at first — misses REPLACEMENTS entirely, and a replacement is
+  // the likelier way an old proof gets in: it is exactly the "add a version to
+  // an existing project" case. Found by testing a real drop, not by reading.
+  useEffect(() => {
+    const targets: { id: string; file: File }[] = []
+    for (const list of Object.values(imagesByOption)) {
+      for (const e of list) {
+        const key = `img:${e.localId}`
+        if (!panelCheckedRef.current.has(key)) targets.push({ id: key, file: e.file })
+      }
+    }
+    for (const [rowId, r] of Object.entries(replacementByV1RowId)) {
+      const key = `rep:${rowId}`
+      if (!panelCheckedRef.current.has(key)) targets.push({ id: key, file: r.file })
+    }
+    if (targets.length === 0) return
+    // Marked before the async work so a re-render mid-check cannot queue the
+    // same file twice.
+    for (const t of targets) panelCheckedRef.current.add(t.id)
+    let cancelled = false
+    void findPanelsInFiles(targets).then((found) => {
+      if (cancelled || found.size === 0) return
+      setPanelFlags((prev) => {
+        const next = new Map(prev)
+        for (const [id, det] of found) next.set(id, det)
+        return next
+      })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [imagesByOption, replacementByV1RowId])
+
+  /** Crop every flagged image in place, replacing its file and preview. */
+  async function cropFlaggedImages() {
+    if (croppingPanels || panelFlags.size === 0) return
+    setCroppingPanels(true)
+    try {
+      const cropped = new Map<string, { file: File; preview: string }>()
+      const sourceFor = (key: string): File | null => {
+        if (key.startsWith('img:')) {
+          const localId = key.slice(4)
+          for (const list of Object.values(imagesByOption)) {
+            const hit = list.find((e) => e.localId === localId)
+            if (hit) return hit.file
+          }
+          return null
+        }
+        return replacementByV1RowId[key.slice(4)]?.file ?? null
+      }
+
+      for (const [key, det] of panelFlags) {
+        if (det.cutX == null) continue
+        const file = sourceFor(key)
+        if (!file) continue
+        const out = await cropProofPanel(file, det.cutX, file.name)
+        if (out) cropped.set(key, { file: out, preview: URL.createObjectURL(out) })
+      }
+
+      if (cropped.size > 0) {
+        const stale: string[] = []
+        setImagesByOption((prev) => {
+          const next: Record<string, ImageEntry[]> = {}
+          for (const [optKey, list] of Object.entries(prev)) {
+            next[optKey] = list.map((e) => {
+              const r = cropped.get(`img:${e.localId}`)
+              if (!r) return e
+              stale.push(e.preview)
+              return { ...e, file: r.file, preview: r.preview }
+            })
+          }
+          return next
+        })
+        setReplacementByV1RowId((prev) => {
+          const next: Record<string, { file: File; preview: string }> = {}
+          for (const [rowId, r] of Object.entries(prev)) {
+            const c = cropped.get(`rep:${rowId}`)
+            if (!c) {
+              next[rowId] = r
+              continue
+            }
+            stale.push(r.preview)
+            next[rowId] = c
+          }
+          return next
+        })
+        // Revoked only after both setters have taken the new previews, so a
+        // render between the two can never point an <img> at a dead URL.
+        for (const url of stale) URL.revokeObjectURL(url)
+        setPanelFlags((prev) => {
+          const next = new Map(prev)
+          for (const key of cropped.keys()) next.delete(key)
+          return next
+        })
+      }
+    } finally {
+      setCroppingPanels(false)
+    }
+  }
 
   // Commit any pending soft-delete on unmount so the blob URL
   // doesn't leak across page navigations. See removeImage for
@@ -3225,6 +3345,23 @@ export default function NewVersionPage() {
     e.preventDefault()
     setError('')
     setSubmitAttempted(true)
+
+    // The whole point of this guard is that people FORGET, so a notice they can
+    // scroll past is not enough — the save itself has to stop once. Not a hard
+    // block: one flag in fifty is wrong, and "Save anyway" is right there.
+    if (panelFlags.size > 0 && !panelAck) {
+      setFormExpanded(true)
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      setToast({
+        kind: 'validation',
+        text: panelNoticeForSave(panelFlags.size) ?? 'Check the artwork before saving.',
+      })
+      toastTimerRef.current = setTimeout(
+        () => setToast((curr) => (curr?.kind === 'validation' ? null : curr)),
+        8000,
+      )
+      return
+    }
 
     // Block save until the proof-type wizard resolves to a concrete,
     // persistable shape (the split guard and incomplete paths don't
@@ -6730,6 +6867,51 @@ export default function NewVersionPage() {
                 </div>
               )
             })()}
+
+            {/* Old-proof guard. One banner for the whole batch rather than a
+                notice per thumbnail: a designer who has just dropped eight
+                files wants one decision and one action, not eight. The
+                per-image detail is deliberately left out — which images are
+                affected matters far less than that ANY are, and the fix is the
+                same either way. */}
+            {panelFlags.size > 0 && (
+              <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+                <p className="text-sm font-medium text-amber-900">
+                  {panelNoticeForSave(panelFlags.size)}
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-4">
+                  <button
+                    type="button"
+                    onClick={() => void cropFlaggedImages()}
+                    disabled={croppingPanels}
+                    className="rounded-md bg-amber-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-amber-800 disabled:opacity-50"
+                  >
+                    {croppingPanels
+                      ? 'Cropping…'
+                      : panelFlags.size === 1
+                        ? 'Crop it'
+                        : `Crop all ${panelFlags.size}`}
+                  </button>
+                  {/* Only offered once a save has actually been stopped. Before
+                      that it would just be an invitation to dismiss the thing
+                      they are meant to read. */}
+                  {submitAttempted && !panelAck && (
+                    <button
+                      type="button"
+                      onClick={() => setPanelAck(true)}
+                      className="text-sm text-amber-900 underline underline-offset-2"
+                    >
+                      Leave them as they are
+                    </button>
+                  )}
+                  {panelAck && (
+                    <span className="text-sm text-amber-900">
+                      Leaving them as they are — saving will go ahead.
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Option tabs */}
             {optionMode && selectedOptions.length > 0 && (

@@ -39,6 +39,9 @@ import { fetchBundleCheckpointMembers, markSetReviewLinkSent, resolveCustomerRev
 import { markProspectContactedByProof } from '../lib/reorderDesk'
 import { buildBundleCheckpoint, type BundleCheckpointModel } from '../lib/bundleCheckpoint'
 import BundleCheckpoint from '../components/BundleCheckpoint'
+import { DropboxImportModal } from '../components/DropboxImportModal'
+import { cropProofPanel, type PanelDetection } from '../lib/proofPanelCrop'
+import { findPanelsInFiles, panelNoticeForSave } from '../lib/artworkPanelGuard'
 
 // Materials whose physical edge construction exposes the three-
 // layer Colorplan stack (un-gilded letterpress) and therefore want
@@ -941,6 +944,88 @@ export default function EditVersionPage() {
   }
 
   const { isZoneDragOver, isPageDragOver, zoneProps } = useImageFileDrop({ onFiles: addFiles })
+  const [dropboxImportOpen, setDropboxImportOpen] = useState(false)
+
+  // ── Old-proof guard ───────────────────────────────────────────────────────
+  // Same guard as the new-version form, for the same reason: an old proof that
+  // still carries the price panel would show the customer those prices beside
+  // the current price grid. Only 'new' entries are checked — an 'existing' one
+  // is already saved and its bytes are in storage, so there is nothing here to
+  // crop even if it were flagged.
+  const [panelFlags, setPanelFlags] = useState<Map<string, PanelDetection>>(new Map())
+  const [croppingPanels, setCroppingPanels] = useState(false)
+  const [panelAck, setPanelAck] = useState(false)
+  const panelCheckedRef = useRef<Set<string>>(new Set())
+
+  useEffect(() => {
+    const targets: { id: string; file: File }[] = []
+    for (const list of Object.values(editImagesByOption)) {
+      for (const e of list) {
+        if (e.kind !== 'new') continue
+        if (!panelCheckedRef.current.has(e.localId)) targets.push({ id: e.localId, file: e.file })
+      }
+    }
+    if (targets.length === 0) return
+    for (const t of targets) panelCheckedRef.current.add(t.id)
+    let cancelled = false
+    void findPanelsInFiles(targets).then((found) => {
+      if (cancelled || found.size === 0) return
+      setPanelFlags((prev) => {
+        const next = new Map(prev)
+        for (const [id, det] of found) next.set(id, det)
+        return next
+      })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [editImagesByOption])
+
+  async function cropFlaggedImages() {
+    if (croppingPanels || panelFlags.size === 0) return
+    setCroppingPanels(true)
+    try {
+      const cropped = new Map<string, { file: File; preview: string }>()
+      for (const [id, det] of panelFlags) {
+        if (det.cutX == null) continue
+        let file: File | null = null
+        for (const list of Object.values(editImagesByOption)) {
+          const hit = list.find((e) => e.kind === 'new' && e.localId === id)
+          if (hit && hit.kind === 'new') {
+            file = hit.file
+            break
+          }
+        }
+        if (!file) continue
+        const out = await cropProofPanel(file, det.cutX, file.name)
+        if (out) cropped.set(id, { file: out, preview: URL.createObjectURL(out) })
+      }
+      if (cropped.size > 0) {
+        const stale: string[] = []
+        setEditImagesByOption((prev) => {
+          const next: Record<string, EditImage[]> = {}
+          for (const [key, list] of Object.entries(prev)) {
+            next[key] = list.map((e) => {
+              if (e.kind !== 'new') return e
+              const r = cropped.get(e.localId)
+              if (!r) return e
+              stale.push(e.preview)
+              return { ...e, file: r.file, preview: r.preview }
+            })
+          }
+          return next
+        })
+        for (const url of stale) URL.revokeObjectURL(url)
+        setPanelFlags((prev) => {
+          const next = new Map(prev)
+          for (const id of cropped.keys()) next.delete(id)
+          return next
+        })
+      }
+    } finally {
+      setCroppingPanels(false)
+    }
+  }
 
   // Soft remove with a 5s undo window (test-report finding (h)).
   // Mirrors NewVersionPage.removeImage; see that explainer for
@@ -1080,6 +1165,13 @@ export default function EditVersionPage() {
     e.preventDefault()
     setError('')
     setSubmitAttempted(true)
+
+    // Stops the save once. Not a block — see artworkPanelGuard for why one flag
+    // in fifty is wrong and there has to be a way past it.
+    if (panelFlags.size > 0 && !panelAck) {
+      setFileError(panelNoticeForSave(panelFlags.size) ?? 'Check the artwork before saving.')
+      return
+    }
 
     // Locked variant rounds short-circuit even if a programmatic
     // form.requestSubmit() reaches us — the save button is disabled
@@ -2058,6 +2150,14 @@ export default function EditVersionPage() {
     <DesignerChrome active="proofs">
     <div className="min-h-dvh bg-canvas">
       <PageDropOverlay visible={isPageDragOver} />
+      {/* Imported files go through addFiles, exactly as a drop does, so they
+          inherit the same type, size and per-tab checks — and the old-proof
+          guard above sees them for the same reason. */}
+      <DropboxImportModal
+        open={dropboxImportOpen}
+        onClose={() => setDropboxImportOpen(false)}
+        onAdd={(files) => addFiles(files)}
+      />
       {toast?.kind === 'validation' && (
         <div
           role="status"
@@ -2509,6 +2609,44 @@ export default function EditVersionPage() {
                       : `Add more images (${currentImages.length} / ${MAX_IMAGES})`}
                 </button>
               </>
+            )}
+
+            <div className="mt-2 text-center">
+              <button
+                type="button"
+                onClick={() => setDropboxImportOpen(true)}
+                className="text-sm font-medium text-ink-soft underline underline-offset-2 hover:text-ink"
+              >
+                Bring in artwork from an old order
+              </button>
+            </div>
+
+            {panelFlags.size > 0 && (
+              <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+                <p className="text-sm font-medium text-amber-900">{panelNoticeForSave(panelFlags.size)}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-4">
+                  <button
+                    type="button"
+                    onClick={() => void cropFlaggedImages()}
+                    disabled={croppingPanels}
+                    className="rounded-md bg-amber-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-amber-800 disabled:opacity-50"
+                  >
+                    {croppingPanels ? 'Cropping…' : panelFlags.size === 1 ? 'Crop it' : `Crop all ${panelFlags.size}`}
+                  </button>
+                  {submitAttempted && !panelAck && (
+                    <button
+                      type="button"
+                      onClick={() => setPanelAck(true)}
+                      className="text-sm text-amber-900 underline underline-offset-2"
+                    >
+                      Leave them as they are
+                    </button>
+                  )}
+                  {panelAck && (
+                    <span className="text-sm text-amber-900">Leaving them as they are — saving will go ahead.</span>
+                  )}
+                </div>
+              </div>
             )}
 
             {fileError && <p className="mt-2 text-sm text-out">{fileError}</p>}
