@@ -281,5 +281,68 @@ test('entries come back oldest-first', () => {
   assertEquals(times, sorted, 'ascending by time')
 })
 
+console.log('\nbuildOrderTimeline — supplier proof holding pen (000409)')
+
+test('a supplier proof coming back and being approved are two entries, in order', () => {
+  const entries = buildOrderTimeline(
+    order({
+      status: 'fulfilled',
+      paid_at: '2026-07-05T10:00:00Z',
+      fulfilled_at: '2026-07-06T10:00:00Z',
+      supplier_email_sent_at: '2026-07-06T10:01:00Z',
+      supplier_name: 'QX Metals',
+      supplier_reply_at: '2026-07-06T12:00:00Z',
+      supplier_proof_approved_at: '2026-07-06T15:30:00Z',
+    }),
+    null, [], null, NOW,
+  )
+  const types = entries.map((e) => e.type)
+  const received = types.indexOf('supplier_proof_received')
+  const approved = types.indexOf('supplier_proof_approved')
+  assert(received !== -1, 'the proof coming back is on the timeline')
+  assert(approved !== -1, 'the approval is on the timeline')
+  assert(received < approved, 'the proof arrives before it is approved')
+  const receivedEntry = entries[received]
+  assert(
+    (receivedEntry.label ?? '').includes('QX Metals'),
+    'the supplier is named — "the supplier replied" is useless with three of them',
+  )
+  // Never claims a proof: we detect the reply, not its contents, and only one of
+  // the three live suppliers actually sends a proof.
+  assert(
+    !(receivedEntry.label ?? '').toLowerCase().includes('proof'),
+    'the timeline should not claim a proof arrived — we only know they replied',
+  )
+})
+
+test('an order with no supplier proof activity gains no pen entries', () => {
+  // The in-house path, and every order placed before 000409 shipped.
+  const entries = buildOrderTimeline(
+    order({ status: 'fulfilled', paid_at: '2026-07-05T10:00:00Z', fulfilled_at: '2026-07-06T10:00:00Z' }),
+    null, [], null, NOW,
+  )
+  const types = entries.map((e) => e.type)
+  assert(!types.includes('supplier_proof_received'), 'no phantom proof entry')
+  assert(!types.includes('supplier_proof_approved'), 'no phantom approval entry')
+})
+
+test('an approval recorded without a reply still shows (the "just record it" path)', () => {
+  // Approved by hand in Help Scout, or a supplier who acknowledged rather than
+  // proofed. There is no reply stamp, but the sign-off is real and must appear.
+  const entries = buildOrderTimeline(
+    order({
+      status: 'fulfilled',
+      paid_at: '2026-07-05T10:00:00Z',
+      fulfilled_at: '2026-07-06T10:00:00Z',
+      supplier_email_sent_at: '2026-07-06T10:01:00Z',
+      supplier_proof_approved_at: '2026-07-07T09:00:00Z',
+    }),
+    null, [], null, NOW,
+  )
+  const types = entries.map((e) => e.type)
+  assert(types.includes('supplier_proof_approved'), 'the approval is recorded')
+  assert(!types.includes('supplier_proof_received'), 'but no proof is claimed to have arrived')
+})
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)

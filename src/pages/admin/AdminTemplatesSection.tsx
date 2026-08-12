@@ -132,6 +132,13 @@ const PROJECT_TEMPLATES = new Set(['proof_abandoned'])
 
 function templateGroup(id: string): TemplateGroupKey {
   if (id === 'inhouse_production_note') return 'workshop'
+  // Supplier proof approval (000409) + any per-supplier override. Production
+  // side, never seen by a customer — same family as the workshop note. Unlike
+  // supplier_order_email it stays in THIS editor rather than moving to Admin →
+  // Outsourcing: that one was exiled because it carries twelve variables and a
+  // parser-critical {order_details} block. This is three variables and free
+  // prose, so the generic card handles it correctly.
+  if (id.startsWith('supplier_proof_approval')) return 'workshop'
   if (PROJECT_TEMPLATES.has(id)) return 'project'
   if (id.startsWith('proof_')) return 'post_action'
   if (id.startsWith('nudge_')) return 'nudge'
@@ -150,6 +157,7 @@ function templateGroup(id: string): TemplateGroupKey {
 // apply to an order pay-link.
 function templateScope(id: string): TemplateVariableScope {
   if (id === 'inhouse_production_note') return 'inhouse_note'
+  if (id.startsWith('supplier_proof_approval')) return 'supplier_proof'
   // Must sit above the proof_ rule — see PROJECT_TEMPLATES. These carry the
   // customer's name and company, not the just-recorded-action variables, and
   // deliberately no {url}: the abandoned proof page shows a closed card with
@@ -371,8 +379,8 @@ export default function AdminTemplatesSection() {
             onSaved={handleSaved}
           />
           <TemplateGroup
-            heading="Workshop hand-off"
-            blurb="The note posted on the customer's thread when an in-house order is placed, telling our own workshop what to make. The customer never sees it. The order itself goes into Stock Control on its own, so this wording is free to change. (Supplier order emails are edited on Admin → Outsourcing.)"
+            heading="Production hand-off"
+            blurb="Messages about making the cards, never seen by a customer: the note telling our own workshop what to make, and the reply approving the proof a supplier sends back before they start. Nothing machine-readable depends on this wording. (Supplier order emails themselves are edited on Admin → Outsourcing.)"
             templates={templates.filter((t) => templateGroup(t.id) === 'workshop')}
             onSaved={handleSaved}
           />

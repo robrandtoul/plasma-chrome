@@ -315,6 +315,52 @@ async function autoFlagOnComplaint(
   return created
 }
 
+// Stamp a supplier's reply onto the order it belongs to — the supplier proof
+// holding pen (000409).
+//
+// `place-order` emails a supplier order as a NEW Help Scout conversation whose
+// customer IS the supplier, and stores its id on
+// orders.supplier_helpscout_conversation_id. The supplier's internal proof comes
+// back as a reply on that thread, so it arrives here as an ordinary
+// convo.customer.reply.created — and until this function existed it matched no
+// proof and was dropped. 62 supplier replies had already come and gone that way.
+//
+// ⚠ CUSTOMER-direction replies only. Our own approval goes onto the same thread
+// as a staff reply; stamping that would make supplier_reply_at leapfrog
+// supplier_proof_approved_at and bounce the card straight back into CHECK,
+// forever, one second after someone cleared it.
+//
+// Independent of the proof match above and deliberately not an `else`: a supplier
+// conversation is never a proof conversation, so neither can steal the other's
+// event, and a future change to one must not silently switch off the other.
+//
+// Best-effort by design. If this runs against a database where 000409 hasn't been
+// applied the update errors on the missing column, and failing the whole delivery
+// would cost us the proof-reply stamp — which is the older, load-bearing contract.
+// So a failure is logged and reported in the response, never thrown. That makes
+// either deploy order safe.
+async function stampSupplierReply(
+  admin: SupabaseClient,
+  conversationId: string,
+  direction: 'customer' | 'staff',
+  stampIso: string,
+): Promise<number> {
+  if (direction !== 'customer') return 0
+  const { data, error } = await admin
+    .from('orders')
+    .update({ supplier_reply_at: stampIso })
+    .eq('supplier_helpscout_conversation_id', conversationId)
+    // Same GREATEST guard the proof stamp uses: a late Help Scout retry must
+    // never regress a stamp a fresher delivery already advanced.
+    .or(`supplier_reply_at.is.null,supplier_reply_at.lt.${stampIso}`)
+    .select('id')
+  if (error) {
+    console.error('[helpscout-webhook] supplier reply stamp failed:', error.message)
+    return 0
+  }
+  return data?.length ?? 0
+}
+
 // GET /v2/conversations/{id}/threads and pull the merged-in source conversation
 // ids from the `merged` line-items. Help Scout records a merge on the surviving
 // (target) conversation; each thread moved in from a deleted source keeps a
@@ -678,9 +724,18 @@ async function handle(req: Request): Promise<Response> {
     console.error('[helpscout-webhook] flagged ingest crashed', (err as Error).message)
   }
 
+  // A supplier answering a placed order (000409). Runs for every reply event,
+  // not only ones that matched no proof — see the note on stampSupplierReply.
+  let supplierStamped = 0
+  try {
+    supplierStamped = await stampSupplierReply(admin, String(conversationId), direction, stampIso)
+  } catch (err) {
+    console.error('[helpscout-webhook] supplier reply stamp crashed', (err as Error).message)
+  }
+
   // 200 whether or not a proof matched (most HS conversations aren't proofs);
   // a matched-but-empty result is a normal no-op, not an error.
-  return json({ ok: true, matched, direction, flagged_ingested: flaggedIngested })
+  return json({ ok: true, matched, direction, flagged_ingested: flaggedIngested, supplier_stamped: supplierStamped })
 }
 
 Deno.serve(async (req) => {

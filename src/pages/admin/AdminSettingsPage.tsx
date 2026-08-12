@@ -41,6 +41,9 @@ interface Settings {
    *  pay link was sent). Only consumed when auto_order_reminders_enabled is on. */
   order_reminders_max: number
   order_reminder_interval_days: number
+  // Working days of supplier silence before a placed order escalates from
+  // Waiting to Fix on the Orders page (000409).
+  supplier_proof_overdue_days: number
   /** Decline-recovery discount (migration 000279). When enabled, the proof page
    *  offers this % off to a customer who flags price as the blocker. Off by
    *  default — auto-discounting touches margin, so a human sets the size. */
@@ -157,6 +160,7 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   auto_order_reminders_enabled:      'setting.auto_order_reminders_enabled_updated',
   order_reminders_max:               'setting.order_reminders_max_updated',
   order_reminder_interval_days:      'setting.order_reminder_interval_days_updated',
+  supplier_proof_overdue_days:       'setting.supplier_proof_overdue_days_updated',
   decline_recovery_discount_enabled: 'setting.decline_recovery_discount_enabled_updated',
   decline_recovery_discount_percent: 'setting.decline_recovery_discount_percent_updated',
   payment_mode:                      'setting.payment_mode_updated',
@@ -363,7 +367,7 @@ export default function AdminSettingsPage() {
   async function load() {
     const { data, error } = await supabase
       .from('settings')
-      .select('default_pricing_display, default_currency, approvals_enabled, proof_callouts_enabled, proof_pins_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, direct_handoff_mode, xero_stripe_account_code, xero_eu_tax_type, xero_row_tax_type, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent, push_enabled, reorder_desk_enabled, reorder_desk_daily_limit, reorder_desk_followup_days')
+      .select('default_pricing_display, default_currency, approvals_enabled, proof_callouts_enabled, proof_pins_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, supplier_proof_overdue_days, payment_mode, direct_handoff_mode, xero_stripe_account_code, xero_eu_tax_type, xero_row_tax_type, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent, push_enabled, reorder_desk_enabled, reorder_desk_daily_limit, reorder_desk_followup_days')
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
@@ -545,7 +549,7 @@ export default function AdminSettingsPage() {
   // Blur handler for the two unpaid-order reminder cadence inputs (000270).
   // Both are whole numbers within their column CHECK range; same surface-a-pill
   // philosophy as onShippingNumberBlur above (no silent snap-back).
-  function onReminderNumberBlur(field: 'order_reminders_max' | 'order_reminder_interval_days') {
+  function onReminderNumberBlur(field: 'order_reminders_max' | 'order_reminder_interval_days' | 'supplier_proof_overdue_days') {
     if (!settings) return
     const draft = drafts[field]
     if (draft === undefined) return
@@ -559,6 +563,10 @@ export default function AdminSettingsPage() {
       return
     }
     if (field === 'order_reminder_interval_days' && (value < 1 || value > 30)) {
+      setErrors((e) => ({ ...e, [field]: 'Between 1 and 30.' }))
+      return
+    }
+    if (field === 'supplier_proof_overdue_days' && (value < 1 || value > 30)) {
       setErrors((e) => ({ ...e, [field]: 'Between 1 and 30.' }))
       return
     }
@@ -840,6 +848,29 @@ export default function AdminSettingsPage() {
               value={drafts.order_reminder_interval_days ?? settings.order_reminder_interval_days}
               onChange={(e) => setDrafts((d) => ({ ...d, order_reminder_interval_days: e.target.value === '' ? 1 : Number(e.target.value) }))}
               onBlur={() => onReminderNumberBlur('order_reminder_interval_days')}
+              className={`w-32 ${inputClass}`}
+            />
+          </FieldRow>
+
+          {/* Supplier proof holding pen (migration 000409). Nothing is sent
+              automatically — this only decides when a silent supplier order
+              stops reading as normal waiting and moves up into Fix. */}
+          <FieldRow
+            label="Chase a supplier after"
+            help="Working days to wait for a supplier's proof before the order is flagged on the Orders page (1–30). Until then it sits quietly under Waiting. QX normally reply within a couple of hours, so 1 is generous. Nothing is emailed automatically — this only decides when it starts asking for a person."
+            saved={recentlySaved('supplier_proof_overdue_days')}
+            working={working.supplier_proof_overdue_days}
+            error={errors.supplier_proof_overdue_days}
+          >
+            <input
+              type="number"
+              min={1}
+              max={30}
+              step={1}
+              inputMode="numeric"
+              value={drafts.supplier_proof_overdue_days ?? settings.supplier_proof_overdue_days}
+              onChange={(e) => setDrafts((d) => ({ ...d, supplier_proof_overdue_days: e.target.value === '' ? 1 : Number(e.target.value) }))}
+              onBlur={() => onReminderNumberBlur('supplier_proof_overdue_days')}
               className={`w-32 ${inputClass}`}
             />
           </FieldRow>
@@ -1738,6 +1769,7 @@ function humanFieldLabel(field: keyof Settings): string {
     auto_order_reminders_enabled: 'Send unpaid-order reminders automatically',
     order_reminders_max: 'Maximum reminders per order',
     order_reminder_interval_days: 'Days between reminders',
+    supplier_proof_overdue_days: 'Chase a supplier after',
     decline_recovery_discount_enabled: 'Decline-recovery discount enabled',
     decline_recovery_discount_percent: 'Decline-recovery discount (%)',
     payment_mode: 'Stripe payment mode',

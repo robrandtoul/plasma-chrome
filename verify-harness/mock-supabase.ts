@@ -53,6 +53,12 @@ const steel = { code: 'metal_steel', display_name: 'Stainless Steel', production
 const letterpress = { code: 'paper_letterpress', display_name: 'Letterpress', production_route: 'supplier', lead_time_max_days: 7, outsourced_supplier_ids: ['s1'] }
 const satin = { code: 'plastic_satin', display_name: 'Satin Plastic', production_route: 'in_house', lead_time_max_days: 4, outsourced_supplier_ids: [] as string[] }
 const paper = { code: 'paper_standard', display_name: 'Standard Paper', production_route: 'supplier', lead_time_max_days: 4, outsourced_supplier_ids: ['s2'] }
+// QX Metals make our metal cards, so a SUPPLIER-route metal — the real shape of
+// the orders the supplier proof holding pen (000409) was built for. `steel`
+// above stays in_house: several other rigs depend on it, and an order carrying
+// both a supplier email and an in-house route is incoherent — handoffState reads
+// it as "the workshop note was never sent" and files it in FIX.
+const qxMetal = { code: 'metal_titanium', display_name: 'Titanium', production_route: 'supplier', lead_time_max_days: 12, outsourced_supplier_ids: ['s-qx'] }
 
 function contact(company: string | null, name: string) {
   return { full_name: name, companies: company ? { name: company } : null }
@@ -106,6 +112,12 @@ function order(partial: FixtureOrder): FixtureOrder {
     supplier_email_sent_at: null,
     supplier_id: null,
     supplier_overs: 0,
+    supplier_name: null,
+    // Supplier proof holding pen (000409). All null by default, which is the
+    // 'none' state — the in-house path every existing fixture is on.
+    supplier_helpscout_conversation_id: null,
+    supplier_reply_at: null,
+    supplier_proof_approved_at: null,
     date_required: null,
     dropbox_folder_url: null,
     stock_order_number: null,
@@ -454,6 +466,118 @@ const ORDERS: FixtureOrder[] = [
     stock_order_number: '403957',
     project_name: 'Thornton Dental & Implant Centre',
     proofs: { helpscout_last_reply_at: daysAgo(4), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-18', contacts: contact('Thornton Dental & Implant Centre', 'Priya Patel') },
+  }),
+  // ── Supplier proof holding pen (000409) ───────────────────────────────────
+  // One order per state of supplierProofState(), so the CHECK section, the
+  // Waiting line, the Fix row and the Recently-ordered exclusion all have
+  // something to render. All are status 'fulfilled' with BOTH the supplier email
+  // stamp and a conversation id — that pair is what puts an order in the pen.
+  //
+  // Day counts are chosen to be weekday-independent: daysAgo(5) always spans at
+  // least three working days (overdue at any threshold ≤3), and daysAgo(0) always
+  // spans zero (never overdue), so the rig behaves the same run on a Tuesday or
+  // a Sunday.
+  order({
+    id: 'sp-check',
+    material_id: 'm-titanium',
+    material_variant_id: 'v-titanium',
+    material_variants: { display_name: '500 micron', materials: qxMetal },
+    status: 'fulfilled',
+    paid_at: daysAgo(3),
+    fulfilled_at: daysAgo(1),
+    handoff_at: daysAgo(1),
+    supplier_email_sent_at: daysAgo(1),
+    supplier_name: 'QX Metals',
+    supplier_id: 'sup-qx',
+    supplier_helpscout_conversation_id: 'hs-sup-1',
+    supplier_reply_at: daysAgo(0.2),
+    quantity: 500,
+    xero_invoice_id: 'xi-sp1',
+    stock_order_number: '403971',
+    dropbox_folder_url: 'https://dropbox.com/order/403971',
+    proofs: { helpscout_last_reply_at: daysAgo(3), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-30', contacts: contact('Northwind Traders', 'Erin Shaw') },
+  }),
+  // A RE-proof: the supplier corrected something after we'd already approved,
+  // so supplier_reply_at is newer than supplier_proof_approved_at and the card
+  // comes back into CHECK with the "check what changed" warning.
+  order({
+    id: 'sp-revised',
+    material_id: 'm-titanium',
+    material_variant_id: 'v-titanium',
+    material_variants: { display_name: '500 micron', materials: qxMetal },
+    status: 'fulfilled',
+    paid_at: daysAgo(4),
+    fulfilled_at: daysAgo(2),
+    handoff_at: daysAgo(2),
+    supplier_email_sent_at: daysAgo(2),
+    supplier_name: 'QX Metals',
+    supplier_id: 'sup-qx',
+    supplier_helpscout_conversation_id: 'hs-sup-2',
+    supplier_proof_approved_at: daysAgo(1),
+    supplier_reply_at: daysAgo(0.5),
+    quantity: 250,
+    xero_invoice_id: 'xi-sp2',
+    stock_order_number: '403972',
+    proofs: { helpscout_last_reply_at: daysAgo(4), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-31', contacts: contact('Gable & Rowe', 'Tom Gable') },
+  }),
+  // Placed today, nothing back yet — normal, so it sits quietly in WAITING.
+  order({
+    id: 'sp-awaiting',
+    material_id: 'm-titanium',
+    material_variant_id: 'v-titanium',
+    material_variants: { display_name: '500 micron', materials: qxMetal },
+    status: 'fulfilled',
+    paid_at: daysAgo(1),
+    fulfilled_at: daysAgo(0),
+    handoff_at: daysAgo(0),
+    supplier_email_sent_at: daysAgo(0),
+    supplier_name: 'QX Metals',
+    supplier_id: 'sup-qx',
+    supplier_helpscout_conversation_id: 'hs-sup-3',
+    quantity: 100,
+    xero_invoice_id: 'xi-sp3',
+    stock_order_number: '403973',
+    proofs: { helpscout_last_reply_at: daysAgo(1), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-32', contacts: contact('Halcyon Legal', 'Marta Ruiz') },
+  }),
+  // Silent for days — the hole this feature closes. Lands in FIX.
+  order({
+    id: 'sp-overdue',
+    material_id: 'm-titanium',
+    material_variant_id: 'v-titanium',
+    material_variants: { display_name: '500 micron', materials: qxMetal },
+    status: 'fulfilled',
+    paid_at: daysAgo(7),
+    fulfilled_at: daysAgo(5),
+    handoff_at: daysAgo(5),
+    supplier_email_sent_at: daysAgo(5),
+    supplier_name: 'QX Metals',
+    supplier_id: 'sup-qx',
+    supplier_helpscout_conversation_id: 'hs-sup-4',
+    quantity: 750,
+    xero_invoice_id: 'xi-sp4',
+    stock_order_number: '403974',
+    proofs: { helpscout_last_reply_at: daysAgo(7), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-33', contacts: contact('Beacon Surveyors', 'Neil Okafor') },
+  }),
+  // Approved, nothing newer since — the terminal state, back in the archive.
+  order({
+    id: 'sp-approved',
+    material_id: 'm-titanium',
+    material_variant_id: 'v-titanium',
+    material_variants: { display_name: '500 micron', materials: qxMetal },
+    status: 'fulfilled',
+    paid_at: daysAgo(9),
+    fulfilled_at: daysAgo(6),
+    handoff_at: daysAgo(6),
+    supplier_email_sent_at: daysAgo(6),
+    supplier_name: 'QX Metals',
+    supplier_id: 'sup-qx',
+    supplier_helpscout_conversation_id: 'hs-sup-5',
+    supplier_reply_at: daysAgo(5.8),
+    supplier_proof_approved_at: daysAgo(5.5),
+    quantity: 300,
+    xero_invoice_id: 'xi-sp5',
+    stock_order_number: '403975',
+    proofs: { helpscout_last_reply_at: daysAgo(9), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-34', contacts: contact('Pemberton & Co', 'Alice Wu') },
   }),
 ].map((o, i) => ({ ...o, proof_id: `p-${o.id}` }))
 
@@ -1543,6 +1667,26 @@ export const supabase: any = {
           error: null,
         }
       }
+      // Approving the proof a supplier sent back (000409). Preview returns the
+      // rendered message so the compose box fills; the send returns ok. The mock
+      // is stateless, so a spec asserts up to the send succeeding — the card
+      // leaving CHECK depends on the refetch, which the mock can't model.
+      if (name === 'approve-supplier-proof') {
+        if (opts?.body?.mode === 'preview') {
+          return {
+            data: {
+              ok: true,
+              // QX's own per-supplier body (they are the fixtures' supplier).
+              // The shared default is deliberately vaguer — see 000409.
+              body: 'Hi,\n\nThanks — the proof is approved. Please go ahead and produce the order.\n\nMany thanks.',
+              supplier_name: 'QX Metals',
+              conversation_id: 'hs-sup-1',
+            },
+            error: null,
+          }
+        }
+        return { data: { ok: true, replied: opts?.body?.skip_reply !== true, thread_id: 1, approved_at: new Date().toISOString() }, error: null }
+      }
       if (name === 'place-order') {
         // ?path=/orders/o-blanks/place — the combined-supplier-batches rig.
         // An ABSENT blanks field plays back the stored choice (o-thornton), so
@@ -1622,6 +1766,11 @@ export const supabase: any = {
                 ok: true,
                 route: 'supplier',
                 subject: 'Order 403958 - Apex Dental & Implant Centre',
+                // Deliberately DIFFERENT from the supplier subject above: the
+                // customer's thread is renamed to the Dropbox folder name, and
+                // on live those two disagree on half of all supplier orders.
+                // Equal values would hide the review screen's new line.
+                customer_thread_subject: 'Order 403958 - Apex Dental Reception Cards',
                 email_lines: [
                   'Hi,',
                   '',

@@ -93,15 +93,16 @@ test.describe('orders work queue', () => {
     expect(waitingSummary).toBe(await headingCount(page, /^waiting ·/i))
   })
 
-  test('the Fix section carries all three row kinds with their remedies on the row', async ({ page }) => {
+  test('the Fix section carries all four row kinds with their remedies on the row', async ({ page }) => {
     // Fix is the old "Needs action" panel: it renders only when something has
     // gone wrong or gone quiet, and each row carries its own fix. The fixture
-    // set produces exactly three rows: an order in Stock Control whose
+    // set produces exactly four rows: an order in Stock Control whose
     // workshop note never went (o10), a paid order whose invoice failed (o5),
-    // and an expired unpaid link (o2) as a full card.
+    // an expired unpaid link (o2) as a full card, and a supplier who hasn't
+    // sent their proof back past the threshold (sp-overdue, 000409).
     const fixSection = page.locator('section').filter({ has: page.getByRole('heading', { name: /^fix ·/i }) })
     await expect(fixSection).toBeVisible()
-    expect(await headingCount(page, /^fix ·/i)).toBe(3)
+    expect(await headingCount(page, /^fix ·/i)).toBe(4)
 
     // The unsent-message row has its own send button; both pointer kinds have
     // a "Go to it" (the unsent row and the invoice row).

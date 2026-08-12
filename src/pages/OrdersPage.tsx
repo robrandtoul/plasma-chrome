@@ -11,6 +11,13 @@ import { logAudit } from '../lib/audit'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
 import { keepApprovedNoOrder, invalidateApprovedNoOrderCount } from '../lib/approvedNoOrder'
 import { splitByChaseNeed, chaseReason, groupNeedsAttention, type TriageOrder } from '../lib/ordersTriage'
+import {
+  splitBySupplierProof,
+  supplierProofState,
+  overdueReason,
+  waitingFor,
+  type SupplierProofOrder,
+} from '../lib/supplierProof'
 import { materialNeedsStockColour, fetchStockColours, type StockColour } from '../lib/stockColours'
 import { downloadBlob } from '../lib/downloadFile'
 import { signThumbnails, type ThumbInfo } from '../lib/thumbnails'
@@ -135,6 +142,15 @@ interface OrderRow {
   // job already sitting in Stock Control.
   supplier_id: string | null
   supplier_overs: number | null
+  supplier_name: string | null
+  // Supplier proof holding pen (000409). The supplier replies with their own
+  // internal proof on the thread place-order opened; helpscout-webhook stamps
+  // supplier_reply_at, a human approves, and only THEN does the order leave the
+  // page. supplierProofState() in src/lib/supplierProof.ts owns the rule — never
+  // compare these two inline, or the sections and the counts drift.
+  supplier_helpscout_conversation_id: string | null
+  supplier_reply_at: string | null
+  supplier_proof_approved_at: string | null
   // Blanks ride a sibling order's supplier batch (000382): the hand-off is the
   // WORKSHOP NOTE and no supplier email ever sends, whatever the material's
   // route says — handoffState must judge these by the note.
@@ -204,7 +220,8 @@ const SELECT = `
   card_discount_type, card_discount_value, amount_card_discount, payment_method, order_kind,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, revised_at,
   held_at, hold_reason, held_by_name, hold_artwork_flag,
-  handoff_at, handoff_error, production_note_posted_at, supplier_email_sent_at, supplier_id, supplier_overs, blanks_source_order_id,
+  handoff_at, handoff_error, production_note_posted_at, supplier_email_sent_at, supplier_id, supplier_overs, supplier_name, blanks_source_order_id,
+  supplier_helpscout_conversation_id, supplier_reply_at, supplier_proof_approved_at,
   artwork_check_verdict, artwork_checked_at,
   date_required, dropbox_folder_url, stock_order_number, project_name, stock_colour, person_quantities,
   ship_to_name, ship_to_email, ship_to_phone, ship_to_address, customs_tax_id, ship_dest_country, proof_id,
@@ -381,6 +398,15 @@ function shorten(text: string, max = 200): string {
 // hands back on error.context rather than in `data`. Read whichever is
 // populated so the real message is never lost. (Mirrors OrderReviewPage's
 // helper of the same name — kept local so the two pages stay independent.)
+// Shown in the approval compose box only when the server's preview call fails —
+// the button must never be dead just because a preview didn't load. Mirrors
+// DEFAULT_BODIES.supplier_proof_approval; the server still resolves the real
+// (possibly per-supplier, possibly admin-edited) template when it sends, so this
+// text only reaches a supplier if the person approving leaves it as-is AND the
+// preview failed.
+const APPROVAL_FALLBACK_BODY =
+  'Hi,\n\nThanks — the proof is approved. Please go ahead and produce the order.\n\nMany thanks.'
+
 async function readFnErrorBody(err: unknown): Promise<{ error?: string; code?: string } | null> {
   const ctx = (err as { context?: { json?: () => Promise<unknown> } } | null)?.context
   if (ctx && typeof ctx.json === 'function') {
@@ -929,6 +955,17 @@ export default function OrdersPage() {
   const [groupReminders, setGroupReminders] = useState<Record<string, ReminderSummary>>({})
   // Chase cadence + on/off, read once from settings. Defaults match the edge fn.
   const [cadence, setCadence] = useState<ReminderCadence>(DEFAULT_CADENCE)
+  // Working days of supplier silence before a placed order escalates from
+  // Waiting to Fix (000409). Default mirrors the column's: measured median
+  // reply lag from QX is 2 hours, so one working day is already generous.
+  const [supplierProofOverdueDays, setSupplierProofOverdueDays] = useState(1)
+  // Approving a supplier's proof: the order being approved, the editable
+  // message, and the two busy flags (loading the preview vs sending).
+  const [approveTarget, setApproveTarget] = useState<OrderRow | null>(null)
+  const [approveBody, setApproveBody] = useState('')
+  const [approveLoading, setApproveLoading] = useState(false)
+  const [approveBusy, setApproveBusy] = useState(false)
+  const [approveError, setApproveError] = useState<string | null>(null)
   // Stock Control supplier id → name, for the supplier-route button labels
   // (the routing stores ids; names live in Stock Control). Best-effort.
   const [supplierNames, setSupplierNames] = useState<Record<string, string>>({})
@@ -1195,6 +1232,15 @@ export default function OrdersPage() {
       // page's contract. Tolerant read: any failure just keeps chips off.
       void supabase.from('settings').select('artwork_check_mode').eq('id', 1).maybeSingle().then(({ data }) => {
         setArtworkChipsOn((data as { artwork_check_mode?: string | null } | null)?.artwork_check_mode === 'live')
+      })
+      // Supplier-proof overdue threshold (000409). Its OWN read, deliberately not
+      // folded into the cadence select below: PostgREST fails a whole select on
+      // one unknown column, so on a database where 000409 hasn't been applied yet
+      // sharing that query would silently cost us the reminder cadence too. Alone,
+      // the worst case is this one number falling back to its default.
+      void supabase.from('settings').select('supplier_proof_overdue_days').eq('id', 1).maybeSingle().then(({ data }) => {
+        const v = (data as { supplier_proof_overdue_days?: number | null } | null)?.supplier_proof_overdue_days
+        if (typeof v === 'number' && v > 0) setSupplierProofOverdueDays(v)
       })
       void supabase.schema('public').from('outsourced_suppliers').select('id, name').then(({ data }) => {
         if (cancelled || !data) return
@@ -1722,6 +1768,64 @@ export default function OrdersPage() {
     }
   }
 
+  // ── Approving a supplier's proof (000409) ─────────────────────────────────
+  // The message is rendered SERVER-side in preview mode rather than assembled
+  // here, so the per-supplier template override
+  // (supplier_proof_approval:<supplier_id> → supplier_proof_approval → constant)
+  // is resolved in exactly one place. A preview that fails still opens the box
+  // with the shipped default, so the button is never dead.
+  async function openApprove(o: OrderRow) {
+    setApproveTarget(o)
+    setApproveError(null)
+    setApproveBody('')
+    setApproveLoading(true)
+    try {
+      const { data, error } = await supabase.functions.invoke<{ ok: boolean; body?: string; error?: string }>(
+        'approve-supplier-proof',
+        { body: { order_id: o.id, mode: 'preview' } },
+      )
+      const payload = data ?? (await readFnErrorBody(error)) as { body?: string } | null
+      setApproveBody(payload?.body ?? APPROVAL_FALLBACK_BODY)
+    } catch {
+      setApproveBody(APPROVAL_FALLBACK_BODY)
+    } finally {
+      setApproveLoading(false)
+    }
+  }
+
+  // `skipReply` is the escape hatch: record the approval without emailing. Needed
+  // because an approval sent by hand in Help Scout would otherwise have to be
+  // sent twice, and because a supplier whose reply was an acknowledgement rather
+  // than a proof shouldn't get "the proof is approved" back.
+  async function submitApprove(skipReply: boolean) {
+    const o = approveTarget
+    if (!o) return
+    setApproveBusy(true)
+    setApproveError(null)
+    try {
+      const { data, error } = await supabase.functions.invoke<{ ok: boolean; error?: string; code?: string }>(
+        'approve-supplier-proof',
+        {
+          body: {
+            order_id: o.id,
+            ...(skipReply ? { skip_reply: true } : { body: approveBody }),
+          },
+        },
+      )
+      const payload = data ?? (await readFnErrorBody(error))
+      if (error || !data?.ok) {
+        setApproveError(payload?.error ?? error?.message ?? 'Couldn’t approve it. Please try again.')
+        return
+      }
+      await refetchOrder(o.id)
+      setApproveTarget(null)
+    } catch (err) {
+      setApproveError((err as Error).message || 'Couldn’t approve it. Please try again.')
+    } finally {
+      setApproveBusy(false)
+    }
+  }
+
   // Put a paid order on hold, or take it off (migration 000377). Two rules from
   // that migration, both load-bearing:
   //
@@ -1859,6 +1963,18 @@ export default function OrdersPage() {
   // The search box narrows every section at once; the view tabs pick which
   // section(s) render. Buckets recompute only when the orders or query change.
   const hasInvoiceProblem = (o: OrderRow) => !o.xero_invoice_id && !!o.xero_invoice_error
+  // Supplier proof holding pen (000409). The adapter is the ONLY place an
+  // OrderRow is translated for the predicate, so the CHECK section, the Waiting
+  // line, the Fix row and the Recently-ordered exclusion all ask the same
+  // question of the same fields.
+  const penOf = (o: OrderRow): SupplierProofOrder => ({
+    status: o.status,
+    supplierEmailSentAt: o.supplier_email_sent_at,
+    supplierConversationId: o.supplier_helpscout_conversation_id,
+    supplierReplyAt: o.supplier_reply_at,
+    approvedAt: o.supplier_proof_approved_at,
+  })
+  const penOpts = { overdueWorkingDays: supplierProofOverdueDays }
   const { awaitingPayment, toOrder, recentlyOrdered, beingRevised } = useMemo(() => {
     const q = search.trim().toLowerCase()
     const filtered = orders.filter((o) => matchesSearch(o, q))
@@ -1887,13 +2003,53 @@ export default function OrdersPage() {
           if (ap !== bp) return ap - bp
           return new Date(b.paid_at ?? b.sent_at ?? 0).getTime() - new Date(a.paid_at ?? a.sent_at ?? 0).getTime()
         }),
-      recentlyOrdered: filtered.filter((o) => o.status === 'fulfilled').slice(0, 30),
+      // Recently ordered: placed AND finished with. An order still waiting on its
+      // supplier's proof — or holding one nobody has approved — is not finished
+      // with, and letting it land here is precisely the hole 000409 closes: the
+      // card would read "ordered" while the supplier sat on an email they may
+      // never have received. It waits in CHECK or in Waiting until someone signs
+      // the proof off, then rejoins the archive.
+      //
+      // 'none' (in-house, blanks-sourced, no supplier thread) and 'approved' are
+      // the two finished states; the pen holds the other three.
+      recentlyOrdered: filtered
+        .filter((o) => {
+          if (o.status !== 'fulfilled') return false
+          const pen = supplierProofState(penOf(o), penOpts)
+          return pen === 'none' || pen === 'approved'
+        })
+        .slice(0, 30),
       // Orders parked while the proof is being redesigned. Only the ones still
       // waiting on the customer — once they re-approve, the order is ready to
       // place and moves up to PLACE with the rest of the work.
       beingRevised: filtered.filter(isAwaitingReapproval),
     }
-  }, [orders, search])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, search, supplierProofOverdueDays])
+
+  // The supplier proof holding pen (000409), bucketed in ONE pass so the CHECK
+  // section, the Waiting line and the Fix row cannot disagree about a card —
+  // the drift that has repeatedly put a count and its own click-through out of
+  // step elsewhere on this page.
+  //
+  // Sorted oldest-first in both working buckets: a proof that arrived this
+  // morning can wait behind one that landed yesterday, and an order that has
+  // been silent longest is the one most likely to have gone missing.
+  const supplierPen = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const filtered = orders.filter((o) => matchesSearch(o, q))
+    const b = splitBySupplierProof(filtered, penOf, penOpts)
+    const oldestReplyFirst = (a: OrderRow, z: OrderRow) =>
+      new Date(a.supplier_reply_at ?? 0).getTime() - new Date(z.supplier_reply_at ?? 0).getTime()
+    const oldestSendFirst = (a: OrderRow, z: OrderRow) =>
+      new Date(a.supplier_email_sent_at ?? 0).getTime() - new Date(z.supplier_email_sent_at ?? 0).getTime()
+    return {
+      toCheck: [...b.toCheck].sort(oldestReplyFirst),
+      awaiting: [...b.awaiting].sort(oldestSendFirst),
+      overdue: [...b.overdue].sort(oldestSendFirst),
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, search, supplierProofOverdueDays])
 
   // The "Links to send" worklist, filtered by the shared search box and sorted
   // oldest- or newest-approved. approvedNoOrder is already oldest-first from the
@@ -1996,7 +2152,8 @@ export default function OrdersPage() {
   // Paid orders whose invoice failed live in PLACE (you must place them
   // regardless) and appear in Fix as a pointer row that jumps to the card.
   const invoiceFailedOrders = toOrder.filter(hasInvoiceProblem)
-  const waitingCountShown = awaitingHealthy.length + groupsWaiting.length + beingRevised.length
+  const waitingCountShown =
+    awaitingHealthy.length + groupsWaiting.length + beingRevised.length + supplierPen.awaiting.length
 
   // A being-revised order's card. Extracted only so the Waiting block can render
   // it without duplicating a dozen props — identical to the card the standalone
@@ -2057,7 +2214,11 @@ export default function OrdersPage() {
     }]
   })
   const fixCount =
-    unsentMessageItems.length + invoiceFailedOrders.length + groupsNeedingYou.length + awaitingNeedsYou.length
+    unsentMessageItems.length + invoiceFailedOrders.length + groupsNeedingYou.length + awaitingNeedsYou.length +
+    // A supplier who hasn't answered a placed order (000409). This is the whole
+    // point of the feature: before it, an order the supplier never received was
+    // indistinguishable from one quietly in production.
+    supplierPen.overdue.length
 
   // The summary line's two figures, computed from the SAME splits the sections
   // below use, over the UNFILTERED order list, and counting ROWS rather than
@@ -2078,17 +2239,28 @@ export default function OrdersPage() {
   // and already inside paidAll, and their Fix entry is only a pointer to the
   // card in PLACE. unsentMessageItems IS added — those are status 'fulfilled',
   // so they overlap nothing else here.
+  // Supplier pen counts over the UNFILTERED list, like every other figure here.
+  // supplierPen above is search-filtered because it feeds the sections; the
+  // header must not move when you type in the search box.
+  //
+  // Disjoint from everything already counted: a pen order is 'fulfilled' (so not
+  // in paidAll) and has a supplier email (so not in unsentMessageItems, which by
+  // definition is an order whose message never went).
+  const supplierPenAll = splitBySupplierProof(orders, penOf, penOpts)
   const toDoCount =
     sentNeedsYouAll.length +
     sentGroupsAll.filter(groupIsExpired).length +
     approvedNoOrder.length +
     paidAll.length +
-    unsentMessageItems.length
+    unsentMessageItems.length +
+    supplierPenAll.toCheck.length +
+    supplierPenAll.overdue.length
   const waitingCount =
     sentUngroupedAll.length -
     sentNeedsYouAll.length +
     sentGroupsAll.filter((g) => !groupIsExpired(g)).length +
-    revisionCount
+    revisionCount +
+    supplierPenAll.awaiting.length
 
   return (
     <DesignerChrome active="orders">
@@ -2242,6 +2414,47 @@ export default function OrdersPage() {
                           </ButtonInk>
                           <ButtonGhost size="sm" onClick={() => jumpToPlacedOrder(i.orderId)} className="max-md:h-11">
                             Go to it
+                          </ButtonGhost>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* A supplier who hasn't answered a placed order (000409). The
+                    reason this feature exists: before it, an order the supplier
+                    never received looked exactly like one quietly in production,
+                    and the difference only showed up a fortnight later when the
+                    cards didn't ship. Ranked with the unsent messages above —
+                    both mean nothing is being made and nobody knows. */}
+                {supplierPen.overdue.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {supplierPen.overdue.map((o) => (
+                      <div
+                        key={`fix-sup-${o.id}`}
+                        className="rounded-xl border border-l-[3px] border-line border-l-[var(--c-critical)] bg-surface px-4 py-3"
+                      >
+                        <p className="text-sm text-ink">
+                          <span className="font-semibold">Nothing back yet</span>
+                          <span className="text-ink-soft"> — {customerLabel(o)}</span>
+                          <span className="ml-2 whitespace-nowrap text-ink-mute">{o.payment_reference}</span>
+                        </p>
+                        <p className="mt-0.5 text-[12.5px] text-ink-mute">
+                          {overdueReason(o.supplier_name, supplierProofOverdueDays)}
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {o.supplier_helpscout_conversation_id && (
+                            <a
+                              href={`https://secure.helpscout.net/conversation/${o.supplier_helpscout_conversation_id}/`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center rounded-lg px-3 text-[13px] text-ink-soft ring-1 ring-line hover:bg-canvas max-md:min-h-[44px] md:h-8"
+                            >
+                              Open the thread
+                            </a>
+                          )}
+                          <ButtonGhost size="sm" onClick={() => openApprove(o)} className="max-md:h-11">
+                            They replied — clear it
                           </ButtonGhost>
                         </div>
                       </div>
@@ -2473,6 +2686,105 @@ export default function OrdersPage() {
                 has always been. Any row that develops a problem MOVES up into
                 Fix, which is why the two lists are exact complements of one
                 property-tested predicate. */}
+            {/* ── CHECK ─────────────────────────────────────────────────────
+                The supplier has sent their internal proof and it needs a human
+                (000409). The fourth stage of an order: SEND the link, take the
+                PAYment, PLACE it with the supplier, then CHECK what they send
+                back before they make 500 cards from it.
+
+                Sits between PLACE and Waiting because it is work — but work
+                that arrives on its own schedule, so unlike PLACE it is often
+                empty, and the whole section disappears when it is. Ordered
+                oldest-proof-first: a proof that came in this morning can wait
+                behind one that landed yesterday. */}
+            {supplierPen.toCheck.length > 0 && (
+              <section className="mt-10">
+                <div className={`flex items-baseline justify-between gap-3 ${SECTION_HEADER_STICKY}`}>
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-ink">
+                    Check · {supplierPen.toCheck.length}
+                  </h2>
+                  <span className="text-[12px] text-ink-mute">Oldest first</span>
+                </div>
+                <p className="mt-1 text-[13px] text-ink-mute">
+                  The supplier has come back on these. Read what they&rsquo;ve sent, reply, and it clears off your list.
+                </p>
+                <div className="mt-3 space-y-2">
+                  {supplierPen.toCheck.map((o) => {
+                    // A reply that postdates an approval is a RE-proof: the
+                    // supplier corrected something after we'd already signed off,
+                    // and the card has come back. Saying which it is matters —
+                    // "approve it" reads very differently the second time.
+                    const isRevised = o.supplier_proof_approved_at != null
+                    return (
+                      <div
+                        key={`check-${o.id}`}
+                        id={`order-card-${o.id}`}
+                        // Structural marker for "this proof arrived after we'd
+                        // already approved one". The difference is otherwise
+                        // carried only in the wording, which the e2e suite is
+                        // deliberately not allowed to assert on.
+                        data-reproof={isRevised ? 'true' : 'false'}
+                        className={`rounded-xl border border-l-[3px] border-line border-l-[var(--c-brand)] bg-surface px-4 py-3 transition-shadow duration-500 ${
+                          flashOrderId === o.id ? 'ring-2 ring-[var(--c-brand)]' : ''
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                          <Link to={`/proofs/${o.proof_id}`} className="text-sm font-medium text-ink hover:underline">
+                            {customerLabel(o)}
+                          </Link>
+                          <span className="whitespace-nowrap text-[12.5px] text-ink-mute">{o.payment_reference}</span>
+                          {o.stock_order_number && (
+                            <span className="whitespace-nowrap text-[12.5px] text-ink-mute">
+                              · Order {o.stock_order_number}
+                            </span>
+                          )}
+                        </div>
+                        {/* Says only what we actually know: they replied. We never
+                            read the message, and the three live suppliers send three
+                            different things — an artwork proof (QX), a booking
+                            confirmation (Solopress), a proforma invoice (Swype). */}
+                        <p className="mt-0.5 text-[12.5px] text-ink-soft">
+                          {o.supplier_name ?? 'The supplier'} {isRevised ? 'replied again' : 'replied'}
+                          {o.supplier_reply_at ? `, ${waitingFor(o.supplier_reply_at)}` : ''}
+                          {o.quantity != null ? ` · ${o.quantity.toLocaleString()} cards` : ''}
+                        </p>
+                        {isRevised && (
+                          <p className="mt-0.5 text-[12.5px] text-out">
+                            This came in after you&rsquo;d already cleared it — check what&rsquo;s changed.
+                          </p>
+                        )}
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <ButtonInk size="sm" onClick={() => openApprove(o)} className="max-md:h-11">
+                            Check &amp; reply…
+                          </ButtonInk>
+                          {o.supplier_helpscout_conversation_id && (
+                            <a
+                              href={`https://secure.helpscout.net/conversation/${o.supplier_helpscout_conversation_id}/`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center rounded-lg px-3 text-[13px] text-ink-soft ring-1 ring-line hover:bg-canvas max-md:min-h-[44px] md:h-8"
+                            >
+                              Open the thread
+                            </a>
+                          )}
+                          {o.dropbox_folder_url && (
+                            <a
+                              href={o.dropbox_folder_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center rounded-lg px-3 text-[13px] text-ink-soft ring-1 ring-line hover:bg-canvas max-md:min-h-[44px] md:h-8"
+                            >
+                              Our artwork
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
+            )}
+
             {waitingCountShown > 0 && (() => {
               // Select mode force-opens it and is NOT overridable — the orders
               // you are ticking live in here. A search only supplies the
@@ -2483,6 +2795,11 @@ export default function OrdersPage() {
                 awaitingHealthy.length > 0 ? `${awaitingHealthy.length} chasing ${awaitingHealthy.length === 1 ? 'itself' : 'themselves'}` : null,
                 groupsWaiting.length > 0 ? `${groupsWaiting.length} combined payment${groupsWaiting.length === 1 ? '' : 's'}` : null,
                 beingRevised.length > 0 ? `${beingRevised.length} being revised` : null,
+                // Placed, emailed, and the supplier hasn't sent their proof yet
+                // (000409). Normal — the median is two hours — so it belongs
+                // here and not in Fix, but it must be SAID, or a placed order
+                // would disappear from the page entirely while we wait.
+                supplierPen.awaiting.length > 0 ? `${supplierPen.awaiting.length} with the supplier` : null,
               ].filter(Boolean).join(' · ')
               return (
                 <section className="mt-10">
@@ -2533,6 +2850,44 @@ export default function OrdersPage() {
                         or reactivate an expired one (extends it {ORDER_EXPIRY_DAYS} days).
                         {selectMode ? ' Tick two or more orders for the same customer to combine them into one payment.' : ''}
                       </p>
+
+                      {/* Placed, and the supplier hasn't sent their proof back
+                          yet (000409). Normal — the median wait is two hours —
+                          so these are genuinely not work, but they must still be
+                          VISIBLE: the whole point of the pen is that a placed
+                          order stops vanishing off the page the moment it's
+                          emailed. One compact row each, not a full card; the
+                          moment one goes quiet past the threshold it moves up
+                          into Fix on its own. */}
+                      {supplierPen.awaiting.length > 0 && (
+                        <div className="mt-3">
+                          <p className="px-1 text-[12px] font-medium uppercase tracking-wide text-ink-mute">
+                            With the supplier · {supplierPen.awaiting.length}
+                          </p>
+                          <div className="mt-2 divide-y divide-line-soft rounded-xl border border-line bg-surface">
+                            {supplierPen.awaiting.map((o) => (
+                              <div
+                                key={`await-sup-${o.id}`}
+                                id={`order-card-${o.id}`}
+                                className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2.5 text-sm"
+                              >
+                                <div className="min-w-0 max-md:w-full">
+                                  <Link to={`/proofs/${o.proof_id}`} className="font-medium text-ink hover:underline">
+                                    {customerLabel(o)}
+                                  </Link>
+                                  <span className="ml-2 whitespace-nowrap text-[12.5px] text-ink-mute">
+                                    {o.payment_reference}
+                                  </span>
+                                </div>
+                                <span className="text-[12.5px] text-ink-soft max-md:w-full">
+                                  Waiting on {o.supplier_name ?? 'the supplier'}
+                                  {o.supplier_email_sent_at ? ` · sent ${waitingFor(o.supplier_email_sent_at)}` : ''}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Each unpaid combined payment renders as ONE tinted
                           block: the group header (its link is the live, payable
@@ -2929,8 +3284,149 @@ export default function OrdersPage() {
             onCancel={() => { setHoldTarget(null); setHoldError(null) }}
           />
         )}
+
+        {approveTarget && (
+          <ApproveSupplierProofDialog
+            customer={customerLabel(approveTarget)}
+            reference={approveTarget.payment_reference}
+            supplierName={approveTarget.supplier_name}
+            conversationId={approveTarget.supplier_helpscout_conversation_id}
+            isRevised={approveTarget.supplier_proof_approved_at != null}
+            body={approveBody}
+            onBodyChange={setApproveBody}
+            loading={approveLoading}
+            working={approveBusy}
+            errorMsg={approveError}
+            onSend={() => void submitApprove(false)}
+            onSkipReply={() => void submitApprove(true)}
+            onClose={() => { setApproveTarget(null); setApproveError(null) }}
+          />
+        )}
       </div>
     </DesignerChrome>
+  )
+}
+
+// Clearing what a supplier sent back on a placed order (000409).
+//
+// Deliberately a compose box rather than a bare confirm: this is a real message
+// to a real person, and roughly one in ten needs a sentence added ("yes, but the
+// second card's edge should be brushed"). The body arrives already rendered from
+// the server, so the per-supplier wording is resolved in ONE place — which
+// matters here, because the three live suppliers send back three different
+// things and the right reply differs accordingly (QX an artwork proof to
+// approve, Solopress a booking confirmation, Swype a proforma they won't start
+// work without).
+//
+// Two ways out, ranked. Sending is the primary — it is what actually closes the
+// loop with the supplier. "Just record it" is demoted to a text control because
+// it leaves them with nothing: it exists for a reply already sent by hand in
+// Help Scout.
+function ApproveSupplierProofDialog({
+  customer,
+  reference,
+  supplierName,
+  conversationId,
+  isRevised,
+  body,
+  onBodyChange,
+  loading,
+  working,
+  errorMsg,
+  onSend,
+  onSkipReply,
+  onClose,
+}: {
+  customer: string
+  reference: string | null
+  supplierName: string | null
+  conversationId: string | null
+  isRevised: boolean
+  body: string
+  onBodyChange: (v: string) => void
+  loading: boolean
+  working: boolean
+  errorMsg: string | null
+  onSend: () => void
+  onSkipReply: () => void
+  onClose: () => void
+}) {
+  const who = supplierName ?? 'the supplier'
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      preventClose={working}
+      ariaLabelledBy="approve-supplier-proof-heading"
+      panelClassName="w-full max-w-lg rounded-2xl bg-surface p-5 shadow-xl"
+    >
+      <h2 id="approve-supplier-proof-heading" className="text-base font-semibold text-ink">
+        {isRevised ? `Reply to ${who} again` : `Reply to ${who}`}
+      </h2>
+      <p className="mt-1 text-[13px] text-ink-soft">
+        {customer}
+        {reference ? ` · ${reference}` : ''} — this replies to {who} on the thread the order was sent on.
+      </p>
+      {isRevised && (
+        <p className="mt-2 rounded-lg bg-[var(--c-warn)]/10 px-3 py-2 text-[12.5px] text-ink-soft">
+          They came back again after you&rsquo;d already cleared this one. Check what&rsquo;s changed before you reply.
+        </p>
+      )}
+
+      {conversationId && (
+        <p className="mt-3 text-[12.5px]">
+          <a
+            href={`https://secure.helpscout.net/conversation/${conversationId}/`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-ink underline underline-offset-2 hover:no-underline"
+          >
+            Read what they sent, in Help Scout
+          </a>
+          <span className="text-ink-mute"> — worth doing before you reply.</span>
+        </p>
+      )}
+
+      <label htmlFor="approve-supplier-proof-body" className="mt-4 block text-[13px] font-medium text-ink">
+        Message to {who}
+      </label>
+      <textarea
+        id="approve-supplier-proof-body"
+        value={loading ? '' : body}
+        onChange={(e) => onBodyChange(e.target.value)}
+        disabled={loading || working}
+        rows={6}
+        placeholder={loading ? 'Loading the message…' : ''}
+        className="mt-1 w-full rounded-lg border border-line bg-canvas px-3 py-2 text-[13px] text-ink focus:border-[var(--c-brand)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)]"
+      />
+
+      {errorMsg && (
+        <p role="alert" className="mt-2 text-[12.5px] text-[var(--c-critical)]">{errorMsg}</p>
+      )}
+
+      <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={working}
+          className="rounded-lg px-3 py-2 text-[13px] text-ink-soft hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)]"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onSkipReply}
+          disabled={working}
+          title="Clear it without emailing them — for when you've already replied in Help Scout"
+          className="rounded-lg px-3 py-2 text-[13px] text-ink-soft underline underline-offset-2 hover:no-underline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-focus)]"
+        >
+          Just record it
+        </button>
+        <ButtonInk onClick={onSend} disabled={working || loading || !body.trim()}>
+          {working ? 'Sending…' : 'Send & clear'}
+        </ButtonInk>
+      </div>
+    </Modal>
   )
 }
 

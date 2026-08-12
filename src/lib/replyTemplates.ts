@@ -114,7 +114,7 @@ export function substituteVariables(text: string, ctx: TemplateContext): string 
 // Designer-picked templates (first_proof, revision) use unprefixed
 // IDs and render in the "Pre-send messages" sub-section.
 
-export type TemplateVariableScope = 'designer_picked' | 'proof_viewer' | 'project_lifecycle' | 'order' | 'order_reminder' | 'order_confirmation' | 'order_lifecycle' | 'supplier_order' | 'inhouse_note'
+export type TemplateVariableScope = 'designer_picked' | 'proof_viewer' | 'project_lifecycle' | 'order' | 'order_reminder' | 'order_confirmation' | 'order_lifecycle' | 'supplier_order' | 'supplier_proof' | 'inhouse_note'
 
 export interface TemplateVariableMeta {
   // Variable name as it appears between braces in templates. Plain
@@ -188,6 +188,14 @@ export const TEMPLATE_VARIABLES: TemplateVariableMeta[] = [
   { name: 'per_person',          scope: 'supplier_order',  description: 'One line per person on a split order (“Joe Bloggs — 50”). Empty when the order isn’t split.', conditional: true  },
   { name: 'artwork_link',        scope: 'supplier_order',  description: 'Link to the Dropbox order folder (when there is one)',                            conditional: true  },
   { name: 'prototype_warning',   scope: 'supplier_order',  description: 'The prototype warning line. Empty on a normal production order.',                 conditional: true  },
+  // Supplier proof approval (supplier_proof_approval) — replied onto the SAME
+  // Help Scout thread the order was emailed on, when we approve the internal
+  // proof the supplier sent back (000409). Deliberately few variables: the
+  // thread already carries the whole order, so this is one human telling
+  // another to go ahead. Nothing parses it.
+  { name: 'customer',            scope: 'supplier_proof',  description: 'Customer name the cards are for',                                                conditional: false },
+  { name: 'order_number',        scope: 'supplier_proof',  description: 'The six-digit order number',                                                     conditional: false },
+  { name: 'note',                scope: 'supplier_proof',  description: 'Anything the person approving typed in the box before sending. Empty when they just approved.', conditional: true  },
   // In-house production note (inhouse_production_note) — the staff note posted
   // on the customer's Help Scout thread telling our own workshop what to make.
   // A human message: Stock Control gets the job directly, so nothing here has
@@ -366,6 +374,35 @@ export const DEFAULT_BODIES: Record<string, string> = {
   // it is meant to be edited. Seeded in 000258.
   supplier_order_email:
     `Hi,\n\nPlease produce the following order for {customer}:\n\n{order_details}\n\nMany thanks.`,
+  // Supplier reply acknowledgement — replied onto the same thread the order went
+  // out on, once someone has read what the supplier sent back. Seeded in 000409;
+  // ⚠ every body here must stay byte-identical to the migration's, which
+  // src/lib/supplierProofTemplate.test.ts pins, or the admin editor's "Reset to
+  // default" restores text nobody wrote.
+  //
+  // ⚠ The SHARED default is deliberately vague, and the specific wording lives on
+  // the per-supplier overrides below. Reading what the three live suppliers
+  // actually send settled this (2026-08-12): only QX send a proof at all.
+  // Solopress send a booking confirmation and a job number; Swype send a proforma
+  // invoice and won't start until it is paid. A shared default promising "the
+  // proof is approved, please go ahead and produce the order" would therefore
+  // have told Swype to start printing something they are waiting to be paid for.
+  // A new supplier we know nothing about gets the safe acknowledgement.
+  supplier_proof_approval:
+    `Hi,\n\nThanks — that's noted and confirmed our end.\n\nMany thanks.`,
+  // QX Metals — the only supplier that returns an artwork proof for approval.
+  'supplier_proof_approval:91eac49d-cea7-44c7-bbcf-974425d26dc7':
+    `Hi,\n\nThanks — the proof is approved. Please go ahead and produce the order.\n\nMany thanks.`,
+  // Solopress — reply is "All booked in" plus their own job number, so there is
+  // nothing to approve; this just closes the loop.
+  'supplier_proof_approval:ca962788-025e-41ca-b7d5-7a00b2a103db':
+    `Hi,\n\nThanks for confirming — all noted our end.\n\nMany thanks.`,
+  // Swype — reply is a proforma invoice, and they don't start until it's paid.
+  // Deliberately says nothing about payment or about going ahead: the payment
+  // itself is handled outside this app (Rob, 2026-08-12), and "please go ahead"
+  // here would be an instruction we're not in a position to give.
+  'supplier_proof_approval:e9494599-a82a-4ccb-ae12-9428c9414fed':
+    `Hi,\n\nThanks — received and noted. We'll come back to you on the proforma.\n\nMany thanks.`,
   // In-house production note — the staff note posted on the customer's Help
   // Scout thread when an in-house order is placed, telling our own workshop
   // what to make. This default reproduces the layout the note has always had,

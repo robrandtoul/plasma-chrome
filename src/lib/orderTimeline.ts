@@ -41,6 +41,11 @@ export type OrderTimelineEntryType =
   | 'handoff'
   | 'supplier_emailed'
   | 'production_note'
+  // The supplier proof holding pen (000409): they sent their internal proof
+  // back, and we signed it off. Between "emailed to the supplier" and anything
+  // being made.
+  | 'supplier_proof_received'
+  | 'supplier_proof_approved'
   | 'shipped'
   | 'delivered'
 
@@ -71,6 +76,11 @@ export interface TimelineOrder {
   handoff_at: string | null
   supplier_email_sent_at: string | null
   production_note_posted_at: string | null
+  // Supplier proof holding pen (000409). Optional so a caller that predates the
+  // migration — or a select that doesn't ask for them — still type-checks and
+  // simply contributes no entries.
+  supplier_reply_at?: string | null
+  supplier_proof_approved_at?: string | null
   artwork_checked_at: string | null
   artwork_check_verdict: string | null
   supplier_name?: string | null
@@ -129,8 +139,10 @@ const TIE_RANK: Record<OrderTimelineEntryType, number> = {
   handoff: 12,
   supplier_emailed: 13,
   production_note: 14,
-  shipped: 15,
-  delivered: 16,
+  supplier_proof_received: 15,
+  supplier_proof_approved: 16,
+  shipped: 17,
+  delivered: 18,
 }
 
 const VERDICT_LABEL: Record<string, string> = {
@@ -254,6 +266,21 @@ export function buildOrderTimeline(
     }
     if (order.production_note_posted_at && !within(order.production_note_posted_at)) {
       add('production_note', order.production_note_posted_at, 'Production note posted')
+    }
+    // The supplier's own proof coming back, and our sign-off (000409).
+    // supplier_reply_at holds only the NEWEST reply — the column is overwritten
+    // by each one — so a re-proofed order shows its latest round, not its
+    // history. Honest about what we store rather than inventing rounds we never
+    // recorded.
+    if (order.supplier_reply_at) {
+      add(
+        'supplier_proof_received',
+        order.supplier_reply_at,
+        order.supplier_name ? `${order.supplier_name} replied` : 'The supplier replied',
+      )
+    }
+    if (order.supplier_proof_approved_at) {
+      add('supplier_proof_approved', order.supplier_proof_approved_at, 'Supplier reply cleared')
     }
   }
 

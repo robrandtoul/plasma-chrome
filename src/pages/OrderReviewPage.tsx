@@ -88,6 +88,10 @@ interface PreviewResponse {
   error?: string
   route?: 'in_house' | 'supplier'
   subject?: string
+  /** Supplier route only: what the CUSTOMER's proof thread gets renamed to.
+   *  Differs from `subject` (the supplier email's) whenever a Dropbox folder is
+   *  linked under a project name that isn't the customer's. */
+  customer_thread_subject?: string
   note_lines?: string[]
   email_lines?: string[]
   supplier?: SupplierOpt
@@ -1226,6 +1230,18 @@ export default function OrderReviewPage() {
                     )}
                     <p className="mt-3 text-[12px] text-ink-mute">Subject</p>
                     <p className="text-sm font-medium text-ink">{preview.subject}</p>
+                    {/* The customer's own thread is renamed to the Dropbox folder
+                        name at the same moment, matching the in-house route. Shown
+                        only when it differs from the supplier subject above —
+                        printing the same string twice under two labels reads as a
+                        mistake, and on the orders where they agree there is
+                        nothing here worth a line. */}
+                    {preview.customer_thread_subject && preview.customer_thread_subject !== preview.subject && (
+                      <>
+                        <p className="mt-3 text-[12px] text-ink-mute">Customer’s thread will be renamed to</p>
+                        <p className="text-sm font-medium text-ink">{preview.customer_thread_subject}</p>
+                      </>
+                    )}
                     <p className="mt-3 text-[12px] text-ink-mute">Message</p>
                     {messageEditor}
                     {preview.artwork_plan && (

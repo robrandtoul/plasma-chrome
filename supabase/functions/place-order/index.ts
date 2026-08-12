@@ -29,6 +29,8 @@ import { getDropboxAccessToken, listSharedLinkEntries, downloadSharedLinkFile } 
 import { buildOrderSpecSnapshot, type OrderSpecSnapshot } from '../_shared/orderSpecSnapshot.ts'
 import { buildHandoffPayload } from '../_shared/orderHandoff.ts'
 import { renderTemplate } from '../_shared/replyTemplates.ts'
+import { awaitingSupplierNote } from '../_shared/supplierNote.ts'
+import { orderFolderSubject } from '../_shared/orderSubject.ts'
 import {
   blanksBatchQuantity,
   blanksSourceProblem,
@@ -911,7 +913,7 @@ Deno.serve(async (req) => {
     }
     const composedNote = await renderInhouseNote(admin, noteVars)
     const lines: string[] = composedNote.split('\n')
-    const subject = `Order ${String(order.stock_order_number).trim()} - ${String(order.project_name ?? customerName).trim()}`.replace(/\s-\s*$/, '').trim()
+    const subject = orderFolderSubject(order.stock_order_number, order.project_name as string | null, customerName)
 
     // The direct hand-off contract payload (docs/order-handoff-spec.md §3.2) —
     // composed from the same values as the note so the two can't drift.
@@ -1194,7 +1196,14 @@ Deno.serve(async (req) => {
     artwork_link: (order.dropbox_folder_url as string | null) ?? '',
     note: (note && !customMessage) ? note : '',
   })).split('\n')
+  // What the SUPPLIER's own email is titled. Unchanged: it is outward-facing and
+  // nobody asked for it to move.
   const subject = `Order ${String(order.stock_order_number).trim()} - ${customerName}`
+  // What the CUSTOMER's proof thread gets renamed to — the Dropbox order folder
+  // name, matching the in-house route (team request, 12 Aug). Differs from the
+  // supplier subject above whenever a folder is linked whose project name isn't
+  // the customer's name, which on live is half of them.
+  const customerThreadSubject = orderFolderSubject(order.stock_order_number, order.project_name as string | null, customerName)
 
   // The direct hand-off contract payload (docs/order-handoff-spec.md §3.2) —
   // composed from the same values as the email so the two can't drift. At
@@ -1261,6 +1270,12 @@ Deno.serve(async (req) => {
       ok: true,
       route,
       subject,
+      // What the customer's own thread will be renamed to. Surfaced separately
+      // because it differs from the supplier email's subject whenever a Dropbox
+      // folder is linked under a project name — half of live's orders — and a
+      // thread quietly renaming itself is exactly the sort of surprise the
+      // review screen exists to prevent.
+      customer_thread_subject: customerThreadSubject,
       email_lines: emailLines,
       supplier: chosen,
       suppliers,
@@ -1416,13 +1431,22 @@ Deno.serve(async (req) => {
     // order can be placed without one, in which case there's nothing to copy onto).
     if (conversationId) {
       try {
-        await createNote(
-          token,
-          conversationId,
-          userId,
-          `<strong>COPY OF ORDER SENT TO SUPPLIER</strong><br><br>${handoffBody}`,
-        )
-      } catch { /* best-effort copy; the supplier email is the hand-off that matters */ }
+        // Rename the CUSTOMER's proof thread to the Dropbox order folder name,
+        // exactly as the in-house route does — so the conversation, the folder
+        // and the Stock Control job all read "Order 402910 - Capital Piling"
+        // and any of the three can be found from the other two.
+        //
+        // ⚠ Uses customerThreadSubject, NOT the `subject` on the supplier email
+        // above: that one is built from the customer name and matches the folder
+        // only by luck (23 of 46 live orders differ). One formula for both routes
+        // now lives in _shared/orderSubject.ts.
+        await setConversationSubject(token, conversationId, customerThreadSubject)
+        // Half of a pair: approve-supplier-proof files the matching "cleared"
+        // note when someone deals with the reply. Both bodies live in
+        // _shared/supplierNote.ts so they can't drift apart, and so the
+        // never-claim-a-proof rule is pinned by one test (000409).
+        await createNote(token, conversationId, userId, awaitingSupplierNote(chosen.name, handoffBody))
+      } catch { /* best-effort: the supplier email has already gone, and it is the hand-off that matters */ }
     }
   } catch (e) {
     const msg = e instanceof HsError ? `Help Scout: ${e.message}` : `${(e as Error)?.message ?? 'unknown'}`

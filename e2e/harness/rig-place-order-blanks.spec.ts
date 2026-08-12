@@ -134,6 +134,29 @@ test.describe('place-order review — blanks from another order (o-blanks)', () 
     expect(errors).toEqual([])
   })
 
+  test('a supplier order warns that the customer’s thread will be renamed, and to what', async ({ page }) => {
+    // Placing a supplier order now renames the CUSTOMER's proof conversation to
+    // the Dropbox order folder name, matching what the in-house route has always
+    // done. A thread silently renaming itself is exactly the surprise this screen
+    // exists to prevent, so the new name has to be on it before you confirm.
+    //
+    // It is a SECOND subject, not the one above it: that one titles the
+    // supplier's email and is built from the customer name, which matches the
+    // folder only by luck (on live the two differ on half of all supplier
+    // orders). The fixture deliberately makes them differ.
+    const main = page.locator('main')
+    await blanksCard(page).getByRole('button', { name: /order its own blanks/i }).click()
+
+    const supplierSubject = 'Order 403958 - Apex Dental & Implant Centre'
+    const threadSubject = 'Order 403958 - Apex Dental Reception Cards'
+    await expect(main.getByText(supplierSubject, { exact: true })).toBeVisible()
+    await expect(main.getByText(threadSubject, { exact: true })).toBeVisible()
+
+    // The rename is labelled as the customer's, so the two subjects can't be
+    // read as a duplicate of each other.
+    await expect(main.getByText(/customer’s thread will be renamed to/i)).toBeVisible()
+  })
+
   test('expanding the disclosure offers the o-thornton batch, and picking it restores the arrangement', async ({ page }) => {
     // Walk out first — the disclosure only exists on the supplier route.
     await blanksCard(page).getByRole('button', { name: /order its own blanks/i }).click()

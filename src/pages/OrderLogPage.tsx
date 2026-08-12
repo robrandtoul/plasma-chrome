@@ -136,6 +136,9 @@ interface LogOrder {
   supplier_overs: number | null
   handoff_at: string | null
   supplier_email_sent_at: string | null
+  // Supplier proof holding pen (000409) — feeds the two timeline entries.
+  supplier_reply_at: string | null
+  supplier_proof_approved_at: string | null
   production_note_posted_at: string | null
   artwork_check_verdict: string | null
   artwork_checked_at: string | null
@@ -235,6 +238,7 @@ const LIST_SELECT = `
   material_variant_id, material_option_id, thickness_open, finish_open, quantity_open,
   date_required, dropbox_folder_url, stock_order_number, project_name, stock_colour,
   supplier_name, supplier_overs, handoff_at, supplier_email_sent_at, production_note_posted_at,
+  supplier_reply_at, supplier_proof_approved_at,
   artwork_check_verdict, artwork_checked_at, created_by, fulfilled_by,
   ship_to_name, ship_to_email, ship_to_phone, ship_dest_country, ship_dest_postcode, customs_tax_id, vat_treatment,
   material_variants(display_name, materials(display_name, code, production_route)),
@@ -1786,6 +1790,11 @@ const TIMELINE_VISUAL: Record<OrderTimelineEntryType, { icon: typeof FilePlus2; 
   handoff: { icon: Send, tint: tokens.allocated },
   supplier_emailed: { icon: Send, tint: tokens.allocated },
   production_note: { icon: StickyNote, tint: tokens.inkMute },
+  // Supplier proof holding pen (000409). Their proof arriving is inbound (same
+  // Eye/allocated treatment as the customer opening a link); our sign-off is a
+  // green tick — it's the moment the job is genuinely released to be made.
+  supplier_proof_received: { icon: FileSearch, tint: tokens.allocated },
+  supplier_proof_approved: { icon: PackageCheck, tint: tokens.inStock },
   shipped: { icon: Truck, tint: tokens.inStock },
   delivered: { icon: PackageCheck, tint: tokens.inStock },
 }
