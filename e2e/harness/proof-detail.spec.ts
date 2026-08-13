@@ -261,3 +261,44 @@ test.describe('the ordered project (p-ordered)', () => {
     await expect(page.getByRole('dialog')).toHaveCount(0)
   })
 })
+
+test.describe('a Selection round shows every direction (p-selection)', () => {
+  // The Brownies Tree regression. The wood proof offered six species as
+  // directions, all six images stamped side='front'. The artwork panel took
+  // the first front and the first back, so it showed ONE picture — Walnut —
+  // with nothing saying five others existed. The customer had chosen Maple;
+  // the order went out as Black Walnut and the page never contradicted it.
+  //
+  // Structure only: the count of tiles and the count of distinct labels. The
+  // label WORDING comes from the designer's own variant names, so it is
+  // fixture data rather than copy, and asserting the set is what proves each
+  // direction is separately identified.
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/verify-harness/index.html?path=/proofs/p-selection')
+    await expect(page.getByRole('button', { name: /open version 1 detail/i })).toBeVisible()
+  })
+
+  test('renders all six directions, not just the first', async ({ page }) => {
+    const panel = page.locator('ul[data-artwork-count]')
+    await expect(panel).toHaveAttribute('data-artwork-count', '6')
+    await expect(panel.getByRole('listitem')).toHaveCount(6)
+    await expect(panel.getByRole('img')).toHaveCount(6)
+  })
+
+  test('names each direction, so no two tiles read the same', async ({ page }) => {
+    const alts = await page.locator('ul[data-artwork-count] img').evaluateAll((els) =>
+      els.map((e) => (e as HTMLImageElement).alt),
+    )
+    expect(alts).toHaveLength(6)
+    expect(new Set(alts).size).toBe(6)
+  })
+
+  test('the whole panel is still one control onto the version detail', async ({ page }) => {
+    // The tiles became a list, so the wrapper had to stop being a <button>
+    // (a list inside a button is invalid). It must keep its role and name, and
+    // must not have sprouted a control per tile.
+    const opener = page.getByRole('button', { name: /open version 1 detail/i })
+    await expect(opener).toHaveCount(1)
+    await expect(opener.locator('button')).toHaveCount(0)
+  })
+})

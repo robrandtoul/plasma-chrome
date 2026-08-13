@@ -1280,14 +1280,23 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
     } else if (select.includes('materials(display_quantities)')) {
       // ProofDetailPage's versions list — one current v1 for the fixture
       // project above.
+      //
+      // A proof id containing 'selection' is the Brownies Tree shape: a
+      // variant round offering several directions at once. The artwork panel
+      // used to show only the first of them, which is how a Maple order went
+      // out as Black Walnut.
       const pid = filters['eq:proof_id'] ?? 'p-a1'
+      const isSelection = String(pid).includes('selection')
       rows = [{
-        id: `ver-${pid}`, version_number: 1, material_id: 'm-steel', material_display: 'Stainless Steel',
+        id: `ver-${pid}`, version_number: 1,
+        material_id: isSelection ? 'm-wood' : 'm-steel',
+        material_display: isSelection ? 'Wood' : 'Stainless Steel',
         ink_names: [], currency: 'GBP', is_current: true, created_at: daysAgo(22), created_by: 'user-rob',
         change_notes: null, pricing_snapshot: null, shipping_note: '', custom_quote: false,
-        names: ['Valentina Ring'], card_type: 'business', shape: 'recipients',
+        names: isSelection ? [] : ['Valentina Ring'],
+        card_type: 'business', shape: isSelection ? 'selection' : 'recipients',
         last_reply_sent_at: daysAgo(21), last_reply_sent_by: null, displayed_variant_ids: [],
-        is_variant_round: false, is_per_direction_pricing: false, material_options: [],
+        is_variant_round: isSelection, is_per_direction_pricing: false, material_options: [],
         has_personalisation: false, team_sharing_enabled: false,
         front_colour_id: null, core_colour_id: null, back_colour_id: null,
         artwork_check: null, artwork_checked_at: null, artwork_check_verdict: null,
@@ -1403,6 +1412,25 @@ function resolveQuery(state: QueryState): { data: any; error: null; count?: numb
         ? filters['in:proof_version_id']
         : [filters['eq:proof_version_id'] ?? 'demo-version']
       rows = versionIds.flatMap((vid, i) => {
+        // The Brownies Tree wood shape: six species offered as directions, every
+        // image a front, one per direction. The proof detail panel showed ONE of
+        // these (Walnut) before the labelled-grid change, on a project the
+        // customer had chosen Maple for.
+        if (String(vid).includes('selection')) {
+          return ['Walnut', 'Oak', 'Birch', 'Cherry', 'Bamboo', 'Maple'].map((v, n) => ({
+            id: `img-${v.toLowerCase()}`,
+            proof_version_id: vid,
+            image_path: `proofs/wood-${v.toLowerCase()}.jpg`,
+            original_filename: `Proof01_${v}.jpg`,
+            associated_name: null,
+            material_option: null,
+            side: 'front',
+            sort_order: n,
+            layout_id: null,
+            proof_round_variants: { display_name: v },
+            proof_layouts: null,
+          }))
+        }
         // Globex (order o6) is the two-recipient fixture — a shared front plus
         // a card each — so the collapsed strip's "+N more" truncation and the
         // panel's per-recipient rows have something to render. Every other

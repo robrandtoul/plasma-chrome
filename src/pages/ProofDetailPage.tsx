@@ -47,6 +47,12 @@ import {
   unresolvedCount,
   type ProofAnnotation,
 } from '../lib/proofAnnotations'
+import {
+  artworkGridColumns,
+  buildCurrentVersionArtwork,
+  type ArtworkImageRow,
+  type LabelledArtwork,
+} from '../lib/currentVersionArtwork'
 import { useCalloutsEnabled } from '../lib/useCalloutsEnabled'
 import { addCardToSet, attachProofToSet, createSetFromProof, fetchBundleHint, markSetReviewLinkSent, setReviewPath } from '../lib/proofSets'
 import { outstandingSummary, type BundleHint } from '../lib/bundleOrderLabels'
@@ -323,13 +329,15 @@ export default function ProofDetailPage() {
   // (one column on the same row) to power the "Last activity" stat card
   // in the snapshot band. Null until loaded / unreadable.
   const [lastActivityAt, setLastActivityAt] = useState<string | null>(null)
-  // Current version's front/back artwork (signed URLs) for the hero
-  // preview at the top of the main column. One representative front +
-  // one back is enough — the version modal and customer view hold the
-  // full gallery. Reloaded by loadProof whenever the proof changes.
+  // EVERY piece of artwork on the current version (signed URLs), labelled, for
+  // the panel at the top of the main column. It used to be one front and one
+  // back, which hid artwork on a quarter of live versions and showed the
+  // Brownies Tree six-species wood proof as a single unlabelled picture of
+  // Walnut — on a project the customer had chosen Maple for. Grouping and
+  // captioning rules live in src/lib/currentVersionArtwork.ts.
   // id is carried so customer pins can be matched to the face they sit on.
   const [heroImages, setHeroImages] = useState<
-    { id: string; url: string; side: 'front' | 'back' | null }[]
+    (LabelledArtwork & { url: string })[]
   >([])
   const [versions, setVersions] = useState<ModalVersion[]>([])
   // proof_version_id → signed thumbnail URL. Populated alongside
@@ -1147,47 +1155,121 @@ export default function ProofDetailPage() {
       setVersionThumbs(m)
     })
 
-    // Hero images — the current version's first front + first back,
-    // signed. Same storage path + createSignedUrls pattern as the
-    // thumbnails, but scoped to the current version and keeping the
-    // back side so the hero can show both faces. Best-effort: any
-    // failure leaves the hero on its "no artwork yet" placeholder.
+    // Hero artwork — EVERY non-QR image on the current version, signed and
+    // labelled. Scoped with .eq to the current version and nothing else: the
+    // panel renders at most 18 tiles (the live maximum), while the worst proof
+    // in the database carries 124 images across all its versions, so widening
+    // this read would mint a hundred signed URLs a page load for nothing.
+    //
+    // The two embeds are what let a tile say WHICH card it is — a Selection
+    // direction and a Set (collection) design. Read directly rather than
+    // through a materials embed: proofs.materials is gated on
+    // `archived_at is null or is_admin()`, so an archived material silently
+    // blanks for designers only (the 000376 trap). proof_round_variants and
+    // proof_layouts carry the images' own predicate, so they are safe.
+    //
+    // Best-effort throughout: any failure leaves the panel on its "no artwork
+    // yet" placeholder, exactly as before.
     const currentForHero = loadedVersions.find((v) => v.is_current)
     if (currentForHero) {
       void (async () => {
-        const { data: imgRows } = await supabase
-          .from('proof_version_images')
-          .select('id, image_path, side, sort_order')
-          .eq('proof_version_id', currentForHero.id)
-          .eq('is_qr_code', false)
-          .order('sort_order', { ascending: true })
+        const optionCodes = Array.isArray(currentForHero.material_options)
+          ? (currentForHero.material_options as string[])
+          : []
+        const IMAGE_COLUMNS =
+          'id, image_path, side, sort_order, associated_name, material_option, original_filename'
+        const [imagesRes, optionsRes] = await Promise.all([
+          supabase
+            .from('proof_version_images')
+            .select(
+              `${IMAGE_COLUMNS}, proof_round_variants(display_name), proof_layouts(title)`,
+            )
+            .eq('proof_version_id', currentForHero.id)
+            .eq('is_qr_code', false)
+            .order('sort_order', { ascending: true })
+            .order('id', { ascending: true }),
+          // Only when the version actually offers a choice of tabs, and only
+          // when it has a material at all — a per-direction-pricing Selection
+          // stores none (000142/000144).
+          optionCodes.length > 1 && currentForHero.material_id
+            ? supabase
+                .from('material_options')
+                .select('code, display_name')
+                .eq('material_id', currentForHero.material_id)
+            : Promise.resolve({ data: null }),
+        ])
         if (isStale()) return
-        const rows = (imgRows ?? []) as Array<{
+
+        // An embed that stops resolving must not read as "no artwork". PostgREST
+        // fails the WHOLE select on one bad relationship, and the empty result
+        // renders as "No artwork uploaded to vN yet" — a plausible lie, on every
+        // proof, of exactly the kind this panel exists to stop telling. So a
+        // failure retries without the embeds: the labels degrade, the artwork
+        // still shows, and the console says why.
+        let imgRows: unknown = imagesRes.data
+        if (imagesRes.error) {
+          console.warn('[proof detail] labelled artwork read failed, retrying plain', imagesRes.error)
+          const plain = await supabase
+            .from('proof_version_images')
+            .select(IMAGE_COLUMNS)
+            .eq('proof_version_id', currentForHero.id)
+            .eq('is_qr_code', false)
+            .order('sort_order', { ascending: true })
+            .order('id', { ascending: true })
+          if (isStale()) return
+          imgRows = plain.data
+        }
+
+        // supabase-js types a to-one embed as either an object or an array;
+        // the runtime shape is a single object (or null). Same unwrapping as
+        // the proof_events read above.
+        const one = <T,>(e: T | T[] | null | undefined): T | null =>
+          Array.isArray(e) ? e[0] ?? null : e ?? null
+        type RawRow = {
           id: string
           image_path: string
           side: 'front' | 'back' | null
-        }>
-        const front = rows.find((r) => r.side !== 'back')
-        const back = rows.find((r) => r.side === 'back')
-        const picked = [front, back].filter(
-          (r): r is { id: string; image_path: string; side: 'front' | 'back' | null } => !!r,
-        )
-        if (picked.length === 0) {
+          sort_order: number | null
+          associated_name: string | null
+          material_option: string | null
+          original_filename: string | null
+          proof_round_variants: { display_name: string } | { display_name: string }[] | null
+          proof_layouts: { title: string } | { title: string }[] | null
+        }
+        const rows: ArtworkImageRow[] = ((imgRows ?? []) as unknown as RawRow[]).map((r) => ({
+          id: r.id,
+          image_path: r.image_path,
+          side: r.side,
+          sort_order: r.sort_order,
+          associated_name: r.associated_name,
+          material_option: r.material_option,
+          original_filename: r.original_filename,
+          variant_name: one(r.proof_round_variants)?.display_name ?? null,
+          layout_title: one(r.proof_layouts)?.title ?? null,
+        }))
+        if (rows.length === 0) {
           setHeroImages([])
           return
         }
+
+        const optionLabels = new Map<string, string>()
+        for (const o of (optionsRes.data ?? []) as { code: string; display_name: string }[]) {
+          optionLabels.set(o.code, o.display_name)
+        }
+        const labelled = buildCurrentVersionArtwork(rows, optionLabels)
+
         const { data: signed } = await supabase.storage
           .from('proof-images')
           .createSignedUrls(
-            picked.map((r) => r.image_path),
+            labelled.map((r) => r.image_path),
             3600,
           )
         if (isStale() || !signed) return
         const urlByPath = new Map<string, string>()
         for (const s of signed) if (s.path && s.signedUrl) urlByPath.set(s.path, s.signedUrl)
         setHeroImages(
-          picked
-            .map((r) => ({ id: r.id, url: urlByPath.get(r.image_path) ?? '', side: r.side }))
+          labelled
+            .map((r) => ({ ...r, url: urlByPath.get(r.image_path) ?? '' }))
             .filter((x) => x.url),
         )
       })()
@@ -2780,22 +2862,48 @@ export default function ProofDetailPage() {
         </div>
       </div>
       {heroImages.length > 0 ? (
-        <button
-          type="button"
+        // A div, not a <button>: the tiles now carry a <ul>, and a list inside
+        // a button is an invalid content model. role + tabIndex + keydown is
+        // the house escape hatch (see ImageGrid.tsx) and keeps both the
+        // accessible name and the getByRole('button') the e2e specs use.
+        <div
+          role="button"
+          tabIndex={0}
           onClick={() => setSelectedVersion(currentVersion)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              setSelectedVersion(currentVersion)
+            }
+          }}
           title="Open version detail"
           aria-label={`Open version ${currentVersion.version_number} detail`}
-          className="block w-full text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]"
+          className="block w-full cursor-pointer text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]"
         >
-          <div className={['grid gap-2 p-3', heroImages.length > 1 ? 'grid-cols-2' : 'grid-cols-1'].join(' ')}>
+          <ul
+            role="list"
+            data-artwork-count={heroImages.length}
+            // Literal class strings — Tailwind scans source text, so an
+            // interpolated `grid-cols-${n}` compiles to no CSS at all.
+            // Literal class strings — Tailwind scans source text, so an
+            // interpolated `grid-cols-${n}` compiles to no CSS at all. Three
+            // across only from `sm`: at 375px it puts a business card in a
+            // 100px tile and truncates its caption to about nine glyphs.
+            className={[
+              'grid list-none gap-2 p-3',
+              { 1: 'grid-cols-1', 2: 'grid-cols-2', 3: 'grid-cols-2 sm:grid-cols-3' }[
+                artworkGridColumns(heroImages.length)
+              ],
+            ].join(' ')}
+          >
             {heroImages.map((img, i) => (
+              <li key={img.id}>
               <div
-                key={i}
                 className="relative overflow-hidden rounded-[8px] bg-ink"
               >
                 <img
                   src={img.url}
-                  alt={img.side === 'back' ? 'Back of the card' : 'Front of the card'}
+                  alt={img.label ?? (img.side === 'back' ? 'Back of the card' : 'Front of the card')}
                   loading="lazy"
                   className="block w-full"
                 />
@@ -2813,7 +2921,13 @@ export default function ProofDetailPage() {
                     The customer page's "never draw on the artwork" rule is about
                     what the CUSTOMER is shown; this is our side of the glass,
                     where the panel already draws the same markers. */}
-                {pinsOnImage(customerPins, img).map((m) => {
+                {/* allowSideFallback only on the first tile of each side. A pin
+                    whose image anchor was lost falls back to matching a SIDE,
+                    and this panel can now render six fronts — drawing the same
+                    dot on all six would misreport where the customer pointed. */}
+                {pinsOnImage(customerPins, img, {
+                  allowSideFallback: heroImages.findIndex((x) => x.side === img.side) === i,
+                }).map((m) => {
                   const pos = markerPosition(Number(m.pin.x), Number(m.pin.y))
                   const done = m.pin.resolved_at != null
                   return (
@@ -2830,18 +2944,26 @@ export default function ProofDetailPage() {
                     </span>
                   )
                 })}
-                {heroImages.length > 1 && (
+                {/* What this card is: the direction, the layout, the finish,
+                    the recipient, the side — whichever of those actually tells
+                    it apart from its neighbours. Never aria-hidden: a decorative
+                    span in here breaks customer-pins.spec's pin count. */}
+                {img.label && (
                   <span
-                    className="absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider"
+                    // Its own title, because the wrapper's would otherwise win
+                    // and a truncated caption would be unrecoverable.
+                    title={img.label}
+                    className="absolute bottom-1.5 left-1.5 max-w-[calc(100%-0.75rem)] truncate rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider"
                     style={{ backgroundColor: 'rgba(22,19,17,0.72)', color: '#fff' }}
                   >
-                    {img.side === 'back' ? 'Back' : 'Front'}
+                    {img.label}
                   </span>
                 )}
               </div>
+              </li>
             ))}
-          </div>
-        </button>
+          </ul>
+        </div>
       ) : (
         <div className="p-8 text-center">
           <p className="text-[13px] text-ink-mute">No artwork uploaded to v{currentVersion.version_number} yet.</p>

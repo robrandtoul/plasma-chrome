@@ -216,19 +216,26 @@ export function pinsForEvent(pins: NumberedPin[], eventId: string | null): Numbe
  * its side intact). The fallback is what keeps such a pin visible on the face it
  * was placed on instead of vanishing from the artwork entirely.
  *
- * A pin whose image is not among those passed in simply isn't returned — the
- * hero shows only the first front and first back, so on a multi-recipient proof
- * some pins have no thumbnail to sit on. Those are never lost: the change-request
- * strip lists every pin regardless of where it sits.
+ * ⚠ That fallback matches a SIDE, so it fires on every image of that side. It
+ * was safe only while the caller rendered at most one front and one back; the
+ * proof detail page now renders the whole current version, and a Selection round
+ * of six species is six fronts. Drawing the customer's pin on all six is a
+ * silent lie about where they pointed — so `allowSideFallback` is opt-in, and
+ * the caller passes it for the FIRST image of each side only.
+ *
+ * A pin that lands nowhere is never lost: the change-request strip lists every
+ * pin regardless of where it sits.
  */
 export function pinsOnImage(
   pins: NumberedPin[],
   image: { id: string; side: AnnotationSide | null },
+  opts: { allowSideFallback?: boolean } = {},
 ): NumberedPin[] {
+  const allowSideFallback = opts.allowSideFallback ?? true
   return pins.filter((p) =>
     p.pin.proof_version_image_id
       ? p.pin.proof_version_image_id === image.id
-      : p.pin.side != null && p.pin.side === image.side,
+      : allowSideFallback && p.pin.side != null && p.pin.side === image.side,
   )
 }
 
