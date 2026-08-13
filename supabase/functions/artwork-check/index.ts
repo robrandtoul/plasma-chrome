@@ -1299,7 +1299,12 @@ Deno.serve(async (req) => {
     }
 
     // ── One multimodal call ─────────────────────────────────────────────────
-    const cutThroughBlock = buildCutThroughContext(cutThroughFaces)
+    // hasApprovedProof gates the "were the cuts lost?" instruction: with no
+    // proof images in the request there is nothing to compare the absence of
+    // cuts against, and asking anyway would invite a guess.
+    const cutThroughBlock = buildCutThroughContext(cutThroughFaces, {
+      hasApprovedProof: approvedBlocks.length > 0,
+    })
     const content: ContentBlock[] = [
       { type: 'text', text: buildContextText(baseCtx) },
       ...(cutThroughBlock ? [{ type: 'text', text: cutThroughBlock } as ContentBlock] : []),

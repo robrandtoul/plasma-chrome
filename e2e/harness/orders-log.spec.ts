@@ -197,4 +197,44 @@ test.describe('order log', () => {
     // A row the RPC says nothing about is untouched by the enrichment.
     await expect(listRows(page).filter({ hasText: 'ORD-O5' }).first()).not.toContainText(/shipped|delivered/i)
   })
+
+  test('the stored artwork check opens from the detail panel, read-only', async ({ page }) => {
+    // Until Aug 2026 this page fetched the verdict but never the report, so a
+    // check that HAD run was unreadable here — which is how a wood order
+    // (403980) came to look as though it had never been checked at all. The
+    // verdict alone is not enough: the whole point of coming back to an
+    // archived order is to read what the check actually said.
+    //
+    // ⚠ SCOPE — this covers the RENDER path only, not the fetch. The harness
+    // mock ignores the select string and hands back whole fixture rows (ask
+    // for `id` alone and all 66 columns come back), so dropping artwork_check
+    // from the detail select — the exact original bug — still passes here.
+    // Verified deliberately, not assumed. Nothing in this suite can catch a
+    // missing column; only reading the select can.
+    const row = listRows(page).filter({ hasText: 'ORD-O9' }).first()
+    await row.click()
+    const detail = page.locator('div.lg\\:sticky').first()
+    await expect(detail.getByRole('heading', { name: /pied piper/i })).toBeVisible()
+
+    const openReport = detail.getByRole('button', { name: /all clear/i })
+    await expect(openReport).toBeVisible()
+    await openReport.click()
+
+    // The report BODY, not just a verdict chip. The field-by-field comparison
+    // renders as a CSS grid of divs with no table/row roles anywhere inside
+    // the dialog, so the stored report's own field VALUES are what prove it
+    // rendered — fixture data, not UI copy, so a rewording can't break this.
+    const report = page.getByRole('dialog')
+    await expect(report).toBeVisible()
+    await expect(report.getByText('richard@piedpiper.com').first()).toBeVisible()
+    await expect(report.getByText(/Richard Hendricks/).first()).toBeVisible()
+
+    // Read-only, asserted by exhaustion: Close is the ONLY control. Every
+    // acting control (Investigate / Mark as addressed / Hold) belongs to an
+    // order still in play — this one is already in production, so offering
+    // them here would invite a designer to "fix" something already made.
+    await expect(report.getByRole('button')).toHaveCount(1)
+    await report.getByRole('button', { name: /close/i }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+  })
 })

@@ -709,6 +709,72 @@ function pdfArtwork(cx: number, tie: boolean): string {
   eq('no files -> no context block', buildCutThroughContext([]), '')
 }
 
+// ── cuts that went missing between proof and print file ───────────────────
+//
+// Regression cover for order 403980 (Bosatta, wood, Aug 2026): the print files
+// had lost the cut-throughs the approved proof showed, the geometry measured
+// exactly that ('no_cut_artwork' on every face), and the run still came back
+// 'clear' because nothing asked the model to compare. The geometry alone can
+// never settle this — it does not see the proof — so what is asserted here is
+// that the model is ASKED, and asked only when an answer is possible.
+{
+  const uncutFace = (label: string) => ({
+    label,
+    result: {
+      status: 'no_cut_artwork' as const,
+      islands: [],
+      cutRegions: 0,
+      printedWhiteRegions: 0,
+      mirroredAreaShare: 0,
+      cardWidthPt: CARD_W,
+      cardHeightPt: CARD_H,
+    },
+  })
+  const bosatta = [uncutFace('01_Front.ai'), uncutFace('01_Back.ai')]
+
+  const withProof = buildCutThroughContext(bosatta, { hasApprovedProof: true })
+  check('nothing cut through + a proof to check it against -> the model is told to compare',
+    /approved proof/i.test(withProof), withProof)
+  check('and told what a mismatch means', /lost/i.test(withProof), withProof)
+  check('and at what severity, so it is not filed as a maybe',
+    /defect/i.test(withProof), withProof)
+  check('both uncut faces are named, so the model knows which cards to check',
+    /01_Front\.ai/.test(withProof) && /01_Back\.ai/.test(withProof), withProof)
+
+  // The other half of the instruction, and the reason this is safe to ship:
+  // 13 of the 17 live orders carrying this exact signature are ordinary flat
+  // cards. If the block only ever said "cuts may be missing" it would cry wolf
+  // on nearly all of them and be ignored by the fourth one.
+  check('a flat card that matches its proof is explicitly a non-event',
+    /say nothing/i.test(withProof), withProof)
+  check('and the normal case is named as normal, not as a suspicion',
+    /normal/i.test(withProof), withProof)
+
+  // No proof images in the request -> nothing to compare against. Asking anyway
+  // invites the model to guess from the print file alone, which is precisely
+  // the judgement it has no evidence for.
+  const noProof = buildCutThroughContext(bosatta, { hasApprovedProof: false })
+  check('no approved proof -> no comparison is requested',
+    !/approved proof/i.test(noProof), noProof)
+  eq('and omitting the option behaves the same as saying no',
+    buildCutThroughContext(bosatta), noProof)
+  check('the measured facts still reach the model either way',
+    /nothing cut through the card/i.test(noProof), noProof)
+}
+
+{
+  // A card that HAS its cut-throughs must not draw the question — it is only
+  // the absence of cuts that is ambiguous.
+  const strutted = buildPdf(pdfArtwork(126, true))
+  const faces = await analyseOrderArtwork([
+    { name: '01_Front.ai', bytes: strutted },
+    { name: '01_Back.ai', bytes: strutted },
+  ])
+  eq('precondition: this artwork really is cut through', faces[0].result.status, 'clean')
+  const ctx = buildCutThroughContext(faces, { hasApprovedProof: true })
+  check('cuts present -> no missing-cuts question', !/have been lost/i.test(ctx), ctx)
+}
+
 // ── merging into the report ───────────────────────────────────────────────
 
 type TestReport = {

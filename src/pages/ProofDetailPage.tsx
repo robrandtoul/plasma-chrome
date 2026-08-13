@@ -292,6 +292,10 @@ interface ProofOrder {
   amount_us_tariff: number | null
   amount_card_discount: number | null
   custom_quote_total: number | null
+  // Verdict only. The report body is fetched on click (same as the Orders
+  // page) — it is the heaviest column on the row and most visits never open it.
+  artwork_check_verdict: string | null
+  artwork_checked_at: string | null
   material_variants: { materials: { production_route: string | null } | null } | null
 }
 
@@ -850,6 +854,24 @@ export default function ProofDetailPage() {
   // (a new version starts unchecked; only an edit clears it), and the chip on
   // its Versions-list row opens that stored report here, read-only.
   const [versionReportModal, setVersionReportModal] = useState<ModalVersion | null>(null)
+  // The ORDER's artwork check — a different check from the pre-send proof check
+  // above, run against the print files at placement. It had no route from this
+  // page at all, so a designer coming back to a project to ask "what did the
+  // check say?" found the proof-check panel, saw it had never run, and
+  // concluded there was no report (order 403980, Aug 2026). Read-only here: the
+  // acting surfaces are the Orders page and the Place-order review screen.
+  const [orderReportModal, setOrderReportModal] = useState<
+    { orderId: string; loading: boolean; report: ArtworkCheckReport | null } | null
+  >(null)
+
+  async function openOrderReport(orderId: string) {
+    setOrderReportModal({ orderId, loading: true, report: null })
+    const { data, error } = await supabase.from('orders').select('artwork_check').eq('id', orderId).maybeSingle()
+    if (error) console.error('[proof-detail] order artwork check fetch failed', error)
+    setOrderReportModal((m) => m && m.orderId === orderId
+      ? { ...m, loading: false, report: (data as { artwork_check?: ArtworkCheckReport | null } | null)?.artwork_check ?? null }
+      : m)
+  }
   // A fresh run persists server-side but the versions array still holds the
   // row as loaded — mirror the new report onto it so the row's verdict chip
   // appears immediately rather than on the next reload. The !== guard makes
@@ -1105,7 +1127,7 @@ export default function ProofDetailPage() {
     // orders only exist for approved proofs, so an empty result is the norm.
     void supabase
       .from('orders')
-      .select('id, status, token, sent_at, paid_at, expires_at, fulfilled_at, xero_invoice_id, xero_invoice_error, payment_method, created_at, revised_at, currency, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, custom_quote_total, material_variants(materials(production_route))')
+      .select('id, status, token, sent_at, paid_at, expires_at, fulfilled_at, xero_invoice_id, xero_invoice_error, payment_method, created_at, revised_at, currency, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, custom_quote_total, artwork_check_verdict, artwork_checked_at, material_variants(materials(production_route))')
       .eq('proof_id', proofId)
       .order('created_at', { ascending: false })
       .then(({ data }) => {
@@ -3734,6 +3756,17 @@ export default function ProofDetailPage() {
                 {orderInvoiceProblem && (
                   <span className="rounded-full bg-out-soft px-2 py-0.5 text-[11px] font-medium text-out ring-1 ring-out" title="The Xero invoice for this order failed — open Orders to retry it.">Invoice failed</span>
                 )}
+                {latestOrder?.artwork_check_verdict && (
+                  <button
+                    type="button"
+                    onClick={() => void openOrderReport(latestOrder.id)}
+                    className="rounded-full bg-canvas px-2 py-0.5 text-[11px] font-medium text-ink-soft underline decoration-dotted underline-offset-2 ring-1 ring-line hover:text-ink"
+                    title="What the artwork check found against the print files when this order was placed"
+                  >
+                    Artwork check
+                    {latestOrder.artwork_checked_at ? ` · ${relativeTime(latestOrder.artwork_checked_at)}` : ''}
+                  </button>
+                )}
               </div>
               <Link to="/orders" className="shrink-0 text-[13px] font-medium text-ink-soft underline underline-offset-2 hover:text-ink">View in Orders →</Link>
             </div>
@@ -5064,6 +5097,41 @@ export default function ProofDetailPage() {
           </div>
           <div className="mt-1 flex shrink-0 justify-end border-t border-line-soft px-5 py-3">
             <ButtonGhost size="sm" onClick={() => setVersionReportModal(null)}>Close</ButtonGhost>
+          </div>
+        </Modal>
+      )}
+
+      {/* The order's artwork check, read-only — see openOrderReport. Headed
+          "Artwork check" (its own default) so it never reads as the pre-send
+          "Proof check" modal directly above; they are different checks against
+          different files, and conflating them is what sent someone looking for
+          this report in the wrong place. */}
+      {orderReportModal && (
+        <Modal
+          open
+          onClose={() => setOrderReportModal(null)}
+          ariaLabel="Artwork check report"
+          panelClassName="w-full max-w-xl rounded-2xl bg-white shadow-xl md:flex md:max-h-[85vh] md:flex-col"
+        >
+          <div className="shrink-0 px-5 pt-5 pb-3">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">
+              Checked against the print files when the order was placed
+            </p>
+          </div>
+          <div className="px-5 text-[13px] text-ink md:min-h-0 md:flex-1 md:overflow-y-auto">
+            {orderReportModal.loading ? (
+              <p className="text-sm text-ink-mute">Loading the report…</p>
+            ) : orderReportModal.report ? (
+              <ArtworkCheckReportView
+                report={orderReportModal.report}
+                history={{ orderId: orderReportModal.orderId }}
+              />
+            ) : (
+              <p className="text-sm text-ink-mute">The stored report for this order couldn’t be read.</p>
+            )}
+          </div>
+          <div className="mt-1 flex shrink-0 justify-end border-t border-line-soft px-5 py-3">
+            <ButtonGhost size="sm" onClick={() => setOrderReportModal(null)}>Close</ButtonGhost>
           </div>
         </Modal>
       )}

@@ -49,7 +49,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
-import { DesignerChrome, PanelShell, Pill, tokens } from '../design'
+import { DesignerChrome, PanelShell, Pill, ButtonGhost, tokens } from '../design'
 import type { PillColour } from '../design'
 import { formatPrice } from '../lib/currency'
 import type { Currency } from '../lib/types'
@@ -77,6 +77,8 @@ import { customerOrderUrl, customerOrderGroupUrl } from '../lib/customerOrderUrl
 import { openDesignerPreview } from '../lib/customerProofUrl'
 import { scopeToOrderedFinish, finishScopeIsUncertain } from '../lib/approvedArtworkFinish'
 import Modal from '../components/Modal'
+import ArtworkCheckReportView, { type ArtworkCheckReport } from '../components/ArtworkCheckReportView'
+import { artworkDisplayVerdict } from '../lib/artworkAcks'
 import FlagProjectModal from '../components/FlagProjectModal'
 import { WATCH_CATEGORIES, type WatchCategory } from '../lib/watchList'
 import type { GridImage } from '../components/ImageGrid'
@@ -209,6 +211,7 @@ interface DetailExtras {
     letterpress?: { front?: string | null; core?: string | null; back?: string | null } | null
   } | null
   handoff_error: string | null
+  artwork_check: ArtworkCheckReport | null
 }
 
 interface Reminder {
@@ -227,7 +230,9 @@ interface ArtworkImage {
 
 // Everything the list select needs and nothing heavy — ship_to_address,
 // person_quantities, order_spec_snapshot and the artwork_check report are
-// fetched per-order when the detail opens.
+// fetched per-order when the detail opens (see the detail effect below; this
+// comment described an intention rather than the code until Aug 2026, which is
+// how a stored report came to be unreadable from this page).
 const LIST_SELECT = `
   id, status, token, expires_at, created_at, sent_at, paid_at, fulfilled_at, revised_at,
   pay_link_opened_at, help_requested_at, pay_link_resend_requested_at, invoice_emailed_at, confirmation_sent_at,
@@ -1086,6 +1091,7 @@ function OrderDetailPanel({
   const [artworkNote, setArtworkNote] = useState<string | null>(null)
   const [retryKey, setRetryKey] = useState(0)
   const [lightbox, setLightbox] = useState<ArtworkImage | null>(null)
+  const [reportOpen, setReportOpen] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -1104,11 +1110,15 @@ function OrderDetailPanel({
   // null and the sections show a retry line instead of "nothing on file".
   useEffect(() => {
     let cancelled = false
+    // Selecting a different order must not carry the open report across to it —
+    // the panel is reused rather than remounted, so the modal would otherwise
+    // reappear over the new order as soon as its extras landed.
+    setReportOpen(false)
     async function load() {
       const [heavyRes, nudgesRes] = await Promise.all([
         supabase
           .from('orders')
-          .select('ship_to_address, person_quantities, order_spec_snapshot, handoff_error')
+          .select('ship_to_address, person_quantities, order_spec_snapshot, handoff_error, artwork_check')
           .eq('id', o.id)
           .maybeSingle(),
         supabase
@@ -1131,6 +1141,7 @@ function OrderDetailPanel({
         person_quantities: h?.person_quantities ?? null,
         order_spec_snapshot: h?.order_spec_snapshot ?? null,
         handoff_error: h?.handoff_error ?? null,
+        artwork_check: h?.artwork_check ?? null,
       })
       setReminders(((nudgesRes.data ?? []) as Reminder[]).filter((r) => r.state === 'sent'))
     }
@@ -1583,13 +1594,37 @@ function OrderDetailPanel({
             />
           )}
           {o.stock_colour && <Row label="Stock colour" value={o.stock_colour} />}
-          {o.artwork_check_verdict && (
-            <Row
-              label="Artwork check"
-              value={`${ARTWORK_VERDICT_LABEL[o.artwork_check_verdict] ?? o.artwork_check_verdict}${o.artwork_checked_at ? ` · ${fmtDate(o.artwork_checked_at)}` : ''}`}
-              alert={o.artwork_check_verdict === 'defect'}
-            />
-          )}
+          {o.artwork_check_verdict && (() => {
+            // The verdict alone was all this page ever showed, which made a
+            // months-old check unreadable exactly when someone went looking for
+            // it (order 403980 — see the artwork-check notes). The report is
+            // fetched with the other heavy fields, so opening it costs nothing
+            // extra; while that fetch is in flight the row is plain text rather
+            // than a button that would do nothing.
+            const report = extras?.forId === o.id ? extras.artwork_check : null
+            // Ticks are counted in, so a report a colleague worked through
+            // reads the same here as it does on the Orders page.
+            const shown = report ? artworkDisplayVerdict(report) : o.artwork_check_verdict
+            const label = `${ARTWORK_VERDICT_LABEL[shown] ?? shown}${o.artwork_checked_at ? ` · ${fmtDate(o.artwork_checked_at)}` : ''}`
+            return (
+              <Row
+                label="Artwork check"
+                alert={shown === 'defect'}
+                value={report
+                  ? (
+                    <button
+                      type="button"
+                      onClick={() => setReportOpen(true)}
+                      className="inline-flex items-center gap-1 underline decoration-dotted underline-offset-2 hover:text-ink"
+                    >
+                      {label}
+                      <FileSearch size={12} aria-hidden="true" />
+                    </button>
+                  )
+                  : label}
+              />
+            )
+          })()}
           {placedByName && <Row label="Placed by" value={placedByName} />}
           {isShipped && (
             <Row
@@ -1662,6 +1697,34 @@ function OrderDetailPanel({
       )}
 
       </div>
+
+      {/* The stored artwork check, read-only.
+          Deliberately without Investigate / Mark as addressed / Hold: this is
+          the archive, and every one of those acts on an order that is already
+          in production. The working copies live on the Orders page and the
+          Place-order review screen. Ticks a colleague already made still show,
+          because the report carries them. */}
+      {reportOpen && extras?.forId === o.id && extras.artwork_check && (
+        <Modal
+          open
+          onClose={() => setReportOpen(false)}
+          ariaLabel="Artwork check report"
+          panelClassName="w-full max-w-xl rounded-2xl bg-white shadow-xl md:flex md:max-h-[85vh] md:flex-col"
+        >
+          <div className="shrink-0 px-5 pt-5 pb-3">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">
+              {o.payment_reference ?? 'Order'}
+              {o.stock_order_number ? ` · #${o.stock_order_number}` : ''}
+            </p>
+          </div>
+          <div className="px-5 text-[13px] text-ink md:min-h-0 md:flex-1 md:overflow-y-auto">
+            <ArtworkCheckReportView report={extras.artwork_check} />
+          </div>
+          <div className="mt-1 flex shrink-0 justify-end border-t border-line-soft px-5 py-3">
+            <ButtonGhost size="sm" onClick={() => setReportOpen(false)}>Close</ButtonGhost>
+          </div>
+        </Modal>
+      )}
 
       {/* Full-size artwork viewer — portal-based Modal with its own Esc +
           backdrop close, same treatment as OrderReviewPage's lightbox. */}

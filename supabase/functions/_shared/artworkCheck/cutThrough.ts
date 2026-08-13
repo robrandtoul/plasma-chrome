@@ -1248,7 +1248,10 @@ export async function analyseOrderArtwork(
  * reports them rather than re-deciding them from the page images, where a
  * 0.4 mm strut is a few pixels.
  */
-export function buildCutThroughContext(faces: CutThroughFace[]): string {
+export function buildCutThroughContext(
+  faces: CutThroughFace[],
+  opts: { hasApprovedProof?: boolean } = {},
+): string {
   if (faces.length === 0) return ''
   const lines: string[] = []
   lines.push(
@@ -1259,6 +1262,32 @@ export function buildCutThroughContext(faces: CutThroughFace[]): string {
   if (loose.length > 0) {
     lines.push(
       'A piece listed as falling out means a supporting strut is missing: report it as a flag on that card. Do NOT re-measure it from the page images and do NOT explain it away.',
+    )
+  }
+  // The cuts that never made it into the print file.
+  //
+  // Everything above answers one question — "will a piece fall out?" — from the
+  // print file's own geometry. It cannot answer the different question "are the
+  // cuts the customer approved actually HERE", because it never sees the proof.
+  // So a face that lost its cut-throughs between proof and print file measures
+  // as 'no_cut_artwork', which reads as "nothing to check" and is silent. That
+  // shipped a wood order to production (403980, Aug 2026) with the cut-outs
+  // missing and a verdict of 'clear'.
+  //
+  // Only the model can settle it, because only the model can see the approved
+  // proof — hence an instruction to LOOK rather than a finding forced in code
+  // (the deliberate opposite of the dropout case above, which is deterministic).
+  // Phrased as a conditional so the overwhelmingly common flat card on a
+  // cut-capable material — a plain printed steel or wood card, no cut-outs ever
+  // intended — produces nothing at all.
+  const uncut = faces.filter((f) => f.result.status === 'no_cut_artwork')
+  if (uncut.length > 0 && opts.hasApprovedProof) {
+    lines.push(
+      `Nothing is cut through ${uncut.length === 1 ? 'this card' : 'these cards'}: ${
+        uncut.map((f) => f.label).join(', ')
+      }. That is perfectly normal for a card that was never meant to have cut-outs — but it is ALSO what a lost cut looks like. Check the approved proof for ${
+        uncut.length === 1 ? 'this card' : 'these cards'
+      }: if it shows artwork cut clean through the card and the print file has none, the cuts have been lost since the customer signed off. Report that as a flag (field 'other', severity defect) naming the cut artwork the proof shows. If the proof shows no cut-outs either, say nothing — the two agree.`,
     )
   }
   return lines.join('\n')

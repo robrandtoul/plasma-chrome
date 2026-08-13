@@ -403,6 +403,18 @@ const ORDERS: FixtureOrder[] = [
   // that proves supersedeOutbound keeps the payment row and the confirmation
   // row apart while collapsing the bare "was sent a reply" that shadowed it.
   order({ id: 'o9', status: 'fulfilled', paid_at: daysAgo(8), confirmation_sent_at: daysAgo(7.999), fulfilled_at: daysAgo(5), handoff_at: daysAgo(5), production_note_posted_at: daysAgo(5), stock_order_number: '403910', artwork_check_verdict: 'clear', artwork_checked_at: daysAgo(5), artwork_check: ARTWORK_REPORT_CLEAR, proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Pied Piper', 'Richard Hendricks') } }),
+  // The ONLY order tied to a proof the /proofs/:id rig can open, so the proof
+  // page's order strip is reachable at all — ?path=/proofs/p-ordered.
+  //
+  // Shaped as the live wood order 403980: placed, its artwork check ran and
+  // came back clear, and the proof VERSION's own pre-send check is null (the
+  // default). That pairing is the whole point — it is exactly the state in
+  // which the page used to show a "never run" proof-check panel and no route
+  // whatsoever to the order's stored report.
+  //
+  // Deliberately NOT hung on p-a1: proof-detail.spec asserts that project is
+  // order-free so "Create order" is its primary action.
+  order({ id: 'o-proof-check', proof_id: 'p-ordered', status: 'fulfilled', paid_at: daysAgo(8), fulfilled_at: daysAgo(5), handoff_at: daysAgo(5), production_note_posted_at: daysAgo(5), stock_order_number: '403980', artwork_check_verdict: 'clear', artwork_checked_at: daysAgo(5), artwork_check: ARTWORK_REPORT_CLEAR, proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact('Bosatta', 'Luca Bosatta') } }),
   // Recently ordered — the new half-way failure: the job IS in Stock Control
   // but the workshop note never went, so nobody knows to make it.
   order({ id: 'o10', status: 'fulfilled', paid_at: daysAgo(15), fulfilled_at: daysAgo(12), handoff_at: daysAgo(12), production_note_posted_at: null, stock_order_number: '403912', proofs: { helpscout_last_reply_at: null, helpscout_last_customer_reply_at: null, helpscout_conversation_id: null, contacts: contact(null, 'Jian Yang') } }),
@@ -588,7 +600,12 @@ const ORDERS: FixtureOrder[] = [
     stock_order_number: '403975',
     proofs: { helpscout_last_reply_at: daysAgo(9), helpscout_last_customer_reply_at: null, helpscout_conversation_id: 'hs-34', contacts: contact('Pemberton & Co', 'Alice Wu') },
   }),
-].map((o, i) => ({ ...o, proof_id: `p-${o.id}` }))
+// Each order gets its own proof by default, so an order-scoped read can never
+// accidentally return a sibling. `??` rather than a blind overwrite: a fixture
+// that names its proof explicitly wants a SPECIFIC proof page to have this
+// order (see o-proof-check), and silently renaming it to `p-<order id>` is a
+// long detour to debug — the proof rig simply renders an order-free project.
+].map((o) => ({ ...o, proof_id: o.proof_id ?? `p-${o.id}` }))
 
 // ?busy=1 — a busy month for the dashboard rig: ~105 extra paid production
 // orders spread across the last four weeks, so the Paid tile renders a

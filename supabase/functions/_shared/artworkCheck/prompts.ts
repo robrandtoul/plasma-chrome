@@ -50,7 +50,8 @@ CUT-THROUGH RULES (metal, acrylic, wood, carbon fibre)
 - A CUT-THROUGH CHECK block may appear in the order context. Those figures are MEASURED from the print file's own geometry, exactly like the decoded QR payloads — not read off the page images, where a 0.4 mm strut is a few pixels. Treat them as exact and do NOT re-judge them by looking at the artwork.
 - A piece reported as falling out is a flag on that card (field 'other', severity defect): a strut is missing and the cards come back wrong. Quote the size and position given.
 - "only one side of this card was supplied" is a CONDITIONAL, not a finding: report it as a flag at severity review, worded as "if this white is cut through, N pieces would come loose", never as a definite fault.
-- If the block says every piece stays attached, or that nothing is cut through, say nothing at all — that is the normal state and belongs in no list.
+- If the block says every piece stays attached, say nothing at all — that is the normal state and belongs in no list.
+- "Nothing is cut through this card" is NOT automatically the normal state on these materials: it is equally what artwork that LOST its cut-throughs looks like. When the block reports it and you have an approved proof, compare — proof shows cut-clean-through artwork and the print file has none ⇒ the cuts were lost after sign-off: flag it (field 'other', severity defect), naming what the proof cuts out. Proof shows no cut-outs either ⇒ they agree, say nothing.
 - Absence of the block means the check did not apply (not a cut-capable material) or could not run. Never infer a strut problem from the page images yourself.
 
 QR RULES
@@ -65,9 +66,9 @@ QR RULES
 - Only raise the no-payload flag (field 'qr') when a QR is visibly printed on the card AND neither source yielded its payload — i.e. the artwork was scanned and nothing decoded (or there was no artwork to scan). If a payload was decoded from the artwork, the QR IS verified: do NOT flag it merely for being unregistered on the proof. One flag per distinct code, not one per recipient sharing it.
 
 APPROVED PROOF RULES (post-approval drift)
-- When APPROVED PROOF images are provided, they are what the customer SIGNED OFF; the print files are what will PRINT. Compare them: contact text, names, titles, and explicitly-agreed treatments (a foil/colour arrangement the thread records) must not diverge. A meaningful divergence is a flag on the affected field (or 'other'), noted as post-approval drift and quoting both sides.
+- When APPROVED PROOF images are provided, they are what the customer SIGNED OFF; the print files are what will PRINT. Compare them: contact text, names, titles, explicitly-agreed treatments (a foil/colour arrangement the thread records), and the CONSTRUCTION the customer can see — artwork cut clean through the card, a shaped edge, a cut-out — must not diverge. A meaningful divergence is a flag on the affected field (or 'other'), noted as post-approval drift and quoting both sides.
 - Tolerate everything rendering explains: JPEG compression, resolution, colour-profile shifts, crop/bleed margins, proof-page chrome or watermarks — and, on cut-through materials, a mirrored back in the print file vs a front-reading approved back (expected construction).
-- The approved proof is the reference for what was AGREED, not for print construction — never flag the print file for production marks the proof lacks (cut lines, bleed, registration).
+- The approved proof is the reference for what was AGREED, not for print production. This runs ONE WAY: never flag the print file for production apparatus the proof lacks — bleed, registration marks, crop marks, a die/cut line drawn as a guide. It does NOT license the reverse. Artwork the PROOF shows and the print file lacks is always worth reporting, cut-throughs included; the customer approved what they saw.
 - No approved proof images provided → the drift comparison simply wasn't possible; note it if relevant, never an error.
 
 SEVERITY — every finding and correction carries one
@@ -75,7 +76,7 @@ SEVERITY — every finding and correction carries one
 - 'defect' (the red tier) — reserved for what you would bet a reprint on. ONLY three categories qualify:
   (1) a functionally BROKEN value: an email or URL whose domain is contradicted by the customer's own other materials (every other card + their website), a URL that cannot resolve, a phone number with an impossible digit count for its country;
   (2) an explicit WRITTEN instruction not carried out: the customer stated "should be X" (or equivalent) and the artwork still shows the pre-instruction value, with no later message superseding that instruction;
-  (3) post-approval DRIFT: the print file contradicts the approved proof on contact text or an explicitly-agreed treatment.
+  (3) post-approval DRIFT: the print file contradicts the approved proof on contact text, an explicitly-agreed treatment, or visible construction (cut-throughs the proof shows and the print file has lost).
 - When torn between review and defect, choose review — a wrong red costs trust that a wrong amber does not. Legitimate-difference shapes (short printed title vs fuller QR title, brand casing, record-vs-trading-name) are NEVER defects.
 - Corrections: severity 'defect' only when resolved=false and the quote meets category (2); resolved=true corrections are always 'review'.
 
@@ -84,6 +85,8 @@ WORKED EXAMPLES
 - Printed email matches the request exactly as typed, but its domain drops a letter vs every other card and the website → flag, severity defect (category 1 — functionally broken even though faithfully transcribed), noted as matching the request.
 - "the phone number should read 020 7288 8008 (not 0207 288 8008)" and the card still shows the old grouping → flag + unresolved correction, both severity defect (category 2 — explicit instruction ignored).
 - The approved proof gilds whole words; the print file gilds single letters → flag, severity defect (category 3 — drift from what was signed off).
+- The approved proof shows the logo cut clean through the card; the cut-through block reports nothing cut through the print file → flag, severity defect (category 3 — the cuts were lost after sign-off). The card would print flat, and nobody would notice until it arrived.
+- The cut-through block reports nothing cut through, and the approved proof shows a flat printed card with no cut-outs → say nothing. The two agree; most cards on these materials have no cut-outs at all.
 - Printed title "Franchisé propriétaire" vs vCard QR title "Franchisé autorisé Snap-on Tools Canada" → flag, severity review — possibly an intentional short form, never a defect.
 - The card still shows the phone number from the first message after the customer stated a new one mid-thread → correction with resolved=false.
 - Mirrored logo on the back of a metal card → notes[], not a flag.

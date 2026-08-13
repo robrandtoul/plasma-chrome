@@ -211,3 +211,53 @@ test.describe('approved vs open treatment', () => {
     expect(approvedPill).not.toBe(openPill)
   })
 })
+
+test.describe('the ordered project (p-ordered)', () => {
+  // The project page carries TWO different artwork checks, and they are easy
+  // to confuse: the pre-send "Proof check" runs against the proof images
+  // before the customer sees them, while the order's check runs against the
+  // PRINT FILES at placement and is the one that gates going to production.
+  //
+  // Only the first was ever reachable from here. So a designer coming back to
+  // ask "what did the check say?" found the proof-check panel offering to run
+  // one, and reasonably concluded no check had ever happened — while the
+  // order's stored report sat one table away (order 403980, Aug 2026, whose
+  // print files had lost the cut-throughs the proof showed).
+  //
+  // The fixture reproduces that exact pairing: a placed order with a stored
+  // report, on a proof version whose own pre-send check is null.
+  //
+  // ⚠ SCOPE — the render path, not the fetch: the harness mock ignores select
+  // strings and returns whole rows, so removing artwork_check_verdict from the
+  // orders select would still pass here. See orders-log.spec.ts.
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/verify-harness/index.html?path=/proofs/p-ordered')
+    await expect(page.getByRole('heading', { name: /realise/i })).toBeVisible()
+  })
+
+  test('the order strip offers the order-time artwork check', async ({ page }) => {
+    // The pre-send panel still says the proof check has never run — which is
+    // true, and is exactly the state that used to read as "no report exists".
+    await expect(page.getByRole('button', { name: /run check/i })).toBeVisible()
+
+    // …and the order's own check is nonetheless reachable, right beside the
+    // order status it belongs to.
+    await expect(page.getByRole('button', { name: /artwork check/i })).toBeVisible()
+  })
+
+  test('it opens the stored report, distinct from the pre-send proof check', async ({ page }) => {
+    await page.getByRole('button', { name: /artwork check/i }).click()
+
+    const report = page.getByRole('dialog')
+    await expect(report).toBeVisible()
+    // Fixture field values rather than UI copy — a rewording must not fail it.
+    await expect(report.getByText('richard@piedpiper.com').first()).toBeVisible()
+
+    // Read-only by exhaustion: Close is the only control. The acting surfaces
+    // are the Orders page and the Place-order review screen; this order is
+    // already in production.
+    await expect(report.getByRole('button')).toHaveCount(1)
+    await report.getByRole('button', { name: /close/i }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+  })
+})
