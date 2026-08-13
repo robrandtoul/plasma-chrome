@@ -422,7 +422,16 @@ function renderOnce(body: string, vars: Record<string, string>): string {
     .replaceAll(BRACE_CLOSE, '}')
 }
 
+// ⚠ Byte-identical to the body seeded by 000361 + amended by 000412, to
+// DEFAULT_BODIES.inhouse_production_note in src/lib/replyTemplates.ts, and to
+// the copy in _shared/inhouseNoteTemplate.test.ts. Change one, change all four.
+//
+// The leading "Order:" line (000412) is why the note can no longer be
+// re-imported as a second job: it gives the importer the number it used to have
+// to guess at, so its own inhouse_order_no lookup recognises the job and returns
+// quietly. See the 000412 header for the Brownies Tree incident behind it.
 const INHOUSE_NOTE_DEFAULT =
+  'Order: {order_number}\n' +
   '{? prototype_warning}{prototype_warning}\n{/?}Qty: {qty}\nCard: {card}' +
   '{? date_required}\nDate required: {date_required}{/?}' +
   '{? ink_front}\nInk on front: {ink_front}{/?}' +

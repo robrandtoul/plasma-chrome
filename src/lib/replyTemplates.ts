@@ -200,6 +200,7 @@ export const TEMPLATE_VARIABLES: TemplateVariableMeta[] = [
   // on the customer's Help Scout thread telling our own workshop what to make.
   // A human message: Stock Control gets the job directly, so nothing here has
   // to keep a fixed shape (docs/order-handoff-spec.md §6, Phase 3).
+  { name: 'order_number',        scope: 'inhouse_note',    description: 'The Stock Control order number this note is about. Keep it — it is what stops the note being imported a second time as a duplicate job.', conditional: false },
   { name: 'qty',                 scope: 'inhouse_note',    description: 'How many cards to make',                                                          conditional: false },
   { name: 'card',                scope: 'inhouse_note',    description: 'The card being made — material, and the paper colours on letterpress',            conditional: false },
   { name: 'date_required',       scope: 'inhouse_note',    description: 'Date the cards are needed by (when one is set)',                                  conditional: true  },
@@ -412,6 +413,9 @@ export const DEFAULT_BODIES: Record<string, string> = {
   // Nothing reads this note any more — the job goes into Stock Control directly
   // the moment the order is placed — so the wording is free to change
   // (docs/order-handoff-spec.md §6, Phase 3).
+  // ⚠ Byte-identical to INHOUSE_NOTE_DEFAULT in place-order, to the body seeded
+  // by 000361 + amended by 000412, and to the copy in
+  // _shared/inhouseNoteTemplate.test.ts. Change one, change all four.
   inhouse_production_note:
-    `{? prototype_warning}{prototype_warning}\n{/?}Qty: {qty}\nCard: {card}{? date_required}\nDate required: {date_required}{/?}{? ink_front}\nInk on front: {ink_front}{/?}{? ink_back}\nInk on back: {ink_back}{/?}{? packaging}\nPackaging: {packaging}{/?}{? per_person}\n{per_person}{/?}{? artwork_link}\nArtwork: {artwork_link}{/?}{? note}\n\n{note}{/?}`,
+    `Order: {order_number}\n{? prototype_warning}{prototype_warning}\n{/?}Qty: {qty}\nCard: {card}{? date_required}\nDate required: {date_required}{/?}{? ink_front}\nInk on front: {ink_front}{/?}{? ink_back}\nInk on back: {ink_back}{/?}{? packaging}\nPackaging: {packaging}{/?}{? per_person}\n{per_person}{/?}{? artwork_link}\nArtwork: {artwork_link}{/?}{? note}\n\n{note}{/?}`,
 }

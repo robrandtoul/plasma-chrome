@@ -7,13 +7,23 @@
 // place-order's pre-Phase-3 in-house block) and asserts the rendered template
 // equals it across every shape a real order takes.
 //
+// ⚠ ONE deliberate departure, added by migration 000412: the note now opens
+// with "Order: <number>". The old builder had no such line, and that omission
+// is what let Stock Control's importer re-import the note as a SECOND job under
+// a guessed number (Brownies Tree, 13 Aug 2026 — see the 000412 header). So the
+// invariant below is now "the old note, plus exactly that one leading line" —
+// which still catches any other drift in the workshop note, which is what this
+// test is really for.
+//
 // Run with: npx tsx supabase/functions/_shared/inhouseNoteTemplate.test.ts
 
 import { renderTemplate } from './replyTemplates.ts'
 
-// Byte-identical to INHOUSE_NOTE_DEFAULT in place-order/index.ts and to the
-// body seeded by migration 000361. If you change one, change all three.
+// Byte-identical to INHOUSE_NOTE_DEFAULT in place-order/index.ts, to
+// DEFAULT_BODIES.inhouse_production_note in src/lib/replyTemplates.ts, and to
+// the body seeded by 000361 + amended by 000412. Change one, change all four.
 const INHOUSE_NOTE_DEFAULT =
+  'Order: {order_number}\n' +
   '{? prototype_warning}{prototype_warning}\n{/?}Qty: {qty}\nCard: {card}' +
   '{? date_required}\nDate required: {date_required}{/?}' +
   '{? ink_front}\nInk on front: {ink_front}{/?}' +
@@ -24,6 +34,7 @@ const INHOUSE_NOTE_DEFAULT =
   '{? note}\n\n{note}{/?}'
 
 interface Order {
+  orderNumber?: string
   isPrototype?: boolean
   prototypeMarker?: string
   qty: number
@@ -62,6 +73,7 @@ function legacyNote(o: Order): string {
 // ── The NEW path ────────────────────────────────────────────────────────────
 function templatedNote(o: Order): string {
   return renderTemplate(INHOUSE_NOTE_DEFAULT, {
+    order_number: o.orderNumber ?? '404001',
     prototype_warning: o.isPrototype ? (o.prototypeMarker ?? '') : '',
     qty: String(o.qty),
     card: o.card,
@@ -78,7 +90,8 @@ function templatedNote(o: Order): string {
 let passed = 0
 let failed = 0
 function check(name: string, o: Order) {
-  const want = legacyNote(o)
+  // The old note, plus the one line 000412 deliberately added in front of it.
+  const want = `Order: ${o.orderNumber ?? '404001'}\n` + legacyNote(o)
   const got = templatedNote(o)
   if (want === got) {
     console.log(`  ✓ ${name}`)
@@ -93,7 +106,7 @@ function check(name: string, o: Order) {
 
 const DBX = 'https://www.dropbox.com/scl/fo/abc/h?rlkey=x&dl=0'
 
-console.log('the shipped default must reproduce the old note exactly')
+console.log('the shipped default must reproduce the old note, plus the order line')
 check('bare minimum (qty + card only)', { qty: 100, card: 'Stainless Steel' })
 check('typical in-house order', {
   qty: 250, card: 'Satin Black Plastic', dateRequiredStr: '30 Jun 2026',

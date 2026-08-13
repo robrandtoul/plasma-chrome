@@ -1,0 +1,117 @@
+-- 000412: put the order number IN the workshop production note.
+--
+-- ⚠ TARGET: the merged stock-control project (bjvinrzbdrwebylkmbwy). Apply via
+-- MCP apply_migration or the dashboard SQL editor — NOT `supabase db push`.
+--
+-- APPLIED to live 2026-08-13 via MCP apply_migration, on Rob's explicit call
+-- (he owns Stock Control, so he is the coordination point the header below
+-- asks for). Verified after: body md5 ba54e4449c2702e8fee397a314d36cdf, 360
+-- chars, opening "Order: {order_number}". Live immediately without an edge
+-- deploy — renderInhouseNote reads this row at render time and only falls back
+-- to the compiled default when the row is missing or blank.
+--
+-- ── WHY ────────────────────────────────────────────────────────────────────
+--
+-- The note this template renders is the only thing on a Help Scout thread that
+-- describes an in-house job, and it has never said WHICH job it is. Its lines
+-- are Qty / Card / Date required / Ink / Packaging / Artwork — no number.
+--
+-- That omission caused the Brownies Tree duplicate on 13 Aug 2026. Stock
+-- Control's legacy note importer consumed the note we had posted for job
+-- 404001, had no number to work from, and (on the best available evidence)
+-- took one from the Help Scout conversation subject — which the supplier
+-- placement had renamed to "Order 404004 - Brownies Tree" 35 seconds earlier.
+-- It created a second letterpress job wearing the Solopress order's number.
+--
+-- All three of the importer's own dedupe layers are keyed on the order number,
+-- so ALL of them would have caught this had the note simply carried it: layer 1
+-- looks up `inhouse_order_no = p_order_no` and returns the existing job
+-- quietly, which is the designed behaviour and needs no new machinery.
+--
+-- 000411 added a work-keyed guard as a backstop, and it works — it blocked a
+-- real re-import three seconds after a note was posted to that thread. But it
+-- is inherently short-horizon: it only fires while a matching directly-placed
+-- job is under 24 hours old, and that window cannot be widened much, because
+-- the nearest legitimate identical-line pair on one conversation is a genuine
+-- REPRINT at 102.6 hours. This migration addresses the cause instead, and has
+-- no time window at all.
+--
+-- ── WHAT CHANGES ───────────────────────────────────────────────────────────
+--
+-- One line at the top of the note: "Order: 404001". Everything else is
+-- byte-identical. `order_number` is ALREADY passed to the renderer by
+-- place-order (noteVars.order_number = orders.stock_order_number), so no edge
+-- function change is required — the variable exists and was simply never used.
+--
+-- It leads rather than trails so it is the first thing a human reads too: the
+-- workshop note has never named its own job, which is a papercut independent
+-- of the importer.
+--
+-- Not conditional. Every in-house placement has a stock_order_number —
+-- place-order refuses without one — so a blank would mean something is wrong
+-- and should be visible rather than silently omitted.
+--
+-- ── THE FOUR COPIES ────────────────────────────────────────────────────────
+--
+-- The default body is duplicated in four places and they must not drift:
+--   1. this migration (and the live reply_templates row it updates)
+--   2. supabase/functions/place-order/index.ts   — INHOUSE_NOTE_DEFAULT
+--   3. src/lib/replyTemplates.ts                 — DEFAULT_BODIES (the admin
+--                                                  "Reset to default" path)
+--   4. supabase/functions/_shared/inhouseNoteTemplate.test.ts
+-- All four are updated in the same change as this file.
+--
+-- ⚠ That test previously pinned "the shipped default renders byte-for-byte what
+-- the pre-Phase-3 line-by-line builder produced". This migration DELIBERATELY
+-- retires that invariant for this one line. The test now pins the new shape and
+-- records why, rather than being deleted — the guarantee it gave (no accidental
+-- drift in the workshop note) is still worth having.
+--
+-- ── COORDINATE BEFORE APPLYING ─────────────────────────────────────────────
+--
+-- This note is read by a parser we cannot see. 000387's header records that
+-- place-order's strict-format machinery was removed on the assumption these
+-- notes are no longer parsed — the 13 Aug incident proves at least one thing
+-- still parses them, so that assumption is now known to be wrong.
+--
+-- Adding a leading line is lower risk than altering an existing one, and the
+-- intended outcome is that the importer reads the number from the note instead
+-- of guessing. But if its parser is positional (expects "Qty:" first), a
+-- leading line could break it. Confirm with whoever owns Stock Control, or move
+-- the line to the end, before applying.
+--
+-- The `update` below is idempotent and only rewrites the row if it still holds
+-- the pre-000412 body — an admin who has since customised the template in
+-- Admin → Content → Messages keeps their wording, and gets the new variable
+-- documented in the editor's variable list either way.
+
+-- ⚠ Matched on a HASH of the current body, not on a rebuilt string literal.
+-- The first draft of this migration reconstructed the body inline and dropped
+-- the `{/?}` that closes the prototype_warning block — the newline sits INSIDE
+-- that conditional, so the real body reads `…{prototype_warning}\n{/?}Qty:`,
+-- not `…{prototype_warning}\nQty:`. The predicate matched nothing, and an
+-- UPDATE that matches nothing still reports success. A hash cannot be got
+-- subtly wrong that way, and it fails loudly (0 rows) instead of silently.
+--
+-- 876ecb94… is the shipped 000361 body, read from live 13 Aug 2026 (338 chars).
+-- ba54e444… is what it must become (360 chars = the same body with the 22-char
+-- "Order: {order_number}\n" in front), and equals INHOUSE_NOTE_DEFAULT in
+-- place-order and DEFAULT_BODIES.inhouse_production_note byte-for-byte.
+--
+-- A body with any other hash is one an admin has customised in
+-- Admin → Content → Messages. Their wording is deliberately left alone; they
+-- get the new variable documented in the editor's variable list either way, and
+-- can add {order_number} themselves. If that happens, the note keeps carrying
+-- no number and the 000411 guard remains the only protection for their orders —
+-- so it is worth telling them.
+
+update proofs.reply_templates
+   set body = 'Order: {order_number}' || chr(10) || body
+ where id = 'inhouse_production_note'
+   and md5(body) = '876ecb948957f305ff11eee358d2be3d';
+
+-- Verification (run after applying) — all three must hold:
+--   select md5(body) = 'ba54e4449c2702e8fee397a314d36cdf' as body_as_expected,
+--          body like 'Order: {order_number}' || chr(10) || '%'  as carries_number,
+--          length(body) = 360                                   as length_as_expected
+--     from proofs.reply_templates where id = 'inhouse_production_note';
