@@ -52,23 +52,46 @@ export function defaultAppsVisible(appCount: number): boolean {
   return appCount >= DEFAULT_ON_AT;
 }
 
+/* WHY THE DEFAULT IS NOT LATCHED.
+   This used to seed useState with defaultAppsVisible(appCount) and keep
+   whatever that first render produced. Every host fetches its app list
+   asynchronously, so appCount is ALWAYS 0 on the first render, and the
+   seeded value was therefore always false. The "on at three or more"
+   default had never once fired in any of the four apps: a person signing
+   in for the first time got no strip, whatever their access, and had to
+   find the app menu and switch it on by hand — which is the discovery
+   problem the strip exists to solve, restored in full.
+
+   So the stored preference is held as null-until-chosen and the default
+   is derived on every render instead. A person who has expressed a
+   preference keeps it from the first paint, because the cookie is read
+   synchronously; a person who has not follows their app count as it
+   arrives.
+
+   The cost is that the strip appears a moment after load rather than
+   with it, moving the page down 38px once. That settle is the same one
+   every app's own switcher accepted before this package existed, and it
+   is the honest trade: reserving the space instead would charge a
+   permanent empty band to every single-app user. */
+
 export function useAppsVisible(
   appCount: number,
   controlled?: boolean,
   onChange?: (next: boolean) => void,
 ): [boolean, (next: boolean) => void] {
-  const [owned, setOwned] = useState<boolean>(() => {
-    const stored = readAppsCookie();
-    return stored === null ? defaultAppsVisible(appCount) : stored;
-  });
+  // null means "no preference expressed", NOT false. Seeded from the
+  // cookie synchronously so a stored choice is right on the first paint.
+  const [chosen, setChosen] = useState<boolean | null>(() => readAppsCookie());
 
   const isControlled = controlled !== undefined;
-  const value = isControlled ? (controlled as boolean) : owned;
+  const value = isControlled
+    ? (controlled as boolean)
+    : (chosen ?? defaultAppsVisible(appCount));
 
   const set = useCallback(
     (next: boolean) => {
       if (!isControlled) {
-        setOwned(next);
+        setChosen(next);
         writeAppsCookie(next);
       }
       if (onChange) onChange(next);
