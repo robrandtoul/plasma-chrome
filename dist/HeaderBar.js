@@ -25,7 +25,7 @@ export function NavLinkish({ linkComponent, item, className, active, children, }
     return (_jsx(Comp, { className: className, href: item.href, "aria-current": active ? 'page' : undefined, ...extra, children: children }));
 }
 export function HeaderBar(props) {
-    const { apps, currentApp, appName, nav, activeNavId, user, linkComponent, accountLinks, search, actions, chat, chatUnread, chatMentionUnread, notificationsUnread, appsVisible, onAppsVisibleChange, onSignOut, onEditProfile, } = props;
+    const { apps, currentApp, appName, nav, activeNavId, user, linkComponent, accountLinks, accountActions, search, actions, chat, chatUnread, chatMentionUnread, notificationsUnread, appsVisible, onAppsVisibleChange, onSignOut, onEditProfile, } = props;
     // One popover at a time: opening either closes the other.
     const [openMenu, setOpenMenu] = useState(null);
     const chatCount = chatUnread ?? 0;
@@ -45,6 +45,6 @@ export function HeaderBar(props) {
                 ? (chat ?? (_jsxs("button", { className: "pd-chrome__icon-btn", type: "button", title: "Team chat", "aria-label": chatLabel, children: [_jsx(ChatIcon, {}), chatCount > 0 ? (_jsx("span", { className: "pd-chrome__dot", "aria-hidden": "true", children: formatCount(chatCount) })) : null] })))
                 : null, showNotifications ? (_jsxs("button", { className: "pd-chrome__icon-btn", type: "button", title: "Notifications", "aria-label": notificationCount > 0
                     ? 'Notifications — ' + notificationCount + ' new'
-                    : 'Notifications', children: [_jsx(BellIcon, {}), notificationCount > 0 ? (_jsx("span", { className: "pd-chrome__dot", "aria-hidden": "true", children: formatCount(notificationCount) })) : null] })) : null, _jsx("span", { className: "pd-chrome__divider pd-chrome__divider--account" }), _jsx(AccountMenu, { user: user, open: openMenu === 'account', onOpen: () => setOpenMenu('account'), onClose: () => setOpenMenu((current) => (current === 'account' ? null : current)), appsVisible: appsVisible, onAppsVisibleChange: onAppsVisibleChange, onSignOut: onSignOut, onEditProfile: onEditProfile, accountLinks: accountLinks, linkComponent: linkComponent })] }));
+                    : 'Notifications', children: [_jsx(BellIcon, {}), notificationCount > 0 ? (_jsx("span", { className: "pd-chrome__dot", "aria-hidden": "true", children: formatCount(notificationCount) })) : null] })) : null, _jsx("span", { className: "pd-chrome__divider pd-chrome__divider--account" }), _jsx(AccountMenu, { user: user, open: openMenu === 'account', onOpen: () => setOpenMenu('account'), onClose: () => setOpenMenu((current) => (current === 'account' ? null : current)), appsVisible: appsVisible, onAppsVisibleChange: onAppsVisibleChange, onSignOut: onSignOut, onEditProfile: onEditProfile, accountLinks: accountLinks, accountActions: accountActions, linkComponent: linkComponent })] }));
 }
 //# sourceMappingURL=HeaderBar.js.map

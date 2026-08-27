@@ -44,6 +44,12 @@ export interface ChromeSearch {
 /** Whatever the host hands us: NavLink, Link, or the default 'a'. */
 export type ChromeLinkComponent = ComponentType<any>;
 
+export interface ChromeAccountAction {
+  id: string;
+  label: string;
+  onClick: () => void;
+}
+
 export interface ChromeAccountLinks {
   notifications?: string;
   feedback?: string;
@@ -95,6 +101,16 @@ export interface ChromeProps {
      no href is not rendered, so an app without a feedback page does not
      get a dead menu item. */
   accountLinks?: ChromeAccountLinks;
+  /* Extra account-menu rows that run an action rather than navigate,
+     rendered after the specified rows and before sign out.
+     Stock Control forced this: MIGRATION requires its change-password
+     key glyph to move into the account menu, and change password is a
+     modal, not a route. Routing it through `onEditProfile` would have
+     put a row labelled "Edit profile" in front of a password dialog,
+     and dropping it would have removed the only way to change a
+     password in that app. Keep the list short: this is an escape hatch
+     for a genuinely app-specific action, not a general menu builder. */
+  accountActions?: ChromeAccountAction[];
   variant?: 'full' | 'switcher-only'; // 'switcher-only' for the no-role screen
 }
 

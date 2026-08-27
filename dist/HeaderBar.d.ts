@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from 'react';
-import type { ChromeLinkComponent, ChromeNavItem, ChromeSearch, ChromeUser, ChromeAccountLinks } from './types.js';
+import type { ChromeLinkComponent, ChromeNavItem, ChromeSearch, ChromeUser, ChromeAccountAction, ChromeAccountLinks } from './types.js';
 import type { ChromeApp } from './types.js';
 /**
  * The router seam. The chrome renders whatever it is handed and never
@@ -23,6 +23,7 @@ export interface HeaderBarProps {
     user: ChromeUser;
     linkComponent?: ChromeLinkComponent;
     accountLinks?: ChromeAccountLinks;
+    accountActions?: ChromeAccountAction[];
     search?: ChromeSearch;
     actions?: ReactNode;
     chat?: ReactNode;

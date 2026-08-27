@@ -7,7 +7,7 @@
    ─────────────────────────────────────────────────────────── */
 
 import type { JSX, ReactNode } from 'react';
-import type { ChromeAccountLinks, ChromeLinkComponent, ChromeUser } from './types';
+import type { ChromeAccountAction, ChromeAccountLinks, ChromeLinkComponent, ChromeUser } from './types';
 import { cx, firstName } from './types';
 import { useDismissable } from './useDismissable';
 import { PREF_TITLE, Toggle, prefHint } from './Toggle';
@@ -38,6 +38,7 @@ export interface AccountPanelBodyProps {
   onSignOut: () => void;
   onEditProfile?: () => void;
   accountLinks?: ChromeAccountLinks;
+  accountActions?: ChromeAccountAction[];
   linkComponent?: ChromeLinkComponent;
   /** Rendered between the identity block and the preference row.
       The mobile sheet puts the app list here, because that is where
@@ -53,6 +54,7 @@ export function AccountPanelBody({
   onSignOut,
   onEditProfile,
   accountLinks,
+  accountActions,
   linkComponent,
   extra,
 }: AccountPanelBodyProps): JSX.Element {
@@ -111,6 +113,17 @@ export function AccountPanelBody({
           Feedback
         </Link>
       ) : null}
+      {(accountActions ?? []).map((action) => (
+        <button
+          key={action.id}
+          className="pd-chrome__menu-row"
+          type="button"
+          role="menuitem"
+          onClick={action.onClick}
+        >
+          {action.label}
+        </button>
+      ))}
       <span className="pd-chrome__panel-divider" />
       <button
         className="pd-chrome__menu-row pd-chrome__signout"
@@ -170,6 +183,13 @@ export function AccountMenu({
                   }
                 : undefined
             }
+            accountActions={body.accountActions?.map((action) => ({
+              ...action,
+              onClick: () => {
+                onClose();
+                action.onClick();
+              },
+            }))}
           />
         </div>
       ) : null}

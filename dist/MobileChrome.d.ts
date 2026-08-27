@@ -1,5 +1,5 @@
 import type { JSX } from 'react';
-import type { ChromeApp, ChromeLinkComponent, ChromeNavItem, ChromeSearch, ChromeUser, ChromeAccountLinks } from './types.js';
+import type { ChromeApp, ChromeLinkComponent, ChromeNavItem, ChromeSearch, ChromeUser, ChromeAccountAction, ChromeAccountLinks } from './types.js';
 export interface MobileChromeProps {
     apps: ChromeApp[];
     currentApp: string;
@@ -9,6 +9,7 @@ export interface MobileChromeProps {
     mobileTabIds: string[];
     mobileTabs?: ChromeNavItem[];
     accountLinks?: ChromeAccountLinks;
+    accountActions?: ChromeAccountAction[];
     user: ChromeUser;
     linkComponent?: ChromeLinkComponent;
     search?: ChromeSearch;

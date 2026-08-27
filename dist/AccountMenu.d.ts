@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from 'react';
-import type { ChromeAccountLinks, ChromeLinkComponent, ChromeUser } from './types.js';
+import type { ChromeAccountAction, ChromeAccountLinks, ChromeLinkComponent, ChromeUser } from './types.js';
 export declare function Avatar({ user, large, size, }: {
     user: ChromeUser;
     large?: boolean;
@@ -12,6 +12,7 @@ export interface AccountPanelBodyProps {
     onSignOut: () => void;
     onEditProfile?: () => void;
     accountLinks?: ChromeAccountLinks;
+    accountActions?: ChromeAccountAction[];
     linkComponent?: ChromeLinkComponent;
     /** Rendered between the identity block and the preference row.
         The mobile sheet puts the app list here, because that is where
@@ -19,7 +20,7 @@ export interface AccountPanelBodyProps {
     extra?: ReactNode;
 }
 /** Shared by the desktop popover and the mobile account sheet. */
-export declare function AccountPanelBody({ user, appsVisible, onAppsVisibleChange, onSignOut, onEditProfile, accountLinks, linkComponent, extra, }: AccountPanelBodyProps): JSX.Element;
+export declare function AccountPanelBody({ user, appsVisible, onAppsVisibleChange, onSignOut, onEditProfile, accountLinks, accountActions, linkComponent, extra, }: AccountPanelBodyProps): JSX.Element;
 export interface AccountMenuProps extends AccountPanelBodyProps {
     open: boolean;
     onOpen: () => void;

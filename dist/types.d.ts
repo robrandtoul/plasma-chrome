@@ -30,6 +30,11 @@ export interface ChromeSearch {
 }
 /** Whatever the host hands us: NavLink, Link, or the default 'a'. */
 export type ChromeLinkComponent = ComponentType<any>;
+export interface ChromeAccountAction {
+    id: string;
+    label: string;
+    onClick: () => void;
+}
 export interface ChromeAccountLinks {
     notifications?: string;
     feedback?: string;
@@ -54,6 +59,7 @@ export interface ChromeProps {
     onSignOut: () => void;
     onEditProfile?: () => void;
     accountLinks?: ChromeAccountLinks;
+    accountActions?: ChromeAccountAction[];
     variant?: 'full' | 'switcher-only';
 }
 /** Counts read as `9+` above nine. */

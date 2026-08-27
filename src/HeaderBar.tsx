@@ -8,7 +8,7 @@
 
 import { useState } from 'react';
 import type { ComponentType, JSX, ReactNode } from 'react';
-import type { ChromeLinkComponent, ChromeNavItem, ChromeSearch, ChromeUser , ChromeAccountLinks} from './types';
+import type { ChromeLinkComponent, ChromeNavItem, ChromeSearch, ChromeUser , ChromeAccountAction, ChromeAccountLinks} from './types';
 import { cx, formatCount } from './types';
 import { AppMenu } from './AppMenu';
 import { AccountMenu } from './AccountMenu';
@@ -58,6 +58,7 @@ export interface HeaderBarProps {
   user: ChromeUser;
   linkComponent?: ChromeLinkComponent;
   accountLinks?: ChromeAccountLinks;
+  accountActions?: ChromeAccountAction[];
   search?: ChromeSearch;
   actions?: ReactNode;
   chat?: ReactNode;
@@ -80,6 +81,7 @@ export function HeaderBar(props: HeaderBarProps): JSX.Element {
     user,
     linkComponent,
     accountLinks,
+    accountActions,
     search,
     actions,
     chat,
@@ -242,6 +244,7 @@ export function HeaderBar(props: HeaderBarProps): JSX.Element {
         onSignOut={onSignOut}
         onEditProfile={onEditProfile}
         accountLinks={accountLinks}
+        accountActions={accountActions}
         linkComponent={linkComponent}
       />
     </div>

@@ -59,6 +59,7 @@ export function Chrome(props: ChromeProps): JSX.Element {
     mobileTabIds,
     mobileTabs,
     accountLinks,
+    accountActions,
     user,
     linkComponent,
     search,
@@ -128,6 +129,7 @@ export function Chrome(props: ChromeProps): JSX.Element {
             onSignOut={onSignOut}
             onEditProfile={onEditProfile}
             accountLinks={accountLinks}
+            accountActions={accountActions}
           />
         )}
       </div>
@@ -141,6 +143,7 @@ export function Chrome(props: ChromeProps): JSX.Element {
           mobileTabIds={mobileTabIds}
           mobileTabs={mobileTabs}
           accountLinks={accountLinks}
+          accountActions={accountActions}
           user={user}
           linkComponent={linkComponent}
           search={search}

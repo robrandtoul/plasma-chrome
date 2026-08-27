@@ -18,7 +18,7 @@
 
 import type { JSX } from 'react';
 import { useState } from 'react';
-import type { ChromeApp, ChromeLinkComponent, ChromeNavItem, ChromeSearch, ChromeUser, ChromeAccountLinks } from './types';
+import type { ChromeApp, ChromeLinkComponent, ChromeNavItem, ChromeSearch, ChromeUser, ChromeAccountAction, ChromeAccountLinks } from './types';
 import { cx, formatCount } from './types';
 import { AccountPanelBody } from './AccountMenu';
 import { NavLinkish } from './HeaderBar';
@@ -34,6 +34,7 @@ export interface MobileChromeProps {
   mobileTabIds: string[];
   mobileTabs?: ChromeNavItem[];
   accountLinks?: ChromeAccountLinks;
+  accountActions?: ChromeAccountAction[];
   user: ChromeUser;
   linkComponent?: ChromeLinkComponent;
   search?: ChromeSearch;
@@ -53,6 +54,7 @@ export function MobileChrome(props: MobileChromeProps): JSX.Element {
     mobileTabIds,
     mobileTabs,
     accountLinks,
+    accountActions,
     user,
     linkComponent,
     search,
@@ -207,6 +209,7 @@ export function MobileChrome(props: MobileChromeProps): JSX.Element {
               onSignOut={onSignOut}
               onEditProfile={onEditProfile}
               accountLinks={accountLinks}
+              accountActions={accountActions}
               linkComponent={linkComponent}
               extra={
                 apps.length >= 2 ? (
