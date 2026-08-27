@@ -29,6 +29,13 @@ const USERS = (_jsxs(_Fragment, { children: [_jsx("path", { d: "M16 21v-2a4 4 0 
 /* lucide "history": a clock with a counter-clockwise arrow. Past runs,
    past orders, an audit log — the tab that looks backwards. */
 const HISTORY = (_jsxs(_Fragment, { children: [_jsx("path", { d: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" }), _jsx("path", { d: "M3 3v5h5" }), _jsx("path", { d: "M12 7v5l4 2" })] }));
+/* lucide "contact". vCard Studio's Cards tab, and the one a CUSTOMER of
+   that app sees, so it is the least optional of these. */
+const CARD = (_jsxs(_Fragment, { children: [_jsx("path", { d: "M16 2v2" }), _jsx("path", { d: "M8 2v2" }), _jsx("rect", { x: "3", y: "4", width: "18", height: "18", rx: "2" }), _jsx("circle", { cx: "12", cy: "11", r: "2" }), _jsx("path", { d: "M8 18a4 4 0 0 1 8 0" })] }));
+/* A QR code's three finder squares and a scatter of modules. Drawn rather
+   than borrowed: lucide's qr-code is a 12-path glyph that turns to mud at
+   22px, which is the only size this is ever rendered at. */
+const QR = (_jsxs(_Fragment, { children: [_jsx("rect", { x: "3", y: "3", width: "7", height: "7", rx: "1" }), _jsx("rect", { x: "14", y: "3", width: "7", height: "7", rx: "1" }), _jsx("rect", { x: "3", y: "14", width: "7", height: "7", rx: "1" }), _jsx("path", { d: "M14 14h3v3" }), _jsx("path", { d: "M21 21v.01" }), _jsx("path", { d: "M17 21h4" })] }));
 /* Keyed on the nav item's id, so two apps that call a destination the
    same thing get the same glyph — which is the point. An id with no
    entry falls back to PANELS, and a bar of several PANELS is the smell
@@ -47,7 +54,10 @@ const TAB_GLYPHS = {
     orders: PACKAGE,
     run: PACKAGE,
     customers: USERS,
+    users: USERS,
     history: HISTORY,
+    cards: CARD,
+    'qr-codes': QR,
     chat: CHAT,
     messages: CHAT,
     activity: BELL,

@@ -119,7 +119,14 @@ export function HeaderBar(props: HeaderBarProps): JSX.Element {
 
   return (
     <div className="pd-chrome__bar">
-      {appsVisible ? (
+      {/* The menu is an app SWITCHER, so it only earns its chevron when
+          there is somewhere to switch to. Below two apps this renders the
+          static lockup whatever the preference says — matching the strip,
+          which has always had that rule. vCard Studio is why: it is the
+          only one of the four with customers, and my_apps() returns them
+          nothing by design, so without this a customer got a dropdown
+          onto an empty list. */}
+      {appsVisible || apps.length < 2 ? (
         <span className="pd-chrome__app--static">
           <span className="pd-chrome__app-mark">{appGlyph(currentApp, 15, appName)}</span>
           <span className="pd-chrome__app-name">{appName}</span>
@@ -243,6 +250,7 @@ export function HeaderBar(props: HeaderBarProps): JSX.Element {
       <span className="pd-chrome__divider pd-chrome__divider--account" />
 
       <AccountMenu
+        showAppsPreference={apps.length >= 2}
         user={user}
         open={openMenu === 'account'}
         onOpen={() => setOpenMenu('account')}

@@ -44,6 +44,11 @@ export interface AccountPanelBodyProps {
       The mobile sheet puts the app list here, because that is where
       app switching lives on a phone. */
   extra?: ReactNode;
+  /** False when this person holds fewer than two apps, which hides the
+      "keep apps visible" row. A preference governing a strip that can
+      never render is not a choice, it is a puzzle — and vCard Studio has
+      CUSTOMERS, for whom my_apps() returns nothing by design. */
+  showAppsPreference?: boolean;
 }
 
 /** Shared by the desktop popover and the mobile account sheet. */
@@ -57,6 +62,7 @@ export function AccountPanelBody({
   accountActions,
   linkComponent,
   extra,
+  showAppsPreference,
 }: AccountPanelBodyProps): JSX.Element {
   const Link: ChromeLinkComponent | 'a' = linkComponent ?? 'a';
   return (
@@ -72,19 +78,21 @@ export function AccountPanelBody({
       </div>
       <span className="pd-chrome__panel-divider" style={{ margin: '0 10px 6px' }} />
       {extra}
-      <button
-        className="pd-chrome__pref"
-        type="button"
-        role="menuitemcheckbox"
-        aria-checked={appsVisible}
-        onClick={() => onAppsVisibleChange(!appsVisible)}
-      >
-        <span className="pd-chrome__pref-text">
-          <span className="pd-chrome__pref-title">{PREF_TITLE}</span>
-          <span className="pd-chrome__pref-hint">{prefHint(appsVisible)}</span>
-        </span>
-        <Toggle on={appsVisible} />
-      </button>
+      {showAppsPreference === false ? null : (
+        <button
+          className="pd-chrome__pref"
+          type="button"
+          role="menuitemcheckbox"
+          aria-checked={appsVisible}
+          onClick={() => onAppsVisibleChange(!appsVisible)}
+        >
+          <span className="pd-chrome__pref-text">
+            <span className="pd-chrome__pref-title">{PREF_TITLE}</span>
+            <span className="pd-chrome__pref-hint">{prefHint(appsVisible)}</span>
+          </span>
+          <Toggle on={appsVisible} />
+        </button>
+      )}
       {accountLinks?.notifications ? (
         <Link
           className="pd-chrome__menu-row"

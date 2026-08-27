@@ -18,9 +18,14 @@ export interface AccountPanelBodyProps {
         The mobile sheet puts the app list here, because that is where
         app switching lives on a phone. */
     extra?: ReactNode;
+    /** False when this person holds fewer than two apps, which hides the
+        "keep apps visible" row. A preference governing a strip that can
+        never render is not a choice, it is a puzzle — and vCard Studio has
+        CUSTOMERS, for whom my_apps() returns nothing by design. */
+    showAppsPreference?: boolean;
 }
 /** Shared by the desktop popover and the mobile account sheet. */
-export declare function AccountPanelBody({ user, appsVisible, onAppsVisibleChange, onSignOut, onEditProfile, accountLinks, accountActions, linkComponent, extra, }: AccountPanelBodyProps): JSX.Element;
+export declare function AccountPanelBody({ user, appsVisible, onAppsVisibleChange, onSignOut, onEditProfile, accountLinks, accountActions, linkComponent, extra, showAppsPreference, }: AccountPanelBodyProps): JSX.Element;
 export interface AccountMenuProps extends AccountPanelBodyProps {
     open: boolean;
     onOpen: () => void;

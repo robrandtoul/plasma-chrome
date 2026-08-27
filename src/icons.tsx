@@ -185,6 +185,32 @@ const HISTORY = (
   </>
 );
 
+/* lucide "contact". vCard Studio's Cards tab, and the one a CUSTOMER of
+   that app sees, so it is the least optional of these. */
+const CARD = (
+  <>
+    <path d="M16 2v2" />
+    <path d="M8 2v2" />
+    <rect x="3" y="4" width="18" height="18" rx="2" />
+    <circle cx="12" cy="11" r="2" />
+    <path d="M8 18a4 4 0 0 1 8 0" />
+  </>
+);
+
+/* A QR code's three finder squares and a scatter of modules. Drawn rather
+   than borrowed: lucide's qr-code is a 12-path glyph that turns to mud at
+   22px, which is the only size this is ever rendered at. */
+const QR = (
+  <>
+    <rect x="3" y="3" width="7" height="7" rx="1" />
+    <rect x="14" y="3" width="7" height="7" rx="1" />
+    <rect x="3" y="14" width="7" height="7" rx="1" />
+    <path d="M14 14h3v3" />
+    <path d="M21 21v.01" />
+    <path d="M17 21h4" />
+  </>
+);
+
 /* Keyed on the nav item's id, so two apps that call a destination the
    same thing get the same glyph — which is the point. An id with no
    entry falls back to PANELS, and a bar of several PANELS is the smell
@@ -203,7 +229,10 @@ const TAB_GLYPHS: Record<string, JSX.Element> = {
   orders: PACKAGE,
   run: PACKAGE,
   customers: USERS,
+  users: USERS,
   history: HISTORY,
+  cards: CARD,
+  'qr-codes': QR,
   chat: CHAT,
   messages: CHAT,
   activity: BELL,

@@ -218,6 +218,7 @@ export function MobileChrome(props: MobileChromeProps): JSX.Element {
             ref={account.containerRef}
           >
             <AccountPanelBody
+        showAppsPreference={apps.length >= 2}
               user={user}
               appsVisible={appsVisible}
               onAppsVisibleChange={onAppsVisibleChange}
