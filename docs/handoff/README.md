@@ -24,6 +24,20 @@ One exception is called out explicitly in **Contrast corrections** — a value i
 
 ---
 
+## Amendment, 2026-08-27 — the accent changed after this was written
+
+**This document is the design spec as handed over. One decision in it has since been overridden by the product owner, and `src/chrome.css` is the source of truth where the two disagree.**
+
+The accent is now `#ec6747`, used for the active nav fill, both badge fills, the strip underline, the search focus border, the "Here" marker and the toggle. White text sits on it at **3.18:1**, which is below the 4.5:1 AA minimum for the 13.5px nav label. That was chosen knowingly, with the measured alternatives on the table: ink text on the same coral is 5.81:1, and the `#c2301a` this section recommends is 5.63:1.
+
+So the "Contrast corrections" section immediately below, and the "no white text on `#ff5b3a`" line in `MIGRATION.md`'s definition of done, no longer describe what ships. They are kept as written because the reasoning is still correct and worth reading before anyone proposes changing the accent again.
+
+One coral was deliberately not moved: the mobile active tab label is coral text on a pale tint rather than a fill behind white, where `#ec6747` measures 2.93:1 against `#c2301a`'s 5.17:1. It stays `#c2301a` and says so in place.
+
+App marks also changed: they render each app's own glyph rather than its initial letter. See `AppGlyph` in `src/icons.tsx`.
+
+---
+
 ## Contrast corrections — read this before you start
 
 The prototype uses `#ff5b3a` (`--c-brand-500`) as the fill behind white text on the active nav item and on count badges. This is what Proofs does today, and it fails WCAG AA:
