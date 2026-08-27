@@ -55,38 +55,17 @@
 
 /* ── Switcher strip (only when appsVisible) ─────────────── */
 
+/* padding-left is 8px, not the 22px the bar below uses, because the
+   first strip link carries 14px of its own. 8 + 14 lands the first
+   label on the same vertical as the app mark in the bar — which only
+   became visible once the PLASMADESIGN lockup that used to sit here
+   was removed (see SwitcherStrip.tsx for why it went). */
 .pd-chrome__strip {
   display: flex;
   align-items: stretch;
   height: 38px;
-  padding: 0 22px;
+  padding: 0 22px 0 8px;
   background: #161311;
-}
-
-.pd-chrome__strip-brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  padding-right: 20px;
-  flex: 0 0 auto;
-}
-
-.pd-chrome__strip-mark {
-  display: inline-block;
-  width: 15px;
-  height: 15px;
-  border-radius: 4px;
-  background: #ffffff;
-}
-
-.pd-chrome__strip-wordmark {
-  font-family: 'Geist Mono', 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 9.5px;
-  font-weight: 500;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: #a89e92;
-  white-space: nowrap;
 }
 
 .pd-chrome__strip-nav {
@@ -892,7 +871,9 @@
 }
 
 @media (max-width: 560px) {
-  .pd-chrome__strip { padding: 0 14px; }
+  /* 4 + the link's own 10px = the bar's 14px, same alignment rule as
+     the full-width case above. */
+  .pd-chrome__strip { padding: 0 14px 0 4px; }
   .pd-chrome__bar { padding: 0 14px; }
   .pd-chrome__strip-link { padding: 0 10px; }
 }

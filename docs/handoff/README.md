@@ -30,6 +30,18 @@ One exception is called out explicitly in **Contrast corrections** — a value i
 
 The accent is now `#ec6747`, used for the active nav fill, both badge fills, the strip underline, the search focus border, the "Here" marker and the toggle. White text sits on it at **3.18:1**, which is below the 4.5:1 AA minimum for the 13.5px nav label. That was chosen knowingly, with the measured alternatives on the table: ink text on the same coral is 5.81:1, and the `#c2301a` this section recommends is 5.63:1.
 
+**Second amendment, same date: the switcher strip loses its wordmark.** The table below
+specifies a 15px white mark and the word `PlasmaDesign` at the head of the strip. Both are
+removed. Every app's own lockup sits 38px underneath saying the same company name, and the
+strip already marks which app you are in, so the row was the third telling of one thing on
+one screen. This reinstates a note made before this bundle existed and answers it directly:
+the spec's "two surfaces, not four" argument is about the ink SURFACE, which stays, not
+about the wordmark on it. The `nav` keeps `aria-label="PlasmaDesign apps"` — the landmark
+still has to have a name, and a screen-reader user never had the duplication.
+
+The strip's `padding-left` drops from 22px to 8px so the first app label lines up with the
+app mark in the bar below, which the lockup used to hide.
+
 So the "Contrast corrections" section immediately below, and the "no white text on `#ff5b3a`" line in `MIGRATION.md`'s definition of done, no longer describe what ships. They are kept as written because the reasoning is still correct and worth reading before anyone proposes changing the accent again.
 
 One coral was deliberately not moved: the mobile active tab label is coral text on a pale tint rather than a fill behind white, where `#ec6747` measures 2.93:1 against `#c2301a`'s 5.17:1. It stays `#c2301a` and says so in place.

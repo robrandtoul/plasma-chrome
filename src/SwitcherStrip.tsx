@@ -6,6 +6,19 @@
    Links point at other origins, so they are always plain anchors:
    linkComponent is a router seam and there is no route to another
    app's domain.
+
+   NO WORDMARK, by product decision 2026-08-27. The handoff spec puts a
+   15px white mark and the word PLASMADESIGN at the head of this row.
+   Both are gone: every app's own lockup sits 38px below saying the same
+   company name, and the strip already names the app you are in, so the
+   lockup was the third telling of one thing on one screen. The ink
+   surface itself stays — that is what the spec's "two surfaces, not
+   four" argument is actually about, and it still separates estate-level
+   navigation from the app cleanly.
+
+   `aria-label` keeps the company name because the accessible name of
+   this landmark still has to say what the row is; a screen-reader user
+   never had the duplication a sighted one did.
    ─────────────────────────────────────────────────────────── */
 
 import type { JSX } from 'react';
@@ -21,10 +34,6 @@ export function SwitcherStrip({ apps, currentApp }: SwitcherStripProps): JSX.Ele
 
   return (
     <nav className="pd-chrome__strip" aria-label="PlasmaDesign apps">
-      <span className="pd-chrome__strip-brand">
-        <span className="pd-chrome__strip-mark" />
-        <span className="pd-chrome__strip-wordmark">PlasmaDesign</span>
-      </span>
       <ul className="pd-chrome__strip-nav" role="list">
         {apps.map((app) =>
           app.app === currentApp ? (
