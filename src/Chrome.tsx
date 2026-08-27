@@ -41,14 +41,48 @@ import { useAppsVisible } from './useAppsVisible';
    top bar is `position: sticky`. A wrapper with a real box would
    become the containing block for the first and would cap the
    scrolling range of the second. */
-const RESPONSIVE_CSS =
-  '@media (max-width: 767px) {' +
-  ' .pd-chrome[data-pd-chrome-has-mobile="true"] { display: none; }' +
-  ' .pd-chrome-mobile { display: contents; }' +
-  '}' +
-  '@media (min-width: 768px) {' +
-  ' .pd-chrome-mobile { display: none; }' +
-  '}';
+/* The tab bar's own height, published the same way --pd-chrome-height
+   is and for the same reason: a host cannot place anything above a bar
+   whose height it is not allowed to know, and the DoD forbids
+   hardcoding the number. 67px is chrome.css's own geometry — 6px top
+   padding + a 49px tab + 12px bottom padding — and chrome.css is frozen
+   byte-for-byte against the reference, so it cannot drift without a
+   deliberate amendment. Zero at every width where no tab bar renders,
+   so `padding-bottom: var(--pd-chrome-tabbar-height)` is safe to write
+   unconditionally. */
+const TABBAR_HEIGHT = 'calc(67px + env(safe-area-inset-bottom))';
+
+/* absolute, chrome.css's default, needs a viewport-locked app frame to
+   be its containing block: proof-viewer has one (#app-scroll owns the
+   scrolling below md), and iOS then cannot pan the bar away from the
+   screen edge the way it pans a fixed one when the keyboard opens.
+   A host that scrolls the DOCUMENT has no such frame, so the bar's
+   containing block falls back to the initial containing block and it
+   is painted 100vh down the page — correct at the top, gone the moment
+   you scroll. Measured in Stock Control: at scrollY 600 the bar sat at
+   y=145 instead of the viewport bottom. `fixed` is the answer for those
+   hosts, and it is strictly better than a bar that scrolls away, but it
+   is opt-in rather than the default because it reintroduces the iOS
+   keyboard pan that proof-viewer learned the hard way. */
+function responsiveCss(hasMobile: boolean, tabBarPosition: 'absolute' | 'fixed'): string {
+  /* The attribute value is deliberately unquoted. React escapes the
+     text children of <style>, so a quoted value renders as &quot; and
+     the selector stops matching under renderToString. None of the four
+     hosts server-render today; `true` is a valid CSS identifier, so
+     this costs nothing and removes the trap. */
+  return (
+    '@media (max-width: 767px) {' +
+    ' .pd-chrome[data-pd-chrome-has-mobile=true] { display: none; }' +
+    ' .pd-chrome-mobile { display: contents; }' +
+    ' :root { --pd-chrome-tabbar-height: ' + (hasMobile ? TABBAR_HEIGHT : '0px') + '; }' +
+    (tabBarPosition === 'fixed' ? ' .pd-chrome__tabs { position: fixed; }' : '') +
+    '}' +
+    '@media (min-width: 768px) {' +
+    ' .pd-chrome-mobile { display: none; }' +
+    ' :root { --pd-chrome-tabbar-height: 0px; }' +
+    '}'
+  );
+}
 
 export function Chrome(props: ChromeProps): JSX.Element {
   const {
@@ -67,12 +101,14 @@ export function Chrome(props: ChromeProps): JSX.Element {
     chat,
     chatUnread,
     chatMentionUnread,
+    notifications,
     notificationsUnread,
     appsVisible: controlledAppsVisible,
     onAppsVisibleChange,
     onSignOut,
     onEditProfile,
     variant = 'full',
+    tabBarPosition = 'absolute',
   } = props;
 
   const [appsVisible, setAppsVisible] = useAppsVisible(
@@ -103,7 +139,7 @@ export function Chrome(props: ChromeProps): JSX.Element {
 
   return (
     <>
-      <style>{RESPONSIVE_CSS}</style>
+      <style>{responsiveCss(!switcherOnly, tabBarPosition)}</style>
       <div
         className={cx('pd-chrome', stripVisible && 'pd-chrome--with-strip')}
         data-pd-chrome-has-mobile={switcherOnly ? undefined : 'true'}
@@ -123,6 +159,7 @@ export function Chrome(props: ChromeProps): JSX.Element {
             chat={chat}
             chatUnread={chatUnread}
             chatMentionUnread={chatMentionUnread}
+            notifications={notifications}
             notificationsUnread={notificationsUnread}
             appsVisible={appsVisible}
             onAppsVisibleChange={setAppsVisible}
@@ -147,6 +184,8 @@ export function Chrome(props: ChromeProps): JSX.Element {
           user={user}
           linkComponent={linkComponent}
           search={search}
+          chat={chat}
+          notifications={notifications}
           appsVisible={appsVisible}
           onAppsVisibleChange={setAppsVisible}
           onSignOut={onSignOut}

@@ -16,7 +16,7 @@
    sheet needed no mobile-scoped hover or focus rules of its own.
    ─────────────────────────────────────────────────────────── */
 
-import type { JSX } from 'react';
+import type { JSX, ReactNode } from 'react';
 import { useState } from 'react';
 import type { ChromeApp, ChromeLinkComponent, ChromeNavItem, ChromeSearch, ChromeUser, ChromeAccountAction, ChromeAccountLinks } from './types';
 import { cx, formatCount } from './types';
@@ -38,6 +38,16 @@ export interface MobileChromeProps {
   user: ChromeUser;
   linkComponent?: ChromeLinkComponent;
   search?: ChromeSearch;
+  /* ADDITION to the README's ChromeProps, forced by a gap in it.
+     The desktop tree is display:none under 768px, so a host that
+     passes ChatMenu or a notifications bell as a slot loses both
+     controls entirely on a phone — for Stock Control that meant the
+     notification feed and the per-device push toggle, which is the
+     surface push actually matters on. Rendered here in the same
+     right-cluster order the README fixes for the desktop bar:
+     search -> chat -> notifications -> account. */
+  chat?: ReactNode;
+  notifications?: ReactNode;
   appsVisible: boolean;
   onAppsVisibleChange: (next: boolean) => void;
   onSignOut: () => void;
@@ -58,6 +68,8 @@ export function MobileChrome(props: MobileChromeProps): JSX.Element {
     user,
     linkComponent,
     search,
+    chat,
+    notifications,
     appsVisible,
     onAppsVisibleChange,
     onSignOut,
@@ -149,6 +161,9 @@ export function MobileChrome(props: MobileChromeProps): JSX.Element {
             <SearchButtonIcon />
           </button>
         ) : null}
+
+        {chat}
+        {notifications}
 
         <button
           className="pd-chrome__avatar"
@@ -264,11 +279,24 @@ export function MobileChrome(props: MobileChromeProps): JSX.Element {
             <span className="pd-chrome__panel-label">Go to</span>
             {nav.map((item) => {
               const active = item.id === activeNavId;
+              // Choosing a destination has to dismiss the sheet, or it
+              // stays parked over whatever you just asked for. Nothing
+              // else closed it: a router host navigates underneath a
+              // still-open dialog, and a host doing view swaps never
+              // leaves the page at all. Composed rather than replacing,
+              // so a host's own onClick still runs.
+              const row: ChromeNavItem = {
+                ...item,
+                onClick: (event) => {
+                  item.onClick?.(event);
+                  setSheet(null);
+                },
+              };
               return (
                 <NavLinkish
                   key={item.id}
                   linkComponent={linkComponent}
-                  item={item}
+                  item={row}
                   active={active}
                   className="pd-chrome__menu-row"
                 >

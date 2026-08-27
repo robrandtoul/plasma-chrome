@@ -6,7 +6,7 @@
    Data arrives as props; routing arrives as `linkComponent`.
    ─────────────────────────────────────────────────────────── */
 
-import type { ComponentType, ReactNode } from 'react';
+import type { ComponentType, MouseEvent, ReactNode } from 'react';
 
 export interface ChromeApp {
   app: string; // 'proofs' | 'qr' | 'programme' | 'stock'
@@ -23,6 +23,16 @@ export interface ChromeNavItem {
   href: string;
   badge?: number;
   end?: boolean; // exact-match highlighting
+  /* ADDITION to the README's ChromeProps, forced by a gap in it.
+     MIGRATION's option B for a router-less host is a nav array "with
+     `href="#"` and an `onClick`", and says "the chrome does not care".
+     It did care: NavLinkish forwarded href, aria-current and end, and
+     nothing else, so the click did nothing and option B could not be
+     taken without a bespoke linkComponent in the app — the drift this
+     package exists to remove. Forwarded to whatever link component is
+     in use, the default plain <a> included. A host that supplies this
+     owns the preventDefault. */
+  onClick?: (event: MouseEvent<HTMLElement>) => void;
 }
 
 export interface ChromeUser {
@@ -85,6 +95,15 @@ export interface ChromeProps {
   chat?: ReactNode;
   chatUnread?: number;
   chatMentionUnread?: number;
+  /* ADDITION to the README's ChromeProps, the same shape and for the
+     same reason as `chat`. MIGRATION §2 says Stock Control's
+     `NotificationsToggle.jsx` is passed through "as slots" alongside
+     ChatMenu, but the declared props offered only `notificationsUnread`
+     — a number. That bell is not a count: it owns the per-device push
+     subscription and its own popover, so a number would have drawn a
+     dead duplicate beside the real control. Omit this and the chrome
+     draws its own bell from notificationsUnread, exactly as before. */
+  notifications?: ReactNode;
   notificationsUnread?: number;
   appsVisible?: boolean; // controlled; omit to let the chrome own the cookie
   onAppsVisibleChange?: (next: boolean) => void;
@@ -112,6 +131,19 @@ export interface ChromeProps {
      for a genuinely app-specific action, not a general menu builder. */
   accountActions?: ChromeAccountAction[];
   variant?: 'full' | 'switcher-only'; // 'switcher-only' for the no-role screen
+  /* ADDITION to the README's ChromeProps, forced by a host the package
+     had silently assumed away. chrome.css positions the mobile tab bar
+     `absolute` on purpose, against the host's viewport-locked app
+     frame; proof-viewer has one, Stock Control scrolls the document and
+     has none, so there the bar is painted 100vh down the page and
+     scrolls out of sight. Pass 'fixed' when the DOCUMENT scrolls. The
+     cost is the iOS keyboard pan that made `absolute` the default in
+     the first place, which is why this is opt-in — but a bar that pans
+     briefly beats a bar that is not there at all.
+     Either way the chrome publishes --pd-chrome-tabbar-height (0px
+     above 768px), which is what a host should pad its content with
+     rather than hardcoding the number. */
+  tabBarPosition?: 'absolute' | 'fixed';
 }
 
 /** Counts read as `9+` above nine. */

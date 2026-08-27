@@ -22,16 +22,21 @@ export function NavLinkish({ linkComponent, item, className, active, children, }
     const extra = {};
     if (linkComponent && item.end !== undefined)
         extra.end = item.end;
+    // Only set when the host asked for it, so a link component that
+    // treats the presence of onClick as "this is a button" is not
+    // handed an undefined one on every ordinary nav item.
+    if (item.onClick)
+        extra.onClick = item.onClick;
     return (_jsx(Comp, { className: className, href: item.href, "aria-current": active ? 'page' : undefined, ...extra, children: children }));
 }
 export function HeaderBar(props) {
-    const { apps, currentApp, appName, nav, activeNavId, user, linkComponent, accountLinks, accountActions, search, actions, chat, chatUnread, chatMentionUnread, notificationsUnread, appsVisible, onAppsVisibleChange, onSignOut, onEditProfile, } = props;
+    const { apps, currentApp, appName, nav, activeNavId, user, linkComponent, accountLinks, accountActions, search, actions, chat, chatUnread, chatMentionUnread, notifications, notificationsUnread, appsVisible, onAppsVisibleChange, onSignOut, onEditProfile, } = props;
     // One popover at a time: opening either closes the other.
     const [openMenu, setOpenMenu] = useState(null);
     const chatCount = chatUnread ?? 0;
     const mentionCount = chatMentionUnread ?? 0;
     const showChat = chat !== undefined || chatUnread !== undefined || chatMentionUnread !== undefined;
-    const showNotifications = notificationsUnread !== undefined;
+    const showNotifications = notifications !== undefined || notificationsUnread !== undefined;
     const notificationCount = notificationsUnread ?? 0;
     const chatLabel = mentionCount > 0
         ? 'Team chat — ' + mentionCount + ' mentioning you'
@@ -43,8 +48,10 @@ export function HeaderBar(props) {
                     return (_jsx("li", { children: _jsxs(NavLinkish, { linkComponent: linkComponent, item: item, active: active, className: cx('pd-chrome__nav-item', active && 'pd-chrome__nav-item--active'), children: [item.label, item.badge && item.badge > 0 ? (_jsx("span", { className: "pd-chrome__count", children: formatCount(item.badge) })) : null] }) }, item.id));
                 }) }), _jsx("span", { className: "pd-chrome__spacer" }), actions, search ? (_jsxs(_Fragment, { children: [_jsxs("label", { className: "pd-chrome__search", children: [_jsx(SearchIcon, {}), _jsx("input", { className: "pd-chrome__search-input", type: "search", placeholder: search.placeholder ?? 'Search', value: search.value, onChange: (event) => search.onChange(event.target.value) }), search.onPalette ? (_jsx("button", { className: "pd-chrome__kbd", type: "button", "aria-label": "Open the search palette", onClick: search.onPalette, children: "\u2318K" })) : null] }), search.onPalette ? (_jsx("button", { className: "pd-chrome__icon-btn pd-chrome__search-toggle", type: "button", title: "Search", "aria-label": "Search", onClick: search.onPalette, children: _jsx(SearchButtonIcon, {}) })) : null] })) : null, showChat
                 ? (chat ?? (_jsxs("button", { className: "pd-chrome__icon-btn", type: "button", title: "Team chat", "aria-label": chatLabel, children: [_jsx(ChatIcon, {}), chatCount > 0 ? (_jsx("span", { className: "pd-chrome__dot", "aria-hidden": "true", children: formatCount(chatCount) })) : null] })))
-                : null, showNotifications ? (_jsxs("button", { className: "pd-chrome__icon-btn", type: "button", title: "Notifications", "aria-label": notificationCount > 0
-                    ? 'Notifications — ' + notificationCount + ' new'
-                    : 'Notifications', children: [_jsx(BellIcon, {}), notificationCount > 0 ? (_jsx("span", { className: "pd-chrome__dot", "aria-hidden": "true", children: formatCount(notificationCount) })) : null] })) : null, _jsx("span", { className: "pd-chrome__divider pd-chrome__divider--account" }), _jsx(AccountMenu, { user: user, open: openMenu === 'account', onOpen: () => setOpenMenu('account'), onClose: () => setOpenMenu((current) => (current === 'account' ? null : current)), appsVisible: appsVisible, onAppsVisibleChange: onAppsVisibleChange, onSignOut: onSignOut, onEditProfile: onEditProfile, accountLinks: accountLinks, accountActions: accountActions, linkComponent: linkComponent })] }));
+                : null, showNotifications
+                ? (notifications ?? (_jsxs("button", { className: "pd-chrome__icon-btn", type: "button", title: "Notifications", "aria-label": notificationCount > 0
+                        ? 'Notifications — ' + notificationCount + ' new'
+                        : 'Notifications', children: [_jsx(BellIcon, {}), notificationCount > 0 ? (_jsx("span", { className: "pd-chrome__dot", "aria-hidden": "true", children: formatCount(notificationCount) })) : null] })))
+                : null, _jsx("span", { className: "pd-chrome__divider pd-chrome__divider--account" }), _jsx(AccountMenu, { user: user, open: openMenu === 'account', onOpen: () => setOpenMenu('account'), onClose: () => setOpenMenu((current) => (current === 'account' ? null : current)), appsVisible: appsVisible, onAppsVisibleChange: onAppsVisibleChange, onSignOut: onSignOut, onEditProfile: onEditProfile, accountLinks: accountLinks, accountActions: accountActions, linkComponent: linkComponent })] }));
 }
 //# sourceMappingURL=HeaderBar.js.map

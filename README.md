@@ -82,13 +82,16 @@ Also exported, for the rare host that needs a piece rather than the whole: `Swit
 | `chat` | `ReactNode` | no | A whole chat control, rendered in the chat position, instead of the chrome's own button. See below. |
 | `chatUnread` | `number` | no | Unread count on the chat button. Supplying this (or `chatMentionUnread`, or `chat`) is what makes the button appear; `0` shows the button with no badge. |
 | `chatMentionUnread` | `number` | no | Mentions, used for the button's accessible label. |
-| `notificationsUnread` | `number` | no | Same contract as `chatUnread` for the bell. Omit it and there is no bell. |
+| `notifications` | `ReactNode` | no | A whole notifications control, rendered in the bell position, instead of the chrome's own button. Same contract as `chat`. |
+| `notificationsUnread` | `number` | no | Same contract as `chatUnread` for the bell. Omit both this and `notifications` and there is no bell. |
 | `appsVisible` | `boolean` | no | Controlled preference. Omit it and the chrome owns the cookie itself, which is what you want in an app. |
 | `onAppsVisibleChange` | `(next: boolean) => void` | no | Called on every change, controlled or not. Useful for mirroring the preference into a profile column. |
 | `onSignOut` | `() => void` | yes | The one sign out in the product. It is only ever in the account menu, never on the bar. |
 | `onEditProfile` | `() => void` | no | Renders the Edit profile row. Omit it and the row is not rendered. |
 | `accountLinks` | `ChromeAccountLinks` | no | Hrefs for the Notifications and Feedback rows. A row with no href is not rendered, so an app with no feedback page does not get a dead menu item. |
+| `accountActions` | `ChromeAccountAction[]` | no | Extra account menu rows that run a handler rather than navigate, placed after the specified rows and before sign out. Keep the list short. |
 | `variant` | `'full' \| 'switcher-only'` | no | Defaults to `'full'`. See below. |
+| `tabBarPosition` | `'absolute' \| 'fixed'` | no | Defaults to `'absolute'`. Pass `'fixed'` when your app scrolls the **document** rather than an inner frame. See below. |
 
 Supporting types:
 
@@ -108,6 +111,7 @@ interface ChromeNavItem {
   href: string;
   badge?: number;       // shown as 9+ above nine; falsy or zero hides it
   end?: boolean;        // exact match highlighting, forwarded to linkComponent
+  onClick?: (e: MouseEvent<HTMLElement>) => void;  // for a host with no router
 }
 
 interface ChromeUser {
@@ -130,15 +134,26 @@ interface ChromeAccountLinks {
   notifications?: string;
   feedback?: string;
 }
+
+interface ChromeAccountAction {
+  id: string;
+  label: string;
+  onClick: () => void;
+}
 ```
 
-### Three props beyond the original specification
+### Props beyond the original specification
 
-`ChromeProps` in `docs/handoff/README.md` does not have `mobileTabs`, `chat` or `accountLinks`. Each was added because the specification asks for something its own prop list cannot express, and each is commented at its declaration in `src/types.ts` with the reason. In short:
+`ChromeProps` in `docs/handoff/README.md` does not have `mobileTabs`, `chat`, `accountLinks`, `accountActions`, `notifications` or `tabBarPosition`. Each was added because the specification asks for something its own prop list cannot express, and each is commented at its declaration in `src/types.ts` with the reason. In short:
 
 - **`mobileTabs`** exists because `mobileTabIds` can only be resolved against `nav`, and the specified mobile bars are not subsets of the desktop navs. Every app is asked for a Chat tab, but rule 4 makes chat a right cluster icon button rather than a destination; Proofs is asked for an Activity tab, which is a route with no nav item. Supply `mobileTabs` to give the bar outright. Omit it and ids are resolved against `nav` as originally described.
 - **`chat`** is the slot the migration promises proof-viewer, whose `ChatMenu` owns a realtime subscription and must not be reimplemented here. Pass the whole control and the chrome puts it in the chat position. Omit it and the chrome draws its own button from the counts.
 - **`accountLinks`** carries the hrefs for the Notifications and Feedback rows. The specification names three account menu rows but declares a handler for one of them, which would leave the other two unreachable in an app that has those pages.
+- **`accountActions`** carries account menu rows that run a handler instead of navigating. Stock Control forced it: the migration moves its change password control into the account menu, and change password there is a modal, not a route. Routing it through `onEditProfile` would have put a row labelled Edit profile in front of a password dialog.
+- **`notifications`** is the bell's equivalent of `chat`, and for the same reason. The migration passes Stock Control's `NotificationsToggle` through "as slots" alongside `ChatMenu`, but the declared prop was a number. That bell owns a per device push subscription and its own popover; a number would have drawn a dead duplicate next to the real control.
+- **`tabBarPosition`** exists because the package had silently assumed every host locks its frame to the viewport. See below.
+
+`ChromeNavItem.onClick` is a fourth addition of the same kind. The migration's option B for a host with no router is a nav array "with `href="#"` and an `onClick`", and says "the chrome does not care" — but `NavLinkish` forwarded `href`, `aria-current` and `end` and nothing else, so the click did nothing. It is forwarded now, to the default plain `<a>` as well as to a supplied `linkComponent`. The host owns the `preventDefault`.
 
 ---
 
@@ -244,6 +259,30 @@ The chrome publishes the current value as a CSS custom property. `chrome.css` de
 Stock Control's stock filter bar and the Proofs sticky admin header both hardcode this today, and both will break on adoption. Grep your repo for `top: 56px`, `top: 94px`, `top-14`, `top-\[56px\]` and their Tailwind equivalents before you ship.
 
 There is exactly one `:root` value, so mount exactly one `Chrome`.
+
+---
+
+## The mobile tab bar: `tabBarPosition` and `--pd-chrome-tabbar-height`
+
+`chrome.css` positions the bottom tab bar `absolute`, not `fixed`, and says why: iOS pans a fixed bar away from the screen edge when the keyboard opens, and proof-viewer learned that the hard way. `absolute` avoids it by resolving against **the host's viewport locked app frame**.
+
+That frame was an unstated requirement, and only one app has one. proof-viewer's `#app-scroll` owns all the scrolling below `md:`, so `bottom: 0` means the bottom of the screen. Stock Control scrolls the document and has no positioned ancestor at all, so the bar's containing block falls back to the initial containing block: it is painted 100vh down the **page**, looks right at the top and scrolls away with everything else. Measured there before the fix, at `scrollY: 600` the bar sat at `y: 145` instead of `y: 745`.
+
+**If your app scrolls the document, pass `tabBarPosition="fixed"`.** The iOS pan comes back, which is why it is not the default, but a bar that pans briefly beats a bar that is not there.
+
+```tsx
+<Chrome tabBarPosition="fixed" ... />   // document scrolls
+<Chrome ... />                          // an inner frame scrolls: leave it alone
+```
+
+Either way the chrome publishes the bar's height, and nothing may hardcode it:
+
+```css
+main            { padding-bottom: var(--pd-chrome-tabbar-height); }
+.my-bottom-bar  { bottom: var(--pd-chrome-tabbar-height); }
+```
+
+It is `0px` at every width where no tab bar renders — above 768px, and at every width under `variant="switcher-only"` — so both rules above are safe to write unconditionally, with no media query of your own.
 
 ---
 

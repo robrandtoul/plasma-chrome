@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from 'react';
+import type { ComponentType, MouseEvent, ReactNode } from 'react';
 export interface ChromeApp {
     app: string;
     label: string;
@@ -13,6 +13,7 @@ export interface ChromeNavItem {
     href: string;
     badge?: number;
     end?: boolean;
+    onClick?: (event: MouseEvent<HTMLElement>) => void;
 }
 export interface ChromeUser {
     name: string;
@@ -53,6 +54,7 @@ export interface ChromeProps {
     chat?: ReactNode;
     chatUnread?: number;
     chatMentionUnread?: number;
+    notifications?: ReactNode;
     notificationsUnread?: number;
     appsVisible?: boolean;
     onAppsVisibleChange?: (next: boolean) => void;
@@ -61,6 +63,7 @@ export interface ChromeProps {
     accountLinks?: ChromeAccountLinks;
     accountActions?: ChromeAccountAction[];
     variant?: 'full' | 'switcher-only';
+    tabBarPosition?: 'absolute' | 'fixed';
 }
 /** Counts read as `9+` above nine. */
 export declare function formatCount(n: number): string;

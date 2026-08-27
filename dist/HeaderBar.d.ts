@@ -29,6 +29,7 @@ export interface HeaderBarProps {
     chat?: ReactNode;
     chatUnread?: number;
     chatMentionUnread?: number;
+    notifications?: ReactNode;
     notificationsUnread?: number;
     appsVisible: boolean;
     onAppsVisibleChange: (next: boolean) => void;

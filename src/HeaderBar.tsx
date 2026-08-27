@@ -37,6 +37,10 @@ export function NavLinkish({
   const Comp: ComponentType<any> | 'a' = linkComponent ?? 'a';
   const extra: Record<string, unknown> = {};
   if (linkComponent && item.end !== undefined) extra.end = item.end;
+  // Only set when the host asked for it, so a link component that
+  // treats the presence of onClick as "this is a button" is not
+  // handed an undefined one on every ordinary nav item.
+  if (item.onClick) extra.onClick = item.onClick;
   return (
     <Comp
       className={className}
@@ -64,6 +68,7 @@ export interface HeaderBarProps {
   chat?: ReactNode;
   chatUnread?: number;
   chatMentionUnread?: number;
+  notifications?: ReactNode;
   notificationsUnread?: number;
   appsVisible: boolean;
   onAppsVisibleChange: (next: boolean) => void;
@@ -87,6 +92,7 @@ export function HeaderBar(props: HeaderBarProps): JSX.Element {
     chat,
     chatUnread,
     chatMentionUnread,
+    notifications,
     notificationsUnread,
     appsVisible,
     onAppsVisibleChange,
@@ -101,7 +107,7 @@ export function HeaderBar(props: HeaderBarProps): JSX.Element {
   const mentionCount = chatMentionUnread ?? 0;
   const showChat =
     chat !== undefined || chatUnread !== undefined || chatMentionUnread !== undefined;
-  const showNotifications = notificationsUnread !== undefined;
+  const showNotifications = notifications !== undefined || notificationsUnread !== undefined;
   const notificationCount = notificationsUnread ?? 0;
 
   const chatLabel =
@@ -212,25 +218,27 @@ export function HeaderBar(props: HeaderBarProps): JSX.Element {
           ))
         : null}
 
-      {showNotifications ? (
-        <button
-          className="pd-chrome__icon-btn"
-          type="button"
-          title="Notifications"
-          aria-label={
-            notificationCount > 0
-              ? 'Notifications — ' + notificationCount + ' new'
-              : 'Notifications'
-          }
-        >
-          <BellIcon />
-          {notificationCount > 0 ? (
-            <span className="pd-chrome__dot" aria-hidden="true">
-              {formatCount(notificationCount)}
-            </span>
-          ) : null}
-        </button>
-      ) : null}
+      {showNotifications
+        ? (notifications ?? (
+            <button
+              className="pd-chrome__icon-btn"
+              type="button"
+              title="Notifications"
+              aria-label={
+                notificationCount > 0
+                  ? 'Notifications — ' + notificationCount + ' new'
+                  : 'Notifications'
+              }
+            >
+              <BellIcon />
+              {notificationCount > 0 ? (
+                <span className="pd-chrome__dot" aria-hidden="true">
+                  {formatCount(notificationCount)}
+                </span>
+              ) : null}
+            </button>
+          ))
+        : null}
 
       <span className="pd-chrome__divider pd-chrome__divider--account" />
 

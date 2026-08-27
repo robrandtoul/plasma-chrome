@@ -1,4 +1,4 @@
-import type { JSX } from 'react';
+import type { JSX, ReactNode } from 'react';
 import type { ChromeApp, ChromeLinkComponent, ChromeNavItem, ChromeSearch, ChromeUser, ChromeAccountAction, ChromeAccountLinks } from './types.js';
 export interface MobileChromeProps {
     apps: ChromeApp[];
@@ -13,6 +13,8 @@ export interface MobileChromeProps {
     user: ChromeUser;
     linkComponent?: ChromeLinkComponent;
     search?: ChromeSearch;
+    chat?: ReactNode;
+    notifications?: ReactNode;
     appsVisible: boolean;
     onAppsVisibleChange: (next: boolean) => void;
     onSignOut: () => void;
