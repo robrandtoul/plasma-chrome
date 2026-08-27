@@ -93,12 +93,23 @@ export function MobileChrome(props: MobileChromeProps): JSX.Element {
     .filter((item): item is ChromeNavItem => Boolean(item)))
     .slice(0, 4);
 
+  // "More" is overflow, so it appears only when there is something to
+  // overflow into. A customer of vCard Studio has a two-item nav, both of
+  // them already tabs, and was being offered a sheet that listed the two
+  // things directly above it.
+  const showMore = nav.some((item) => !tabs.some((tab) => tab.id === item.id));
+
   const openAccount = () => setSheet(sheet === 'account' ? null : 'account');
 
   return (
     <div className="pd-chrome-mobile">
       <div className="pd-chrome__mobile-bar">
-        {appsVisible ? (
+        {/* Same rule as the desktop bar: the chevron is an app SWITCHER
+            affordance, so below two apps the title is static. Without this a
+            vCard Studio customer got a chevron next to the app name that only
+            opened their own account sheet — which the avatar beside it
+            already does. */}
+        {appsVisible || apps.length < 2 ? (
           <>
             <span
               className="pd-chrome__app-mark"
@@ -195,17 +206,19 @@ export function MobileChrome(props: MobileChromeProps): JSX.Element {
             </NavLinkish>
           );
         })}
-        <button
-          className="pd-chrome__tab"
-          type="button"
-          ref={more.triggerRef}
-          aria-haspopup="dialog"
-          aria-expanded={sheet === 'more'}
-          onClick={() => setSheet(sheet === 'more' ? null : 'more')}
-        >
-          <MoreIcon />
-          <span className="pd-chrome__tab-label">More</span>
-        </button>
+        {showMore ? (
+          <button
+            className="pd-chrome__tab"
+            type="button"
+            ref={more.triggerRef}
+            aria-haspopup="dialog"
+            aria-expanded={sheet === 'more'}
+            onClick={() => setSheet(sheet === 'more' ? null : 'more')}
+          >
+            <MoreIcon />
+            <span className="pd-chrome__tab-label">More</span>
+          </button>
+        ) : null}
       </nav>
 
       {sheet === 'account' ? (
