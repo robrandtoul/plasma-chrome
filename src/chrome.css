@@ -529,6 +529,16 @@
   cursor: pointer;
   transition: background-color 0.15s ease;
 }
+/* Every :hover rule on an anchor class re-declares `border: 0`, not only
+   the strip link and the nav item that used to. A host may legitimately
+   write `a:hover { border-bottom: 1px solid X }`, which is (0,1,1) and
+   beats a base class's `border: 0` at (0,1,0). vCard Studio comes within
+   one word of doing so: it writes the COLOUR LONGHAND instead, which
+   lands harmlessly on a border whose width is already 0 and style already
+   `none`. Three of these rules were therefore correct only by an accident
+   of one host's stylesheet. Two classes deep plus the pseudo-class is
+   (0,3,0) - :hover counts in the CLASS column, not the element one - and
+   that settles it against anything a host can write. */
 .pd-chrome .pd-chrome__app-row:hover { border: 0; background: #f4ede0; text-decoration: none; }
 .pd-chrome .pd-chrome__app-row:focus-visible { outline: 2px solid #e8421f; outline-offset: -2px; }
 .pd-chrome__app-row--current { background: #fbf7f0; cursor: default; }
