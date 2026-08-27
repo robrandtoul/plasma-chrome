@@ -88,6 +88,7 @@ export function Chrome(props: ChromeProps): JSX.Element {
   const {
     apps,
     currentApp,
+    appName: appNameProp,
     nav,
     activeNavId,
     mobileTabIds,
@@ -135,7 +136,11 @@ export function Chrome(props: ChromeProps): JSX.Element {
     };
   }, [stripVisible]);
 
-  const appName = apps.find((app) => app.app === currentApp)?.fullLabel ?? currentApp;
+  // The host's own name wins. The registry lookup is the fallback, and
+  // `currentApp` behind that is a last resort that should never be what
+  // a person reads: it is the lowercase database key.
+  const appName =
+    appNameProp ?? apps.find((app) => app.app === currentApp)?.fullLabel ?? currentApp;
 
   return (
     <>

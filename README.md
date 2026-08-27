@@ -70,7 +70,8 @@ Also exported, for the rare host that needs a piece rather than the whole: `Swit
 | Prop | Type | Required | What it does |
 | --- | --- | --- | --- |
 | `apps` | `ChromeApp[]` | yes | Every app this person holds a role on, in `my_apps().sort_order`. Drives the strip, the app menu and the mobile account sheet. Below two entries the strip does not render at all, whatever the preference says. |
-| `currentApp` | `string` | yes | Matched against `ChromeApp.app` to find the current entry. Its `fullLabel` becomes the header's app name and its `role` becomes the strip's role label. |
+| `currentApp` | `string` | yes | Matched against `ChromeApp.app` to find the current entry. Its `role` becomes the strip's role label. |
+| `appName` | `string` | no | The name shown in the header and the mobile title. **Pass it.** Omitted, it is derived from the matching `ChromeApp.fullLabel` — which arrives over the network, so the bar shows the raw registry key (`programme`, `proofs`) until the app list lands, and for good if `my_apps()` fails. |
 | `nav` | `ChromeNavItem[]` | yes | The header's destinations, **already filtered** for role and feature flags. The chrome holds no gating logic and never will. |
 | `activeNavId` | `string \| null` | yes | The `id` of the item to mark active. The chrome does not read the URL, so highlighting is the host's decision. |
 | `mobileTabIds` | `string[]` | yes | Up to four ids resolved against `nav` for the bottom tab bar. More is appended by the chrome. Ignored when `mobileTabs` is supplied; pass `[]` then. |
@@ -144,7 +145,7 @@ interface ChromeAccountAction {
 
 ### Props beyond the original specification
 
-`ChromeProps` in `docs/handoff/README.md` does not have `mobileTabs`, `chat`, `accountLinks`, `accountActions`, `notifications` or `tabBarPosition`. Each was added because the specification asks for something its own prop list cannot express, and each is commented at its declaration in `src/types.ts` with the reason. In short:
+`ChromeProps` in `docs/handoff/README.md` does not have `mobileTabs`, `chat`, `accountLinks`, `accountActions`, `notifications`, `tabBarPosition` or `appName`. Each was added because the specification asks for something its own prop list cannot express, and each is commented at its declaration in `src/types.ts` with the reason. In short:
 
 - **`mobileTabs`** exists because `mobileTabIds` can only be resolved against `nav`, and the specified mobile bars are not subsets of the desktop navs. Every app is asked for a Chat tab, but rule 4 makes chat a right cluster icon button rather than a destination; Proofs is asked for an Activity tab, which is a route with no nav item. Supply `mobileTabs` to give the bar outright. Omit it and ids are resolved against `nav` as originally described.
 - **`chat`** is the slot the migration promises proof-viewer, whose `ChatMenu` owns a realtime subscription and must not be reimplemented here. Pass the whole control and the chrome puts it in the chat position. Omit it and the chrome draws its own button from the counts.
@@ -152,6 +153,7 @@ interface ChromeAccountAction {
 - **`accountActions`** carries account menu rows that run a handler instead of navigating. Stock Control forced it: the migration moves its change password control into the account menu, and change password there is a modal, not a route. Routing it through `onEditProfile` would have put a row labelled Edit profile in front of a password dialog.
 - **`notifications`** is the bell's equivalent of `chat`, and for the same reason. The migration passes Stock Control's `NotificationsToggle` through "as slots" alongside `ChatMenu`, but the declared prop was a number. That bell owns a per device push subscription and its own popover; a number would have drawn a dead duplicate next to the real control.
 - **`tabBarPosition`** exists because the package had silently assumed every host locks its frame to the viewport. See below.
+- **`appName`** exists because the header derived the app's own name from `apps`, which every host fetches asynchronously. The bar read the lowercase database key on every first paint, and permanently whenever the fetch failed. An app knows its own name; it should not learn it over the network.
 
 `ChromeNavItem.onClick` is a fourth addition of the same kind. The migration's option B for a host with no router is a nav array "with `href="#"` and an `onClick`", and says "the chrome does not care" — but `NavLinkish` forwarded `href`, `aria-current` and `end` and nothing else, so the click did nothing. It is forwarded now, to the default plain `<a>` as well as to a supplied `linkComponent`. The host owns the `preventDefault`.
 

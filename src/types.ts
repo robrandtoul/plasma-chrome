@@ -68,6 +68,17 @@ export interface ChromeAccountLinks {
 export interface ChromeProps {
   apps: ChromeApp[]; // from the host's own my_apps() call
   currentApp: string;
+  /* ADDITION to the README's ChromeProps, forced by a defect in it. The
+     header's app name was derived as
+     `apps.find(a => a.app === currentApp)?.fullLabel ?? currentApp`,
+     which reads its own name out of a NETWORK CALL. Every host fetches
+     `apps` asynchronously, so on the first paint of every load the bar
+     showed the raw registry key — "programme", "proofs", "stock" — and
+     it stayed that way for good whenever my_apps() returned nothing or
+     failed, which it does silently by design. An app always knows its
+     own name; pass it. Omit this and the derivation still applies, so
+     nothing that already works breaks. */
+  appName?: string;
   nav: ChromeNavItem[]; // already filtered for role and feature flags
   activeNavId: string | null;
   mobileTabIds: string[]; // up to 4; More is appended by the chrome
@@ -156,8 +167,21 @@ export function markLetter(fullLabel: string): string {
   return (fullLabel.trim().charAt(0) || '?').toUpperCase();
 }
 
+/**
+ * The bar shows one word. `name` is meant to be a full name, but every
+ * host has some account with no name on file and falls back to the
+ * email, and an address has no whitespace to split on — so this used to
+ * paint the whole of
+ * `someone.with.a.long.name@plasmadesign.co.uk` into a bar whose
+ * container is `flex: 0 0 auto` and never shrinks. Degrade to the local
+ * part instead: still identifying, and bounded. The account menu's
+ * identity block still shows the address in full.
+ */
 export function firstName(name: string): string {
-  return name.trim().split(/\s+/)[0] || name;
+  const trimmed = name.trim();
+  const first = trimmed.split(/\s+/)[0] || trimmed;
+  const at = first.indexOf('@');
+  return at > 0 ? first.slice(0, at) : first;
 }
 
 export function cx(...parts: Array<string | false | null | undefined>): string {

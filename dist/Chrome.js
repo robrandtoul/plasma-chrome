@@ -78,7 +78,7 @@ function responsiveCss(hasMobile, tabBarPosition) {
         '}');
 }
 export function Chrome(props) {
-    const { apps, currentApp, nav, activeNavId, mobileTabIds, mobileTabs, accountLinks, accountActions, user, linkComponent, search, actions, chat, chatUnread, chatMentionUnread, notifications, notificationsUnread, appsVisible: controlledAppsVisible, onAppsVisibleChange, onSignOut, onEditProfile, variant = 'full', tabBarPosition = 'absolute', } = props;
+    const { apps, currentApp, appName: appNameProp, nav, activeNavId, mobileTabIds, mobileTabs, accountLinks, accountActions, user, linkComponent, search, actions, chat, chatUnread, chatMentionUnread, notifications, notificationsUnread, appsVisible: controlledAppsVisible, onAppsVisibleChange, onSignOut, onEditProfile, variant = 'full', tabBarPosition = 'absolute', } = props;
     const [appsVisible, setAppsVisible] = useAppsVisible(apps.length, controlledAppsVisible, onAppsVisibleChange);
     const switcherOnly = variant === 'switcher-only';
     // Below two apps the strip does not render at all — the same
@@ -95,7 +95,10 @@ export function Chrome(props) {
             root.style.removeProperty('--pd-chrome-height');
         };
     }, [stripVisible]);
-    const appName = apps.find((app) => app.app === currentApp)?.fullLabel ?? currentApp;
+    // The host's own name wins. The registry lookup is the fallback, and
+    // `currentApp` behind that is a last resort that should never be what
+    // a person reads: it is the lowercase database key.
+    const appName = appNameProp ?? apps.find((app) => app.app === currentApp)?.fullLabel ?? currentApp;
     return (_jsxs(_Fragment, { children: [_jsx("style", { children: responsiveCss(!switcherOnly, tabBarPosition) }), _jsxs("div", { className: cx('pd-chrome', stripVisible && 'pd-chrome--with-strip'), "data-pd-chrome-has-mobile": switcherOnly ? undefined : 'true', children: [stripVisible ? _jsx(SwitcherStrip, { apps: apps, currentApp: currentApp }) : null, switcherOnly ? null : (_jsx(HeaderBar, { apps: apps, currentApp: currentApp, appName: appName, nav: nav, activeNavId: activeNavId, user: user, linkComponent: linkComponent, search: search, actions: actions, chat: chat, chatUnread: chatUnread, chatMentionUnread: chatMentionUnread, notifications: notifications, notificationsUnread: notificationsUnread, appsVisible: appsVisible, onAppsVisibleChange: setAppsVisible, onSignOut: onSignOut, onEditProfile: onEditProfile, accountLinks: accountLinks, accountActions: accountActions }))] }), switcherOnly ? null : (_jsx(MobileChrome, { apps: apps, currentApp: currentApp, appName: appName, nav: nav, activeNavId: activeNavId, mobileTabIds: mobileTabIds, mobileTabs: mobileTabs, accountLinks: accountLinks, accountActions: accountActions, user: user, linkComponent: linkComponent, search: search, chat: chat, notifications: notifications, appsVisible: appsVisible, onAppsVisibleChange: setAppsVisible, onSignOut: onSignOut, onEditProfile: onEditProfile }))] }));
 }
 //# sourceMappingURL=Chrome.js.map
