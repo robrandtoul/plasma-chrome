@@ -529,7 +529,7 @@
   cursor: pointer;
   transition: background-color 0.15s ease;
 }
-.pd-chrome .pd-chrome__app-row:hover { background: #f4ede0; text-decoration: none; }
+.pd-chrome .pd-chrome__app-row:hover { border: 0; background: #f4ede0; text-decoration: none; }
 .pd-chrome .pd-chrome__app-row:focus-visible { outline: 2px solid #e8421f; outline-offset: -2px; }
 .pd-chrome__app-row--current { background: #fbf7f0; cursor: default; }
 
@@ -631,7 +631,7 @@
   cursor: pointer;
   transition: background-color 0.15s ease;
 }
-.pd-chrome .pd-chrome__menu-row:hover { background: #f4ede0; color: #161311; text-decoration: none; }
+.pd-chrome .pd-chrome__menu-row:hover { border: 0; background: #f4ede0; color: #161311; text-decoration: none; }
 .pd-chrome .pd-chrome__menu-row:focus-visible { outline: 2px solid #e8421f; outline-offset: -2px; }
 
 /* The one place sign out exists. Not a text link in the bar, not
@@ -774,7 +774,7 @@
   text-decoration: none;
   cursor: pointer;
 }
-.pd-chrome-mobile .pd-chrome__tab:hover { text-decoration: none; }
+.pd-chrome-mobile .pd-chrome__tab:hover { border: 0; text-decoration: none; }
 .pd-chrome-mobile .pd-chrome__tab:focus-visible { outline: 2px solid #e8421f; outline-offset: -2px; }
 
 /* The mobile BAR's own controls, scoped the same way the tab above is.
