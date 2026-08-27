@@ -1,6 +1,12 @@
 node_modules/
-dist/
 demo/dist/
+
+# dist/ is COMMITTED, deliberately. This package is consumed as a git
+# dependency by four apps, so the alternative is a `prepare` build at
+# install time, and that is blocked by default in modern pnpm and by
+# any CI running --ignore-scripts. The first consumer hit exactly that.
+# Committing the build removes the whole class of problem; the cost is
+# remembering to rebuild before tagging a release.
 *.tsbuildinfo
 
 npm-debug.log*
