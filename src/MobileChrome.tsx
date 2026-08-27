@@ -9,45 +9,21 @@
    `display: contents` — a real box here would become the containing
    block and would break the top bar's `position: sticky` besides.
 
-   chrome.css ships no sheet classes, so the sheet shell (backdrop and
-   panel geometry) is inline; everything inside it is the specified
-   panel classes, and the shell carries `pd-chrome` so the rules that
-   are written two classes deep still bite.
+   The sheet shell uses `pd-chrome__sheet-overlay` and
+   `pd-chrome__sheet`; everything inside it is the specified panel
+   classes. The shell also carries `pd-chrome` so the rules that are
+   written two classes deep still bite inside it, which is why the
+   sheet needed no mobile-scoped hover or focus rules of its own.
    ─────────────────────────────────────────────────────────── */
 
 import type { JSX } from 'react';
 import { useState } from 'react';
-import type { ChromeApp, ChromeLinkComponent, ChromeNavItem, ChromeSearch, ChromeUser , ChromeAccountLinks} from './types';
-import { cx, formatCount, markLetter } from './types';
+import type { ChromeApp, ChromeLinkComponent, ChromeNavItem, ChromeSearch, ChromeUser, ChromeAccountLinks } from './types';
+import { cx, formatCount } from './types';
 import { AccountPanelBody } from './AccountMenu';
 import { NavLinkish } from './HeaderBar';
-import { MoreIcon, SearchButtonIcon, TabIcon } from './icons';
+import { appGlyph, MoreIcon, SearchButtonIcon, TabIcon } from './icons';
 import { useDismissable } from './useDismissable';
-
-const OVERLAY_STYLE = {
-  position: 'fixed' as const,
-  inset: 0,
-  zIndex: 60,
-  display: 'flex',
-  alignItems: 'flex-end',
-  width: '100%',
-  height: '100%',
-  background: 'rgba(22, 19, 17, 0.42)',
-};
-
-const SHEET_STYLE = {
-  position: 'relative' as const,
-  top: 'auto',
-  right: 'auto',
-  left: 'auto',
-  width: '100%',
-  maxHeight: '82vh',
-  overflowY: 'auto' as const,
-  border: 0,
-  borderTop: '1px solid #ece4d3',
-  borderRadius: '16px 16px 0 0',
-  paddingBottom: 'calc(7px + env(safe-area-inset-bottom))',
-};
 
 export interface MobileChromeProps {
   apps: ChromeApp[];
@@ -114,7 +90,7 @@ export function MobileChrome(props: MobileChromeProps): JSX.Element {
               className="pd-chrome__app-mark"
               style={{ width: 28, height: 28, borderRadius: 8 }}
             >
-              {markLetter(appName)}
+              {appGlyph(currentApp, 16, appName)}
             </span>
             <span className="pd-chrome__mobile-title">{appName}</span>
           </>
@@ -141,7 +117,7 @@ export function MobileChrome(props: MobileChromeProps): JSX.Element {
               className="pd-chrome__app-mark"
               style={{ width: 28, height: 28, borderRadius: 8 }}
             >
-              {markLetter(appName)}
+              {appGlyph(currentApp, 16, appName)}
             </span>
             <span className="pd-chrome__mobile-title">{appName}</span>
             <span
@@ -216,10 +192,9 @@ export function MobileChrome(props: MobileChromeProps): JSX.Element {
       </nav>
 
       {sheet === 'account' ? (
-        <div className="pd-chrome" style={OVERLAY_STYLE}>
+        <div className="pd-chrome pd-chrome__sheet-overlay">
           <div
-            className="pd-chrome__panel pd-chrome__panel--account"
-            style={SHEET_STYLE}
+            className="pd-chrome__panel pd-chrome__panel--account pd-chrome__sheet"
             role="dialog"
             aria-modal="true"
             aria-label="Account"
@@ -245,7 +220,7 @@ export function MobileChrome(props: MobileChromeProps): JSX.Element {
                           aria-current="page"
                         >
                           <span className="pd-chrome__app-row-mark">
-                            {markLetter(app.fullLabel)}
+                            {appGlyph(app.app, 14, app.fullLabel)}
                           </span>
                           <span className="pd-chrome__app-row-text">
                             <span className="pd-chrome__app-row-title">{app.fullLabel}</span>
@@ -256,7 +231,7 @@ export function MobileChrome(props: MobileChromeProps): JSX.Element {
                       ) : (
                         <a key={app.app} className="pd-chrome__app-row" href={app.url}>
                           <span className="pd-chrome__app-row-mark">
-                            {markLetter(app.fullLabel)}
+                            {appGlyph(app.app, 14, app.fullLabel)}
                           </span>
                           <span className="pd-chrome__app-row-text">
                             <span className="pd-chrome__app-row-title">{app.fullLabel}</span>
@@ -275,10 +250,9 @@ export function MobileChrome(props: MobileChromeProps): JSX.Element {
       ) : null}
 
       {sheet === 'more' ? (
-        <div className="pd-chrome" style={OVERLAY_STYLE}>
+        <div className="pd-chrome pd-chrome__sheet-overlay">
           <div
-            className="pd-chrome__panel pd-chrome__panel--account"
-            style={SHEET_STYLE}
+            className="pd-chrome__panel pd-chrome__panel--account pd-chrome__sheet"
             role="dialog"
             aria-modal="true"
             aria-label="More"

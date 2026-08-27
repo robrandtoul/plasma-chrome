@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>@plasma/chrome — static reference</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./chrome.css?v=2" />
+<style>
+  /* Page furniture only — NOT part of the package. Everything
+     inside a .frame is chrome.css doing the work. */
+  html, body { margin: 0; background: #fbf7f0; color: #161311;
+    font-family: 'IBM Plex Sans', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1360px; margin: 0 auto; padding: 56px 28px 120px; }
+  h1 { margin: 0 0 14px; font-size: 40px; font-weight: 500; letter-spacing: -0.02em; }
+  .lede { margin: 0 0 8px; max-width: 760px; font-size: 16px; line-height: 1.55; color: #3d342d; }
+  .lede--soft { color: #766b62; font-size: 15px; margin-bottom: 44px; }
+  h2 { margin: 0 0 6px; font-size: 13px; font-weight: 600; letter-spacing: 0.01em; color: #161311; }
+  .note { margin: 0 0 14px; max-width: 860px; font-size: 13px; line-height: 1.55; color: #766b62; }
+  .eyebrow { display: block; font-family: 'IBM Plex Mono', monospace; font-size: 9px;
+    font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: #837868; margin-bottom: 10px; }
+  section { margin-bottom: 56px; }
+  .rule { display: flex; align-items: baseline; gap: 14px; margin-bottom: 22px; }
+  .rule span:last-child { height: 1px; flex: 1; background: #ece4d3; }
+  /* Desktop frames hold the chrome at its real minimum width and
+     scroll rather than collapse, so measurements stay true. */
+  .frame { border: 1px solid #ece4d3; border-radius: 12px; overflow: hidden;
+    background: #fbf7f0; box-shadow: 0 2px 6px rgba(22,19,17,0.06); margin-bottom: 12px; }
+  .frame__scroll { overflow-x: auto; }
+  .frame__inner { min-width: 1240px; }
+  .frame__body { padding: 26px 22px; }
+  .frame__body--tall { padding: 26px 22px 300px; }
+  .ph { font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: #b6ac9f; }
+  .phone { position: relative; width: 340px; border: 1px solid #ece4d3; border-radius: 20px;
+    overflow: hidden; background: #fbf7f0; box-shadow: 0 2px 6px rgba(22,19,17,0.06); }
+  .phone__body { height: 210px; padding: 18px 16px; }
+  .row { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+  .spec { border: 1px solid #ece4d3; border-radius: 10px; background: #ffffff;
+    padding: 16px 18px; font-size: 13px; line-height: 1.6; color: #3d342d; max-width: 420px; }
+  .spec code { font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
+  .states { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    padding: 18px 20px; border: 1px solid #ece4d3; border-radius: 10px; background: #ffffff; }
+  .states__label { font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: #837868; width: 100%; margin-bottom: 4px; }
+  /* chrome.css collapses the search field below 1180px viewport, which is
+     correct in a real full-width app but hides a state on this reference
+     page when the window is narrower. Force the desktop state here so
+     every control is visible at any window size. Page furniture only. */
+  .frame .pd-chrome__search,
+  .states .pd-chrome__search { display: flex !important; }
+  .frame .pd-chrome__search-toggle,
+  .states .pd-chrome__search-toggle { display: none !important; }
+  /* In a real strip the link fills the 38px row, so the current-marker
+     rule sits on the row's bottom edge. Isolated below it would hug the
+     text like an underline, so the demo restores the row height. */
+  .states--strip .pd-chrome__strip-link { height: 38px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <span class="eyebrow">@plasma/chrome</span>
+  <h1>Static reference</h1>
+  <p class="lede">Every state of the shared chrome, rendered by <code style="font-family:'IBM Plex Mono',monospace;font-size:15px;">./chrome.css</code>. Nothing here is styled by this page except the grey furniture around each frame — if a measurement is in question, read the class in the stylesheet rather than the markup.</p>
+  <p class="lede lede--soft">Hover and focus states are live: mouse over a nav item, tab through a bar. The contrast correction is already applied — the active nav fill is <code style="font-family:'IBM Plex Mono',monospace;">#c2301a</code>, never <code style="font-family:'IBM Plex Mono',monospace;">#ff5b3a</code>.</p>
+
+  <!-- ═══ 1. Both modes ═══════════════════════════════════ -->
+  <section>
+    <div class="rule"><span class="eyebrow" style="margin:0;">01 · The two modes</span><span></span></div>
+
+    <h2>appsVisible = true &nbsp;·&nbsp; 94px &nbsp;·&nbsp; strip + label mode</h2>
+    <p class="note">The apps are listed above, so the header's app name is a plain label with no chevron. This is the default for anyone whose <code>my_apps()</code> returns three or more apps.</p>
+    <div class="frame"><div class="frame__scroll"><div class="frame__inner">
+      <div class="pd-chrome pd-chrome--with-strip">
+        <nav class="pd-chrome__strip" aria-label="PlasmaDesign apps">
+          <span class="pd-chrome__strip-brand">
+            <span class="pd-chrome__strip-mark"></span>
+            <span class="pd-chrome__strip-wordmark">PlasmaDesign</span>
+          </span>
+          <ul class="pd-chrome__strip-nav" role="list">
+            <li><span class="pd-chrome__strip-link pd-chrome__strip-link--current" aria-current="page">Proofs<span class="pd-chrome__strip-rule"></span></span></li>
+            <li><a class="pd-chrome__strip-link" href="#">vCards</a></li>
+            <li><a class="pd-chrome__strip-link" href="#">Programme</a></li>
+            <li><a class="pd-chrome__strip-link" href="#">Stock</a></li>
+          </ul>
+          <span class="pd-chrome__strip-role">Admin</span>
+        </nav>
+        <div class="pd-chrome__bar">
+          <span class="pd-chrome__app--static">
+            <span class="pd-chrome__app-mark">P</span>
+            <span class="pd-chrome__app-name">Proofs</span>
+          </span>
+          <span class="pd-chrome__divider"></span>
+          <ul class="pd-chrome__nav" role="list">
+            <li><a class="pd-chrome__nav-item pd-chrome__nav-item--active" href="#" aria-current="page">Dashboard</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Orders<span class="pd-chrome__count">1</span></a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Logbook</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Flagged<span class="pd-chrome__count">1</span></a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Quote</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Admin</a></li>
+          </ul>
+          <span class="pd-chrome__spacer"></span>
+          <label class="pd-chrome__search">
+            <svg class="pd-chrome__search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input class="pd-chrome__search-input" type="search" placeholder="Search customers, emails, HS" />
+            <button class="pd-chrome__kbd" type="button" aria-label="Open the search palette">⌘K</button>
+          </label>
+          <button class="pd-chrome__icon-btn" type="button" title="Team chat" aria-label="Team chat">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2Z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>
+          </button>
+          <button class="pd-chrome__icon-btn" type="button" title="Notifications" aria-label="Notifications — 5 new">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="M21 15H3a2 2 0 0 0 2-2V9a7 7 0 0 1 14 0v4a2 2 0 0 0 2 2Z"/></svg>
+            <span class="pd-chrome__dot" aria-hidden="true">5</span>
+          </button>
+          <span class="pd-chrome__divider pd-chrome__divider--account"></span>
+          <div class="pd-chrome__account-wrap">
+            <button class="pd-chrome__account" type="button" aria-expanded="false" aria-label="Account menu">
+              <span class="pd-chrome__avatar" style="background:#2b6df5;">RR</span>
+              <span class="pd-chrome__account-name">Rob</span>
+              <span class="pd-chrome__chevron" aria-hidden="true"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="frame__body"><span class="ph">Page content</span></div>
+    </div></div></div>
+
+    <h2 style="margin-top:34px;">appsVisible = false &nbsp;·&nbsp; 56px &nbsp;·&nbsp; menu mode</h2>
+    <p class="note">No strip. The app name becomes a button with a chevron, and switching happens in the app menu. Identical bar, identical nav, identical right cluster — one boolean apart.</p>
+    <div class="frame"><div class="frame__scroll"><div class="frame__inner">
+      <div class="pd-chrome">
+        <div class="pd-chrome__bar">
+          <div class="pd-chrome__app-wrap">
+            <button class="pd-chrome__app" type="button" aria-expanded="false" aria-haspopup="menu">
+              <span class="pd-chrome__app-mark">P</span>
+              <span class="pd-chrome__app-name">Proofs</span>
+              <span class="pd-chrome__chevron" aria-hidden="true"></span>
+            </button>
+          </div>
+          <span class="pd-chrome__divider"></span>
+          <ul class="pd-chrome__nav" role="list">
+            <li><a class="pd-chrome__nav-item pd-chrome__nav-item--active" href="#" aria-current="page">Dashboard</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Orders<span class="pd-chrome__count">1</span></a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Logbook</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Flagged<span class="pd-chrome__count">1</span></a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Quote</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Admin</a></li>
+          </ul>
+          <span class="pd-chrome__spacer"></span>
+          <label class="pd-chrome__search">
+            <svg class="pd-chrome__search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input class="pd-chrome__search-input" type="search" placeholder="Search customers, emails, HS" />
+            <button class="pd-chrome__kbd" type="button" aria-label="Open the search palette">⌘K</button>
+          </label>
+          <button class="pd-chrome__icon-btn" type="button" title="Team chat" aria-label="Team chat">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2Z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>
+          </button>
+          <button class="pd-chrome__icon-btn" type="button" title="Notifications" aria-label="Notifications — 5 new">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="M21 15H3a2 2 0 0 0 2-2V9a7 7 0 0 1 14 0v4a2 2 0 0 0 2 2Z"/></svg>
+            <span class="pd-chrome__dot" aria-hidden="true">5</span>
+          </button>
+          <span class="pd-chrome__divider pd-chrome__divider--account"></span>
+          <div class="pd-chrome__account-wrap">
+            <button class="pd-chrome__account" type="button" aria-expanded="false" aria-label="Account menu">
+              <span class="pd-chrome__avatar" style="background:#2b6df5;">RR</span>
+              <span class="pd-chrome__account-name">Rob</span>
+              <span class="pd-chrome__chevron" aria-hidden="true"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="frame__body"><span class="ph">Page content</span></div>
+    </div></div></div>
+  </section>
+
+  <!-- ═══ 2. App menu ═════════════════════════════════════ -->
+  <section>
+    <div class="rule"><span class="eyebrow" style="margin:0;">02 · App menu, open</span><span></span></div>
+    <p class="note">Menu mode only. The preference row at the bottom reads as "keep this open" — this is where someone discovers the strip. Turning it on switches the header to label mode and removes this chevron.</p>
+    <div class="frame"><div class="frame__scroll"><div class="frame__inner">
+      <div class="pd-chrome">
+        <div class="pd-chrome__bar">
+          <div class="pd-chrome__app-wrap">
+            <button class="pd-chrome__app" type="button" aria-expanded="true" aria-haspopup="menu">
+              <span class="pd-chrome__app-mark">P</span>
+              <span class="pd-chrome__app-name">Proofs</span>
+              <span class="pd-chrome__chevron" aria-hidden="true"></span>
+            </button>
+            <div class="pd-chrome__panel pd-chrome__panel--apps" role="menu">
+              <span class="pd-chrome__panel-label">Your apps</span>
+              <span class="pd-chrome__app-row pd-chrome__app-row--current" role="menuitem" aria-current="page">
+                <span class="pd-chrome__app-row-mark">P</span>
+                <span class="pd-chrome__app-row-text">
+                  <span class="pd-chrome__app-row-title">Proofs</span>
+                  <span class="pd-chrome__app-row-desc">Proof approvals, orders, logbook</span>
+                </span>
+                <span class="pd-chrome__here">Here</span>
+              </span>
+              <a class="pd-chrome__app-row" role="menuitem" href="#">
+                <span class="pd-chrome__app-row-mark">V</span>
+                <span class="pd-chrome__app-row-text">
+                  <span class="pd-chrome__app-row-title">vCard Studio</span>
+                  <span class="pd-chrome__app-row-desc">Digital cards and QR codes</span>
+                </span>
+              </a>
+              <a class="pd-chrome__app-row" role="menuitem" href="#">
+                <span class="pd-chrome__app-row-mark">C</span>
+                <span class="pd-chrome__app-row-text">
+                  <span class="pd-chrome__app-row-title">Card Programme</span>
+                  <span class="pd-chrome__app-row-desc">Membership card runs and credits</span>
+                </span>
+              </a>
+              <a class="pd-chrome__app-row" role="menuitem" href="#">
+                <span class="pd-chrome__app-row-mark">S</span>
+                <span class="pd-chrome__app-row-text">
+                  <span class="pd-chrome__app-row-title">Stock Control</span>
+                  <span class="pd-chrome__app-row-desc">Materials, production, dispatch</span>
+                </span>
+              </a>
+              <span class="pd-chrome__panel-divider"></span>
+              <button class="pd-chrome__pref" type="button" role="menuitemcheckbox" aria-checked="false">
+                <span class="pd-chrome__pref-text"><span class="pd-chrome__pref-title">Keep apps visible</span></span>
+                <span class="pd-chrome__switch" aria-hidden="true"><span class="pd-chrome__switch-knob"></span></span>
+              </button>
+            </div>
+          </div>
+          <span class="pd-chrome__divider"></span>
+          <ul class="pd-chrome__nav" role="list">
+            <li><a class="pd-chrome__nav-item pd-chrome__nav-item--active" href="#" aria-current="page">Dashboard</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Orders<span class="pd-chrome__count">1</span></a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Logbook</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Flagged<span class="pd-chrome__count">1</span></a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Quote</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Admin</a></li>
+          </ul>
+          <span class="pd-chrome__spacer"></span>
+          <div class="pd-chrome__account-wrap">
+            <button class="pd-chrome__account" type="button" aria-expanded="false" aria-label="Account menu">
+              <span class="pd-chrome__avatar" style="background:#2b6df5;">RR</span>
+              <span class="pd-chrome__account-name">Rob</span>
+              <span class="pd-chrome__chevron" aria-hidden="true"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="frame__body frame__body--tall"><span class="ph">Page content</span></div>
+    </div></div></div>
+  </section>
+
+  <!-- ═══ 3. Account menu ═════════════════════════════════ -->
+  <section>
+    <div class="rule"><span class="eyebrow" style="margin:0;">03 · Account menu — both switch states</span><span></span></div>
+    <p class="note">The one place sign out exists. Today it is a purple text link, a hidden menu item, an unlabelled door glyph, and in Card Programme the avatar itself. Here the preference row reads as a setting, so it is tinted; the copy under it changes with the state.</p>
+    <div class="frame"><div class="frame__scroll"><div class="frame__inner">
+      <div class="pd-chrome pd-chrome--with-strip">
+        <nav class="pd-chrome__strip" aria-label="PlasmaDesign apps">
+          <span class="pd-chrome__strip-brand">
+            <span class="pd-chrome__strip-mark"></span>
+            <span class="pd-chrome__strip-wordmark">PlasmaDesign</span>
+          </span>
+          <ul class="pd-chrome__strip-nav" role="list">
+            <li><span class="pd-chrome__strip-link pd-chrome__strip-link--current" aria-current="page">Proofs<span class="pd-chrome__strip-rule"></span></span></li>
+            <li><a class="pd-chrome__strip-link" href="#">vCards</a></li>
+            <li><a class="pd-chrome__strip-link" href="#">Programme</a></li>
+            <li><a class="pd-chrome__strip-link" href="#">Stock</a></li>
+          </ul>
+          <span class="pd-chrome__strip-role">Admin</span>
+        </nav>
+        <div class="pd-chrome__bar">
+          <span class="pd-chrome__app--static">
+            <span class="pd-chrome__app-mark">P</span>
+            <span class="pd-chrome__app-name">Proofs</span>
+          </span>
+          <span class="pd-chrome__divider"></span>
+          <ul class="pd-chrome__nav" role="list">
+            <li><a class="pd-chrome__nav-item pd-chrome__nav-item--active" href="#" aria-current="page">Dashboard</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Orders<span class="pd-chrome__count">1</span></a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Logbook</a></li>
+          </ul>
+          <span class="pd-chrome__spacer"></span>
+          <span class="pd-chrome__divider pd-chrome__divider--account"></span>
+          <div class="pd-chrome__account-wrap">
+            <button class="pd-chrome__account" type="button" aria-expanded="true" aria-label="Account menu">
+              <span class="pd-chrome__avatar" style="background:#2b6df5;">RR</span>
+              <span class="pd-chrome__account-name">Rob</span>
+              <span class="pd-chrome__chevron" aria-hidden="true"></span>
+            </button>
+            <div class="pd-chrome__panel pd-chrome__panel--account" role="menu">
+              <div class="pd-chrome__identity">
+                <span class="pd-chrome__avatar pd-chrome__avatar--lg" style="background:#2b6df5;">RR</span>
+                <span class="pd-chrome__identity-text">
+                  <span class="pd-chrome__identity-name">Rob Randtoul</span>
+                  <span class="pd-chrome__identity-meta">rob@plasmadesign.co.uk · Admin</span>
+                </span>
+              </div>
+              <span class="pd-chrome__panel-divider" style="margin:0 10px 6px;"></span>
+              <button class="pd-chrome__pref" type="button" role="menuitemcheckbox" aria-checked="true">
+                <span class="pd-chrome__pref-text">
+                  <span class="pd-chrome__pref-title">Keep apps visible</span>
+                  <span class="pd-chrome__pref-hint">A strip lists all four, always</span>
+                </span>
+                <span class="pd-chrome__switch pd-chrome__switch--on" aria-hidden="true"><span class="pd-chrome__switch-knob"></span></span>
+              </button>
+              <a class="pd-chrome__menu-row" role="menuitem" href="#">Notifications</a>
+              <a class="pd-chrome__menu-row" role="menuitem" href="#">Edit profile</a>
+              <a class="pd-chrome__menu-row" role="menuitem" href="#">Feedback</a>
+              <span class="pd-chrome__panel-divider"></span>
+              <button class="pd-chrome__menu-row pd-chrome__signout" type="button" role="menuitem">Sign out</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="frame__body frame__body--tall"><span class="ph">Page content</span></div>
+    </div></div></div>
+
+    <div class="row" style="margin-top:16px;">
+      <div class="states">
+        <span class="states__label">Switch — off, with its alternate hint copy</span>
+        <div class="pd-chrome" style="position:static;">
+          <div class="pd-chrome__panel pd-chrome__panel--account" style="position:static;width:288px;">
+            <button class="pd-chrome__pref" type="button" role="menuitemcheckbox" aria-checked="false">
+              <span class="pd-chrome__pref-text">
+                <span class="pd-chrome__pref-title">Keep apps visible</span>
+                <span class="pd-chrome__pref-hint">Switch from the app menu instead</span>
+              </span>
+              <span class="pd-chrome__switch" aria-hidden="true"><span class="pd-chrome__switch-knob"></span></span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="spec">
+        <strong>Both controls write one value.</strong> The app-menu row and this row are the same preference. Stored as a cookie on <code>.plasmadesign.co.uk</code> — never <code>localStorage</code>, which is per-origin and would give each of the four subdomains its own setting.
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 4. The other three apps ═════════════════════════ -->
+  <section>
+    <div class="rule"><span class="eyebrow" style="margin:0;">04 · The same chrome in the other three apps</span><span></span></div>
+    <p class="note">One nav-item shape everywhere. Today these are 36px coral pills, 26px uppercase mono pills, bare text links, and — in Stock Control — no nav at all.</p>
+
+    <div class="frame"><div class="frame__scroll"><div class="frame__inner">
+      <div class="pd-chrome pd-chrome--with-strip">
+        <nav class="pd-chrome__strip" aria-label="PlasmaDesign apps">
+          <span class="pd-chrome__strip-brand"><span class="pd-chrome__strip-mark"></span><span class="pd-chrome__strip-wordmark">PlasmaDesign</span></span>
+          <ul class="pd-chrome__strip-nav" role="list">
+            <li><a class="pd-chrome__strip-link" href="#">Proofs</a></li>
+            <li><span class="pd-chrome__strip-link pd-chrome__strip-link--current" aria-current="page">vCards<span class="pd-chrome__strip-rule"></span></span></li>
+            <li><a class="pd-chrome__strip-link" href="#">Programme</a></li>
+            <li><a class="pd-chrome__strip-link" href="#">Stock</a></li>
+          </ul>
+          <span class="pd-chrome__strip-role">Admin</span>
+        </nav>
+        <div class="pd-chrome__bar">
+          <span class="pd-chrome__app--static"><span class="pd-chrome__app-mark">V</span><span class="pd-chrome__app-name">vCard Studio</span></span>
+          <span class="pd-chrome__divider"></span>
+          <ul class="pd-chrome__nav" role="list">
+            <li><a class="pd-chrome__nav-item pd-chrome__nav-item--active" href="#" aria-current="page">Cards</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">QR codes</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Users</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Analytics</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Deleted</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Settings</a></li>
+          </ul>
+          <span class="pd-chrome__spacer"></span>
+          <button class="pd-chrome__icon-btn" type="button" title="Team chat" aria-label="Team chat"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2Z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg></button>
+          <span class="pd-chrome__divider pd-chrome__divider--account"></span>
+          <div class="pd-chrome__account-wrap"><button class="pd-chrome__account" type="button" aria-expanded="false" aria-label="Account menu"><span class="pd-chrome__avatar" style="background:#2b6df5;">RR</span><span class="pd-chrome__account-name">Rob</span><span class="pd-chrome__chevron" aria-hidden="true"></span></button></div>
+        </div>
+      </div>
+      <div class="frame__body"><span class="ph">Account leaves the nav — it lives in the account menu. The full email address leaves the bar with it.</span></div>
+    </div></div></div>
+
+    <div class="frame"><div class="frame__scroll"><div class="frame__inner">
+      <div class="pd-chrome pd-chrome--with-strip">
+        <nav class="pd-chrome__strip" aria-label="PlasmaDesign apps">
+          <span class="pd-chrome__strip-brand"><span class="pd-chrome__strip-mark"></span><span class="pd-chrome__strip-wordmark">PlasmaDesign</span></span>
+          <ul class="pd-chrome__strip-nav" role="list">
+            <li><a class="pd-chrome__strip-link" href="#">Proofs</a></li>
+            <li><a class="pd-chrome__strip-link" href="#">vCards</a></li>
+            <li><span class="pd-chrome__strip-link pd-chrome__strip-link--current" aria-current="page">Programme<span class="pd-chrome__strip-rule"></span></span></li>
+            <li><a class="pd-chrome__strip-link" href="#">Stock</a></li>
+          </ul>
+          <span class="pd-chrome__strip-role">Production</span>
+        </nav>
+        <div class="pd-chrome__bar">
+          <span class="pd-chrome__app--static"><span class="pd-chrome__app-mark">C</span><span class="pd-chrome__app-name">Card Programme</span></span>
+          <span class="pd-chrome__divider"></span>
+          <ul class="pd-chrome__nav" role="list">
+            <li><a class="pd-chrome__nav-item" href="#">Overview</a></li>
+            <li><a class="pd-chrome__nav-item pd-chrome__nav-item--active" href="#" aria-current="page">This run</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Customers</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">History</a></li>
+          </ul>
+          <span class="pd-chrome__spacer"></span>
+          <span class="pd-chrome__divider pd-chrome__divider--account"></span>
+          <div class="pd-chrome__account-wrap"><button class="pd-chrome__account" type="button" aria-expanded="false" aria-label="Account menu"><span class="pd-chrome__avatar" style="background:#0d9488;">RR</span><span class="pd-chrome__account-name">Rob</span><span class="pd-chrome__chevron" aria-hidden="true"></span></button></div>
+        </div>
+      </div>
+      <div class="frame__body"><span class="ph">Admin is absent — this is the Production role. The nav array arrives already filtered; the chrome holds no role logic.</span></div>
+    </div></div></div>
+
+    <div class="frame"><div class="frame__scroll"><div class="frame__inner">
+      <div class="pd-chrome pd-chrome--with-strip">
+        <nav class="pd-chrome__strip" aria-label="PlasmaDesign apps">
+          <span class="pd-chrome__strip-brand"><span class="pd-chrome__strip-mark"></span><span class="pd-chrome__strip-wordmark">PlasmaDesign</span></span>
+          <ul class="pd-chrome__strip-nav" role="list">
+            <li><a class="pd-chrome__strip-link" href="#">Proofs</a></li>
+            <li><a class="pd-chrome__strip-link" href="#">vCards</a></li>
+            <li><a class="pd-chrome__strip-link" href="#">Programme</a></li>
+            <li><span class="pd-chrome__strip-link pd-chrome__strip-link--current" aria-current="page">Stock<span class="pd-chrome__strip-rule"></span></span></li>
+          </ul>
+          <span class="pd-chrome__strip-role">Admin</span>
+        </nav>
+        <div class="pd-chrome__bar">
+          <span class="pd-chrome__app--static"><span class="pd-chrome__app-mark">S</span><span class="pd-chrome__app-name">Stock Control</span></span>
+          <span class="pd-chrome__divider"></span>
+          <ul class="pd-chrome__nav" role="list">
+            <li><a class="pd-chrome__nav-item pd-chrome__nav-item--active" href="#" aria-current="page">Dashboard</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Insights</a></li>
+            <li><a class="pd-chrome__nav-item" href="#">Admin</a></li>
+          </ul>
+          <span class="pd-chrome__spacer"></span>
+          <label class="pd-chrome__search">
+            <svg class="pd-chrome__search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input class="pd-chrome__search-input" type="search" placeholder="Search materials" />
+          </label>
+          <button class="pd-chrome__icon-btn" type="button" title="Team chat" aria-label="Team chat"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2Z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg></button>
+          <button class="pd-chrome__icon-btn" type="button" title="Notifications" aria-label="Notifications — 5 new"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="M21 15H3a2 2 0 0 0 2-2V9a7 7 0 0 1 14 0v4a2 2 0 0 0 2 2Z"/></svg><span class="pd-chrome__dot" aria-hidden="true">5</span></button>
+          <span class="pd-chrome__divider pd-chrome__divider--account"></span>
+          <div class="pd-chrome__account-wrap"><button class="pd-chrome__account" type="button" aria-expanded="false" aria-label="Account menu"><span class="pd-chrome__avatar" style="background:#2b6df5;">RR</span><span class="pd-chrome__account-name">Rob</span><span class="pd-chrome__chevron" aria-hidden="true"></span></button></div>
+        </div>
+      </div>
+      <div class="frame__body"><span class="ph">The key and door glyphs are gone — change password and sign out both live in the account menu.</span></div>
+    </div></div></div>
+
+    <h2 style="margin-top:34px;">variant = "switcher-only"</h2>
+    <p class="note">Card Programme renders the switcher above its signed-in-but-no-role screen on purpose: whoever lands there is usually staff of another app who followed a link, and a dead end with no way back is the confusion the strip exists to end. Preserve this exactly.</p>
+    <div class="frame"><div class="frame__scroll"><div class="frame__inner">
+      <div class="pd-chrome pd-chrome--with-strip">
+        <nav class="pd-chrome__strip" aria-label="PlasmaDesign apps">
+          <span class="pd-chrome__strip-brand"><span class="pd-chrome__strip-mark"></span><span class="pd-chrome__strip-wordmark">PlasmaDesign</span></span>
+          <ul class="pd-chrome__strip-nav" role="list">
+            <li><a class="pd-chrome__strip-link" href="#">Proofs</a></li>
+            <li><a class="pd-chrome__strip-link" href="#">vCards</a></li>
+            <li><a class="pd-chrome__strip-link" href="#">Stock</a></li>
+          </ul>
+        </nav>
+      </div>
+      <div class="frame__body"><span class="ph">You do not hold a role on the card programme. Use the strip above to go back.</span></div>
+    </div></div></div>
+  </section>
+
+  <!-- ═══ 5. Item states ═════════════════════════════════ -->
+  <section>
+    <div class="rule"><span class="eyebrow" style="margin:0;">05 · Item states</span><span></span></div>
+    <p class="note">Hover and focus are live here — mouse over, or tab in. Focus rings are <code>#e8421f</code>, never <code>#ff5b3a</code>: the brand coral measures 2.89:1 on cream, under the 3:1 minimum for a non-text indicator, which is why the apps already keep <code>--c-focus</code> as its own token.</p>
+    <div class="pd-chrome" style="position:static;">
+      <div class="states">
+        <span class="states__label">Nav item — rest · with count · active · active with count · hover and focus are live</span>
+        <a class="pd-chrome__nav-item" href="#">Logbook</a>
+        <a class="pd-chrome__nav-item" href="#">Orders<span class="pd-chrome__count">1</span></a>
+        <a class="pd-chrome__nav-item pd-chrome__nav-item--active" href="#" aria-current="page">Dashboard</a>
+        <a class="pd-chrome__nav-item pd-chrome__nav-item--active" href="#" aria-current="page">Orders<span class="pd-chrome__count">9+</span></a>
+      </div>
+      <div class="states states--strip" style="margin-top:12px;background:#161311;border-color:#161311;">
+        <span class="states__label" style="color:#766b62;">Strip link — rest · current · hover is live</span>
+        <a class="pd-chrome__strip-link" href="#">Programme</a>
+        <span class="pd-chrome__strip-link pd-chrome__strip-link--current">Proofs<span class="pd-chrome__strip-rule"></span></span>
+      </div>
+      <div class="states" style="margin-top:12px;">
+        <span class="states__label">Right cluster — search, chat, notifications with count, account</span>
+        <label class="pd-chrome__search">
+          <svg class="pd-chrome__search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input class="pd-chrome__search-input" type="search" placeholder="Search" />
+          <button class="pd-chrome__kbd" type="button" aria-label="Open the search palette">⌘K</button>
+        </label>
+        <button class="pd-chrome__icon-btn" type="button" aria-label="Team chat"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2Z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg></button>
+        <button class="pd-chrome__icon-btn" type="button" aria-label="Notifications — 5 new"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="M21 15H3a2 2 0 0 0 2-2V9a7 7 0 0 1 14 0v4a2 2 0 0 0 2 2Z"/></svg><span class="pd-chrome__dot" aria-hidden="true">5</span></button>
+        <div class="pd-chrome__account-wrap"><button class="pd-chrome__account" type="button" aria-label="Account menu"><span class="pd-chrome__avatar" style="background:#2b6df5;">RR</span><span class="pd-chrome__account-name">Rob</span><span class="pd-chrome__chevron" aria-hidden="true"></span></button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 6. Mobile ══════════════════════════════════════ -->
+  <section>
+    <div class="rule"><span class="eyebrow" style="margin:0;">06 · Mobile</span><span></span></div>
+    <p class="note">One treatment for both modes — the only difference is the chevron. Four destinations plus More, 48px minimum targets, and the tab bar is <code>absolute</code> inside the app frame, never <code>fixed</code>: iOS pans a fixed bar away from the screen edge when the keyboard opens.</p>
+    <div class="row">
+      <div>
+        <span class="eyebrow">Menu mode · app name opens the sheet</span>
+        <div class="phone pd-chrome-mobile">
+          <div class="pd-chrome__mobile-bar">
+            <span class="pd-chrome__app-mark" style="width:28px;height:28px;border-radius:8px;">P</span>
+            <span class="pd-chrome__mobile-title">Proofs</span>
+            <span class="pd-chrome__chevron" style="width:6px;height:6px;border-right-width:1.5px;border-bottom-width:1.5px;margin:-3px 0 0 -2px;" aria-hidden="true"></span>
+            <span class="pd-chrome__spacer"></span>
+            <button class="pd-chrome__icon-btn" type="button" aria-label="Search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></button>
+            <span class="pd-chrome__avatar" style="width:28px;height:28px;background:#2b6df5;">RR</span>
+          </div>
+          <div class="phone__body"><span class="ph">Page content</span></div>
+          <nav class="pd-chrome__tabs" aria-label="Primary">
+            <a class="pd-chrome__tab pd-chrome__tab--active" href="#" aria-current="page"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m6.08 11-3.5 1.6a1 1 0 0 0 0 1.81l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9a1 1 0 0 0 0-1.83L17.9 11"/></svg><span class="pd-chrome__tab-label">Dashboard</span></a>
+            <a class="pd-chrome__tab" href="#"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg><span class="pd-chrome__tab-label">Orders</span></a>
+            <a class="pd-chrome__tab" href="#"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2Z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg><span class="pd-chrome__tab-label">Chat</span></a>
+            <a class="pd-chrome__tab" href="#"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="M21 15H3a2 2 0 0 0 2-2V9a7 7 0 0 1 14 0v4a2 2 0 0 0 2 2Z"/></svg><span class="pd-chrome__tab-label">Activity</span></a>
+            <button class="pd-chrome__tab" type="button"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg><span class="pd-chrome__tab-label">More</span></button>
+          </nav>
+        </div>
+      </div>
+
+      <div>
+        <span class="eyebrow">Label mode · no chevron</span>
+        <div class="phone pd-chrome-mobile">
+          <div class="pd-chrome__mobile-bar">
+            <span class="pd-chrome__app-mark" style="width:28px;height:28px;border-radius:8px;">S</span>
+            <span class="pd-chrome__mobile-title">Stock Control</span>
+            <span class="pd-chrome__spacer"></span>
+            <button class="pd-chrome__icon-btn" type="button" aria-label="Search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></button>
+            <span class="pd-chrome__avatar" style="width:28px;height:28px;background:#2b6df5;">RR</span>
+          </div>
+          <div class="phone__body"><span class="ph">Page content</span></div>
+          <nav class="pd-chrome__tabs" aria-label="Primary">
+            <a class="pd-chrome__tab pd-chrome__tab--active" href="#" aria-current="page"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg><span class="pd-chrome__tab-label">Dashboard</span></a>
+            <a class="pd-chrome__tab" href="#"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg><span class="pd-chrome__tab-label">Insights</span></a>
+            <a class="pd-chrome__tab" href="#"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2Z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg><span class="pd-chrome__tab-label">Chat</span></a>
+            <button class="pd-chrome__tab" type="button"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg><span class="pd-chrome__tab-label">More</span></button>
+          </nav>
+        </div>
+      </div>
+
+      <div class="spec">
+        <strong>Three destinations plus More is correct for Stock Control.</strong> Never pad the bar to five. The rule is "the fifth slot is always overflow", not "there are always five tabs".
+        <br /><br />
+        App switching lives in the account sheet behind the avatar. Today's strip is <code>overflow-x: auto</code> with <code>scrollbar-width: none</code>, so on a narrow phone the fourth app can sit off-screen with nothing indicating it exists.
+      </div>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

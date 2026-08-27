@@ -1,0 +1,36 @@
+{
+  /* Typecheck config: covers src/ and demo/, emits nothing.
+     tsconfig.build.json extends this and is the one that emits.
+
+     Targeted at the oldest host: React 18, and a bundler doing module
+     resolution (all four apps are Vite). `jsx: react-jsx` means no
+     `import React` is needed anywhere, which matters because the
+     package must work under React 18 and 19 without a conditional
+     import. */
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+
+    "noEmit": true
+  },
+  "include": ["src", "demo"]
+}

@@ -10,7 +10,7 @@
 
 import type { JSX } from 'react';
 import type { ChromeApp } from './types';
-import { markLetter } from './types';
+import { appGlyph } from './icons';
 import { useDismissable } from './useDismissable';
 import { PREF_TITLE, Toggle } from './Toggle';
 
@@ -47,7 +47,7 @@ export function AppMenu({
         aria-haspopup="menu"
         onClick={() => (open ? onClose() : onOpen())}
       >
-        <span className="pd-chrome__app-mark">{markLetter(appName)}</span>
+        <span className="pd-chrome__app-mark">{appGlyph(currentApp, 15, appName)}</span>
         <span className="pd-chrome__app-name">{appName}</span>
         <span className="pd-chrome__chevron" aria-hidden="true" />
       </button>
@@ -62,7 +62,7 @@ export function AppMenu({
                 role="menuitem"
                 aria-current="page"
               >
-                <span className="pd-chrome__app-row-mark">{markLetter(app.fullLabel)}</span>
+                <span className="pd-chrome__app-row-mark">{appGlyph(app.app, 14, app.fullLabel)}</span>
                 <span className="pd-chrome__app-row-text">
                   <span className="pd-chrome__app-row-title">{app.fullLabel}</span>
                   <span className="pd-chrome__app-row-desc">{app.description}</span>
@@ -71,7 +71,7 @@ export function AppMenu({
               </span>
             ) : (
               <a key={app.app} className="pd-chrome__app-row" role="menuitem" href={app.url}>
-                <span className="pd-chrome__app-row-mark">{markLetter(app.fullLabel)}</span>
+                <span className="pd-chrome__app-row-mark">{appGlyph(app.app, 14, app.fullLabel)}</span>
                 <span className="pd-chrome__app-row-text">
                   <span className="pd-chrome__app-row-title">{app.fullLabel}</span>
                   <span className="pd-chrome__app-row-desc">{app.description}</span>

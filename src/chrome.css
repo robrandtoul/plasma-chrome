@@ -1,0 +1,898 @@
+/* ─────────────────────────────────────────────────────────────
+   @plasma/chrome — the shared navigation stylesheet.
+
+   Ships built, imported once per app:  import '@plasma/chrome/chrome.css'
+
+   Rules that keep it portable across the four hosts, all
+   load-bearing:
+
+     * NO Tailwind, NO build-step CSS, NO host custom properties.
+       The four apps are Tailwind v3, v4, v4 and hand-written CSS;
+       agreeing on a version was the thing that forced the old
+       copy-verbatim rule. Depending on none of them is the fix.
+     * Every class is prefixed `pd-chrome`, and every visual
+       property is declared outright rather than inherited,
+       because each host reset differs.
+     * Rules that must beat a host `a:hover` (specificity 0-1-1)
+       are written two classes deep. vcard-creator styles bare
+       `a` with a border-bottom and will find any that are not.
+
+   Contrast note, AMENDED BY PRODUCT DECISION 2026-08-27: the accent is
+   #ec6747 and white text sits on it, at 3.18:1. That is below the 4.5:1
+   AA minimum for the 13.5px nav label and was chosen deliberately over
+   the alternatives (ink text on the same coral measures 5.81:1, and
+   #c2301a with white measures 5.63:1). Do not "fix" it back without
+   asking. Coral used as SMALL TEXT is a different case and is still
+   #c2301a where it was passing - see the mobile tab label. #ec6747 as
+   non-text marks and for text on pale tints.
+   ─────────────────────────────────────────────────────────── */
+
+.pd-chrome,
+.pd-chrome *,
+.pd-chrome-mobile,
+.pd-chrome-mobile * { box-sizing: border-box; }
+
+/* ── Shell ──────────────────────────────────────────────── */
+
+.pd-chrome {
+  --pd-chrome-height: 56px;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: block;
+  width: 100%;
+  font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.pd-chrome--with-strip { --pd-chrome-height: 94px; }
+
+/* Consumers position sticky elements below the chrome against this:
+   `top: var(--pd-chrome-height)`. Never a hardcoded pixel value —
+   the strip is a per-person preference, so the offset is not a
+   constant. Re-declared on :root by Chrome.tsx so descendants
+   outside the chrome subtree can read it too. */
+
+/* ── Switcher strip (only when appsVisible) ─────────────── */
+
+.pd-chrome__strip {
+  display: flex;
+  align-items: stretch;
+  height: 38px;
+  padding: 0 22px;
+  background: #161311;
+}
+
+.pd-chrome__strip-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding-right: 20px;
+  flex: 0 0 auto;
+}
+
+.pd-chrome__strip-mark {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  background: #ffffff;
+}
+
+.pd-chrome__strip-wordmark {
+  font-family: 'Geist Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #a89e92;
+  white-space: nowrap;
+}
+
+.pd-chrome__strip-nav {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.pd-chrome__strip-nav::-webkit-scrollbar { display: none; }
+.pd-chrome__strip-nav > li { display: flex; flex: 0 0 auto; }
+
+.pd-chrome__strip-link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 14px;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+  text-decoration: none;
+  color: #a89e92;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+/* Two classes deep: beats a host `a:hover`. */
+.pd-chrome .pd-chrome__strip-link:hover,
+.pd-chrome .pd-chrome__strip-link:focus {
+  border: 0;
+  color: #ffffff;
+  text-decoration: none;
+}
+
+.pd-chrome .pd-chrome__strip-link:focus-visible {
+  outline: 2px solid #e8421f;
+  outline-offset: -2px;
+}
+
+.pd-chrome__strip-link--current {
+  color: #ffffff;
+  font-weight: 600;
+  cursor: default;
+}
+
+/* The current marker. Coral on ink is 5.36:1 — well past the 3:1
+   a non-text indicator needs. It replaces the old folder-tab
+   cut-out, which required every app header to be the same white
+   and failed on the one that is cream. */
+.pd-chrome__strip-rule {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: #ec6747;
+}
+
+.pd-chrome__strip-role {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  font-family: 'Geist Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #a89e92;
+  white-space: nowrap;
+}
+
+/* ── Header bar ─────────────────────────────────────────── */
+
+.pd-chrome__bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 56px;
+  padding: 0 22px;
+  background: #ffffff;
+  border-bottom: 1px solid #ece4d3;
+}
+
+.pd-chrome__spacer { flex: 1; }
+
+.pd-chrome__divider {
+  width: 1px;
+  height: 24px;
+  background: #ece4d3;
+  flex: 0 0 auto;
+}
+.pd-chrome__divider--account { margin: 0 3px; }
+
+/* ── App identity ───────────────────────────────────────── */
+
+.pd-chrome__app-wrap { position: relative; flex: 0 0 auto; }
+
+/* Menu mode: appsVisible === false, the name opens the app menu. */
+.pd-chrome__app {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 38px;
+  margin: 0;
+  padding: 0 10px 0 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  font-family: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.pd-chrome .pd-chrome__app:hover { background: #f4ede0; text-decoration: none; }
+.pd-chrome__app[aria-expanded='true'] { background: #f4ede0; }
+.pd-chrome .pd-chrome__app:focus-visible { outline: 2px solid #e8421f; outline-offset: 1px; }
+
+/* Label mode: appsVisible === true. The apps are listed above, so
+   the menu is redundant and the name reverts to a label. No
+   chevron — this is the only structural difference between modes. */
+.pd-chrome__app--static {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  padding-right: 4px;
+  cursor: default;
+}
+
+.pd-chrome__app-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: #161311;
+  color: #ffffff;
+  font-family: 'Geist Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.pd-chrome__app--static .pd-chrome__app-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+.pd-chrome__app-name {
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  color: #161311;
+  white-space: nowrap;
+}
+.pd-chrome__app--static .pd-chrome__app-name {
+  font-size: 15.5px;
+  letter-spacing: -0.015em;
+}
+
+.pd-chrome__chevron {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-right: 1.6px solid #766b62;
+  border-bottom: 1.6px solid #766b62;
+  transform: rotate(45deg);
+  margin: -3px 2px 0 2px;
+  flex: 0 0 auto;
+  transition: transform 0.16s ease;
+}
+[aria-expanded='true'] > .pd-chrome__chevron { transform: rotate(225deg); }
+
+/* ── Nav ────────────────────────────────────────────────── */
+
+.pd-chrome__nav {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pd-chrome__nav > li { flex: 0 0 auto; margin: 0; padding: 0; }
+
+.pd-chrome__nav-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  margin: 0;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  text-decoration: none;
+  color: #3d342d;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.pd-chrome .pd-chrome__nav-item:hover {
+  border: 0;
+  background: #f4ede0;
+  color: #161311;
+  text-decoration: none;
+}
+.pd-chrome .pd-chrome__nav-item:focus-visible { outline: 2px solid #e8421f; outline-offset: 1px; }
+
+/* #ec6747 with white, by product decision 2026-08-27. This was
+   #c2301a, which measured 5.63:1 and passed; #ec6747 measures 3.18:1
+   and does not. The trade was made knowingly. For reference, #c2301a
+   is the same hue two stops down at
+   5.63:1. */
+.pd-chrome__nav-item--active,
+.pd-chrome .pd-chrome__nav-item--active:hover {
+  background: #ec6747;
+  color: #ffffff;
+}
+
+.pd-chrome__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #ec6747;
+  color: #ffffff;
+  font-family: 'Geist Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+/* On the active pill the fill is already coral, so the count
+   inverts rather than restating it. */
+.pd-chrome__nav-item--active .pd-chrome__count {
+  background: rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+}
+
+/* ── Search ─────────────────────────────────────────────── */
+
+.pd-chrome__search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 240px;
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid #ece4d3;
+  border-radius: 8px;
+  background: #fbf7f0;
+  flex: 0 0 auto;
+}
+.pd-chrome__search:focus-within {
+  border-color: #ec6747;
+  outline: 2px solid #e8421f;
+  outline-offset: -1px;
+}
+
+.pd-chrome__search-icon { flex: 0 0 auto; color: #837868; }
+
+.pd-chrome__search-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12.5px;
+  color: #161311;
+  outline: none;
+}
+.pd-chrome__search-input::placeholder { color: #837868; }
+
+.pd-chrome__kbd {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: 'Geist Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: #837868;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.pd-chrome .pd-chrome__kbd:hover { color: #161311; }
+
+/* ── Icon buttons ───────────────────────────────────────── */
+
+.pd-chrome__icon-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #3d342d;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background-color 0.15s ease;
+}
+.pd-chrome .pd-chrome__icon-btn:hover { background: #f4ede0; }
+.pd-chrome .pd-chrome__icon-btn:focus-visible { outline: 2px solid #e8421f; outline-offset: 1px; }
+
+.pd-chrome__dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: #ec6747;
+  color: #ffffff;
+  font-family: 'Geist Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: 0 0 0 2px #ffffff;
+}
+
+/* ── Account control ────────────────────────────────────── */
+
+.pd-chrome__account-wrap { position: relative; flex: 0 0 auto; }
+
+.pd-chrome__account {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  margin: 0;
+  padding: 0 10px 0 4px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.pd-chrome .pd-chrome__account:hover { background: #f4ede0; }
+.pd-chrome__account[aria-expanded='true'] { background: #f4ede0; }
+.pd-chrome .pd-chrome__account:focus-visible { outline: 2px solid #e8421f; outline-offset: 1px; }
+
+.pd-chrome__account-name {
+  font-size: 13px;
+  line-height: 1;
+  color: #3d342d;
+  white-space: nowrap;
+}
+
+.pd-chrome__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #766b62;
+  color: #ffffff;
+  font-family: 'Geist Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.pd-chrome__avatar img { width: 100%; height: 100%; object-fit: cover; }
+.pd-chrome__avatar--lg { width: 32px; height: 32px; font-size: 11px; }
+
+.pd-chrome__account .pd-chrome__chevron {
+  width: 6px;
+  height: 6px;
+  border-right-width: 1.5px;
+  border-bottom-width: 1.5px;
+  margin: -3px 0 0 0;
+}
+
+/* ── Popovers ───────────────────────────────────────────── */
+
+.pd-chrome__panel {
+  position: absolute;
+  z-index: 30;
+  padding: 7px;
+  border: 1px solid #ece4d3;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 24px 64px rgba(22, 19, 17, 0.18), 0 2px 6px rgba(22, 19, 17, 0.08);
+}
+.pd-chrome__panel--apps { top: 46px; left: 0; width: 296px; }
+.pd-chrome__panel--account { top: 40px; right: 0; width: 288px; }
+
+.pd-chrome__panel-label {
+  display: block;
+  padding: 8px 10px 9px;
+  font-family: 'Geist Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #837868;
+}
+
+.pd-chrome__panel-divider {
+  display: block;
+  height: 1px;
+  margin: 6px 10px;
+  background: #f4ede0;
+}
+
+.pd-chrome__app-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  margin: 0;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.pd-chrome .pd-chrome__app-row:hover { background: #f4ede0; text-decoration: none; }
+.pd-chrome .pd-chrome__app-row:focus-visible { outline: 2px solid #e8421f; outline-offset: -2px; }
+.pd-chrome__app-row--current { background: #fbf7f0; cursor: default; }
+
+.pd-chrome__app-row-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: #f4ede0;
+  color: #766b62;
+  font-family: 'Geist Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.pd-chrome__app-row--current .pd-chrome__app-row-mark {
+  background: #161311;
+  color: #ffffff;
+}
+
+.pd-chrome__app-row-text { min-width: 0; flex: 1; }
+
+.pd-chrome__app-row-title {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: #161311;
+}
+.pd-chrome__app-row--current .pd-chrome__app-row-title { font-weight: 600; }
+
+.pd-chrome__app-row-desc {
+  display: block;
+  margin-top: 1px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: #766b62;
+}
+
+/* #ff5b3a as TEXT on white is 2.89:1 — under AA. This is a 9px
+   uppercase mono marker beside a row that already reads as
+   current from its tint and its ink mark, so it is decorative
+   reinforcement, not the signal. If it ever becomes the only cue,
+   move it to #c2301a. */
+.pd-chrome__here {
+  font-family: 'Geist Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #ec6747;
+  flex: 0 0 auto;
+}
+
+/* ── Account menu contents ──────────────────────────────── */
+
+.pd-chrome__identity {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 10px 12px;
+}
+.pd-chrome__identity-text { min-width: 0; }
+.pd-chrome__identity-name {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #161311;
+}
+.pd-chrome__identity-meta {
+  display: block;
+  margin-top: 1px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: #766b62;
+  overflow-wrap: anywhere;
+}
+
+.pd-chrome__menu-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.3;
+  text-align: left;
+  text-decoration: none;
+  color: #3d342d;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.pd-chrome .pd-chrome__menu-row:hover { background: #f4ede0; color: #161311; text-decoration: none; }
+.pd-chrome .pd-chrome__menu-row:focus-visible { outline: 2px solid #e8421f; outline-offset: -2px; }
+
+/* The one place sign out exists. Not a text link in the bar, not
+   an unlabelled door glyph, and never the avatar itself. */
+.pd-chrome__signout {
+  color: #d11e3d;
+  font-weight: 500;
+}
+.pd-chrome .pd-chrome__signout:hover { background: #fcd0d6; color: #d11e3d; }
+
+/* ── Preference row + switch ─────────────────────────────── */
+
+.pd-chrome__pref {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 9px 10px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.pd-chrome .pd-chrome__pref:hover { background: #f4ede0; }
+.pd-chrome .pd-chrome__pref:focus-visible { outline: 2px solid #e8421f; outline-offset: -2px; }
+/* In the account menu the row reads as a setting, so it is tinted;
+   in the app menu it reads as "keep this open" and is not. */
+.pd-chrome__panel--account .pd-chrome__pref { padding: 10px; background: #fbf7f0; }
+
+.pd-chrome__pref-text { flex: 1; min-width: 0; }
+.pd-chrome__pref-title {
+  display: block;
+  font-size: 13px;
+  line-height: 1.3;
+  color: #161311;
+}
+.pd-chrome__pref-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: #766b62;
+}
+
+.pd-chrome__switch {
+  position: relative;
+  display: inline-block;
+  width: 32px;
+  height: 19px;
+  border-radius: 999px;
+  background: #dcd2c0;
+  flex: 0 0 auto;
+  transition: background-color 0.16s ease;
+}
+.pd-chrome__switch--on { background: #ec6747; }
+
+.pd-chrome__switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(22, 19, 17, 0.3);
+  transition: left 0.16s ease;
+}
+.pd-chrome__switch--on .pd-chrome__switch-knob { left: 15px; }
+
+/* ── Mobile ─────────────────────────────────────────────── */
+
+.pd-chrome-mobile {
+  font-family: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.pd-chrome__mobile-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 54px;
+  padding: env(safe-area-inset-top) 14px 0;
+  background: #ffffff;
+  border-bottom: 1px solid #ece4d3;
+}
+
+.pd-chrome__mobile-title {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: #161311;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* absolute, NOT fixed. The containing block is the app's
+   viewport-locked frame, which iOS cannot pan; fixed tracked the
+   layout viewport and visibly broke away from the screen edge
+   whenever WebKit panned it (keyboard open, short page,
+   overscroll). proof-viewer learned this the hard way. */
+.pd-chrome__tabs {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  align-items: stretch;
+  padding: 6px 4px calc(12px + env(safe-area-inset-bottom));
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-top: 1px solid #ece4d3;
+}
+
+.pd-chrome__tab {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 48px;
+  margin: 0;
+  padding: 4px 2px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  font-family: inherit;
+  color: #766b62;
+  text-decoration: none;
+  cursor: pointer;
+}
+.pd-chrome-mobile .pd-chrome__tab:hover { text-decoration: none; }
+.pd-chrome-mobile .pd-chrome__tab:focus-visible { outline: 2px solid #e8421f; outline-offset: -2px; }
+
+/* The mobile BAR's own controls, scoped the same way the tab above is.
+   Without these they inherit nothing: the two-classes-deep defence that
+   beats a host `a:hover` is written against `.pd-chrome`, and the bar
+   sits under `.pd-chrome-mobile`, which is a different root. The
+   account sheet does not need this because its shell carries
+   `.pd-chrome`, so the desktop rules already bite inside it. Missing
+   focus rings on a touch bar are still a keyboard defect on a small
+   laptop, which is why these are here and not left to the host. */
+.pd-chrome-mobile .pd-chrome__icon-btn:hover { background: #f4ede0; }
+.pd-chrome-mobile .pd-chrome__icon-btn:focus-visible { outline: 2px solid #e8421f; outline-offset: 1px; }
+.pd-chrome-mobile .pd-chrome__avatar:focus-visible { outline: 2px solid #e8421f; outline-offset: 2px; }
+
+/* ── Mobile sheet ───────────────────────────────────────── */
+/* The account sheet's shell. Previously inline styles in
+   MobileChrome.tsx because no classes shipped for it; a consumer could
+   not restyle or even inspect it by class like every other part. */
+
+.pd-chrome__sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  width: 100%;
+  height: 100%;
+  background: rgba(22, 19, 17, 0.42);
+}
+
+/* Overrides the popover geometry it inherits from __panel: a sheet is
+   full-width and anchored to the bottom edge, not a floating card. */
+.pd-chrome__sheet {
+  position: relative;
+  top: auto;
+  right: auto;
+  left: auto;
+  width: 100%;
+  max-height: 82vh;
+  overflow-y: auto;
+  border: 0;
+  border-top: 1px solid #ece4d3;
+  border-radius: 16px 16px 0 0;
+  padding-bottom: calc(7px + env(safe-area-inset-bottom));
+}
+
+/* Deliberately NOT the #ec6747 the fills use. This is coral as small
+   text on a pale tint, not a fill behind white: #ec6747 here measures
+   2.93:1 against #fff3ee, where #c2301a measures 5.17:1 and passes.
+   The 2026-08-27 accent decision covered the button fill and the
+   indicator marks, so this one stayed. The label is 10.5px MEDIUM and
+   always paired with an icon. */
+.pd-chrome__tab--active {
+  background: #fff3ee;
+  color: #c2301a;
+}
+
+.pd-chrome__tab-label {
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* ── Motion ─────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-chrome *,
+  .pd-chrome-mobile * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* ── Narrow desktop ─────────────────────────────────────── */
+
+/* The bar's real minimum is ~1220px with a six-item nav and the
+   search field. Nav items are nowrap with fixed padding and will
+   NOT shrink — they overlap the search field instead. So the
+   search collapses to an icon button first, then the nav scrolls.
+   Never let the nav flex-shrink. */
+@media (max-width: 1180px) {
+  .pd-chrome__search { display: none; }
+  .pd-chrome__search-toggle { display: inline-flex; }
+  .pd-chrome__nav {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .pd-chrome__nav::-webkit-scrollbar { display: none; }
+}
+
+@media (min-width: 1181px) {
+  .pd-chrome__search-toggle { display: none; }
+}
+
+@media (max-width: 560px) {
+  .pd-chrome__strip { padding: 0 14px; }
+  .pd-chrome__bar { padding: 0 14px; }
+  .pd-chrome__strip-link { padding: 0 10px; }
+}

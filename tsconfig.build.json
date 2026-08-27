@@ -1,0 +1,17 @@
+{
+  /* The emitting config. src/ only; the demo never ships.
+
+     tsc is the whole build: it emits ES modules and .d.ts side by
+     side, and scripts/copy-css.mjs drops the stylesheet in beside
+     them. No bundler, deliberately. A bundler would have to be told
+     that `react` is external, that CSS is not an entry point and that
+     JSX must stay untransformed for the host's own React version, all
+     to produce one fewer file than tsc already produces correctly. */
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"]
+}

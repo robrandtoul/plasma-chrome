@@ -9,10 +9,10 @@
 import { useState } from 'react';
 import type { ComponentType, JSX, ReactNode } from 'react';
 import type { ChromeLinkComponent, ChromeNavItem, ChromeSearch, ChromeUser , ChromeAccountLinks} from './types';
-import { cx, formatCount, markLetter } from './types';
+import { cx, formatCount } from './types';
 import { AppMenu } from './AppMenu';
 import { AccountMenu } from './AccountMenu';
-import { BellIcon, ChatIcon, SearchButtonIcon, SearchIcon } from './icons';
+import { appGlyph, BellIcon, ChatIcon, SearchButtonIcon, SearchIcon } from './icons';
 import type { ChromeApp } from './types';
 
 /**
@@ -113,7 +113,7 @@ export function HeaderBar(props: HeaderBarProps): JSX.Element {
     <div className="pd-chrome__bar">
       {appsVisible ? (
         <span className="pd-chrome__app--static">
-          <span className="pd-chrome__app-mark">{markLetter(appName)}</span>
+          <span className="pd-chrome__app-mark">{appGlyph(currentApp, 15, appName)}</span>
           <span className="pd-chrome__app-name">{appName}</span>
         </span>
       ) : (

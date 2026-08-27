@@ -183,3 +183,100 @@ export function TabIcon({ id }: { id: string }): JSX.Element {
 export function MoreIcon(): JSX.Element {
   return tabSvg(ELLIPSIS, false);
 }
+
+/* ── App marks ──────────────────────────────────────────────
+   Each app's own glyph, not its initial. These are the marks the four
+   apps carried in their own headers before the chrome existed: Layers
+   for Proofs, Boxes for Stock Control, an engraved card for Card
+   Programme, a contact card for vCard Studio. Two came from lucide and
+   are inlined here at their published path data, for the same reason
+   every other icon in this file is inlined: the package takes no
+   runtime dependencies, and one of the four consuming apps has no
+   lucide.
+
+   Keyed on the app id from my_apps(), because the app menu draws marks
+   for apps the current host knows nothing about. An unknown id falls
+   back to the initial, so a fifth app added to public.apps still
+   renders something sensible before its glyph is added here. */
+
+const APP_GLYPH_PATHS: Record<string, string[]> = {
+  proofs: [
+    'm12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z',
+    'm22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65',
+    'm22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65',
+  ],
+  stock: [
+    'M2.97 12.92A2 2 0 0 0 2 14.63v3.24a2 2 0 0 0 .97 1.71l3 1.8a2 2 0 0 0 2.06 0L12 19v-5.5l-5-3-4.03 2.42Z',
+    'm7 16.5-4.74-2.85',
+    'm7 16.5 5-3',
+    'M7 16.5v5.17',
+    'M12 13.5V19l3.97 2.38a2 2 0 0 0 2.06 0l3-1.8a2 2 0 0 0 .97-1.71v-3.24a2 2 0 0 0-.97-1.71L17 10.5l-5 3Z',
+    'm17 16.5-5-3',
+    'm17 16.5 4.74-2.85',
+    'M17 16.5v5.17',
+    'M7.97 4.42A2 2 0 0 0 7 6.13v4.37l5 3 5-3V6.13a2 2 0 0 0-.97-1.71l-3-1.8a2 2 0 0 0-2.06 0l-3 1.8Z',
+    'M12 8 7.26 5.15',
+    'm12 8 4.74-2.85',
+    'M12 13.5V8',
+  ],
+  programme: ['M7 11h7', 'M7 14.5h4'],
+  qr: [
+    'M6 14.4c.5-1.1 1.5-1.7 2.6-1.7s2.1.6 2.6 1.7',
+    'M14 10h4.2',
+    'M14 12.9h3.2',
+    'M6.2 16.8h11.6',
+  ],
+};
+
+/** Shapes that are not paths, drawn before the paths above. */
+function AppGlyphExtras({ app }: { app: string }): JSX.Element | null {
+  if (app === 'programme') return <rect x="3" y="6" width="18" height="12.5" rx="2.5" />;
+  if (app === 'qr') {
+    return (
+      <>
+        <rect x="3" y="5" width="18" height="14" rx="2.5" />
+        <circle cx="8.6" cy="10.5" r="1.7" />
+      </>
+    );
+  }
+  return null;
+}
+
+export function hasAppGlyph(app: string): boolean {
+  return Object.prototype.hasOwnProperty.call(APP_GLYPH_PATHS, app);
+}
+
+export function AppGlyph({ app, size }: { app: string; size: number }): JSX.Element | null {
+  const paths = APP_GLYPH_PATHS[app];
+  if (!paths) return null;
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={app === 'qr' ? 1.7 : 2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <AppGlyphExtras app={app} />
+      {paths.map((d) => (
+        <path key={d} d={d} />
+      ))}
+    </svg>
+  );
+}
+
+/**
+ * The mark for an app: its own glyph where we have one, otherwise the
+ * initial of its name. The fallback matters because the app menu lists
+ * whatever `my_apps()` returns, which can include an app added to
+ * `public.apps` before a glyph for it is added here.
+ */
+export function appGlyph(app: string, size: number, fallbackName: string): JSX.Element | string {
+  if (hasAppGlyph(app)) return <AppGlyph app={app} size={size} />;
+  const trimmed = fallbackName.trim();
+  return trimmed ? trimmed[0]!.toUpperCase() : '?';
+}

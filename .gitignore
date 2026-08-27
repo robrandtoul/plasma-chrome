@@ -1,0 +1,16 @@
+node_modules/
+dist/
+demo/dist/
+*.tsbuildinfo
+
+npm-debug.log*
+yarn-error.log*
+.npm/
+
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+.env
+.env.*

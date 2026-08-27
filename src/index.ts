@@ -26,6 +26,7 @@ export {
 } from './useAppsVisible';
 
 export type {
+  ChromeAccountLinks,
   ChromeApp,
   ChromeLinkComponent,
   ChromeNavItem,

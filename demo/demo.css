@@ -1,0 +1,220 @@
+/* ─────────────────────────────────────────────────────────────
+   Demo page furniture. NOT part of the package.
+
+   Lifted from docs/handoff/reference/chrome-reference.html so the two
+   pages can be compared side by side without the frames themselves
+   being a difference. Everything inside a .frame is chrome.css doing
+   the work; if a measurement is in question, read the class in
+   src/chrome.css rather than anything here.
+   ─────────────────────────────────────────────────────────── */
+
+html,
+body {
+  margin: 0;
+  background: #fbf7f0;
+  color: #161311;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 56px 28px 120px;
+}
+
+h1 {
+  margin: 0 0 14px;
+  font-size: 40px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.lede {
+  margin: 0 0 8px;
+  max-width: 760px;
+  font-size: 16px;
+  line-height: 1.55;
+  color: #3d342d;
+}
+.lede--soft {
+  color: #766b62;
+  font-size: 15px;
+  margin-bottom: 44px;
+}
+
+h2 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: #161311;
+}
+
+.note {
+  margin: 0 0 14px;
+  max-width: 860px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #766b62;
+}
+
+.note code,
+.spec code,
+.lede code {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.92em;
+}
+
+.eyebrow {
+  display: block;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #837868;
+  margin-bottom: 10px;
+}
+
+section {
+  margin-bottom: 56px;
+}
+
+.rule {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+.rule span:last-child {
+  height: 1px;
+  flex: 1;
+  background: #ece4d3;
+}
+
+/* Desktop frames hold the chrome at its real minimum width and scroll
+   rather than collapse, so measurements stay true. */
+.frame {
+  border: 1px solid #ece4d3;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fbf7f0;
+  box-shadow: 0 2px 6px rgba(22, 19, 17, 0.06);
+  margin-bottom: 12px;
+}
+.frame__scroll {
+  overflow-x: auto;
+}
+.frame__inner {
+  min-width: 1240px;
+}
+.frame__body {
+  padding: 26px 22px;
+}
+.frame__body--tall {
+  padding: 26px 22px 300px;
+}
+
+.ph {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #b6ac9f;
+}
+
+.phone {
+  position: relative;
+  width: 340px;
+  border: 1px solid #ece4d3;
+  border-radius: 20px;
+  overflow: hidden;
+  background: #fbf7f0;
+  box-shadow: 0 2px 6px rgba(22, 19, 17, 0.06);
+}
+.phone__body {
+  height: 210px;
+  padding: 18px 16px;
+}
+
+.row {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.spec {
+  border: 1px solid #ece4d3;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 16px 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #3d342d;
+  max-width: 420px;
+}
+
+.states {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 18px 20px;
+  border: 1px solid #ece4d3;
+  border-radius: 10px;
+  background: #ffffff;
+}
+.states__label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #837868;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+/* The reopen affordance under an auto-opened popover. Demo only:
+   in a real host the popover is opened by its own trigger. */
+.reopen {
+  margin: 0 0 14px;
+  font-size: 12px;
+  color: #766b62;
+}
+.reopen button {
+  font: inherit;
+  color: #161311;
+  background: #ffffff;
+  border: 1px solid #ece4d3;
+  border-radius: 7px;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+.reopen button:hover {
+  background: #f4ede0;
+}
+
+/* chrome.css collapses the search field below 1180px viewport, which is
+   correct in a real full-width app but hides a state on this page when
+   the window is narrower. Force the desktop state here so every control
+   is visible at any window size. Page furniture only. */
+.frame .pd-chrome__search,
+.states .pd-chrome__search {
+  display: flex !important;
+}
+.frame .pd-chrome__search-toggle,
+.states .pd-chrome__search-toggle {
+  display: none !important;
+}
+
+/* Chrome.tsx injects `@media (min-width: 768px) { .pd-chrome-mobile
+   { display: none } }` so the two trees swap in CSS rather than at a
+   JS breakpoint. That rule is right in a host and wrong here, where
+   the point is to see the mobile chrome on a desktop screen next to
+   the desktop one. Two classes deep, so it wins on specificity without
+   !important and without the package knowing this page exists. */
+.demo-phone .pd-chrome-mobile {
+  display: contents;
+}

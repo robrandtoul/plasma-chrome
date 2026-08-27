@@ -5,16 +5,24 @@
    ─────────────────────────────────────────────────────────── */
 
 import { useEffect, useRef } from 'react';
-import type { RefObject } from 'react';
 
 const FOCUSABLE =
   'a[href], button, input, select, textarea, summary, [contenteditable], [tabindex]:not([tabindex="-1"])';
 
+/* The refs are typed structurally rather than as React's own
+   `RefObject`, because the two supported majors disagree about what
+   that type means. @types/react 18 declares `readonly current: T |
+   null`; 19 declares `current: T` and moves the null into `Ref<T>`.
+   So `RefObject<HTMLDivElement | null>` passes on 19 and fails 18's
+   variance check, while `RefObject<HTMLDivElement>` does the reverse:
+   no spelling of React's own type satisfies both. `{ current: T |
+   null }` is what both versions structurally are, and is assignable
+   to the `ref` prop under either. */
 export interface Dismissable {
   /** Wrap trigger + panel. Clicks inside are not "outside". */
-  containerRef: RefObject<HTMLDivElement | null>;
+  containerRef: { current: HTMLDivElement | null };
   /** The control that opened the panel; focus returns here. */
-  triggerRef: RefObject<HTMLButtonElement | null>;
+  triggerRef: { current: HTMLButtonElement | null };
 }
 
 export function useDismissable(open: boolean, onClose: () => void): Dismissable {
