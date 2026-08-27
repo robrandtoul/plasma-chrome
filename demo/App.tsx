@@ -20,7 +20,7 @@ import { Chrome } from '../src/Chrome';
 import { SwitcherStrip } from '../src/SwitcherStrip';
 import { MobileChrome } from '../src/MobileChrome';
 import { NavLinkish } from '../src/HeaderBar';
-import { ChatIcon } from '../src/icons';
+import { BellIcon, ChatIcon } from '../src/icons';
 import { cx } from '../src/types';
 
 import {
@@ -517,6 +517,23 @@ function Mobile(): JSX.Element {
   const [stockVisible, setStockVisible] = useState(true);
   const search = useSearch('Search');
 
+  // The two right-cluster slots, as a host passes them. Both render in
+  // the mobile bar as well as the desktop one — Stock Control loses its
+  // chat and its push toggle entirely on a phone otherwise.
+  const chatSlot = (
+    <button className="pd-chrome__icon-btn" type="button" title="Team chat" aria-label="Team chat, 2 unread">
+      <ChatIcon />
+      <span className="pd-chrome__dot" aria-hidden="true">
+        2
+      </span>
+    </button>
+  );
+  const bellSlot = (
+    <button className="pd-chrome__icon-btn" type="button" title="Notifications" aria-label="Notifications">
+      <BellIcon />
+    </button>
+  );
+
   return (
     <section>
       <Rule>06 · Mobile</Rule>
@@ -524,7 +541,9 @@ function Mobile(): JSX.Element {
         One treatment for both modes, and the only difference is the chevron. Four
         destinations plus More, 48px minimum targets, and the tab bar is{' '}
         <code>absolute</code> inside the app frame, never <code>fixed</code>: iOS pans a
-        fixed bar away from the screen edge when the keyboard opens. Tap the avatar for
+        fixed bar away from the screen edge when the keyboard opens. That needs a
+        viewport-locked frame to resolve against, so an app that scrolls the document
+        passes <code>tabBarPosition=&quot;fixed&quot;</code> instead. Tap the avatar for
         the account sheet, which is where app switching lives on a phone, or More for the
         rest of the nav.
       </p>
@@ -541,6 +560,8 @@ function Mobile(): JSX.Element {
             accountLinks={ACCOUNT_LINKS}
             user={USER}
             search={search}
+            chat={chatSlot}
+            notifications={bellSlot}
             appsVisible={proofsVisible}
             onAppsVisibleChange={setProofsVisible}
             onSignOut={noop}
@@ -560,6 +581,8 @@ function Mobile(): JSX.Element {
             accountLinks={ACCOUNT_LINKS}
             user={USER}
             search={search}
+            chat={chatSlot}
+            notifications={bellSlot}
             appsVisible={stockVisible}
             onAppsVisibleChange={setStockVisible}
             onSignOut={noop}
