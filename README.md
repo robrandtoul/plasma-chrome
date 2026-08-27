@@ -262,6 +262,34 @@ There is exactly one `:root` value, so mount exactly one `Chrome`.
 
 ---
 
+## Mobile tab icons
+
+The bottom tab bar draws each tab's glyph from its `ChromeNavItem.id`, so two apps that
+call a destination the same thing get the same picture. The ids with a glyph today:
+
+| id | glyph |
+| --- | --- |
+| `proofs`, `dashboard` | layers |
+| `overview` | panels |
+| `orders`, `run` | package |
+| `customers` | users |
+| `history` | history |
+| `chat`, `messages` | speech bubbles |
+| `activity`, `notifications` | bell |
+| `insights`, `analytics` | bars |
+
+Anything else falls back to the panels glyph. **A bar showing several identical panels is
+the smell that says an entry is missing** — add it to `TAB_GLYPHS` in `src/icons.tsx`.
+Do not rename a host's nav ids to borrow a glyph: the id is load-bearing for `activeNavId`
+matching and `mobileTabIds` resolution, and a semantically false one outlives the person
+who chose it.
+
+There is deliberately no per-item icon override. The package inlines its own path data and
+takes no runtime dependencies, so an icon prop would mean each host shipping its own SVG
+and the four bars drifting apart, which is the drift this package exists to remove.
+
+---
+
 ## The mobile tab bar: `tabBarPosition` and `--pd-chrome-tabbar-height`
 
 `chrome.css` positions the bottom tab bar `absolute`, not `fixed`, and says why: iOS pans a fixed bar away from the screen edge when the keyboard opens, and proof-viewer learned that the hard way. `absolute` avoids it by resolving against **the host's viewport locked app frame**.
@@ -274,6 +302,12 @@ That frame was an unstated requirement, and only one app has one. proof-viewer's
 <Chrome tabBarPosition="fixed" ... />   // document scrolls
 <Chrome ... />                          // an inner frame scrolls: leave it alone
 ```
+
+As it turns out, `absolute` is the minority case across the four apps: only proof-viewer
+locks its frame. Stock Control, Card Programme and vCard Studio all scroll the document
+and all pass `fixed`. The default stays `absolute` anyway, because getting it wrong that
+way is a visible bug on one app rather than a silent iOS regression on the one app that
+does it properly.
 
 Either way the chrome publishes the bar's height, and nothing may hardcode it:
 

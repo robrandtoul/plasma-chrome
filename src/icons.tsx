@@ -164,10 +164,46 @@ const ELLIPSIS = (
   </>
 );
 
+/* lucide "users". Card Programme's Customers tab; any app with a list of
+   people it serves. */
+const USERS = (
+  <>
+    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+    <circle cx="9" cy="7" r="4" />
+    <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+  </>
+);
+
+/* lucide "history": a clock with a counter-clockwise arrow. Past runs,
+   past orders, an audit log — the tab that looks backwards. */
+const HISTORY = (
+  <>
+    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+    <path d="M3 3v5h5" />
+    <path d="M12 7v5l4 2" />
+  </>
+);
+
+/* Keyed on the nav item's id, so two apps that call a destination the
+   same thing get the same glyph — which is the point. An id with no
+   entry falls back to PANELS, and a bar of several PANELS is the smell
+   that says entries are missing: add them here rather than renaming a
+   host's ids to borrow a glyph, which would put a semantically false id
+   into activeNavId and every future debugging session.
+
+   `overview` is mapped to PANELS explicitly rather than left to the
+   fallback. Same picture, but it records that a summary screen is what
+   PANELS is FOR, so the next person adding a tab does not read the
+   fallback as a deliberate choice. */
 const TAB_GLYPHS: Record<string, JSX.Element> = {
   proofs: LAYERS,
   dashboard: LAYERS,
+  overview: PANELS,
   orders: PACKAGE,
+  run: PACKAGE,
+  customers: USERS,
+  history: HISTORY,
   chat: CHAT,
   messages: CHAT,
   activity: BELL,
