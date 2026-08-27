@@ -42,6 +42,15 @@ still has to have a name, and a screen-reader user never had the duplication.
 The strip's `padding-left` drops from 22px to 8px so the first app label lines up with the
 app mark in the bar below, which the lockup used to hide.
 
+**Third amendment, same date: the nav focus ring is drawn inside the item below 1180px.**
+The spec gives nav items `outline-offset: 1px` and, in the same file, makes `.pd-chrome__nav`
+a scroll container below 1180px so the search field can collapse before the nav shrinks.
+Those two rules contradict each other: `overflow-x: auto` computes `overflow-y: auto`, the
+nav's padding box is exactly one item tall with no slack, and a ring painted outside the item
+is therefore clipped away. Between 768px and 1180px — an ordinary laptop — a keyboard user saw
+at most the ring's vertical edges. The offset goes negative in that band only; above 1181px
+there is no scroll container and the specified value stands.
+
 So the "Contrast corrections" section immediately below, and the "no white text on `#ff5b3a`" line in `MIGRATION.md`'s definition of done, no longer describe what ships. They are kept as written because the reasoning is still correct and worth reading before anyone proposes changing the accent again.
 
 One coral was deliberately not moved: the mobile active tab label is coral text on a pale tint rather than a fill behind white, where `#ec6747` measures 2.93:1 against `#c2301a`'s 5.17:1. It stays `#c2301a` and says so in place.

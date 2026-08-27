@@ -864,6 +864,15 @@
     scrollbar-width: none;
   }
   .pd-chrome__nav::-webkit-scrollbar { display: none; }
+  /* The scroll container above clips the focus ring. `overflow-x: auto`
+     computes `overflow-y: auto` too, and the nav's padding box is exactly
+     one nav item tall with no padding and no slack — so the ring, drawn
+     2px wide 1px OUTSIDE the item, lands entirely in the clipped region
+     and a keyboard user sees at most its vertical edges. Drawing it just
+     inside instead costs nothing and is what the mobile tab and the strip
+     link already do. Scoped to this band deliberately: above 1181px there
+     is no scroll container and the specified 1px offset is intact. */
+  .pd-chrome .pd-chrome__nav-item:focus-visible { outline-offset: -2px; }
 }
 
 @media (min-width: 1181px) {
