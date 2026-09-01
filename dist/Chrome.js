@@ -87,10 +87,17 @@ export function Chrome(props) {
     /* chrome.css declares --pd-chrome-height on .pd-chrome, but the
        chrome is a sibling of page content rather than an ancestor of
        it, so a sticky element elsewhere in the tree cannot inherit it.
-       Re-declare it on :root, and take it back down on unmount. */
+       Re-declare it on :root, and take it back down on unmount.
+  
+       The safe-area term is carried as a var() rather than resolved to
+       a number, for two reasons: --pd-chrome-safe-top is the documented
+       seam a host overrides (chrome.css says how and why), so reading
+       it here is what makes an override reach the offsets as well as
+       the bar; and the inset itself changes on rotation, which a value
+       computed once in an effect would not follow. */
     useEffect(() => {
         const root = document.documentElement;
-        root.style.setProperty('--pd-chrome-height', stripVisible ? '94px' : '56px');
+        root.style.setProperty('--pd-chrome-height', `calc(${stripVisible ? '94px' : '56px'} + var(--pd-chrome-safe-top, 0px))`);
         return () => {
             root.style.removeProperty('--pd-chrome-height');
         };

@@ -34,24 +34,61 @@
 
 /* ── Shell ──────────────────────────────────────────────── */
 
+/* The status bar's height in an iOS home-screen web app, and 0
+   everywhere else.
+
+   The chrome is the first thing on the page, so it is the thing a
+   status bar covers. A host that sets `viewport-fit=cover` — which
+   it does to let full-bleed bands reach the physical screen edges —
+   is asking for the page to extend INTO that strip, and iOS then
+   reports the obscured height here. On an iPad saved to the home
+   screen that is exactly what happens, and until this rule existed
+   the switcher strip was drawn underneath the clock and the battery.
+
+   Declared on :root rather than on .pd-chrome so that the
+   --pd-chrome-height a consumer reads (which Chrome.tsx re-declares
+   on :root, see below) can be built out of it, and so a host that
+   finds a platform under-reporting the inset can raise the floor in
+   one line:
+
+     :root { --pd-chrome-safe-top: max(env(safe-area-inset-top), 24px); }
+
+   Not applied to the mobile bar, which has carried its own
+   env(safe-area-inset-top) padding since the reference and whose
+   fixed 54px height would be eaten by a floor set here. */
+:root {
+  --pd-chrome-safe-top: env(safe-area-inset-top, 0px);
+}
+
 .pd-chrome {
-  --pd-chrome-height: 56px;
+  --pd-chrome-height: calc(56px + var(--pd-chrome-safe-top, 0px));
   position: sticky;
   top: 0;
   z-index: 20;
   display: block;
   width: 100%;
+  /* The status-bar band is painted, not left transparent: the chrome
+     is sticky, so page content scrolls beneath it and would otherwise
+     read through behind the clock. White rather than the strip's
+     #161311 because a host sets `apple-mobile-web-app-status-bar-style`
+     to `default`, which draws the clock in DARK — legible on white,
+     invisible on near-black. A host that wants one continuous dark bar
+     switches that meta to `black-translucent` and overrides this
+     background alongside it. */
+  padding-top: var(--pd-chrome-safe-top, 0px);
+  background: #ffffff;
   font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
-.pd-chrome--with-strip { --pd-chrome-height: 94px; }
+.pd-chrome--with-strip { --pd-chrome-height: calc(94px + var(--pd-chrome-safe-top, 0px)); }
 
 /* Consumers position sticky elements below the chrome against this:
    `top: var(--pd-chrome-height)`. Never a hardcoded pixel value —
-   the strip is a per-person preference, so the offset is not a
-   constant. Re-declared on :root by Chrome.tsx so descendants
-   outside the chrome subtree can read it too. */
+   the strip is a per-person preference and the safe-area inset is a
+   per-device one, so the offset is not a constant. Re-declared on
+   :root by Chrome.tsx so descendants outside the chrome subtree can
+   read it too. */
 
 /* ── Switcher strip (only when appsVisible) ─────────────── */
 

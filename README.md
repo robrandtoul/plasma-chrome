@@ -238,7 +238,7 @@ Supplying `appsVisible` makes the chrome fully controlled and it stops touching 
 
 ## `--pd-chrome-height`
 
-The chrome has two heights: **94px** with the strip, **56px** without. That is a per person preference, so it is not a constant, and nothing below the chrome may treat it as one.
+The chrome has two heights: **94px** with the strip, **56px** without, plus the iOS status-bar inset on a device that has one. The strip is a per person preference and the inset is a per device one, so the height is not a constant, and nothing below the chrome may treat it as one.
 
 The chrome publishes the current value as a CSS custom property. `chrome.css` declares it on `.pd-chrome`, and `Chrome.tsx` re-declares it on `:root`, because the chrome is a sibling of your page content rather than an ancestor of it and a sticky element elsewhere in the tree cannot inherit it.
 
@@ -261,6 +261,24 @@ The chrome publishes the current value as a CSS custom property. `chrome.css` de
 Stock Control's stock filter bar and the Proofs sticky admin header both hardcode this today, and both will break on adoption. Grep your repo for `top: 56px`, `top: 94px`, `top-14`, `top-\[56px\]` and their Tailwind equivalents before you ship.
 
 There is exactly one `:root` value, so mount exactly one `Chrome`.
+
+### The safe-area term
+
+The chrome sits at the top of the page, so in a home-screen web app it is what the status bar covers. `chrome.css` declares
+
+```css
+:root { --pd-chrome-safe-top: env(safe-area-inset-top, 0px); }
+```
+
+pads the bar by it, paints that band white so scrolling content cannot read through behind the clock, and folds it into `--pd-chrome-height` so your sticky offsets stay correct. On anything without a status bar over the page — every desktop browser, and any host that has not set `viewport-fit=cover` — it resolves to `0px` and nothing moves.
+
+The mobile bar is deliberately outside this: it has carried its own `env(safe-area-inset-top)` padding since the reference, and its fixed 54px height would be eaten by a floor set on the variable.
+
+If you meet a platform that under-reports the inset, raise the floor in your own stylesheet rather than forking the package — one line, and it reaches the bar and the offsets together:
+
+```css
+:root { --pd-chrome-safe-top: max(env(safe-area-inset-top), 24px); }
+```
 
 ---
 
