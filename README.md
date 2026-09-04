@@ -19,7 +19,11 @@ The design specification travels with the code in [`docs/handoff/`](docs/handoff
 
 There is no registry. The tag is the version, and upgrading is a deliberate per-app act: move the tag, run the app, look at it.
 
-`dist/` is not committed, so npm builds the package on install through its `prepare` script. That needs the package's devDependencies, which npm installs for a git dependency automatically. Nothing is required of the host beyond having React.
+`dist/` **is** committed, and building it before you tag is a manual step you have to remember. The alternative was a `prepare` script that builds at install time, and that is blocked by default in modern pnpm and by any CI running `--ignore-scripts`; the first consumer hit exactly that. So the release ritual is: `npm run build`, commit `dist/`, tag, then move each app's pin.
+
+> This paragraph used to say the opposite — that `dist/` was not committed and a `prepare` script built it on install. There has never been a `prepare` script. Anyone planning a release from that description would have designed the wrong build step and shipped a stale bundle to all four apps at once.
+
+The package has a second entry point, `@plasma/chrome/chat`, holding the shared staff chat. It is documented in [`docs/handoff/CHAT.md`](docs/handoff/CHAT.md); everything below is about the navigation chrome.
 
 Then import the stylesheet exactly once, at the app entry point, before your own styles:
 
@@ -31,7 +35,7 @@ import './index.css';
 
 One line, no build-step CSS, no PostCSS plugin, no Tailwind config change. The order matters only in that your own sheet should come second, so that a rule of yours can win if you ever need it to.
 
-Peer dependency: `react` at `^18 || ^19`. Both are exercised: the package typechecks against `@types/react` 18 and 19, and uses no React 19 only API.
+Peer dependencies: `react` and `react-dom` at `^18 || ^19`. Both are exercised: the package typechecks against `@types/react` 18 and 19, and uses no React 19 only API.
 
 ---
 
