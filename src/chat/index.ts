@@ -38,7 +38,25 @@ export { default as ChatPopoutHost } from './ChatPopoutHost';
    its chat route should render the bare popout shell rather than the full
    page, and `reopenKey` to ask the dropdown to reopen after that page
    minimises back into it. */
-export { isPopoutWindow, isPopoutSearch, popoutPath, popoutWindowName } from './popout';
+export {
+  isPopoutWindow,
+  isPopoutSearch,
+  popoutPath,
+  popoutWindowName,
+  // The pure rules underneath the popout, plus the constants they are written
+  // against. Exported so a host can unit-test them: the package has no test
+  // runner of its own, and these three decide whether the feature behaves —
+  // read "am I the popout" wrong and the popped-out window mutes itself while
+  // the main one chimes, which is exactly backwards.
+  clampPopoutSize,
+  popoutIsAlive,
+  windowFeatures,
+  DEFAULT_POPOUT_SIZE,
+  MIN_POPOUT_W,
+  MIN_POPOUT_H,
+  POPOUT_ALIVE_MS,
+  POPOUT_HEARTBEAT_MS,
+} from './popout';
 export { reopenKey } from './ChatMenu';
 
 /* Pure helpers, exported because a host may want to render a message the same
