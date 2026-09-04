@@ -1,4 +1,11 @@
 import { type ChatLinkComponent } from './types.js';
+/** The dropdown's own storage keys, namespaced per app.
+ *
+ *  Both are genuinely per-window furniture rather than preferences: a
+ *  dropdown sized for a 27-inch monitor has no business travelling to a
+ *  laptop, and "reopen after minimising" is answering a question about THIS
+ *  tab. That is why they stay in browser storage while sound, pinned and the
+ *  open conversation moved to the database. */
 export declare function reopenKey(prefix: string): string;
 export interface ChatMenuProps {
     /** We are already on the full chat page, so the dropdown stays shut. */

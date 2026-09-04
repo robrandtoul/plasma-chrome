@@ -40,8 +40,10 @@ Sharing the code fixes drift. It does **not**, on its own, fix sync, because the
 | Placement (floating/docked) | database | Honoured only where the host has a dock. |
 | Open conversation | database | The one that was costing people their place. |
 | Manual status (Away/Busy) | database | Presence keeps a person's *most present* status across tabs, so without this an idle tab in another app silently overrode a deliberate "Busy". |
-| Dropdown size, popout size | browser | Genuinely about the window in front of you. A size chosen on a 27-inch monitor has no business travelling to a laptop. |
+| Dropdown size, popout size, dock height | database | Added in 1.9.3. Rob asked for the window to arrive the same size it was left, and works on one screen. The stored value is never capped on write — the dropdown caps to the viewport at render — so a size chosen on a large screen shrinks to fit a laptop and comes back intact on the large screen. If someone does work across two very different displays, this is the setting to move back to the browser. |
 | "Am I the popout?" | browser (session) | A question about one tab. |
+
+The three sizes keep the browser-storage key names they always had (`<prefix>-size`, `<prefix>-popout-size`, `<prefix>-dock-height`), so a size someone had already set carries over rather than resetting to the default on the first load after the upgrade. Storage is still written on every change and is what the panel reads at mount; the profile is the copy that crosses apps and it is applied over the top when the preferences arrive.
 
 Every read of the preference column is guarded on the key being **present**, not truthy, and the column is fetched in its own request rather than folded into the profile select. PostgREST rejects an entire select if one named column is missing, so folding it in would mean an app running against a database that predates the migration lost the whole profile row. As written, either deploy order is safe.
 

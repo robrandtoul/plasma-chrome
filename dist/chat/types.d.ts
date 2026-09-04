@@ -233,6 +233,28 @@ export interface ChatPrefs {
     placement?: ChatPlacement;
     thread?: ChatThread;
     status?: ChatStatus;
+    /** The header dropdown's size. Travels because the four staff apps are four
+     *  subdomains: resize it in Proofs and it should still be that size in vCard
+     *  Studio a second later, which is the whole point of one shared chat.
+     *
+     *  It was left in browser storage at first, on the argument that a large
+     *  monitor's size has no business travelling to a laptop. That is weaker
+     *  than it sounds: the size is clamped to a minimum on read and capped to
+     *  the viewport at RENDER, not on write, so a small screen shows it capped
+     *  while the stored value survives intact for the big one. */
+    size?: {
+        w: number;
+        h: number;
+    };
+    /** The popped-out window's size, same reasoning. */
+    popoutSize?: {
+        w: number;
+        h: number;
+    };
+    /** The height of the docked panel in a host's rail. Only proof-viewer has a
+     *  dock, so this does not travel BETWEEN apps — it is here so the setting
+     *  survives a new browser or cleared storage like every other one. */
+    dockHeight?: number;
 }
 /**
  * The router seam: whatever the host hands us — react-router's Link, the

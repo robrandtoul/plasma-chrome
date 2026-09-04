@@ -73,6 +73,24 @@ interface TeamChatValue {
      *  floating dropdown stays available everywhere. Persisted. */
     placement: ChatPlacement;
     setPlacement: (placement: ChatPlacement) => void;
+    /** The header dropdown's size, and the setter the resize grip commits to on
+     *  release. Held here rather than inside ChatMenu so it can be written to
+     *  the profile as well as to this browser, and so a value arriving from
+     *  another app lands on a live component instead of one that already read
+     *  localStorage at mount. */
+    chatSize: {
+        w: number;
+        h: number;
+    };
+    setChatSize: (size: {
+        w: number;
+        h: number;
+    }) => void;
+    /** The docked panel's height in pixels, or null for the host's default.
+     *  Only a host that sets `dockEnabled` renders a dock, and it owns the drag
+     *  handle; this is where the resulting height is kept. */
+    dockHeight: number | null;
+    setDockHeight: (height: number | null) => void;
     /** Move chat into a window of its own — a floating always-on-top window
      *  where the browser supports it, otherwise a plain second window. */
     openPopout: () => void;
@@ -94,6 +112,10 @@ interface TeamChatValue {
     /** Call as the user types to broadcast a throttled "typing" signal. */
     notifyTyping: () => void;
 }
+export declare const DEFAULT_CHAT_SIZE: {
+    w: number;
+    h: number;
+};
 export declare function useTeamChat(): TeamChatValue;
 export declare function TeamChatProvider({ config, children, }: {
     config: ChatConfig;

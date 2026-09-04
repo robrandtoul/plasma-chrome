@@ -144,6 +144,18 @@ interface TeamChatValue {
    *  floating dropdown stays available everywhere. Persisted. */
   placement: ChatPlacement
   setPlacement: (placement: ChatPlacement) => void
+  /** The header dropdown's size, and the setter the resize grip commits to on
+   *  release. Held here rather than inside ChatMenu so it can be written to
+   *  the profile as well as to this browser, and so a value arriving from
+   *  another app lands on a live component instead of one that already read
+   *  localStorage at mount. */
+  chatSize: { w: number; h: number }
+  setChatSize: (size: { w: number; h: number }) => void
+  /** The docked panel's height in pixels, or null for the host's default.
+   *  Only a host that sets `dockEnabled` renders a dock, and it owns the drag
+   *  handle; this is where the resulting height is kept. */
+  dockHeight: number | null
+  setDockHeight: (height: number | null) => void
   /** Move chat into a window of its own — a floating always-on-top window
    *  where the browser supports it, otherwise a plain second window. */
   openPopout: () => void
@@ -205,6 +217,34 @@ function writeLocal(prefix: string, name: string, value: string | null) {
   }
 }
 
+export const DEFAULT_CHAT_SIZE = { w: 460, h: 460 }
+const MIN_CHAT_W = 320
+const MIN_CHAT_H = 300
+
+/** A stored {w,h}, floored at the minimum. Deliberately NOT capped to the
+ *  viewport here: the cap belongs at render, so a laptop shows a desktop's
+ *  size shrunk to fit while the stored value stays intact for the desktop. */
+function readSize(prefix: string): { w: number; h: number } {
+  const raw = readLocal(prefix, 'size')
+  if (raw) {
+    try {
+      const p = JSON.parse(raw) as { w?: unknown; h?: unknown }
+      if (typeof p.w === 'number' && typeof p.h === 'number') {
+        return { w: Math.max(MIN_CHAT_W, p.w), h: Math.max(MIN_CHAT_H, p.h) }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return DEFAULT_CHAT_SIZE
+}
+
+function readDockHeight(prefix: string): number | null {
+  const raw = readLocal(prefix, 'dock-height')
+  const n = raw ? Number(raw) : NaN
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : null
+}
+
 function readPinned(prefix: string): boolean {
   return readLocal(prefix, 'pinned') === '1'
 }
@@ -257,6 +297,10 @@ const DEFAULT: TeamChatValue = {
   setSoundEnabled: () => {},
   placement: 'floating',
   setPlacement: () => {},
+  chatSize: DEFAULT_CHAT_SIZE,
+  setChatSize: () => {},
+  dockHeight: null,
+  setDockHeight: () => {},
   openPopout: () => {},
   closePopout: () => {},
   focusPopout: () => false,
@@ -362,6 +406,8 @@ export function TeamChatProvider({
   const [dropdownPinned, setDropdownPinnedState] = useState<boolean>(() => readPinned(prefix))
   const [soundEnabled, setSoundEnabledState] = useState<boolean>(() => readSound(prefix))
   const [placement, setPlacementState] = useState<ChatPlacement>(() => readPlacement(prefix))
+  const [chatSize, setChatSizeState] = useState(() => readSize(prefix))
+  const [dockHeight, setDockHeightState] = useState<number | null>(() => readDockHeight(prefix))
   const [typingUsers, setTypingUsers] = useState<{ userId: string; name: string | null }[]>([])
   // The picture-in-picture window, when chat has been popped out that way. It
   // is state (not just a ref) because ChatPopoutHost renders the panel into it.
@@ -815,6 +861,36 @@ export function TeamChatProvider({
       if (prefs.placement === 'docked' && cfgRef.current.dockEnabled) {
         setPlacementState('docked')
       }
+      // Sizes. These land on live state rather than only in storage, because
+      // ChatMenu reads its size once at mount and this arrives after: writing
+      // localStorage alone would leave the panel at the old size until the
+      // next reload, which is exactly the "it didn't follow me" complaint.
+      if (
+        prefs.size &&
+        typeof prefs.size.w === 'number' &&
+        typeof prefs.size.h === 'number'
+      ) {
+        const size = {
+          w: Math.max(MIN_CHAT_W, prefs.size.w),
+          h: Math.max(MIN_CHAT_H, prefs.size.h),
+        }
+        setChatSizeState(size)
+        writeLocal(prefix, 'size', JSON.stringify(size))
+      }
+      if (
+        prefs.popoutSize &&
+        typeof prefs.popoutSize.w === 'number' &&
+        typeof prefs.popoutSize.h === 'number'
+      ) {
+        // Straight to storage: the popout reads its size when it opens, which
+        // is always after this, so there is no live component to update.
+        writePopoutSize(prefix, prefs.popoutSize)
+      }
+      if (typeof prefs.dockHeight === 'number' && prefs.dockHeight > 0) {
+        const h = Math.round(prefs.dockHeight)
+        setDockHeightState(h)
+        writeLocal(prefix, 'dock-height', String(h))
+      }
       if (prefs.status === 'away' || prefs.status === 'busy') {
         manualRef.current = prefs.status
         refreshStatus()
@@ -1208,7 +1284,13 @@ export function TeamChatProvider({
         // Remember the size it's left at, and put chat back in the app the
         // moment the window goes — including when the browser closes it for us.
         opened.addEventListener('pagehide', () => {
-          writePopoutSize(cfgRef.current.storagePrefix, { w: opened.innerWidth, h: opened.innerHeight })
+          const popoutSize = { w: opened.innerWidth, h: opened.innerHeight }
+          writePopoutSize(cfgRef.current.storagePrefix, popoutSize)
+          // Also onto the profile, so re-opening the popout from a different
+          // app gets the size you last dragged it to rather than the default.
+          // A closing window reports 0×0 in some browsers; writePopoutSize
+          // already ignores that, and so must this.
+          if (popoutSize.w && popoutSize.h) persistPref({ popoutSize }, [])
           pipWindowRef.current = null
           setPopoutWindow(null)
           setPlacementState(readPlacement(cfgRef.current.storagePrefix))
@@ -1469,6 +1551,23 @@ export function TeamChatProvider({
       // window that may be gone, with chat reachable from nowhere.
       if (next === 'popout') return
       persistPref({ placement: next }, [['placement', next === 'docked' ? 'docked' : null]])
+    },
+    chatSize,
+    setChatSize: (size: { w: number; h: number }) => {
+      const next = {
+        w: Math.max(MIN_CHAT_W, Math.round(size.w)),
+        h: Math.max(MIN_CHAT_H, Math.round(size.h)),
+      }
+      setChatSizeState(next)
+      persistPref({ size: next }, [['size', JSON.stringify(next)]])
+    },
+    dockHeight,
+    setDockHeight: (height: number | null) => {
+      const next = height == null ? null : Math.round(height)
+      setDockHeightState(next)
+      persistPref({ dockHeight: next ?? undefined }, [
+        ['dock-height', next == null ? null : String(next)],
+      ])
     },
     openPopout: () => {
       void openPopout()
