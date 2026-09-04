@@ -14,11 +14,22 @@
    reason — the four hosts are React 18, 18, 19 and 19, and Tailwind
    v3, v4, v4 and none at all. Depending on none of them is the fix.
 
-   THE SUPABASE CLIENT IS INJECTED, NOT IMPORTED. `import type` is
-   erased at build, so package.json still declares React and only
-   React at runtime. @supabase/supabase-js is a devDependency here,
-   present for typechecking only; every consumer already has it,
-   since they need it to construct the client they pass in.
+   THE SUPABASE CLIENT IS INJECTED, AND ITS TYPE IS STRUCTURAL.
+
+   The obvious thing is `import type { SupabaseClient }`. It was the
+   first version of this file and it does not work, because the four
+   apps are on @supabase/supabase-js ^2.45, ^2.49 and ^2.112, and the
+   shape of SupabaseClient has changed across that range: 2.112 added
+   `getOpenApiSpec`, so a client built by an older copy is not
+   assignable to the type from a newer one. Pinning the package to any
+   one version would make it fail to typecheck in whichever apps
+   disagreed, and force all four to upgrade in lockstep — the exact
+   coupling this package exists to remove.
+
+   So the client is described by what the chat ACTUALLY calls on it,
+   below. Any real Supabase client satisfies it structurally, whatever
+   its version, and the package keeps its best property: no
+   dependencies at all, not even a type-only one.
    ─────────────────────────────────────────────────────────── */
 /** The schema the chat tables live in. Overridable, but never in practice. */
 export const CHAT_SCHEMA = 'proofs';

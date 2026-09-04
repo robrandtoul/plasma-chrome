@@ -1,6 +1,5 @@
 import { type ReactNode } from 'react';
-import type { SupabaseClient } from '@supabase/supabase-js';
-import { type ChatAttachment, type ChatConfig, type ChatPlacement, type ChatStatus, type ChatThread, type PresenceMember, type ReactionRow, type ResolvedChatConfig, type TeamMember, type TeamMessage } from './types.js';
+import { type ChatAttachment, type ChatConfig, type ChatPlacement, type ChatSchemaClient, type ChatStatus, type ChatThread, type PresenceMember, type ReactionRow, type ResolvedChatConfig, type TeamMember, type TeamMessage } from './types.js';
 interface TeamChatValue {
     /** The host's settings after defaults. The panel reads `client` for
      *  storage, `isAdmin` for the delete affordance, and `fullPagePath` +
@@ -11,7 +10,7 @@ interface TeamChatValue {
      *  must go through this and never through `config.client` directly: each
      *  app pins its root client to its own schema, so a direct `.from()` there
      *  silently resolves against the wrong one. */
-    db: ReturnType<SupabaseClient['schema']> | null;
+    db: ChatSchemaClient | null;
     messages: TeamMessage[];
     loading: boolean;
     /** Total unread across every thread (team room + all DMs). */

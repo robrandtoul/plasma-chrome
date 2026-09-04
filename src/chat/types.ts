@@ -14,14 +14,69 @@
    reason — the four hosts are React 18, 18, 19 and 19, and Tailwind
    v3, v4, v4 and none at all. Depending on none of them is the fix.
 
-   THE SUPABASE CLIENT IS INJECTED, NOT IMPORTED. `import type` is
-   erased at build, so package.json still declares React and only
-   React at runtime. @supabase/supabase-js is a devDependency here,
-   present for typechecking only; every consumer already has it,
-   since they need it to construct the client they pass in.
+   THE SUPABASE CLIENT IS INJECTED, AND ITS TYPE IS STRUCTURAL.
+
+   The obvious thing is `import type { SupabaseClient }`. It was the
+   first version of this file and it does not work, because the four
+   apps are on @supabase/supabase-js ^2.45, ^2.49 and ^2.112, and the
+   shape of SupabaseClient has changed across that range: 2.112 added
+   `getOpenApiSpec`, so a client built by an older copy is not
+   assignable to the type from a newer one. Pinning the package to any
+   one version would make it fail to typecheck in whichever apps
+   disagreed, and force all four to upgrade in lockstep — the exact
+   coupling this package exists to remove.
+
+   So the client is described by what the chat ACTUALLY calls on it,
+   below. Any real Supabase client satisfies it structurally, whatever
+   its version, and the package keeps its best property: no
+   dependencies at all, not even a type-only one.
    ─────────────────────────────────────────────────────────── */
 
-import type { SupabaseClient } from '@supabase/supabase-js';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+/**
+ * A PostgREST query builder. Deliberately `any`: it is a deep fluent chain
+ * whose shape is supabase-js's business, not this package's, and reproducing
+ * it here would reintroduce exactly the version coupling described above.
+ * Results are narrowed at the point of use instead.
+ */
+export type ChatQueryBuilder = any;
+
+/** A client scoped to one schema. */
+export interface ChatSchemaClient {
+  from(table: string): ChatQueryBuilder;
+  rpc(fn: string, args?: Record<string, unknown>): ChatQueryBuilder;
+}
+
+/** The realtime channel, as the chat uses it. */
+export interface ChatRealtimeChannel {
+  on(type: string, filter: any, callback: (payload: any) => void): ChatRealtimeChannel;
+  subscribe(callback?: (status: string) => void): ChatRealtimeChannel;
+  send(message: Record<string, unknown>): unknown;
+  track(payload: Record<string, unknown>): unknown;
+  presenceState(): Record<string, unknown[]>;
+}
+
+/** One storage bucket, as the chat uses it. */
+export interface ChatStorageBucket {
+  createSignedUrls(
+    paths: string[],
+    expiresIn: number,
+  ): Promise<{ data: { signedUrl: string | null }[] | null; error: any }>;
+  upload(path: string, body: any, options?: any): Promise<{ data: any; error: any }>;
+  remove(paths: string[]): Promise<{ data: any; error: any }>;
+}
+
+/**
+ * The host's Supabase client, described by the four things the chat calls on
+ * it. A real `SupabaseClient` of any 2.x satisfies this.
+ */
+export interface ChatSupabaseClient {
+  schema(name: string): ChatSchemaClient;
+  channel(name: string, opts?: any): ChatRealtimeChannel;
+  removeChannel(channel: any): unknown;
+  storage: { from(bucket: string): ChatStorageBucket };
+}
 
 /** The schema the chat tables live in. Overridable, but never in practice. */
 export const CHAT_SCHEMA = 'proofs';
@@ -67,7 +122,7 @@ export interface ChatConfig {
    * because `public.team_messages` does not exist. Deriving the accessor in
    * one place makes that mistake unavailable.
    */
-  client: SupabaseClient;
+  client: ChatSupabaseClient;
 
   /** The signed-in person, or null when signed out. The chat renders nothing without it. */
   userId: string | null;
@@ -129,7 +184,7 @@ export interface ChatConfig {
 
 /** Config after defaults, which is what the internals actually read. */
 export interface ResolvedChatConfig extends Required<Omit<ChatConfig, 'client' | 'userId'>> {
-  client: SupabaseClient;
+  client: ChatSupabaseClient;
   userId: string | null;
 }
 
@@ -251,10 +306,16 @@ export interface ChatPrefs {
 }
 
 /**
- * The router seam, identical in shape to the chrome's own `linkComponent`.
- * Defaults to a plain anchor, which is correct for the two apps that link
- * across to another subdomain.
+ * The router seam: whatever the host hands us — react-router's Link, the
+ * ChromeLink adapter each app already wrote for the nav, or the default 'a'.
+ *
+ * ⚠ Deliberately `ComponentType<any>`, exactly as the chrome's own
+ * `ChromeLinkComponent` is, and for the reason the chrome found first. A
+ * precisely-typed props shape looks better and does not work: a forwardRef
+ * component whose own `to` is optional is not assignable to one whose `to` is
+ * required, and every app's ChromeLink is written that way so it can accept
+ * either `to` or `href`. Being strict here made three of the four apps fail to
+ * typecheck against a component they were already passing to the chrome next
+ * door.
  */
-export type ChatLinkComponent = React.ComponentType<
-  { to: string; className?: string; children?: React.ReactNode } & Record<string, unknown>
->;
+export type ChatLinkComponent = React.ComponentType<any>;

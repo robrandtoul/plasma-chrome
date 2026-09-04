@@ -1,4 +1,52 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+/**
+ * A PostgREST query builder. Deliberately `any`: it is a deep fluent chain
+ * whose shape is supabase-js's business, not this package's, and reproducing
+ * it here would reintroduce exactly the version coupling described above.
+ * Results are narrowed at the point of use instead.
+ */
+export type ChatQueryBuilder = any;
+/** A client scoped to one schema. */
+export interface ChatSchemaClient {
+    from(table: string): ChatQueryBuilder;
+    rpc(fn: string, args?: Record<string, unknown>): ChatQueryBuilder;
+}
+/** The realtime channel, as the chat uses it. */
+export interface ChatRealtimeChannel {
+    on(type: string, filter: any, callback: (payload: any) => void): ChatRealtimeChannel;
+    subscribe(callback?: (status: string) => void): ChatRealtimeChannel;
+    send(message: Record<string, unknown>): unknown;
+    track(payload: Record<string, unknown>): unknown;
+    presenceState(): Record<string, unknown[]>;
+}
+/** One storage bucket, as the chat uses it. */
+export interface ChatStorageBucket {
+    createSignedUrls(paths: string[], expiresIn: number): Promise<{
+        data: {
+            signedUrl: string | null;
+        }[] | null;
+        error: any;
+    }>;
+    upload(path: string, body: any, options?: any): Promise<{
+        data: any;
+        error: any;
+    }>;
+    remove(paths: string[]): Promise<{
+        data: any;
+        error: any;
+    }>;
+}
+/**
+ * The host's Supabase client, described by the four things the chat calls on
+ * it. A real `SupabaseClient` of any 2.x satisfies this.
+ */
+export interface ChatSupabaseClient {
+    schema(name: string): ChatSchemaClient;
+    channel(name: string, opts?: any): ChatRealtimeChannel;
+    removeChannel(channel: any): unknown;
+    storage: {
+        from(bucket: string): ChatStorageBucket;
+    };
+}
 /** The schema the chat tables live in. Overridable, but never in practice. */
 export declare const CHAT_SCHEMA = "proofs";
 /** The storage bucket attachments are read from and written to. */
@@ -39,7 +87,7 @@ export interface ChatConfig {
      * because `public.team_messages` does not exist. Deriving the accessor in
      * one place makes that mistake unavailable.
      */
-    client: SupabaseClient;
+    client: ChatSupabaseClient;
     /** The signed-in person, or null when signed out. The chat renders nothing without it. */
     userId: string | null;
     /**
@@ -92,7 +140,7 @@ export interface ChatConfig {
 }
 /** Config after defaults, which is what the internals actually read. */
 export interface ResolvedChatConfig extends Required<Omit<ChatConfig, 'client' | 'userId'>> {
-    client: SupabaseClient;
+    client: ChatSupabaseClient;
     userId: string | null;
 }
 export declare function resolveChatConfig(config: ChatConfig): ResolvedChatConfig;
@@ -187,13 +235,17 @@ export interface ChatPrefs {
     status?: ChatStatus;
 }
 /**
- * The router seam, identical in shape to the chrome's own `linkComponent`.
- * Defaults to a plain anchor, which is correct for the two apps that link
- * across to another subdomain.
+ * The router seam: whatever the host hands us — react-router's Link, the
+ * ChromeLink adapter each app already wrote for the nav, or the default 'a'.
+ *
+ * ⚠ Deliberately `ComponentType<any>`, exactly as the chrome's own
+ * `ChromeLinkComponent` is, and for the reason the chrome found first. A
+ * precisely-typed props shape looks better and does not work: a forwardRef
+ * component whose own `to` is optional is not assignable to one whose `to` is
+ * required, and every app's ChromeLink is written that way so it can accept
+ * either `to` or `href`. Being strict here made three of the four apps fail to
+ * typecheck against a component they were already passing to the chrome next
+ * door.
  */
-export type ChatLinkComponent = React.ComponentType<{
-    to: string;
-    className?: string;
-    children?: React.ReactNode;
-} & Record<string, unknown>>;
+export type ChatLinkComponent = React.ComponentType<any>;
 //# sourceMappingURL=types.d.ts.map

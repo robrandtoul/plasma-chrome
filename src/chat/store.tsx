@@ -7,7 +7,6 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js'
 import { playChatSound } from './sound'
 import {
   POPOUT_HEARTBEAT_MS,
@@ -28,6 +27,8 @@ import {
   type ChatConfig,
   type ChatPlacement,
   type ChatPrefs,
+  type ChatRealtimeChannel,
+  type ChatSchemaClient,
   type ChatStatus,
   type ChatThread,
   type PresenceMember,
@@ -57,6 +58,10 @@ const STATUS_RANK: Record<ChatStatus, number> = { online: 0, idle: 1, away: 2, b
 
 // What each client broadcasts about itself on the presence channel.
 interface PresenceMeta {
+  // Index signature so this satisfies the channel's Record<string, unknown>
+  // payload parameter. It is a plain data bag broadcast over presence, so
+  // there is nothing to lose by saying so.
+  [key: string]: unknown
   user_id: string
   name: string | null
   initials: string | null
@@ -75,7 +80,7 @@ interface TeamChatValue {
    *  must go through this and never through `config.client` directly: each
    *  app pins its root client to its own schema, so a direct `.from()` there
    *  silently resolves against the wrong one. */
-  db: ReturnType<SupabaseClient['schema']> | null
+  db: ChatSchemaClient | null
   messages: TeamMessage[]
   loading: boolean
   /** Total unread across every thread (team room + all DMs). */
@@ -411,7 +416,7 @@ export function TeamChatProvider({
     colour: null,
     avatarUrl: null,
   })
-  const channelRef = useRef<RealtimeChannel | null>(null)
+  const channelRef = useRef<ChatRealtimeChannel | null>(null)
 
   // ── Popout plumbing ───────────────────────────────────────────────────────
   // The two routes are tracked separately because they need different handling:
@@ -523,7 +528,7 @@ export function TeamChatProvider({
         .from('profiles')
         .update({ team_chat_seen_at: nowIso })
         .eq('id', uid)
-        .then(({ error }) => {
+        .then(({ error }: { error: { message: string } | null }) => {
           if (error) console.error('[chat] team seen stamp failed:', error.message)
         })
       setMentionUnread(0)
@@ -532,7 +537,7 @@ export function TeamChatProvider({
       void dbRef.current
         .from('team_chat_dm_reads')
         .upsert({ user_id: uid, peer_id: thread, seen_at: nowIso }, { onConflict: 'user_id,peer_id' })
-        .then(({ error }) => {
+        .then(({ error }: { error: { message: string } | null }) => {
           if (error) console.error('[chat] DM read stamp failed:', error.message)
         })
     }
@@ -1366,7 +1371,7 @@ export function TeamChatProvider({
           .from('team_message_reactions')
           .delete()
           .eq('id', existing.id)
-          .then(({ error }) => {
+          .then(({ error }: { error: { message: string } | null }) => {
             // Lazy-builder rule (see stampSeen): .then makes the delete real.
             // If it fails, put the optimistically-removed reaction back.
             if (error)
