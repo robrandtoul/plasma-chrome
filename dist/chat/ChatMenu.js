@@ -187,6 +187,10 @@ export default function ChatMenu({ active = false, dockAvailable = false, linkCo
         function onMove(ev) {
             const w = Math.min(maxW, Math.max(MIN_W, startW - (ev.clientX - startX)));
             const h = Math.min(maxH, Math.max(MIN_H, startH + (ev.clientY - startY)));
+            // The ref is set here as well as during render: pointerup can arrive
+            // before React has flushed the render this schedules, and the release
+            // would then save the size from one move ago.
+            sizeRef.current = { w, h };
             setSize({ w, h });
         }
         function onEnd() {
