@@ -102,8 +102,8 @@ To theme it, set the overrides anywhere above the panel:
 
 Two migrations, both in the proof-viewer repo:
 
-- `20260904100000_staff_gate_team_chat.sql` — **apply this first, and independently of everything else.** The room's SELECT policy had no staff gate, so any of the 8 non-staff accounts on the project could read all 60 room messages and post into the room. That was survivable only while no customer-facing bundle contained chat code, which this change ends.
-- `20260904110000_team_chat_prefs.sql` — adds the preference column described above.
+- `20260904130639_staff_gate_team_chat.sql` — **apply this first, and independently of everything else.** The room's SELECT policy had no staff gate, so any of the 8 non-staff accounts on the project could read all 60 room messages and post into the room. That was survivable only while no customer-facing bundle contained chat code, which this change ends.
+- `20260904130708_team_chat_prefs.sql` — adds the preference column described above.
 
 ---
 
