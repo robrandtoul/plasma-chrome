@@ -7,12 +7,20 @@
    opinion about CSS in a package whose job is to have none. */
 
 import { copyFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const from = fileURLToPath(new URL('../src/chrome.css', import.meta.url));
-const toDir = fileURLToPath(new URL('../dist', import.meta.url));
-const to = fileURLToPath(new URL('../dist/chrome.css', import.meta.url));
+/* One entry per stylesheet the package ships. Two today: the navigation
+   chrome, and the chat panel that lives beside it under ./chat. */
+const SHEETS = [
+  ['../src/chrome.css', '../dist/chrome.css'],
+  ['../src/chat/chat.css', '../dist/chat/chat.css'],
+];
 
-mkdirSync(toDir, { recursive: true });
-copyFileSync(from, to);
-console.log('copied src/chrome.css -> dist/chrome.css');
+for (const [fromRel, toRel] of SHEETS) {
+  const from = fileURLToPath(new URL(fromRel, import.meta.url));
+  const to = fileURLToPath(new URL(toRel, import.meta.url));
+  mkdirSync(dirname(to), { recursive: true });
+  copyFileSync(from, to);
+  console.log(`copied ${fromRel.replace('../', '')} -> ${toRel.replace('../', '')}`);
+}

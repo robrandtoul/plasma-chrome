@@ -1,0 +1,1 @@
+{"version":3,"file":"useFileDrop.d.ts","sourceRoot":"","sources":["../../src/chat/useFileDrop.ts"],"names":[],"mappings":"AASA,UAAU,OAAO;IACf,OAAO,EAAE,CAAC,KAAK,EAAE,IAAI,EAAE,KAAK,IAAI,CAAA;CACjC;AAED,wBAAgB,gBAAgB,CAAC,EAAE,OAAO,EAAE,EAAE,OAAO;;;;uBA8FlC,KAAK,CAAC,SAAS;sBAKhB,KAAK,CAAC,SAAS;uBAId,KAAK,CAAC,SAAS;kBAIpB,KAAK,CAAC,SAAS;;EAqB5B"}

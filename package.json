@@ -1,6 +1,6 @@
 {
   "name": "@plasma/chrome",
-  "version": "1.8.0",
+  "version": "1.9.1",
   "private": false,
   "license": "UNLICENSED",
   "type": "module",
@@ -21,7 +21,12 @@
       "default": "./dist/index.js"
     },
     "./chrome.css": "./dist/chrome.css",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./chat": {
+      "types": "./dist/chat/index.d.ts",
+      "default": "./dist/chat/index.js"
+    },
+    "./chat.css": "./dist/chat/chat.css"
   },
   "files": [
     "dist",
@@ -37,7 +42,8 @@
     "prerelease": "npm run build"
   },
   "peerDependencies": {
-    "react": "^18 || ^19"
+    "react": "^18 || ^19",
+    "react-dom": "^18 || ^19"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

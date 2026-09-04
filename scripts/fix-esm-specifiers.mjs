@@ -41,10 +41,23 @@ function addExtension(_match, open, specifier, close) {
   return open + specifier + '.js' + close;
 }
 
+/* Walks subdirectories, not just the top level.
+
+   It used to read dist/ flat, which was correct while every emitted file sat
+   there. The chat entry point lives at dist/chat/, and its relative imports
+   would have been left extensionless — resolvable by a bundler and by nothing
+   else, which is exactly the failure this script exists to prevent, hidden in
+   the one part of the package the four Vite hosts would never have caught. */
+function* emittedFiles(dir) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) yield* emittedFiles(path);
+    else if (entry.name.endsWith('.js') || entry.name.endsWith('.d.ts')) yield path;
+  }
+}
+
 let changed = 0;
-for (const name of readdirSync(dist)) {
-  if (!name.endsWith('.js') && !name.endsWith('.d.ts')) continue;
-  const path = join(dist, name);
+for (const path of emittedFiles(dist)) {
   const before = readFileSync(path, 'utf8');
   const after = before.replace(FROM, addExtension).replace(BARE, addExtension);
   if (after === before) continue;

@@ -19,7 +19,15 @@ The design specification travels with the code in [`docs/handoff/`](docs/handoff
 
 There is no registry. The tag is the version, and upgrading is a deliberate per-app act: move the tag, run the app, look at it.
 
-`dist/` is not committed, so npm builds the package on install through its `prepare` script. That needs the package's devDependencies, which npm installs for a git dependency automatically. Nothing is required of the host beyond having React.
+`dist/` **is** committed, and building it before you tag is a manual step you have to remember. The alternative was a `prepare` script that builds at install time, and that is blocked by default in modern pnpm and by any CI running `--ignore-scripts`; the first consumer hit exactly that. So the release ritual is: **bump `version` in `package.json`**, `npm run build`, commit `dist/`, tag, then move each app's pin.
+
+> ⚠ **The version bump is not cosmetic, it is the release.** npm decides whether an already-installed git dependency still satisfies the manifest by comparing `name@version`, and it ignores the resolved commit while doing it. So a new tag carrying the *same* internal version is invisible: `npm install` over an existing `node_modules` prints "up to date", leaves the old files on disk, and helpfully rewrites `node_modules/.package-lock.json` to claim the new commit, so the bookkeeping says you upgraded and the code says otherwise. The failure looks nothing like a stale package. It looks like `error TS2307: Cannot find module '@plasma/chrome/chat'` on a machine where the manifest, the lockfile and the tag all plainly agree.
+>
+> This shipped once. v1.9.0 was tagged with `version` still reading `1.8.0`, and it went unnoticed locally, where `npm ci` on a fresh checkout wipes `node_modules` and so always fetches. It surfaced on Netlify, which restores a cached `node_modules` and then runs `npm install`: two of the four apps failed to build, one built fine because it never runs `tsc`, and proof-viewer was immune because pnpm keys its store by the resolved commit rather than the version. The cure was v1.9.1, which differs from 1.8.0 and so is seen. Bump the version, every time, even for a release that changes one line.
+
+> This paragraph used to say the opposite — that `dist/` was not committed and a `prepare` script built it on install. There has never been a `prepare` script. Anyone planning a release from that description would have designed the wrong build step and shipped a stale bundle to all four apps at once.
+
+The package has a second entry point, `@plasma/chrome/chat`, holding the shared staff chat. It is documented in [`docs/handoff/CHAT.md`](docs/handoff/CHAT.md); everything below is about the navigation chrome.
 
 Then import the stylesheet exactly once, at the app entry point, before your own styles:
 
@@ -31,7 +39,7 @@ import './index.css';
 
 One line, no build-step CSS, no PostCSS plugin, no Tailwind config change. The order matters only in that your own sheet should come second, so that a rule of yours can win if you ever need it to.
 
-Peer dependency: `react` at `^18 || ^19`. Both are exercised: the package typechecks against `@types/react` 18 and 19, and uses no React 19 only API.
+Peer dependencies: `react` and `react-dom` at `^18 || ^19`. Both are exercised: the package typechecks against `@types/react` 18 and 19, and uses no React 19 only API.
 
 ---
 
@@ -377,4 +385,4 @@ The build is `tsc` and a file copy. There is no bundler: `tsc` emits ES modules 
 - **Add props, do not rename them.** Four apps upgrade on their own schedule, so a rename is a coordinated release across four repos.
 - **`src/types.ts` is a public contract.** Anything optional stays optional.
 - **If an app needs a change to be served properly, change the package.** A workaround in the app is the drift this whole exercise exists to remove.
-- Tag the release, then bump the four apps one at a time.
+- Bump `version` in `package.json`, tag the release, then bump the four apps one at a time. The version bump is what makes npm actually fetch the new code; see the warning at the top.
