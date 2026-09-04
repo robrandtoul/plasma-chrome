@@ -1,6 +1,6 @@
 {
   "name": "@plasma/chrome",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "private": false,
   "license": "UNLICENSED",
   "type": "module",
@@ -35,7 +35,7 @@
   ],
   "scripts": {
     "clean": "node scripts/clean.mjs",
-    "build": "npm run clean && tsc -p tsconfig.build.json && node scripts/fix-esm-specifiers.mjs && node scripts/copy-css.mjs",
+    "build": "npm run clean && tsc -p tsconfig.build.json && node scripts/fix-esm-specifiers.mjs && node scripts/copy-css.mjs && node scripts/check-css-scope.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "demo": "vite --config demo/vite.config.ts",
     "demo:build": "vite build --config demo/vite.config.ts",
