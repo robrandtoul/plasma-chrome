@@ -6,7 +6,6 @@ import TeamChatPanel from './TeamChatPanel.js';
 import { CHAT_DOCK_ID } from './types.js';
 // Wide enough that the five thread pills (Team + four names, with an unread
 // badge or two) fit on one line out of the box.
-const DEFAULT_SIZE = { w: 460, h: 460 };
 const MIN_W = 320;
 const MIN_H = 300;
 /** The dropdown's own storage keys, namespaced per app.
@@ -16,28 +15,8 @@ const MIN_H = 300;
  *  laptop, and "reopen after minimising" is answering a question about THIS
  *  tab. That is why they stay in browser storage while sound, pinned and the
  *  open conversation moved to the database. */
-function sizeKey(prefix) {
-    return `${prefix}-size`;
-}
 export function reopenKey(prefix) {
     return `${prefix}-reopen`;
-}
-// The dropdown's saved size (per browser). Clamped on read so a stale value
-// can't be smaller than the minimum; the render also caps it to the viewport.
-function readChatSize(prefix) {
-    try {
-        const raw = localStorage.getItem(sizeKey(prefix));
-        if (raw) {
-            const p = JSON.parse(raw);
-            if (typeof p.w === 'number' && typeof p.h === 'number') {
-                return { w: Math.max(MIN_W, p.w), h: Math.max(MIN_H, p.h) };
-            }
-        }
-    }
-    catch {
-        /* ignore */
-    }
-    return DEFAULT_SIZE;
 }
 // The desktop header chat control: the speech-bubble icon + unread badge that
 // opens the shared chat panel as a dropdown. A pin keeps it open across pages
@@ -80,7 +59,7 @@ function FullPageLink({ as: As, to, ...rest }) {
     return _jsx("a", { href: to, ...rest });
 }
 export default function ChatMenu({ active = false, dockAvailable = false, linkComponent, }) {
-    const { config, unread, mentionUnread, dmUnread, dropdownPinned, setDropdownPinned, placement, setPlacement, openPopout, closePopout, focusPopout, } = useTeamChat();
+    const { config, unread, mentionUnread, dmUnread, dropdownPinned, setDropdownPinned, placement, setPlacement, openPopout, closePopout, focusPopout, chatSize, setChatSize, } = useTeamChat();
     const prefix = config?.storagePrefix ?? 'plasma:chat';
     const fullPagePath = config?.fullPagePath ?? '/chat';
     const popoutEnabled = config?.popoutEnabled ?? true;
@@ -88,6 +67,10 @@ export default function ChatMenu({ active = false, dockAvailable = false, linkCo
     // through a ref rather than closing over the render's value.
     const prefixRef = useRef(prefix);
     prefixRef.current = prefix;
+    // The resize listeners are bound once per drag, so they reach the latest
+    // setter through a ref rather than re-subscribing on every render.
+    const setChatSizeRef = useRef(setChatSize);
+    setChatSizeRef.current = setChatSize;
     const isDesktop = useIsDesktop();
     const isLarge = useIsLarge();
     const onDashboard = dockAvailable;
@@ -105,11 +88,21 @@ export default function ChatMenu({ active = false, dockAvailable = false, linkCo
     // auto-open on the /chat page itself, nor when chat is showing elsewhere.
     const [open, setOpen] = useState(() => dropdownPinned && !active && !dockVisible && !poppedOut);
     const ref = useRef(null);
-    // User-resizable dropdown. `size` drives the box; `sizeRef` lets the drag's
-    // pointerup persist the latest size without re-subscribing listeners.
-    const [size, setSize] = useState(() => readChatSize(prefix));
+    // User-resizable dropdown. `size` drives the box during a drag; `sizeRef`
+    // lets the drag's pointerup commit the latest value without re-subscribing
+    // listeners. The COMMITTED size lives in the store, which persists it to
+    // this browser and to the person's profile — so resizing in Proofs is the
+    // size you get in vCard Studio a moment later.
+    const [size, setSize] = useState(chatSize);
     const sizeRef = useRef(size);
     sizeRef.current = size;
+    // Adopt a size that arrived from the profile after mount. Skipped mid-drag,
+    // or a late read would yank the panel out from under the pointer.
+    const draggingRef = useRef(false);
+    useEffect(() => {
+        if (!draggingRef.current)
+            setSize(chatSize);
+    }, [chatSize]);
     // Re-open when the full /chat page "minimises" back to the dropdown.
     useEffect(() => {
         try {
@@ -180,6 +173,7 @@ export default function ChatMenu({ active = false, dockAvailable = false, linkCo
         const pointerId = e.pointerId;
         const startX = e.clientX;
         const startY = e.clientY;
+        draggingRef.current = true;
         const startW = sizeRef.current.w;
         const startH = sizeRef.current.h;
         const maxW = Math.min(760, window.innerWidth - 16);
@@ -193,18 +187,18 @@ export default function ChatMenu({ active = false, dockAvailable = false, linkCo
         function onMove(ev) {
             const w = Math.min(maxW, Math.max(MIN_W, startW - (ev.clientX - startX)));
             const h = Math.min(maxH, Math.max(MIN_H, startH + (ev.clientY - startY)));
+            // The ref is set here as well as during render: pointerup can arrive
+            // before React has flushed the render this schedules, and the release
+            // would then save the size from one move ago.
+            sizeRef.current = { w, h };
             setSize({ w, h });
         }
         function onEnd() {
             handle.removeEventListener('pointermove', onMove);
             handle.removeEventListener('pointerup', onEnd);
             handle.removeEventListener('pointercancel', onEnd);
-            try {
-                localStorage.setItem(sizeKey(prefixRef.current), JSON.stringify(sizeRef.current));
-            }
-            catch {
-                /* ignore */
-            }
+            draggingRef.current = false;
+            setChatSizeRef.current(sizeRef.current);
         }
         handle.addEventListener('pointermove', onMove);
         handle.addEventListener('pointerup', onEnd);

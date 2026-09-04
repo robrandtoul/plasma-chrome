@@ -61,6 +61,32 @@ function writeLocal(prefix, name, value) {
            still applies for this session, it just will not survive a reload. */
     }
 }
+export const DEFAULT_CHAT_SIZE = { w: 460, h: 460 };
+const MIN_CHAT_W = 320;
+const MIN_CHAT_H = 300;
+/** A stored {w,h}, floored at the minimum. Deliberately NOT capped to the
+ *  viewport here: the cap belongs at render, so a laptop shows a desktop's
+ *  size shrunk to fit while the stored value stays intact for the desktop. */
+function readSize(prefix) {
+    const raw = readLocal(prefix, 'size');
+    if (raw) {
+        try {
+            const p = JSON.parse(raw);
+            if (typeof p.w === 'number' && typeof p.h === 'number') {
+                return { w: Math.max(MIN_CHAT_W, p.w), h: Math.max(MIN_CHAT_H, p.h) };
+            }
+        }
+        catch {
+            /* ignore */
+        }
+    }
+    return DEFAULT_CHAT_SIZE;
+}
+function readDockHeight(prefix) {
+    const raw = readLocal(prefix, 'dock-height');
+    const n = raw ? Number(raw) : NaN;
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+}
 function readPinned(prefix) {
     return readLocal(prefix, 'pinned') === '1';
 }
@@ -109,6 +135,10 @@ const DEFAULT = {
     setSoundEnabled: () => { },
     placement: 'floating',
     setPlacement: () => { },
+    chatSize: DEFAULT_CHAT_SIZE,
+    setChatSize: () => { },
+    dockHeight: null,
+    setDockHeight: () => { },
     openPopout: () => { },
     closePopout: () => { },
     focusPopout: () => false,
@@ -198,6 +228,8 @@ export function TeamChatProvider({ config, children, }) {
     const [dropdownPinned, setDropdownPinnedState] = useState(() => readPinned(prefix));
     const [soundEnabled, setSoundEnabledState] = useState(() => readSound(prefix));
     const [placement, setPlacementState] = useState(() => readPlacement(prefix));
+    const [chatSize, setChatSizeState] = useState(() => readSize(prefix));
+    const [dockHeight, setDockHeightState] = useState(() => readDockHeight(prefix));
     const [typingUsers, setTypingUsers] = useState([]);
     // The picture-in-picture window, when chat has been popped out that way. It
     // is state (not just a ref) because ChatPopoutHost renders the panel into it.
@@ -630,6 +662,32 @@ export function TeamChatProvider({ config, children, }) {
             if (prefs.placement === 'docked' && cfgRef.current.dockEnabled) {
                 setPlacementState('docked');
             }
+            // Sizes. These land on live state rather than only in storage, because
+            // ChatMenu reads its size once at mount and this arrives after: writing
+            // localStorage alone would leave the panel at the old size until the
+            // next reload, which is exactly the "it didn't follow me" complaint.
+            if (prefs.size &&
+                typeof prefs.size.w === 'number' &&
+                typeof prefs.size.h === 'number') {
+                const size = {
+                    w: Math.max(MIN_CHAT_W, prefs.size.w),
+                    h: Math.max(MIN_CHAT_H, prefs.size.h),
+                };
+                setChatSizeState(size);
+                writeLocal(prefix, 'size', JSON.stringify(size));
+            }
+            if (prefs.popoutSize &&
+                typeof prefs.popoutSize.w === 'number' &&
+                typeof prefs.popoutSize.h === 'number') {
+                // Straight to storage: the popout reads its size when it opens, which
+                // is always after this, so there is no live component to update.
+                writePopoutSize(prefix, prefs.popoutSize);
+            }
+            if (typeof prefs.dockHeight === 'number' && prefs.dockHeight > 0) {
+                const h = Math.round(prefs.dockHeight);
+                setDockHeightState(h);
+                writeLocal(prefix, 'dock-height', String(h));
+            }
             if (prefs.status === 'away' || prefs.status === 'busy') {
                 manualRef.current = prefs.status;
                 refreshStatus();
@@ -1031,7 +1089,14 @@ export function TeamChatProvider({ config, children, }) {
                 // Remember the size it's left at, and put chat back in the app the
                 // moment the window goes — including when the browser closes it for us.
                 opened.addEventListener('pagehide', () => {
-                    writePopoutSize(cfgRef.current.storagePrefix, { w: opened.innerWidth, h: opened.innerHeight });
+                    const popoutSize = { w: opened.innerWidth, h: opened.innerHeight };
+                    writePopoutSize(cfgRef.current.storagePrefix, popoutSize);
+                    // Also onto the profile, so re-opening the popout from a different
+                    // app gets the size you last dragged it to rather than the default.
+                    // A closing window reports 0×0 in some browsers; writePopoutSize
+                    // already ignores that, and so must this.
+                    if (popoutSize.w && popoutSize.h)
+                        persistPref({ popoutSize }, []);
                     pipWindowRef.current = null;
                     setPopoutWindow(null);
                     setPlacementState(readPlacement(cfgRef.current.storagePrefix));
@@ -1295,6 +1360,23 @@ export function TeamChatProvider({ config, children, }) {
             if (next === 'popout')
                 return;
             persistPref({ placement: next }, [['placement', next === 'docked' ? 'docked' : null]]);
+        },
+        chatSize,
+        setChatSize: (size) => {
+            const next = {
+                w: Math.max(MIN_CHAT_W, Math.round(size.w)),
+                h: Math.max(MIN_CHAT_H, Math.round(size.h)),
+            };
+            setChatSizeState(next);
+            persistPref({ size: next }, [['size', JSON.stringify(next)]]);
+        },
+        dockHeight,
+        setDockHeight: (height) => {
+            const next = height == null ? null : Math.round(height);
+            setDockHeightState(next);
+            persistPref({ dockHeight: next ?? undefined }, [
+                ['dock-height', next == null ? null : String(next)],
+            ]);
         },
         openPopout: () => {
             void openPopout();
