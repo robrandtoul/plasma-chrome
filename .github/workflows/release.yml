@@ -1,0 +1,93 @@
+# Cut the tag from the version field, on merge to main.
+#
+# WHY. The four staff apps pin this package by git tag, so a release is: bump
+# `version`, build, commit `dist/`, tag, then move each app's pin. Every one of
+# those steps was a thing a human had to remember, and two of them went wrong
+# on the first real release:
+#
+#   * v1.9.0 was tagged with `version` still reading 1.8.0. npm decides whether
+#     it already holds a git dependency by comparing name@version and ignores
+#     the resolved commit, so the new tag was invisible: `npm install` over an
+#     existing node_modules reported "up to date" and kept the old files. Two of
+#     the four apps failed to build and the cause looked nothing like the fault.
+#
+#   * Tagging by hand also means the tag can be cut from a tree that was never
+#     rebuilt, shipping a stale `dist/` to all four apps at once. The README has
+#     warned about that since the package existed, which is exactly the kind of
+#     warning that works right up until the day it doesn't.
+#
+# So the version field becomes the release. Merge a PR that bumps it and the
+# tag follows automatically; merge one that doesn't and nothing happens. The
+# deliberate human gate moves from "remember to tag" to "approve the version
+# bump in the diff", which is a better place for it: it is reviewed, and it is
+# the field that actually governs whether consumers see the release.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# The whole point is pushing a tag, which needs write access to the repo's
+# contents. Nothing else here writes anything.
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tags are needed to tell an already-released version from a new one.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Read the version, and stop early if it is already released
+        id: version
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git rev-parse "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "v$VERSION is already tagged; nothing to release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$VERSION is new."
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ⚠ Runs on EVERY push to main, released or not, so a broken build is
+      # caught even on a commit that changes no version. This is the repo's
+      # only CI, and it carries the scoped-utility check that `npm run build`
+      # now runs — the guard against a chat stylesheet whose rules cannot
+      # reach the panel root.
+      - name: Build
+        run: |
+          npm ci
+          npm run build
+
+      # dist/ is committed, and a tag cut from an unrebuilt tree ships stale
+      # code to four apps. If the build just produced something different from
+      # what was committed, that is the bug, so fail here rather than tag it.
+      - name: The committed dist/ must match a fresh build
+        run: |
+          if ! git diff --quiet -- dist; then
+            echo "::error::dist/ is out of date. Run 'npm run build' and commit the result."
+            git --no-pager diff --stat -- dist
+            exit 1
+          fi
+          echo "dist/ matches a fresh build."
+
+      - name: Tag the release
+        if: steps.version.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin "v$VERSION"
+          echo "::notice::Tagged v$VERSION"
