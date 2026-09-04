@@ -109,6 +109,26 @@ export function popoutIsAlive(lastBeatAt, now) {
         return false;
     return now - lastBeatAt < POPOUT_ALIVE_MS;
 }
+/**
+ * The stored popout size, or null when this browser has never saved one.
+ * Distinguishing "never set" from "set to the default" is what lets the store
+ * publish a pre-existing local size up to the profile without every app racing
+ * to write the same default over each other.
+ */
+export function readStoredPopoutSize(prefix) {
+    try {
+        const raw = localStorage.getItem(popoutSizeKey(prefix));
+        if (!raw)
+            return null;
+        const p = JSON.parse(raw);
+        if (typeof p.w === 'number' && typeof p.h === 'number')
+            return clampPopoutSize({ w: p.w, h: p.h });
+    }
+    catch {
+        /* ignore */
+    }
+    return null;
+}
 export function readPopoutSize(prefix) {
     try {
         const raw = localStorage.getItem(popoutSizeKey(prefix));

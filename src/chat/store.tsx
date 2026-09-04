@@ -17,6 +17,7 @@ import {
   readPopoutSize,
   syncChannelName,
   windowFeatures,
+  readStoredPopoutSize,
   writePopoutSize,
   type ChatSyncMessage,
 } from './popout'
@@ -237,6 +238,21 @@ function readSize(prefix: string): { w: number; h: number } {
     }
   }
   return DEFAULT_CHAT_SIZE
+}
+
+/** The stored dropdown size, or null when this browser has never saved one. */
+function readStoredSize(prefix: string): { w: number; h: number } | null {
+  const raw = readLocal(prefix, 'size')
+  if (!raw) return null
+  try {
+    const p = JSON.parse(raw) as { w?: unknown; h?: unknown }
+    if (typeof p.w === 'number' && typeof p.h === 'number') {
+      return { w: Math.max(MIN_CHAT_W, p.w), h: Math.max(MIN_CHAT_H, p.h) }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
 }
 
 function readDockHeight(prefix: string): number | null {
@@ -891,6 +907,36 @@ export function TeamChatProvider({
         setDockHeightState(h)
         writeLocal(prefix, 'dock-height', String(h))
       }
+      // Publish a size this browser already had but the profile does not.
+      // Without this the sizes only start travelling after someone happens to
+      // drag a resize handle again: an existing local value is read at mount
+      // and never leaves the browser it is in, so every other app has nothing
+      // to read and shows its own. That is the whole feature failing quietly
+      // for anyone who had already set their size, which is everyone.
+      //
+      // Only keys the profile LACKS are published, so this is a one-way
+      // seeding, not a sync: an app that finds a value already there reads it
+      // down in the block above instead of overwriting it. Two apps opened at
+      // the same moment can both find the gap and both publish, in which case
+      // the later write wins and everything converges on the next load; that
+      // is a size, so it is not worth a lock. Nothing is published when the
+      // browser has no stored value either, so the apps never race to write
+      // identical defaults over each other.
+      const seed: ChatPrefs = {}
+      if (!prefs.size) {
+        const localSize = readStoredSize(prefix)
+        if (localSize) seed.size = localSize
+      }
+      if (!prefs.popoutSize) {
+        const localPopout = readStoredPopoutSize(prefix)
+        if (localPopout) seed.popoutSize = localPopout
+      }
+      if (typeof prefs.dockHeight !== 'number') {
+        const localDock = readDockHeight(prefix)
+        if (localDock) seed.dockHeight = localDock
+      }
+      if (Object.keys(seed).length) persistPref(seed, [])
+
       if (prefs.status === 'away' || prefs.status === 'busy') {
         manualRef.current = prefs.status
         refreshStatus()

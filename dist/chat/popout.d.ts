@@ -76,6 +76,16 @@ export declare function isPopoutSearch(search: string): boolean;
 export declare function isPopoutWindow(prefix: string): boolean;
 /** Has the popped-out window been heard from recently enough to still count? */
 export declare function popoutIsAlive(lastBeatAt: number, now: number): boolean;
+/**
+ * The stored popout size, or null when this browser has never saved one.
+ * Distinguishing "never set" from "set to the default" is what lets the store
+ * publish a pre-existing local size up to the profile without every app racing
+ * to write the same default over each other.
+ */
+export declare function readStoredPopoutSize(prefix: string): {
+    w: number;
+    h: number;
+} | null;
 export declare function readPopoutSize(prefix: string): {
     w: number;
     h: number;
