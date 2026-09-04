@@ -1,7 +1,7 @@
 import { jsx as _jsx } from "react/jsx-runtime";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, } from 'react';
 import { playChatSound } from './sound.js';
-import { POPOUT_HEARTBEAT_MS, isPopoutWindow, popoutIsAlive, popoutPath, preparePopoutDocument, readPopoutSize, syncChannelName, windowFeatures, writePopoutSize, } from './popout.js';
+import { POPOUT_HEARTBEAT_MS, isPopoutWindow, popoutIsAlive, popoutPath, preparePopoutDocument, readPopoutSize, syncChannelName, windowFeatures, readStoredPopoutSize, writePopoutSize, } from './popout.js';
 import { CHAT_CHANNEL, resolveChatConfig, } from './types.js';
 // Shared "engine" for the team chat: one live connection (message realtime +
 // presence) mounted once near the app root, so the header badge, the dropdown
@@ -81,6 +81,22 @@ function readSize(prefix) {
         }
     }
     return DEFAULT_CHAT_SIZE;
+}
+/** The stored dropdown size, or null when this browser has never saved one. */
+function readStoredSize(prefix) {
+    const raw = readLocal(prefix, 'size');
+    if (!raw)
+        return null;
+    try {
+        const p = JSON.parse(raw);
+        if (typeof p.w === 'number' && typeof p.h === 'number') {
+            return { w: Math.max(MIN_CHAT_W, p.w), h: Math.max(MIN_CHAT_H, p.h) };
+        }
+    }
+    catch {
+        /* ignore */
+    }
+    return null;
 }
 function readDockHeight(prefix) {
     const raw = readLocal(prefix, 'dock-height');
@@ -688,6 +704,39 @@ export function TeamChatProvider({ config, children, }) {
                 setDockHeightState(h);
                 writeLocal(prefix, 'dock-height', String(h));
             }
+            // Publish a size this browser already had but the profile does not.
+            // Without this the sizes only start travelling after someone happens to
+            // drag a resize handle again: an existing local value is read at mount
+            // and never leaves the browser it is in, so every other app has nothing
+            // to read and shows its own. That is the whole feature failing quietly
+            // for anyone who had already set their size, which is everyone.
+            //
+            // Only keys the profile LACKS are published, so this is a one-way
+            // seeding, not a sync: an app that finds a value already there reads it
+            // down in the block above instead of overwriting it. Two apps opened at
+            // the same moment can both find the gap and both publish, in which case
+            // the later write wins and everything converges on the next load; that
+            // is a size, so it is not worth a lock. Nothing is published when the
+            // browser has no stored value either, so the apps never race to write
+            // identical defaults over each other.
+            const seed = {};
+            if (!prefs.size) {
+                const localSize = readStoredSize(prefix);
+                if (localSize)
+                    seed.size = localSize;
+            }
+            if (!prefs.popoutSize) {
+                const localPopout = readStoredPopoutSize(prefix);
+                if (localPopout)
+                    seed.popoutSize = localPopout;
+            }
+            if (typeof prefs.dockHeight !== 'number') {
+                const localDock = readDockHeight(prefix);
+                if (localDock)
+                    seed.dockHeight = localDock;
+            }
+            if (Object.keys(seed).length)
+                persistPref(seed, []);
             if (prefs.status === 'away' || prefs.status === 'busy') {
                 manualRef.current = prefs.status;
                 refreshStatus();
