@@ -59,6 +59,19 @@ export {
 } from './popout';
 export { reopenKey } from './ChatMenu';
 
+/* Desktop notifications. The panel owns the menu that sets the level, so a
+   host needs none of this to get the behaviour, but the level is part of the
+   stored preferences and a host may want to read or report it. */
+export {
+  CHAT_ALERT_LEVELS,
+  DEFAULT_ALERT_LEVEL,
+  alertsSupported,
+  alertPermission,
+  requestAlertPermission,
+  isAlertLevel,
+  type ChatAlertLevel,
+} from './desktopAlert';
+
 /* Pure helpers, exported because a host may want to render a message the same
    way the panel does (a notification, a search result, an activity feed). */
 export {

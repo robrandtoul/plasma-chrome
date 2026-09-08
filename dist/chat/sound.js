@@ -115,13 +115,24 @@ function tone(c, freq, start, dur, gain, type) {
 function playNow(c, kind) {
     const now = c.currentTime;
     if (kind === 'mention') {
-        // Two rising notes, a touch louder — "this one's for you".
-        tone(c, 660, now, 0.16, 0.14, 'triangle');
-        tone(c, 988, now + 0.14, 0.22, 0.14, 'triangle');
+        // Three rising notes, and loud enough to carry across a room.
+        //
+        // This was two quiet notes at 0.14 gain lasting a third of a second, and
+        // it was the entire audible signal for a private message. Against a
+        // podcast, an open workshop, or simply a person concentrating on
+        // something else, that is not a notification, it is a hint. The third
+        // note is what makes it read as a deliberate phrase rather than a blip,
+        // which is what the ear picks out of background noise.
+        tone(c, 660, now, 0.16, 0.26, 'triangle');
+        tone(c, 988, now + 0.13, 0.18, 0.26, 'triangle');
+        tone(c, 1319, now + 0.26, 0.34, 0.2, 'triangle');
     }
     else {
-        // One gentle low blip.
-        tone(c, 600, now, 0.11, 0.05, 'sine');
+        // One low blip for room chatter. Lifted a little, but deliberately still
+        // in the background: this fires for every message the whole team sends,
+        // and a room cue as insistent as the one above would train people to
+        // mute the lot, taking their private messages with it.
+        tone(c, 600, now, 0.12, 0.09, 'sine');
     }
 }
 export function playChatSound(kind) {

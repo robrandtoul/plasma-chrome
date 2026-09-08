@@ -1,3 +1,4 @@
+import type { ChatAlertLevel } from './desktopAlert.js';
 /**
  * A PostgREST query builder. Deliberately `any`: it is a deep fluent chain
  * whose shape is supabase-js's business, not this package's, and reproducing
@@ -229,6 +230,9 @@ export declare const CHAT_STATUS_META: Record<ChatStatus, {
  */
 export interface ChatPrefs {
     sound?: boolean;
+    /** How much an operating-system notification may say. Travels for the same
+     *  reason muting does: it is a decision about you, not about one machine. */
+    alerts?: ChatAlertLevel;
     pinned?: boolean;
     placement?: ChatPlacement;
     thread?: ChatThread;

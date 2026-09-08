@@ -32,6 +32,8 @@
    dependencies at all, not even a type-only one.
    ─────────────────────────────────────────────────────────── */
 
+import type { ChatAlertLevel } from './desktopAlert';
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /**
@@ -299,6 +301,9 @@ export const CHAT_STATUS_META: Record<ChatStatus, { label: string; dot: string }
  */
 export interface ChatPrefs {
   sound?: boolean;
+  /** How much an operating-system notification may say. Travels for the same
+   *  reason muting does: it is a decision about you, not about one machine. */
+  alerts?: ChatAlertLevel;
   pinned?: boolean;
   placement?: ChatPlacement;
   thread?: ChatThread;

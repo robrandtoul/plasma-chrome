@@ -13,9 +13,17 @@ import {
   FileIcon,
   Download,
   Smile,
+  Bell,
+  BellOff,
 } from './icons'
 import { useImageFileDrop } from './useFileDrop'
 import { playChatSound } from './sound'
+import {
+  CHAT_ALERT_LEVELS,
+  alertPermission,
+  requestAlertPermission,
+  type ChatAlertLevel,
+} from './desktopAlert'
 import { useTeamChat } from './store'
 import {
   attachmentsOf,
@@ -434,6 +442,110 @@ function StatusPicker() {
               {myStatus === s.value && <Check size={14} aria-hidden="true" className="pdc-text-ink-mute" />}
             </button>
           ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AlertsMenu() {
+  const { alertLevel, setAlertLevel } = useTeamChat()
+  const [open, setOpen] = useState(false)
+  const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>(() =>
+    alertPermission(),
+  )
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    // Bind to the document this menu is actually in, not the app's: popped out
+    // into a picture-in-picture window the panel lives in a second document,
+    // where a listener on the main one never sees the click or the Escape.
+    const doc = ref.current?.ownerDocument ?? document
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    doc.addEventListener('mousedown', onDoc)
+    doc.addEventListener('keydown', onKey)
+    return () => {
+      doc.removeEventListener('mousedown', onDoc)
+      doc.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  if (permission === 'unsupported') return null
+
+  const blocked = permission === 'denied'
+  // Nothing will actually appear unless the browser has been asked and said
+  // yes, so the icon reports what is really happening rather than what has
+  // been chosen. A bell that looks on while the browser is blocking is the
+  // sort of quiet lie this whole change exists to remove.
+  const live = alertLevel !== 'off' && permission === 'granted'
+
+  async function choose(level: ChatAlertLevel) {
+    if (level !== 'off' && permission !== 'granted') {
+      // This is a click, which is the only context Safari will accept a
+      // permission request from, and asking on load burns the single chance.
+      const result = await requestAlertPermission()
+      setPermission(result)
+      if (result !== 'granted') return // leave the old level; nothing would show
+    }
+    setAlertLevel(level)
+    setOpen(false)
+  }
+
+  return (
+    <div ref={ref} className="pdc-relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Desktop notifications"
+        title={
+          blocked
+            ? 'Your browser is blocking notifications for this site'
+            : live
+              ? 'Desktop notifications are on'
+              : 'Desktop notifications are off'
+        }
+        className="pdc-flex pdc-h-7 pdc-w-7 pdc-flex-shrink-0 pdc-items-center pdc-justify-center pdc-rounded-full pdc-text-ink-mute pdc-transition-colors pdc-hover-bg-canvas pdc-hover-text-ink"
+      >
+        {live ? <Bell size={15} aria-hidden="true" /> : <BellOff size={15} aria-hidden="true" />}
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="pdc-absolute pdc-right-0 pdc-top-9 pdc-z-30 pdc-min-w-9rem pdc-rounded-10px pdc-border pdc-border-line pdc-bg-surface pdc-py-1 pdc-shadow-md"
+        >
+          {CHAT_ALERT_LEVELS.map((l) => (
+            <button
+              key={l.value}
+              type="button"
+              role="menuitemradio"
+              aria-checked={alertLevel === l.value}
+              disabled={blocked && l.value !== 'off'}
+              onClick={() => void choose(l.value)}
+              className="pdc-flex pdc-w-full pdc-items-center pdc-gap-2 pdc-px-3 pdc-py-1-5 pdc-text-left pdc-text-15px pdc-text-ink-soft pdc-hover-bg-canvas pdc-disabled-opacity-40 pdc-sm-text-13px"
+            >
+              <span className="pdc-flex-1">
+                {l.label}
+                <span className="pdc-block pdc-text-11px pdc-text-ink-mute">{l.hint}</span>
+              </span>
+              {alertLevel === l.value && (
+                <Check size={14} aria-hidden="true" className="pdc-text-ink-mute" />
+              )}
+            </button>
+          ))}
+          {blocked && (
+            <p className="pdc-px-3 pdc-py-1-5 pdc-text-11px pdc-text-ink-mute">
+              Your browser is blocking notifications for this site. Turn them back on in its site
+              settings.
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -965,6 +1077,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
         >
           <SearchIcon size={15} aria-hidden="true" />
         </button>
+        <AlertsMenu />
         <SoundToggle />
       </div>
 

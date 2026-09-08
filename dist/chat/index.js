@@ -44,6 +44,10 @@ export { isPopoutWindow, isPopoutSearch, popoutPath, popoutWindowName,
 // the main one chimes, which is exactly backwards.
 clampPopoutSize, popoutIsAlive, windowFeatures, DEFAULT_POPOUT_SIZE, MIN_POPOUT_W, MIN_POPOUT_H, POPOUT_ALIVE_MS, POPOUT_HEARTBEAT_MS, } from './popout.js';
 export { reopenKey } from './ChatMenu.js';
+/* Desktop notifications. The panel owns the menu that sets the level, so a
+   host needs none of this to get the behaviour, but the level is part of the
+   stored preferences and a host may want to read or report it. */
+export { CHAT_ALERT_LEVELS, DEFAULT_ALERT_LEVEL, alertsSupported, alertPermission, requestAlertPermission, isAlertLevel, } from './desktopAlert.js';
 /* Pure helpers, exported because a host may want to render a message the same
    way the panel does (a notification, a search result, an activity feed). */
 export { attachmentsOf, authorBadgeColour, buildMessageSegments, dayKey, dayLabel, designerTint, formatBytes, isGroupedWithPrevious, messageTime, splitLinkifiedText, } from './message.js';

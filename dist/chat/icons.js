@@ -26,4 +26,6 @@ export const AtSign = icon('AtSign', _jsxs(_Fragment, { children: [_jsx("circle"
 export const PanelRight = icon('PanelRight', _jsxs(_Fragment, { children: [_jsx("rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }), _jsx("path", { d: "M15 3v18" })] }));
 export const PictureInPicture2 = icon('PictureInPicture2', _jsxs(_Fragment, { children: [_jsx("path", { d: "M21 9V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4" }), _jsx("rect", { width: "10", height: "7", x: "12", y: "13", rx: "2" })] }));
 export const CornerUpLeft = icon('CornerUpLeft', _jsxs(_Fragment, { children: [_jsx("polyline", { points: "9 14 4 9 9 4" }), _jsx("path", { d: "M20 20v-7a4 4 0 0 0-4-4H4" })] }));
+export const Bell = icon('Bell', _jsxs(_Fragment, { children: [_jsx("path", { d: "M10.268 21a2 2 0 0 0 3.464 0" }), _jsx("path", { d: "M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" })] }));
+export const BellOff = icon('BellOff', _jsxs(_Fragment, { children: [_jsx("path", { d: "M10.268 21a2 2 0 0 0 3.464 0" }), _jsx("path", { d: "M17 17H4a1 1 0 0 1-.74-1.673C4.59 13.956 6 12.499 6 8a6 6 0 0 1 .258-1.742" }), _jsx("path", { d: "m2 2 20 20" }), _jsx("path", { d: "M8.668 3.01A6 6 0 0 1 18 8c0 2.687.77 4.653 1.616 6.05" })] }));
 //# sourceMappingURL=icons.js.map

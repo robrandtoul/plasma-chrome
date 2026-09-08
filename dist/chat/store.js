@@ -1,6 +1,8 @@
 import { jsx as _jsx } from "react/jsx-runtime";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, } from 'react';
 import { playChatSound } from './sound.js';
+import { setChatBadge, clearChatBadge } from './badge.js';
+import { DEFAULT_ALERT_LEVEL, dismissChatAlerts, isAlertLevel, showChatAlert, } from './desktopAlert.js';
 import { POPOUT_HEARTBEAT_MS, isPopoutWindow, popoutIsAlive, popoutPath, preparePopoutDocument, readPopoutSize, syncChannelName, windowFeatures, readStoredPopoutSize, writePopoutSize, } from './popout.js';
 import { CHAT_CHANNEL, resolveChatConfig, } from './types.js';
 // Shared "engine" for the team chat: one live connection (message realtime +
@@ -110,6 +112,14 @@ function readPinned(prefix) {
 function readSound(prefix) {
     return readLocal(prefix, 'sound') !== '0';
 }
+// Alerts default to the fullest form. Someone who has granted notification
+// permission has already said they want to be told; asking them to opt in a
+// second time, in a menu they would have to find, is how a feature ships and
+// then goes unused.
+function readAlertLevel(prefix) {
+    const raw = readLocal(prefix, 'alerts');
+    return isAlertLevel(raw) ? raw : DEFAULT_ALERT_LEVEL;
+}
 // Placement defaults to floating; only an explicit 'docked' opts in.
 function readPlacement(prefix) {
     return readLocal(prefix, 'placement') === 'docked' ? 'docked' : 'floating';
@@ -149,6 +159,8 @@ const DEFAULT = {
     setDropdownPinned: () => { },
     soundEnabled: true,
     setSoundEnabled: () => { },
+    alertLevel: DEFAULT_ALERT_LEVEL,
+    setAlertLevel: () => { },
     placement: 'floating',
     setPlacement: () => { },
     chatSize: DEFAULT_CHAT_SIZE,
@@ -243,6 +255,7 @@ export function TeamChatProvider({ config, children, }) {
     const [myStatus, setMyStatus] = useState('online');
     const [dropdownPinned, setDropdownPinnedState] = useState(() => readPinned(prefix));
     const [soundEnabled, setSoundEnabledState] = useState(() => readSound(prefix));
+    const [alertLevel, setAlertLevelState] = useState(() => readAlertLevel(prefix));
     const [placement, setPlacementState] = useState(() => readPlacement(prefix));
     const [chatSize, setChatSizeState] = useState(() => readSize(prefix));
     const [dockHeight, setDockHeightState] = useState(() => readDockHeight(prefix));
@@ -256,6 +269,8 @@ export function TeamChatProvider({ config, children, }) {
     userIdRef.current = userId;
     const soundEnabledRef = useRef(soundEnabled);
     soundEnabledRef.current = soundEnabled;
+    const alertLevelRef = useRef(alertLevel);
+    alertLevelRef.current = alertLevel;
     const lastGeneralSoundRef = useRef(0);
     const typingMapRef = useRef(new Map());
     const lastTypingSentRef = useRef(0);
@@ -315,6 +330,21 @@ export function TeamChatProvider({ config, children, }) {
     // only one copy of the app, so nothing is broadcasting and nothing is muted.
     function anotherWindowOwnsSound() {
         return !amPopout && popoutIsAlive(remoteBeatRef.current, Date.now());
+    }
+    // Open a conversation. Extracted from `setActiveThread` so that clicking a
+    // desktop notification lands on the thread it was about, by the same route
+    // and with the same side effects, rather than a second near-copy of them.
+    function selectThread(thread) {
+        activeThreadRef.current = thread;
+        setActiveThreadState(thread);
+        // Remember it so a hard refresh — or a switch to another app — reopens
+        // this conversation rather than dumping you back in the room. 93% of
+        // messages on live are DMs, so this is the preference that matters most.
+        persistPref({ thread }, [['thread', thread === 'team' ? null : thread]]);
+        // If a chat surface is open, landing on the thread reads it.
+        if (viewingRef.current)
+            stampSeen(thread);
+        recomputeTyping();
     }
     function postSync(msg) {
         try {
@@ -666,6 +696,10 @@ export function TeamChatProvider({ config, children, }) {
                 setSoundEnabledState(prefs.sound);
                 writeLocal(prefix, 'sound', prefs.sound ? null : '0');
             }
+            if (isAlertLevel(prefs.alerts)) {
+                setAlertLevelState(prefs.alerts);
+                writeLocal(prefix, 'alerts', prefs.alerts);
+            }
             if (typeof prefs.pinned === 'boolean') {
                 setDropdownPinnedState(prefs.pinned);
                 writeLocal(prefix, 'pinned', prefs.pinned ? '1' : null);
@@ -795,6 +829,34 @@ export function TeamChatProvider({ config, children, }) {
                         setThreadUnread((prev) => ({ ...prev, [thread]: (prev[thread] ?? 0) + 1 }));
                         if (mentioned)
                             setMentionUnread((n) => n + 1);
+                        // An operating-system notification, for the case the chat has
+                        // never covered: something personal arrives while the app is
+                        // not the window you are looking at.
+                        //
+                        // Deliberately hung off this branch rather than tested
+                        // separately. Reaching here means the message counted as
+                        // unread, which is exactly the question worth asking, and it
+                        // settles the awkward case for free: with chat popped out into
+                        // its own window, the app document has lost focus while the
+                        // conversation may be in plain sight, and anything visible
+                        // there has already been marked read.
+                        if ((isDm || mentioned) &&
+                            alertLevelRef.current !== 'off' &&
+                            !anotherWindowOwnsSound() &&
+                            typeof document !== 'undefined' &&
+                            !document.hasFocus()) {
+                            const text = (row.body ?? '').trim();
+                            showChatAlert({
+                                id: row.id,
+                                sender: row.author_name ?? 'Someone',
+                                // Matches the wording `send-push` uses for a body-less
+                                // message, so the push and this say the same thing.
+                                snippet: text.length > 0 ? text.slice(0, 140) : 'Sent an attachment',
+                                mention: mentioned,
+                                level: alertLevelRef.current,
+                                onClick: () => selectThread(thread),
+                            });
+                        }
                     }
                     // Audio cue: a brighter chime for a DM or an @mention, else a
                     // subtle blip (throttled so a burst doesn't machine-gun). Muted
@@ -914,6 +976,12 @@ export function TeamChatProvider({ config, children, }) {
         function resync() {
             if (document.hidden)
                 return;
+            // Back in the app, so any notifications this page raised have done their
+            // job. Cleared before the throttle below, because tidying the desktop is
+            // free and should happen every time, where refetching should not. The
+            // unread state itself is untouched: the tab badge and the thread pills
+            // still carry it until the conversation is actually read.
+            dismissChatAlerts();
             // These three events overlap heavily (a desktop window switch can fire
             // all of them), so collapse a burst into one fetch.
             const now = Date.now();
@@ -1189,6 +1257,15 @@ export function TeamChatProvider({ config, children, }) {
     // Totals derived from the per-thread map (tiny arrays; no memo needed).
     const unread = Object.values(threadUnread).reduce((a, b) => a + b, 0);
     const dmUnread = unread - (threadUnread.team ?? 0);
+    const personalUnread = dmUnread > 0 || mentionUnread > 0;
+    // Say the count where it can be seen without the app in front of you: the
+    // tab title, the favicon, and the installed app's icon. The header pill's
+    // own badge only ever helped someone already looking at the page.
+    useEffect(() => {
+        setChatBadge(unread, personalUnread);
+    }, [unread, personalUnread]);
+    // Tearing the chat down must not leave a count stuck in the host's tab.
+    useEffect(() => clearChatBadge, []);
     const value = {
         config: cfg,
         db,
@@ -1199,18 +1276,7 @@ export function TeamChatProvider({ config, children, }) {
         dmUnread,
         threadUnread,
         activeThread,
-        setActiveThread: (thread) => {
-            activeThreadRef.current = thread;
-            setActiveThreadState(thread);
-            // Remember it so a hard refresh — or a switch to another app — reopens
-            // this conversation rather than dumping you back in the room. 93% of
-            // messages on live are DMs, so this is the preference that matters most.
-            persistPref({ thread }, [['thread', thread === 'team' ? null : thread]]);
-            // If a chat surface is open, landing on the thread reads it.
-            if (viewingRef.current)
-                stampSeen(thread);
-            recomputeTyping();
-        },
+        setActiveThread: selectThread,
         loadEarlier: async (thread) => {
             const uid = userIdRef.current;
             if (!uid)
@@ -1392,6 +1458,11 @@ export function TeamChatProvider({ config, children, }) {
         setDropdownPinned: (pinned) => {
             setDropdownPinnedState(pinned);
             persistPref({ pinned }, [['pinned', pinned ? '1' : null]]);
+        },
+        alertLevel,
+        setAlertLevel: (level) => {
+            setAlertLevelState(level);
+            persistPref({ alerts: level }, [['alerts', level]]);
         },
         soundEnabled,
         setSoundEnabled: (enabled) => {

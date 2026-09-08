@@ -49,6 +49,84 @@ Every read of the preference column is guarded on the key being **present**, not
 
 ---
 
+## Being noticed (1.10.0)
+
+The chat had one way of telling you something had arrived: a badge on its own
+header pill, and a short quiet chime. Both only work on a tab you are already
+looking at, which is the one case where you did not need telling. With the tab
+in the background there was no lasting trace of any kind, so a message missed
+in the moment was missed for good, and people were missing them.
+
+Four signals now, each independently guarded so a browser that cannot do one
+still does the others.
+
+**The tab title** carries the count, `(3) Proof Viewer`, with a bullet after it
+when something is personal. The hosts set their own titles per page and
+proof-viewer restores the previous one when a page unmounts, so `badge.ts`
+watches the `<title>` element: any title it did not write becomes the new base
+and the count goes back on top. Without that the count would be wiped by the
+next navigation, or, worse, a prefixed title would be captured as the
+"previous" one and restored later with a stale number frozen into it.
+
+**The favicon** takes a coloured disc in the corner, coral for personal and
+blue otherwise. It is drawn by loading the host's own icon into a canvas, so a
+host whose icon will not load (no intrinsic size, cross-origin, a 404) simply
+does not get this one, once, rather than retrying on every message. No digits:
+at sixteen physical pixels a number is a smudge.
+
+**The installed app's icon** gets `navigator.setAppBadge`, which is a no-op in
+a browser tab and the dock or Home Screen count everywhere else.
+
+**A desktop notification** is raised for a DM or an @mention that arrives while
+the app is not the window in front of you. Three things about it are
+load-bearing:
+
+- It is hung off the branch where the message *counted as unread*, not tested
+  separately. That is the question worth asking, and it settles the awkward
+  case for free: with chat popped out into its own window the app document has
+  lost focus while the conversation may be in plain sight, and anything visible
+  there has already been marked read.
+- Its tag is `chat:<message id>`, which is exactly the tag `send-push` sets.
+  Where both a push and a local notification arrive, the operating system
+  treats them as the same notification and replaces rather than stacks, so
+  nobody is told twice about one message.
+- It is silent. The panel chimes for the same message, and letting the
+  notification sound as well means two noises for one event, from two
+  different places, a fraction of a second apart.
+
+How much it may say is a preference, `alerts`, alongside the others in
+`team_chat_prefs`: sender and message, sender only, or off. It travels for the
+same reason muting does, and "sender only" exists because a preview is on
+screen for anyone standing behind you. It defaults to the fullest form:
+someone who has granted notification permission has already said they want to
+be told, and asking them to opt in a second time, in a menu they would have to
+find, is how a feature ships and then goes unused.
+
+The chime is louder, and the personal one is three rising notes rather than
+two, which is what makes it read as a deliberate phrase rather than a blip and
+is what the ear picks out of background noise. The room cue was lifted much
+less: it fires for every message the whole team sends, and a room cue as
+insistent as the personal one would train people to mute the lot, taking their
+private messages with it.
+
+The header pill pulses when the personal count goes up. Finite, three beats:
+a control that animates for as long as it has unread stops reading as a signal
+within about a minute and becomes wallpaper. It is keyed off the rise rather
+than off "is there unread", so a second message pulses again instead of being
+swallowed by the first one's animation, and returning to a page with old
+unread does not replay an alert about nothing new. `prefers-reduced-motion`
+drops the movement and keeps everything else.
+
+⚠ None of this replaces push, and push is what reaches a phone in a pocket.
+Proof-viewer's `reconcileSubscription()` was separately found to be repairing
+nothing when a subscription had been pruned server-side, which had left one
+person with 140 undelivered messages over a month and no indication anything
+was wrong. If notifications are "not working" for someone, check
+`proofs.push_subscriptions` has a row for them before looking at any of the
+above.
+
+---
+
 ## The contract
 
 Everything host-specific arrives through `ChatConfig`. `src/chat/types.ts` is authoritative.
