@@ -1,4 +1,5 @@
 import { type ReactNode } from 'react';
+import { type ChatAlertLevel } from './desktopAlert.js';
 import { type ChatAttachment, type ChatConfig, type ChatPlacement, type ChatSchemaClient, type ChatStatus, type ChatThread, type PresenceMember, type ReactionRow, type ResolvedChatConfig, type TeamMember, type TeamMessage } from './types.js';
 interface TeamChatValue {
     /** The host's settings after defaults. The panel reads `client` for
@@ -68,6 +69,12 @@ interface TeamChatValue {
      *  blip for a general message, a brighter chime when you're @mentioned. */
     soundEnabled: boolean;
     setSoundEnabled: (enabled: boolean) => void;
+    /** How much an operating-system notification may say about a personal
+     *  message that lands while the app is not the window in front of you.
+     *  'off' leaves the tab badge and the chime, which is the whole signal the
+     *  chat used to have. Persisted, and shared across the four apps. */
+    alertLevel: ChatAlertLevel;
+    setAlertLevel: (level: ChatAlertLevel) => void;
     /** Where the chat lives: 'floating' (header dropdown) or 'docked' (in the
      *  dashboard right rail). Only the dashboard renders the docked panel; the
      *  floating dropdown stays available everywhere. Persisted. */

@@ -410,3 +410,24 @@
 /* The popped-out window has no host page around it, so the panel owns the
    whole viewport there. */
 .pd-chat--popout { height: 100%; display: flex; flex-direction: column; }
+
+/* A short pulse on the header pill when something personal lands.
+   
+   Deliberately finite. A control that animates for as long as it has unread
+   stops reading as a signal within about a minute and becomes wallpaper, and
+   it is miserable to sit beside all day: three beats and then still is enough
+   to catch the eye of someone already looking at the screen, without becoming
+   something to be endured. Re-triggered per message by the component, so a
+   second message pulses again rather than being swallowed by the first. */
+@keyframes pd-chat-attention {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pd-chat-brand) 55%, transparent); }
+  70%  { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.pd-chat .pd-chat__pill--attention { animation: pd-chat-attention 1s ease-out 3; }
+
+/* Someone who has asked for less motion still gets the colour, the count and
+   the sound; they simply do not get the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .pd-chat .pd-chat__pill--attention { animation: none; }
+}

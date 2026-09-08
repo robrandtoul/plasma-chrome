@@ -82,4 +82,12 @@ export declare const CornerUpLeft: {
     ({ size, ...rest }: IconProps): JSX.Element;
     displayName: string;
 };
+export declare const Bell: {
+    ({ size, ...rest }: IconProps): JSX.Element;
+    displayName: string;
+};
+export declare const BellOff: {
+    ({ size, ...rest }: IconProps): JSX.Element;
+    displayName: string;
+};
 //# sourceMappingURL=icons.d.ts.map

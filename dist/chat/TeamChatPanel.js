@@ -1,8 +1,9 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Send, Trash2, ChevronDown, Check, Volume2, VolumeX, SearchIcon, X, Paperclip, FileText, FileIcon, Download, Smile, } from './icons.js';
+import { Send, Trash2, ChevronDown, Check, Volume2, VolumeX, SearchIcon, X, Paperclip, FileText, FileIcon, Download, Smile, Bell, BellOff, } from './icons.js';
 import { useImageFileDrop } from './useFileDrop.js';
 import { playChatSound } from './sound.js';
+import { CHAT_ALERT_LEVELS, alertPermission, requestAlertPermission, } from './desktopAlert.js';
 import { useTeamChat } from './store.js';
 import { attachmentsOf, authorBadgeColour, buildMessageSegments, dayKey, dayLabel, formatBytes, isGroupedWithPrevious, messageTime, } from './message.js';
 import { designerTint } from './colours.js';
@@ -198,6 +199,59 @@ function StatusPicker() {
                         setManualStatus(s.value);
                         setOpen(false);
                     }, className: "pdc-flex pdc-w-full pdc-items-center pdc-gap-2 pdc-px-3 pdc-py-1-5 pdc-text-left pdc-text-15px pdc-text-ink-soft pdc-hover-bg-canvas pdc-sm-text-13px", children: [_jsx(StatusDot, { status: s.value }), _jsx("span", { className: "pdc-flex-1", children: s.label }), myStatus === s.value && _jsx(Check, { size: 14, "aria-hidden": "true", className: "pdc-text-ink-mute" })] }, s.value))) }))] }));
+}
+function AlertsMenu() {
+    const { alertLevel, setAlertLevel } = useTeamChat();
+    const [open, setOpen] = useState(false);
+    const [permission, setPermission] = useState(() => alertPermission());
+    const ref = useRef(null);
+    useEffect(() => {
+        if (!open)
+            return;
+        // Bind to the document this menu is actually in, not the app's: popped out
+        // into a picture-in-picture window the panel lives in a second document,
+        // where a listener on the main one never sees the click or the Escape.
+        const doc = ref.current?.ownerDocument ?? document;
+        function onDoc(e) {
+            if (ref.current && !ref.current.contains(e.target))
+                setOpen(false);
+        }
+        function onKey(e) {
+            if (e.key === 'Escape')
+                setOpen(false);
+        }
+        doc.addEventListener('mousedown', onDoc);
+        doc.addEventListener('keydown', onKey);
+        return () => {
+            doc.removeEventListener('mousedown', onDoc);
+            doc.removeEventListener('keydown', onKey);
+        };
+    }, [open]);
+    if (permission === 'unsupported')
+        return null;
+    const blocked = permission === 'denied';
+    // Nothing will actually appear unless the browser has been asked and said
+    // yes, so the icon reports what is really happening rather than what has
+    // been chosen. A bell that looks on while the browser is blocking is the
+    // sort of quiet lie this whole change exists to remove.
+    const live = alertLevel !== 'off' && permission === 'granted';
+    async function choose(level) {
+        if (level !== 'off' && permission !== 'granted') {
+            // This is a click, which is the only context Safari will accept a
+            // permission request from, and asking on load burns the single chance.
+            const result = await requestAlertPermission();
+            setPermission(result);
+            if (result !== 'granted')
+                return; // leave the old level; nothing would show
+        }
+        setAlertLevel(level);
+        setOpen(false);
+    }
+    return (_jsxs("div", { ref: ref, className: "pdc-relative", children: [_jsx("button", { type: "button", onClick: () => setOpen((v) => !v), "aria-haspopup": "menu", "aria-expanded": open, "aria-label": "Desktop notifications", title: blocked
+                    ? 'Your browser is blocking notifications for this site'
+                    : live
+                        ? 'Desktop notifications are on'
+                        : 'Desktop notifications are off', className: "pdc-flex pdc-h-7 pdc-w-7 pdc-flex-shrink-0 pdc-items-center pdc-justify-center pdc-rounded-full pdc-text-ink-mute pdc-transition-colors pdc-hover-bg-canvas pdc-hover-text-ink", children: live ? _jsx(Bell, { size: 15, "aria-hidden": "true" }) : _jsx(BellOff, { size: 15, "aria-hidden": "true" }) }), open && (_jsxs("div", { role: "menu", className: "pdc-absolute pdc-right-0 pdc-top-9 pdc-z-30 pdc-min-w-9rem pdc-rounded-10px pdc-border pdc-border-line pdc-bg-surface pdc-py-1 pdc-shadow-md", children: [CHAT_ALERT_LEVELS.map((l) => (_jsxs("button", { type: "button", role: "menuitemradio", "aria-checked": alertLevel === l.value, disabled: blocked && l.value !== 'off', onClick: () => void choose(l.value), className: "pdc-flex pdc-w-full pdc-items-center pdc-gap-2 pdc-px-3 pdc-py-1-5 pdc-text-left pdc-text-15px pdc-text-ink-soft pdc-hover-bg-canvas pdc-disabled-opacity-40 pdc-sm-text-13px", children: [_jsxs("span", { className: "pdc-flex-1", children: [l.label, _jsx("span", { className: "pdc-block pdc-text-11px pdc-text-ink-mute", children: l.hint })] }), alertLevel === l.value && (_jsx(Check, { size: 14, "aria-hidden": "true", className: "pdc-text-ink-mute" }))] }, l.value))), blocked && (_jsx("p", { className: "pdc-px-3 pdc-py-1-5 pdc-text-11px pdc-text-ink-mute", children: "Your browser is blocking notifications for this site. Turn them back on in its site settings." }))] }))] }));
 }
 function SoundToggle() {
     const { soundEnabled, setSoundEnabled } = useTeamChat();
@@ -636,7 +690,7 @@ export default function TeamChatPanel({ variant }) {
                         }), "aria-pressed": searchOpen, "aria-label": searchOpen ? 'Close search' : 'Search messages', title: "Search messages", className: [
                             'pdc-flex pdc-h-7 pdc-w-7 pdc-flex-shrink-0 pdc-items-center pdc-justify-center pdc-rounded-full pdc-transition-colors',
                             searchOpen ? 'pdc-bg-canvas pdc-text-ink' : 'pdc-text-ink-mute pdc-hover-bg-canvas pdc-hover-text-ink',
-                        ].join(' '), children: _jsx(SearchIcon, { size: 15, "aria-hidden": "true" }) }), _jsx(SoundToggle, {})] }), _jsxs("div", { className: "pdc-flex pdc-flex-shrink-0 pdc-flex-wrap pdc-items-center pdc-gap-1-5 pdc-border-b pdc-border-line-soft pdc-px-3 pdc-py-2", children: [_jsx(ThreadPill, { label: "Team", active: activeThread === 'team', count: threadUnread.team ?? 0, onClick: () => setActiveThread('team') }), mentionCandidates.map((m) => (_jsx(ThreadPill, { label: firstName(m.name), active: activeThread === m.id, count: threadUnread[m.id] ?? 0, status: presenceByUser.get(m.id) ?? null, onClick: () => setActiveThread(m.id) }, m.id)))] }), searchOpen && (_jsxs("div", { className: "pdc-flex pdc-items-center pdc-gap-2 pdc-border-b pdc-border-line-soft pdc-px-3 pdc-py-2", children: [_jsx(SearchIcon, { size: 14, className: "pdc-text-ink-mute", "aria-hidden": "true" }), _jsx("input", { type: "search", autoFocus: true, value: search, onChange: (e) => setSearch(e.target.value), placeholder: "Search messages\u2026", className: "pdc-flex-1 pdc-bg-transparent pdc-text-17px pdc-text-ink pdc-outline-none pdc-placeholder-text-ink-dim pdc-sm-text-13px" }), search && (_jsx("button", { type: "button", onClick: () => setSearch(''), "aria-label": "Clear search", className: "pdc-text-ink-mute pdc-hover-text-ink", children: _jsx(X, { size: 14, "aria-hidden": "true" }) }))] })), _jsx("div", { ref: scrollRef, onScroll: onListScroll, className: "pdc-flex pdc-min-h-0 pdc-flex-1 pdc-flex-col pdc-overflow-y-auto pdc-overscroll-contain pdc-px-3 pdc-py-3", children: loading ? (_jsx("div", { className: "pdc-flex pdc-h-full pdc-items-center pdc-justify-center", children: _jsx("div", { className: "pdc-h-6 pdc-w-6 pdc-animate-spin pdc-rounded-full pdc-border-2 pdc-border-line pdc-motion-reduce-animate-none", style: { borderTopColor: 'var(--c-ink)' } }) })) : threadMessages.length === 0 ? (_jsxs("div", { className: "pdc-flex pdc-h-full pdc-flex-col pdc-items-center pdc-justify-center pdc-px-6 pdc-text-center", children: [_jsx("p", { className: "pdc-text-17px pdc-text-ink-soft pdc-sm-text-14px", children: "No messages yet." }), _jsx("p", { className: "pdc-text-15px pdc-text-ink-mute pdc-sm-text-13px", children: activePeer
+                        ].join(' '), children: _jsx(SearchIcon, { size: 15, "aria-hidden": "true" }) }), _jsx(AlertsMenu, {}), _jsx(SoundToggle, {})] }), _jsxs("div", { className: "pdc-flex pdc-flex-shrink-0 pdc-flex-wrap pdc-items-center pdc-gap-1-5 pdc-border-b pdc-border-line-soft pdc-px-3 pdc-py-2", children: [_jsx(ThreadPill, { label: "Team", active: activeThread === 'team', count: threadUnread.team ?? 0, onClick: () => setActiveThread('team') }), mentionCandidates.map((m) => (_jsx(ThreadPill, { label: firstName(m.name), active: activeThread === m.id, count: threadUnread[m.id] ?? 0, status: presenceByUser.get(m.id) ?? null, onClick: () => setActiveThread(m.id) }, m.id)))] }), searchOpen && (_jsxs("div", { className: "pdc-flex pdc-items-center pdc-gap-2 pdc-border-b pdc-border-line-soft pdc-px-3 pdc-py-2", children: [_jsx(SearchIcon, { size: 14, className: "pdc-text-ink-mute", "aria-hidden": "true" }), _jsx("input", { type: "search", autoFocus: true, value: search, onChange: (e) => setSearch(e.target.value), placeholder: "Search messages\u2026", className: "pdc-flex-1 pdc-bg-transparent pdc-text-17px pdc-text-ink pdc-outline-none pdc-placeholder-text-ink-dim pdc-sm-text-13px" }), search && (_jsx("button", { type: "button", onClick: () => setSearch(''), "aria-label": "Clear search", className: "pdc-text-ink-mute pdc-hover-text-ink", children: _jsx(X, { size: 14, "aria-hidden": "true" }) }))] })), _jsx("div", { ref: scrollRef, onScroll: onListScroll, className: "pdc-flex pdc-min-h-0 pdc-flex-1 pdc-flex-col pdc-overflow-y-auto pdc-overscroll-contain pdc-px-3 pdc-py-3", children: loading ? (_jsx("div", { className: "pdc-flex pdc-h-full pdc-items-center pdc-justify-center", children: _jsx("div", { className: "pdc-h-6 pdc-w-6 pdc-animate-spin pdc-rounded-full pdc-border-2 pdc-border-line pdc-motion-reduce-animate-none", style: { borderTopColor: 'var(--c-ink)' } }) })) : threadMessages.length === 0 ? (_jsxs("div", { className: "pdc-flex pdc-h-full pdc-flex-col pdc-items-center pdc-justify-center pdc-px-6 pdc-text-center", children: [_jsx("p", { className: "pdc-text-17px pdc-text-ink-soft pdc-sm-text-14px", children: "No messages yet." }), _jsx("p", { className: "pdc-text-15px pdc-text-ink-mute pdc-sm-text-13px", children: activePeer
                                 ? `This is a private conversation between you and ${firstName(activePeer.name)} — no-one else can see it.`
                                 : 'Say hello to the team.' })] })) : shown.length === 0 ? (_jsx("div", { className: "pdc-flex pdc-h-full pdc-flex-col pdc-items-center pdc-justify-center pdc-text-center", children: searchingRemote ? (_jsx("p", { className: "pdc-text-15px pdc-text-ink-mute pdc-sm-text-13px", children: "Searching the full history\u2026" })) : (_jsxs(_Fragment, { children: [_jsx("p", { className: "pdc-text-17px pdc-text-ink-soft pdc-sm-text-14px", children: "No matches" }), _jsxs("p", { className: "pdc-text-15px pdc-text-ink-mute pdc-sm-text-13px", children: ["Nothing matches \u201C", search.trim(), "\u201D."] })] })) })) : (_jsxs("div", { ref: listRef, className: "pdc-mt-auto", children: [!searchQuery && historyFor(activeThread) !== 'exhausted' && (_jsx("div", { className: "pdc-flex pdc-justify-center pdc-pb-2", children: _jsx("button", { type: "button", onClick: () => void onLoadEarlier(), disabled: historyFor(activeThread) === 'loading', className: "pdc-rounded-full pdc-border pdc-border-line pdc-bg-surface pdc-px-3 pdc-py-1 pdc-text-14px pdc-font-medium pdc-text-ink-soft pdc-transition-colors pdc-hover-bg-canvas pdc-hover-text-ink pdc-disabled-opacity-60 pdc-sm-text-12px", children: historyFor(activeThread) === 'loading' ? 'Loading…' : 'Show earlier messages' }) })), searchQuery && searchingRemote && (_jsx("p", { className: "pdc-pb-2 pdc-text-center pdc-text-13px pdc-text-ink-mute pdc-sm-text-11px", children: "Searching the full history\u2026" })), _jsx("ul", { className: "pdc-space-y-0", children: shown.map((m, i) => {
                                 const prev = shown[i - 1];

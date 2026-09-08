@@ -264,6 +264,35 @@ export default function ChatMenu({
   // DMs are personal, so they get the same loud coral treatment as @mentions.
   const hasMention = mentionUnread > 0 || dmUnread > 0
 
+  // Pulse the pill when the personal count GOES UP, not merely while it is
+  // above zero. Keyed off the rise so a second message pulses again instead
+  // of being swallowed by the first one's animation, and so returning to a
+  // page with old unread does not replay an alert about nothing new.
+  const personal = mentionUnread + dmUnread
+  const [pulsing, setPulsing] = useState(false)
+  const lastPersonal = useRef(personal)
+  useEffect(() => {
+    const rose = personal > lastPersonal.current
+    lastPersonal.current = personal
+    if (!rose) return
+    // Off first, so an animation already running is torn down and restarted
+    // rather than left mid-cycle. Two frames: one to apply the removal, one
+    // for the browser to notice it before the class comes back.
+    setPulsing(false)
+    let second = 0
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => setPulsing(true))
+    })
+    // Matches the three one-second beats in the stylesheet. Clearing the class
+    // afterwards is what lets the next message start it again.
+    const done = window.setTimeout(() => setPulsing(false), 3200)
+    return () => {
+      cancelAnimationFrame(first)
+      cancelAnimationFrame(second)
+      window.clearTimeout(done)
+    }
+  }, [personal])
+
   return (
     <div ref={ref} className="pd-chat pdc-relative">
       <button
@@ -319,7 +348,10 @@ export default function ChatMenu({
               : hasUnread
                 ? 'pdc-border-line pdc-bg-canvas pdc-text-ink pdc-hover-bg-canvas'
                 : 'pdc-border-line pdc-bg-surface pdc-text-ink-soft pdc-hover-bg-canvas pdc-hover-text-ink',
-        ].join(' ')}
+          pulsing ? 'pd-chat__pill--attention' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
       >
         <MessagesSquare size={17} aria-hidden="true" />
         <span className="pdc-hidden pdc-lg-inline">Chat</span>
