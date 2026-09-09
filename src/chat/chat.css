@@ -137,7 +137,6 @@
 .pd-chat.pdc-bottom-full, .pd-chat .pdc-bottom-full { bottom:100%; }
 .pd-chat.pdc-break-all, .pd-chat .pdc-break-all { word-break:break-all; }
 .pd-chat.pdc-break-words, .pd-chat .pdc-break-words { overflow-wrap:break-word; }
-.pd-chat.pdc-cursor-nesw-resize, .pd-chat .pdc-cursor-nesw-resize { cursor:nesw-resize; }
 .pd-chat.pdc-fixed, .pd-chat .pdc-fixed { position:fixed; }
 .pd-chat.pdc-flex, .pd-chat .pdc-flex { display:flex; }
 .pd-chat.pdc-flex-1, .pd-chat .pdc-flex-1 { flex:1 1 0%; }
@@ -258,7 +257,6 @@
 .pd-chat.pdc-text-ink, .pd-chat .pdc-text-ink { color:var(--pd-chat-ink); }
 .pd-chat.pdc-text-ink-dim, .pd-chat .pdc-text-ink-dim { color:var(--pd-chat-ink-dim); }
 .pd-chat.pdc-text-ink-mute, .pd-chat .pdc-text-ink-mute { color:var(--pd-chat-ink-mute); }
-.pd-chat.pdc-text-ink-mute-70, .pd-chat .pdc-text-ink-mute-70 { color:color-mix(in srgb,var(--pd-chat-ink-mute) 70%,transparent); }
 .pd-chat.pdc-text-ink-soft, .pd-chat .pdc-text-ink-soft { color:var(--pd-chat-ink-soft); }
 .pd-chat.pdc-text-left, .pd-chat .pdc-text-left { text-align:left; }
 .pd-chat.pdc-text-on-ink, .pd-chat .pdc-text-on-ink { color:var(--pd-chat-on-ink); }
@@ -269,7 +267,6 @@
 .pd-chat.pdc-top-4, .pd-chat .pdc-top-4 { top:1rem; }
 .pd-chat.pdc-top-7, .pd-chat .pdc-top-7 { top:1.75rem; }
 .pd-chat.pdc-top-9, .pd-chat .pdc-top-9 { top:2.25rem; }
-.pd-chat.pdc-touch-none, .pd-chat .pdc-touch-none { touch-action:none; }
 .pd-chat.pdc-tracking-wide, .pd-chat .pdc-tracking-wide { letter-spacing:.025em; }
 .pd-chat.pdc-transition-colors, .pd-chat .pdc-transition-colors { transition-property:color,background-color,border-color,fill,stroke;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:150ms; }
 .pd-chat.pdc-transition-opacity, .pd-chat .pdc-transition-opacity { transition-property:opacity;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:150ms; }
@@ -286,7 +283,6 @@
 .pd-chat.pdc-w-7, .pd-chat .pdc-w-7 { width:1.75rem; }
 .pd-chat.pdc-w-8, .pd-chat .pdc-w-8 { width:2rem; }
 .pd-chat.pdc-w-9, .pd-chat .pdc-w-9 { width:2.25rem; }
-.pd-chat.pdc-w-18px, .pd-chat .pdc-w-18px { width:18px; }
 .pd-chat.pdc-w-42px, .pd-chat .pdc-w-42px { width:42px; }
 .pd-chat.pdc-w-full, .pd-chat .pdc-w-full { width:100%; }
 .pd-chat.pdc-whitespace-pre-wrap, .pd-chat .pdc-whitespace-pre-wrap { white-space:pre-wrap; }
@@ -410,6 +406,50 @@
 /* The popped-out window has no host page around it, so the panel owns the
    whole viewport there. */
 .pd-chat--popout { height: 100%; display: flex; flex-direction: column; }
+
+/* The dropdown's resize grip.
+
+   It lives in the bottom-left because the panel is anchored top-right, so that
+   is the only corner that can grow without walking the panel off the edge of
+   the screen.
+
+   Two things kept it looking like a stray mark rather than a handle, and both
+   are fixed here rather than in the markup. It sat hard against `bottom-0
+   left-0`, which put the glyph on top of the panel's own 14px corner curve —
+   at 45 degrees that curve cuts about 5.8px in from the corner, so the mark
+   read as hanging off the edge; it is now inset past that. And it was drawn at
+   full strength, competing for attention with the conversation above it, when
+   the resize cursor already announces the corner to anyone who reaches for it.
+   Faint at rest, up to full on hover or keyboard focus.
+
+   The hit area is deliberately larger than the glyph: 24px square is a
+   comfortable target for a corner drag, and the padding is what holds the mark
+   away from the edge while the button itself still reaches it. */
+.pd-chat .pd-chat__resize {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  z-index: 10;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  width: 24px;
+  height: 24px;
+  padding: 0 0 4px 4px;
+  color: color-mix(in srgb, var(--pd-chat-ink-mute) 45%, transparent);
+  cursor: nesw-resize;
+  touch-action: none;
+  transition: color 150ms cubic-bezier(.4, 0, .2, 1);
+}
+.pd-chat .pd-chat__resize:hover,
+.pd-chat .pd-chat__resize:focus-visible {
+  color: var(--pd-chat-ink-mute);
+}
+.pd-chat .pd-chat__resize:focus-visible {
+  outline: 2px solid var(--pd-chat-focus);
+  outline-offset: -2px;
+  border-radius: 10px;
+}
 
 /* A short pulse on the header pill when something personal lands.
    

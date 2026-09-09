@@ -529,19 +529,24 @@ export default function ChatMenu({
             onPointerDown={onResizeStart}
             aria-label="Resize chat window"
             title="Drag to resize"
-            className="pdc-absolute pdc-bottom-0 pdc-left-0 pdc-z-10 pdc-flex pdc-h-18px pdc-w-18px pdc-touch-none pdc-cursor-nesw-resize pdc-items-end pdc-justify-start pdc-p-1 pdc-text-ink-mute-70 pdc-transition-colors pdc-hover-text-ink"
+            className="pd-chat__resize"
           >
+            {/* Three diagonals tapering into the bottom-left corner. The
+                direction is the whole point: a grip's lines run parallel to
+                the corner they sit in, so bottom-left leans this way and
+                bottom-right leans the other. This was drawn the other way,
+                which is why it read as a stray tick rather than a handle. */}
             <svg
-              width="10"
-              height="10"
-              viewBox="0 0 10 10"
+              width="11"
+              height="11"
+              viewBox="0 0 11 11"
               fill="none"
               stroke="currentColor"
-              strokeWidth="1.3"
+              strokeWidth="1.25"
               strokeLinecap="round"
               aria-hidden="true"
             >
-              <path d="M9 2 L2 9 M9 6 L6 9" />
+              <path d="M1 1 L10 10 M1 5 L6 10 M1 9 L2 10" />
             </svg>
           </button>
         </div>
