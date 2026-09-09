@@ -1,1 +1,1 @@
-{"version":3,"file":"TeamChatPanel.d.ts","sourceRoot":"","sources":["../../src/chat/TeamChatPanel.tsx"],"names":[],"mappings":"AAuVA,UAAU,kBAAkB;IAC1B,OAAO,EAAE,UAAU,GAAG,MAAM,GAAG,QAAQ,GAAG,QAAQ,CAAA;CACnD;AA2PD,MAAM,CAAC,OAAO,UAAU,aAAa,CAAC,EAAE,OAAO,EAAE,EAAE,kBAAkB,+BA45BpE"}
+{"version":3,"file":"TeamChatPanel.d.ts","sourceRoot":"","sources":["../../src/chat/TeamChatPanel.tsx"],"names":[],"mappings":"AAuVA,UAAU,kBAAkB;IAC1B,OAAO,EAAE,UAAU,GAAG,MAAM,GAAG,QAAQ,GAAG,QAAQ,CAAA;CACnD;AAuRD,MAAM,CAAC,OAAO,UAAU,aAAa,CAAC,EAAE,OAAO,EAAE,EAAE,kBAAkB,+BA45BpE"}

@@ -127,6 +127,69 @@ above.
 
 ---
 
+## The message peek (1.11.0)
+
+The four signals in 1.10.0 all assume you are somewhere else. The desktop
+notification is explicitly gated on the app NOT being the window in front of
+you, so a message arriving while you were working here got a badge, a chime and
+a three-beat pulse, and nothing that said who it was from or what they wanted.
+
+So a card now grows out from under the header pill: sender, the message, and a
+click that opens that conversation. It and the desktop notification are exact
+complements, one wanting the document focused and the other wanting it not, so
+nobody is ever told the same thing twice at once.
+
+`transform-origin: top right` is what makes it read as the button opening out
+rather than a panel arriving from off-screen. That is the whole difference
+between a notification and an interruption.
+
+**Every message peeks, and a personal one lingers.** A DM or an @mention holds
+for 8 seconds against a room message's 3.5. A difference in dwell alone would
+read as a glitch, so the two cards also differ in colour: coral with a left
+rule for personal, plain for the room. The colour is what turns the timing into
+a rule somebody can learn.
+
+**A burst replaces rather than stacks**, and the card says who the latest is
+from plus "and 2 more". Four cards sliding down under the header is how a
+helpful thing becomes the thing everybody switches off, and the badge already
+carries the true count.
+
+⚠ `personal` is **sticky across a burst**, and that is the rule to keep. The
+card describes the newest message, so room chatter arriving behind a DM takes
+over the name and the text while the DM is still unread underneath it. Letting
+that drag the card back to the short dwell and the quiet colour would cut short
+the very message that earned the long one. Once a burst contains something for
+you, the card is for you.
+
+Three gates, in `store.tsx`:
+
+- It hangs off the branch where the message **counted as unread**, same as the
+  desktop notification, so a thread you are reading never raises one.
+- `!viewingRef.current` is the "chat is shut" test, and it has to be separate
+  from that branch: reaching there only means you are not reading THIS thread,
+  so without it a DM would slide a card over the top of an open panel that is
+  already showing its unread pill.
+- The popped-out guard, because that window is listening too.
+
+**The dwell timer lives in the store, not in ChatMenu**, and that is
+deliberate: ChatMenu renders at desktop widths only, so a card raised on a
+phone would otherwise sit in state with nothing to time it out and appear stale
+the moment the window was widened.
+
+It has its own on/off (`peek` in `team_chat_prefs`) rather than riding the
+`alerts` level, because the two cover different moments and someone can
+reasonably want one without the other. They share the preview-or-sender-only
+choice, though: a card in your own window is if anything MORE likely to be read
+over your shoulder than a corner toast. `alerts: 'off'` means "no desktop
+notification", not "no privacy", so the peek resolves it to sender-only rather
+than to the full preview.
+
+The pure rules are exported (`mergePeek`, `peekDwell`, `peekBody`, `peekTitle`)
+for the same reason the popout's are: this package has no test runner, and the
+merge rule is the part that goes quietly wrong.
+
+---
+
 ## The contract
 
 Everything host-specific arrives through `ChatConfig`. `src/chat/types.ts` is authoritative.

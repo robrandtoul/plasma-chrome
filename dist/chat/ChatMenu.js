@@ -4,6 +4,7 @@ import { MessagesSquare, Maximize2, X, Pin, AtSign, PanelRight, PictureInPicture
 import { useTeamChat } from './store.js';
 import TeamChatPanel from './TeamChatPanel.js';
 import { CHAT_DOCK_ID } from './types.js';
+import { peekBody, peekTitle } from './peek.js';
 // Wide enough that the five thread pills (Team + four names, with an unread
 // badge or two) fit on one line out of the box.
 const MIN_W = 320;
@@ -59,7 +60,7 @@ function FullPageLink({ as: As, to, ...rest }) {
     return _jsx("a", { href: to, ...rest });
 }
 export default function ChatMenu({ active = false, dockAvailable = false, linkComponent, }) {
-    const { config, unread, mentionUnread, dmUnread, dropdownPinned, setDropdownPinned, placement, setPlacement, openPopout, closePopout, focusPopout, chatSize, setChatSize, } = useTeamChat();
+    const { config, unread, mentionUnread, dmUnread, dropdownPinned, setDropdownPinned, placement, setPlacement, openPopout, closePopout, focusPopout, chatSize, setChatSize, peek, dismissPeek, holdPeek, alertLevel, setActiveThread, } = useTeamChat();
     const prefix = config?.storagePrefix ?? 'plasma:chat';
     const fullPagePath = config?.fullPagePath ?? '/chat';
     const popoutEnabled = config?.popoutEnabled ?? true;
@@ -204,6 +205,12 @@ export default function ChatMenu({ active = false, dockAvailable = false, linkCo
         handle.addEventListener('pointerup', onEnd);
         handle.addEventListener('pointercancel', onEnd);
     }
+    // Opening the panel answers the card, so retire it rather than leaving it in
+    // state to reappear for the tail of its dwell when the panel closes again.
+    useEffect(() => {
+        if (open)
+            dismissPeek();
+    }, [open, dismissPeek]);
     // Popped out counts as "chat is on" even though nothing is showing here.
     const current = open || active || poppedOut;
     const hasUnread = unread > 0;
@@ -291,7 +298,34 @@ export default function ChatMenu({ active = false, dockAvailable = false, linkCo
                     .join(' '), children: [_jsx(MessagesSquare, { size: 17, "aria-hidden": "true" }), _jsx("span", { className: "pdc-hidden pdc-lg-inline", children: "Chat" }), hasUnread && (_jsxs("span", { className: [
                             'pdc-absolute pdc-neg-right-1-5 pdc-neg-top-1-5 pdc-inline-flex pdc-h-18px pdc-min-w-18px pdc-items-center pdc-justify-center pdc-gap-0-5 pdc-rounded-full pdc-px-1 pdc-text-10px pdc-font-bold pdc-leading-none pdc-text-white',
                             hasMention ? 'pdc-bg-brand' : 'pdc-bg-ink',
-                        ].join(' '), style: { boxShadow: '0 0 0 2px var(--c-surface)' }, "aria-hidden": "true", children: [hasMention && _jsx(AtSign, { size: 10, strokeWidth: 2.5, "aria-hidden": "true" }), unread > 9 ? '9+' : unread] }))] }), open && !poppedOut && (_jsxs("div", { role: "dialog", "aria-label": "Team chat", className: "pdc-absolute pdc-right-0 pdc-top-11 pdc-z-40 pdc-flex pdc-flex-col pdc-overflow-hidden pdc-rounded-14px pdc-border pdc-border-line pdc-bg-surface pdc-shadow-xl", style: {
+                        ].join(' '), style: { boxShadow: '0 0 0 2px var(--c-surface)' }, "aria-hidden": "true", children: [hasMention && _jsx(AtSign, { size: 10, strokeWidth: 2.5, "aria-hidden": "true" }), unread > 9 ? '9+' : unread] }))] }), peek && !open && !poppedOut && (_jsxs("div", { className: [
+                    'pd-chat__peek',
+                    peek.personal ? 'pd-chat__peek--personal' : '',
+                ]
+                    .filter(Boolean)
+                    .join(' '), 
+                // Announced politely rather than assertively: this arrives while
+                // someone is working, and a card about a room message has no
+                // business interrupting a screen reader mid-sentence.
+                role: "status", "aria-live": "polite", onMouseEnter: () => holdPeek(true), onMouseLeave: () => holdPeek(false), 
+                // Keyboard focus holds it too, or tabbing to the card would be a
+                // race against its own dwell.
+                onFocus: () => holdPeek(true), onBlur: () => holdPeek(false), children: [_jsxs("button", { type: "button", className: "pd-chat__peek-open", onClick: () => {
+                            setActiveThread(peek.thread);
+                            dismissPeek();
+                            // The dock case cannot arrive here (a visible dock means the
+                            // panel is mounted and reading, which is what stops the card
+                            // being raised at all), but if it ever does, dropping the cursor
+                            // into the composer is the right answer rather than opening a
+                            // second copy of the panel over the top of it.
+                            if (dockVisible) {
+                                document
+                                    .querySelector(`#${CHAT_DOCK_ID} textarea`)
+                                    ?.focus({ preventScroll: true });
+                                return;
+                            }
+                            setOpen(true);
+                        }, children: [_jsx("span", { className: "pd-chat__peek-who", children: peekTitle(peek) }), peekBody(alertLevel, peek.snippet) && (_jsx("span", { className: "pd-chat__peek-what", children: peekBody(alertLevel, peek.snippet) }))] }), _jsx("button", { type: "button", className: "pd-chat__peek-dismiss", "aria-label": "Dismiss", onClick: dismissPeek, children: _jsx(X, { size: 13, "aria-hidden": "true" }) })] })), open && !poppedOut && (_jsxs("div", { role: "dialog", "aria-label": "Team chat", className: "pdc-absolute pdc-right-0 pdc-top-11 pdc-z-40 pdc-flex pdc-flex-col pdc-overflow-hidden pdc-rounded-14px pdc-border pdc-border-line pdc-bg-surface pdc-shadow-xl", style: {
                     width: size.w,
                     height: size.h,
                     maxWidth: 'calc(100vw - 1rem)',

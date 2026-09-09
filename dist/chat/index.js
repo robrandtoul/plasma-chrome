@@ -44,6 +44,11 @@ export { isPopoutWindow, isPopoutSearch, popoutPath, popoutWindowName,
 // the main one chimes, which is exactly backwards.
 clampPopoutSize, popoutIsAlive, windowFeatures, DEFAULT_POPOUT_SIZE, MIN_POPOUT_W, MIN_POPOUT_H, POPOUT_ALIVE_MS, POPOUT_HEARTBEAT_MS, } from './popout.js';
 export { reopenKey } from './ChatMenu.js';
+/* The in-app message peek. The rules are exported because the package has no
+   test runner of its own and the merge/dwell behaviour is the whole design:
+   get the sticky-personal rule wrong and a room message silently cuts short
+   the DM sitting behind it. */
+export { mergePeek, peekDwell, peekBody, peekTitle, PEEK_DWELL_PERSONAL_MS, PEEK_DWELL_ROOM_MS, } from './peek.js';
 /* Desktop notifications. The panel owns the menu that sets the level, so a
    host needs none of this to get the behaviour, but the level is part of the
    stored preferences and a host may want to read or report it. */

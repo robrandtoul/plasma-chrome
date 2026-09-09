@@ -449,7 +449,7 @@ function StatusPicker() {
 }
 
 function AlertsMenu() {
-  const { alertLevel, setAlertLevel } = useTeamChat()
+  const { alertLevel, setAlertLevel, peekEnabled, setPeekEnabled } = useTeamChat()
   const [open, setOpen] = useState(false)
   const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>(() =>
     alertPermission(),
@@ -483,7 +483,10 @@ function AlertsMenu() {
   // yes, so the icon reports what is really happening rather than what has
   // been chosen. A bell that looks on while the browser is blocking is the
   // sort of quiet lie this whole change exists to remove.
-  const live = alertLevel !== 'off' && permission === 'granted'
+  // Either signal counts, because the menu now governs both. A bell that read
+  // 'off' while a card was still sliding out under the header would be exactly
+  // the sort of quiet lie the rest of this is here to remove.
+  const live = (alertLevel !== 'off' && permission === 'granted') || peekEnabled
 
   async function choose(level: ChatAlertLevel) {
     if (level !== 'off' && permission !== 'granted') {
@@ -504,13 +507,13 @@ function AlertsMenu() {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Desktop notifications"
+        aria-label="Message notifications"
         title={
           blocked
-            ? 'Your browser is blocking notifications for this site'
+            ? 'Your browser is blocking desktop notifications for this site'
             : live
-              ? 'Desktop notifications are on'
-              : 'Desktop notifications are off'
+              ? 'Message notifications are on'
+              : 'Message notifications are off'
         }
         className="pdc-flex pdc-h-7 pdc-w-7 pdc-flex-shrink-0 pdc-items-center pdc-justify-center pdc-rounded-full pdc-text-ink-mute pdc-transition-colors pdc-hover-bg-canvas pdc-hover-text-ink"
       >
@@ -521,6 +524,9 @@ function AlertsMenu() {
           role="menu"
           className="pdc-absolute pdc-right-0 pdc-top-9 pdc-z-30 pdc-min-w-9rem pdc-rounded-10px pdc-border pdc-border-line pdc-bg-surface pdc-py-1 pdc-shadow-md"
         >
+          <p className="pdc-px-3 pdc-py-1-5 pdc-text-11px pdc-font-semibold pdc-text-ink-mute">
+            When you&rsquo;re in another window
+          </p>
           {CHAT_ALERT_LEVELS.map((l) => (
             <button
               key={l.value}
@@ -546,6 +552,28 @@ function AlertsMenu() {
               settings.
             </p>
           )}
+          <div className="pd-chat__menu-divider" />
+          <p className="pdc-px-3 pdc-py-1-5 pdc-text-11px pdc-font-semibold pdc-text-ink-mute">
+            When you&rsquo;re in the app
+          </p>
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={peekEnabled}
+            onClick={() => {
+              setPeekEnabled(!peekEnabled)
+              setOpen(false)
+            }}
+            className="pdc-flex pdc-w-full pdc-items-center pdc-gap-2 pdc-px-3 pdc-py-1-5 pdc-text-left pdc-text-15px pdc-text-ink-soft pdc-hover-bg-canvas pdc-sm-text-13px"
+          >
+            <span className="pdc-flex-1">
+              Show the message here
+              <span className="pdc-block pdc-text-11px pdc-text-ink-mute">
+                Slides out under the chat button
+              </span>
+            </span>
+            {peekEnabled && <Check size={14} aria-hidden="true" className="pdc-text-ink-mute" />}
+          </button>
         </div>
       )}
     </div>
