@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, } from
 import { playChatSound } from './sound.js';
 import { setChatBadge, clearChatBadge } from './badge.js';
 import { DEFAULT_ALERT_LEVEL, dismissChatAlerts, isAlertLevel, showChatAlert, } from './desktopAlert.js';
+import { mergePeek, peekDwell } from './peek.js';
 import { POPOUT_HEARTBEAT_MS, isPopoutWindow, popoutIsAlive, popoutPath, preparePopoutDocument, readPopoutSize, syncChannelName, windowFeatures, readStoredPopoutSize, writePopoutSize, } from './popout.js';
 import { CHAT_CHANNEL, resolveChatConfig, } from './types.js';
 // Shared "engine" for the team chat: one live connection (message realtime +
@@ -120,6 +121,12 @@ function readAlertLevel(prefix) {
     const raw = readLocal(prefix, 'alerts');
     return isAlertLevel(raw) ? raw : DEFAULT_ALERT_LEVEL;
 }
+// The peek defaults ON, for the same reason alerts default to their fullest
+// form: a signal switched off by default is one nobody discovers. Only an
+// explicit '0' turns it off.
+function readPeek(prefix) {
+    return readLocal(prefix, 'peek') !== '0';
+}
 // Placement defaults to floating; only an explicit 'docked' opts in.
 function readPlacement(prefix) {
     return readLocal(prefix, 'placement') === 'docked' ? 'docked' : 'floating';
@@ -161,6 +168,11 @@ const DEFAULT = {
     setSoundEnabled: () => { },
     alertLevel: DEFAULT_ALERT_LEVEL,
     setAlertLevel: () => { },
+    peekEnabled: true,
+    setPeekEnabled: () => { },
+    peek: null,
+    dismissPeek: () => { },
+    holdPeek: () => { },
     placement: 'floating',
     setPlacement: () => { },
     chatSize: DEFAULT_CHAT_SIZE,
@@ -256,6 +268,12 @@ export function TeamChatProvider({ config, children, }) {
     const [dropdownPinned, setDropdownPinnedState] = useState(() => readPinned(prefix));
     const [soundEnabled, setSoundEnabledState] = useState(() => readSound(prefix));
     const [alertLevel, setAlertLevelState] = useState(() => readAlertLevel(prefix));
+    const [peekEnabled, setPeekEnabledState] = useState(() => readPeek(prefix));
+    const [peek, setPeek] = useState(null);
+    // Pointing at the card holds it open. Leaving restarts the full dwell rather
+    // than resuming the remainder, so a card you have just finished reading does
+    // not vanish under the cursor a moment later.
+    const [peekHeld, setPeekHeld] = useState(false);
     const [placement, setPlacementState] = useState(() => readPlacement(prefix));
     const [chatSize, setChatSizeState] = useState(() => readSize(prefix));
     const [dockHeight, setDockHeightState] = useState(() => readDockHeight(prefix));
@@ -271,6 +289,8 @@ export function TeamChatProvider({ config, children, }) {
     soundEnabledRef.current = soundEnabled;
     const alertLevelRef = useRef(alertLevel);
     alertLevelRef.current = alertLevel;
+    const peekEnabledRef = useRef(peekEnabled);
+    peekEnabledRef.current = peekEnabled;
     const lastGeneralSoundRef = useRef(0);
     const typingMapRef = useRef(new Map());
     const lastTypingSentRef = useRef(0);
@@ -696,6 +716,10 @@ export function TeamChatProvider({ config, children, }) {
                 setSoundEnabledState(prefs.sound);
                 writeLocal(prefix, 'sound', prefs.sound ? null : '0');
             }
+            if (typeof prefs.peek === 'boolean') {
+                setPeekEnabledState(prefs.peek);
+                writeLocal(prefix, 'peek', prefs.peek ? null : '0');
+            }
             if (isAlertLevel(prefs.alerts)) {
                 setAlertLevelState(prefs.alerts);
                 writeLocal(prefix, 'alerts', prefs.alerts);
@@ -856,6 +880,32 @@ export function TeamChatProvider({ config, children, }) {
                                 level: alertLevelRef.current,
                                 onClick: () => selectThread(thread),
                             });
+                        }
+                        // And its complement: a card under the header pill for a
+                        // message that lands while you ARE looking at the app with
+                        // chat shut. The two are mutually exclusive by construction —
+                        // one wants the document focused, the other wants it not — so
+                        // nobody is ever told the same thing twice at once.
+                        //
+                        // `!viewingRef.current` is the "chat is shut" test, and it has
+                        // to be tested separately from the branch we are standing in:
+                        // reaching here only means you are not reading THIS thread, so
+                        // without it a DM would slide a card over the top of the open
+                        // panel that is already showing its unread pill.
+                        if (peekEnabledRef.current &&
+                            !viewingRef.current &&
+                            !anotherWindowOwnsSound() &&
+                            typeof document !== 'undefined' &&
+                            document.hasFocus()) {
+                            const text = (row.body ?? '').trim();
+                            setPeek((prev) => mergePeek(prev, {
+                                id: row.id,
+                                thread,
+                                sender: row.author_name ?? 'Someone',
+                                snippet: text.length > 0 ? text.slice(0, 140) : 'Sent an attachment',
+                                personal: isDm || mentioned,
+                                more: 0,
+                            }));
                         }
                     }
                     // Audio cue: a brighter chime for a DM or an @mention, else a
@@ -1266,6 +1316,18 @@ export function TeamChatProvider({ config, children, }) {
     }, [unread, personalUnread]);
     // Tearing the chat down must not leave a count stuck in the host's tab.
     useEffect(() => clearChatBadge, []);
+    // The peek's own clock. It lives here, not in ChatMenu, because ChatMenu
+    // renders on desktop widths only: a card raised on a phone would otherwise
+    // sit in state with nothing to time it out, and appear stale the moment the
+    // window was widened. Re-running on `peek` restarts the dwell for each new
+    // message, which is what makes a burst feel like one live card rather than
+    // the tail of the first one's.
+    useEffect(() => {
+        if (!peek || peekHeld)
+            return;
+        const timer = window.setTimeout(() => setPeek(null), peekDwell(peek));
+        return () => window.clearTimeout(timer);
+    }, [peek, peekHeld]);
     const value = {
         config: cfg,
         db,
@@ -1458,6 +1520,14 @@ export function TeamChatProvider({ config, children, }) {
         setDropdownPinned: (pinned) => {
             setDropdownPinnedState(pinned);
             persistPref({ pinned }, [['pinned', pinned ? '1' : null]]);
+        },
+        peek,
+        dismissPeek: () => setPeek(null),
+        holdPeek: setPeekHeld,
+        peekEnabled,
+        setPeekEnabled: (enabled) => {
+            setPeekEnabledState(enabled);
+            persistPref({ peek: enabled }, [['peek', enabled ? null : '0']]);
         },
         alertLevel,
         setAlertLevel: (level) => {

@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react';
 import { type ChatAlertLevel } from './desktopAlert.js';
+import { type ChatPeek } from './peek.js';
 import { type ChatAttachment, type ChatConfig, type ChatPlacement, type ChatSchemaClient, type ChatStatus, type ChatThread, type PresenceMember, type ReactionRow, type ResolvedChatConfig, type TeamMember, type TeamMessage } from './types.js';
 interface TeamChatValue {
     /** The host's settings after defaults. The panel reads `client` for
@@ -75,6 +76,18 @@ interface TeamChatValue {
      *  chat used to have. Persisted, and shared across the four apps. */
     alertLevel: ChatAlertLevel;
     setAlertLevel: (level: ChatAlertLevel) => void;
+    /** Whether a message glides out under the header pill while you are in the
+     *  app with chat shut. The complement of `alertLevel`, which only ever fires
+     *  when the app is NOT the window in front of you. */
+    peekEnabled: boolean;
+    setPeekEnabled: (enabled: boolean) => void;
+    /** The card showing right now, or null. Owned here rather than in ChatMenu
+     *  because the burst-merge rule needs to see a message the moment it lands,
+     *  which is here, not one render later. */
+    peek: ChatPeek | null;
+    dismissPeek: () => void;
+    /** Hold the card open while the pointer is on it. */
+    holdPeek: (hold: boolean) => void;
     /** Where the chat lives: 'floating' (header dropdown) or 'docked' (in the
      *  dashboard right rail). Only the dashboard renders the docked panel; the
      *  floating dropdown stays available everywhere. Persisted. */

@@ -11,6 +11,7 @@ import {
 import { useTeamChat } from './store'
 import TeamChatPanel from './TeamChatPanel'
 import { CHAT_DOCK_ID, type ChatLinkComponent } from './types'
+import { peekBody, peekTitle } from './peek'
 // Wide enough that the five thread pills (Team + four names, with an unread
 // badge or two) fit on one line out of the box.
 const MIN_W = 320
@@ -118,6 +119,11 @@ export default function ChatMenu({
     focusPopout,
     chatSize,
     setChatSize,
+    peek,
+    dismissPeek,
+    holdPeek,
+    alertLevel,
+    setActiveThread,
   } = useTeamChat()
   const prefix = config?.storagePrefix ?? 'plasma:chat'
   const fullPagePath = config?.fullPagePath ?? '/chat'
@@ -258,6 +264,12 @@ export default function ChatMenu({
     handle.addEventListener('pointercancel', onEnd)
   }
 
+  // Opening the panel answers the card, so retire it rather than leaving it in
+  // state to reappear for the tail of its dwell when the panel closes again.
+  useEffect(() => {
+    if (open) dismissPeek()
+  }, [open, dismissPeek])
+
   // Popped out counts as "chat is on" even though nothing is showing here.
   const current = open || active || poppedOut
   const hasUnread = unread > 0
@@ -369,6 +381,62 @@ export default function ChatMenu({
           </span>
         )}
       </button>
+
+      {peek && !open && !poppedOut && (
+        <div
+          className={[
+            'pd-chat__peek',
+            peek.personal ? 'pd-chat__peek--personal' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          // Announced politely rather than assertively: this arrives while
+          // someone is working, and a card about a room message has no
+          // business interrupting a screen reader mid-sentence.
+          role="status"
+          aria-live="polite"
+          onMouseEnter={() => holdPeek(true)}
+          onMouseLeave={() => holdPeek(false)}
+          // Keyboard focus holds it too, or tabbing to the card would be a
+          // race against its own dwell.
+          onFocus={() => holdPeek(true)}
+          onBlur={() => holdPeek(false)}
+        >
+          <button
+            type="button"
+            className="pd-chat__peek-open"
+            onClick={() => {
+              setActiveThread(peek.thread)
+              dismissPeek()
+              // The dock case cannot arrive here (a visible dock means the
+              // panel is mounted and reading, which is what stops the card
+              // being raised at all), but if it ever does, dropping the cursor
+              // into the composer is the right answer rather than opening a
+              // second copy of the panel over the top of it.
+              if (dockVisible) {
+                document
+                  .querySelector<HTMLTextAreaElement>(`#${CHAT_DOCK_ID} textarea`)
+                  ?.focus({ preventScroll: true })
+                return
+              }
+              setOpen(true)
+            }}
+          >
+            <span className="pd-chat__peek-who">{peekTitle(peek)}</span>
+            {peekBody(alertLevel, peek.snippet) && (
+              <span className="pd-chat__peek-what">{peekBody(alertLevel, peek.snippet)}</span>
+            )}
+          </button>
+          <button
+            type="button"
+            className="pd-chat__peek-dismiss"
+            aria-label="Dismiss"
+            onClick={dismissPeek}
+          >
+            <X size={13} aria-hidden="true" />
+          </button>
+        </div>
+      )}
 
       {open && !poppedOut && (
         <div

@@ -304,6 +304,11 @@ export interface ChatPrefs {
   /** How much an operating-system notification may say. Travels for the same
    *  reason muting does: it is a decision about you, not about one machine. */
   alerts?: ChatAlertLevel;
+  /** Whether a new message glides out under the header pill while you are
+   *  working in the app with chat shut. Separate from `alerts` because the two
+   *  cover different moments and a person can reasonably want one without the
+   *  other; the two share the preview-or-sender-only choice above. */
+  peek?: boolean;
   pinned?: boolean;
   placement?: ChatPlacement;
   thread?: ChatThread;

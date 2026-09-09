@@ -431,3 +431,109 @@
 @media (prefers-reduced-motion: reduce) {
   .pd-chat .pd-chat__pill--attention { animation: none; }
 }
+
+/* The message peek: a card that grows out from under the header pill when a
+   message lands while you are in the app with chat shut.
+
+   `transform-origin: top right` is what sells it. The pill sits immediately
+   above this card's right edge, so scaling up from that corner reads as the
+   button opening out rather than a panel arriving from somewhere off-screen —
+   the difference between a notification and an interruption. */
+@keyframes pd-chat-peek-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.pd-chat .pd-chat__peek {
+  position: absolute;
+  right: 0;
+  top: 2.75rem;
+  z-index: 40;
+  width: 17.5rem;
+  max-width: calc(100vw - 1rem);
+  display: flex;
+  align-items: flex-start;
+  gap: 0.25rem;
+  padding: 0.625rem 0.5rem 0.625rem 0.75rem;
+  border: 1px solid var(--pd-chat-line);
+  border-radius: 14px;
+  background-color: var(--pd-chat-surface);
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  text-align: left;
+  animation: pd-chat-peek-in 180ms cubic-bezier(.2, .8, .2, 1);
+  transform-origin: top right;
+}
+
+/* A message for you is worth more of the eye than room chatter, and it also
+   HOLDS for longer. The colour is what makes that difference read as a rule
+   rather than as a glitch: identical cards that linger for different times
+   look broken, where a coral card that lingers looks deliberate. */
+.pd-chat .pd-chat__peek--personal {
+  border-color: var(--pd-chat-brand);
+  box-shadow:
+    inset 3px 0 0 0 var(--pd-chat-brand),
+    0 10px 15px -3px rgb(0 0 0 / 0.1),
+    0 4px 6px -4px rgb(0 0 0 / 0.1);
+}
+
+.pd-chat .pd-chat__peek-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pd-chat .pd-chat__peek-who {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--pd-chat-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-chat .pd-chat__peek-what {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  margin-top: 0.125rem;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--pd-chat-ink-soft);
+}
+
+.pd-chat .pd-chat__peek-dismiss {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.25rem;
+  width: 1.25rem;
+  border-radius: 9999px;
+  color: var(--pd-chat-ink-mute);
+  transition: background-color 150ms, color 150ms;
+}
+.pd-chat .pd-chat__peek-dismiss:hover {
+  background-color: var(--pd-chat-canvas);
+  color: var(--pd-chat-ink);
+}
+
+/* Someone who has asked for less motion still gets the card, the colour and
+   the dwell; it simply arrives rather than grows. */
+@media (prefers-reduced-motion: reduce) {
+  .pd-chat .pd-chat__peek { animation: none; }
+}
+
+/* A hairline between the two halves of the notifications menu: what happens
+   when you are elsewhere, and what happens when you are here. */
+.pd-chat .pd-chat__menu-divider {
+  margin: 0.25rem 0;
+  border-top: 1px solid var(--pd-chat-line-soft);
+}
