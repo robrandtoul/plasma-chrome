@@ -211,8 +211,6 @@ export default function ChatMenu({
     }
   }, [open, dropdownPinned])
 
-  if (!isDesktop) return null
-
   // Any direct close also releases the pin, so a "kept open" panel can't linger
   // closed on this page yet reappear on the next.
   function close() {
@@ -266,9 +264,11 @@ export default function ChatMenu({
 
   // Opening the panel answers the card, so retire it rather than leaving it in
   // state to reappear for the tail of its dwell when the panel closes again.
+  // Desktop only, as it was when this sat below the early return: on a phone
+  // the menu draws nothing, so a pinned `open` there answers no card.
   useEffect(() => {
-    if (open) dismissPeek()
-  }, [open, dismissPeek])
+    if (open && isDesktop) dismissPeek()
+  }, [open, isDesktop, dismissPeek])
 
   // Popped out counts as "chat is on" even though nothing is showing here.
   const current = open || active || poppedOut
@@ -304,6 +304,13 @@ export default function ChatMenu({
       window.clearTimeout(done)
     }
   }, [personal])
+
+  // ⚠ After every hook, never above one. Rotating a phone from portrait to
+  // landscape crosses 768px, and an early return placed among the hooks made
+  // the landscape render call more hooks than the portrait one, which React
+  // refuses (error #310, "Rendered more hooks than during the previous
+  // render"): the whole page fell over on every app that mounts this menu.
+  if (!isDesktop) return null
 
   return (
     <div ref={ref} className="pd-chat pdc-relative">
