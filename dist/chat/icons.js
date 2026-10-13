@@ -40,5 +40,8 @@ export const Copy = icon('Copy', _jsxs(_Fragment, { children: [_jsx("rect", { wi
 export const ArrowUp = icon('ArrowUp', _jsxs(_Fragment, { children: [_jsx("path", { d: "m5 12 7-7 7 7" }), _jsx("path", { d: "M12 19V5" })] }));
 export const ChevronLeft = icon('ChevronLeft', _jsx("path", { d: "m15 18-6-6 6-6" }));
 export const ExternalLink = icon('ExternalLink', _jsxs(_Fragment, { children: [_jsx("path", { d: "M15 3h6v6" }), _jsx("path", { d: "M10 14 21 3" }), _jsx("path", { d: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" })] }));
+// Send later (1.14.0): the clock on the composer's "Send later" button and
+// on each scheduled message's row.
+export const Clock = icon('Clock', _jsxs(_Fragment, { children: [_jsx("circle", { cx: "12", cy: "12", r: "10" }), _jsx("polyline", { points: "12 6 12 12 16 14" })] }));
 export const PanelRightClose = icon('PanelRightClose', _jsxs(_Fragment, { children: [_jsx("rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }), _jsx("path", { d: "M15 3v18" }), _jsx("path", { d: "m8 9 3 3-3 3" })] }));
 //# sourceMappingURL=icons.js.map

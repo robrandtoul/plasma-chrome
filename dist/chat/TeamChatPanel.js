@@ -1,10 +1,11 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import { useEffect, useMemo, useRef, useState, } from 'react';
-import { ArrowUp, AtSign, Bell, Check, ChevronLeft, Copy, Download, FileIcon, FileText, MoreHorizontal, Paperclip, SearchIcon, Smile, Sparkle, Trash2, Users, Volume2, X, } from './icons.js';
+import { ArrowUp, AtSign, Bell, Check, ChevronLeft, Clock, Copy, Download, FileIcon, FileText, MoreHorizontal, Paperclip, SearchIcon, Smile, Sparkle, Trash2, Users, Volume2, X, } from './icons.js';
 import { useImageFileDrop } from './useFileDrop.js';
 import { playChatSound } from './sound.js';
 import { CHAT_ALERT_LEVELS, alertPermission, requestAlertPermission, } from './desktopAlert.js';
 import { useTeamChat } from './store.js';
+import { earliestSendAt, fromLocalInputValue, scheduleProblem, schedulePresets, scheduledForThread, sendAtLabel, toLocalInputValue, } from './later.js';
 import { attachmentsOf, authorBadgeColour, buildMessageSegments, dayKey, dayLabel, formatBytes, isGroupedWithPrevious, messageTime, } from './message.js';
 import { CHAT_BUCKET, CHAT_STATUS_META, } from './types.js';
 const EMOJI_CHOICES = ['👍', '❤️', '😂', '🎉', '👀', '✅', '🙏'];
@@ -320,7 +321,7 @@ function PanelMenu({ items, linkComponent: As, }) {
 // window. It reads everything from the TeamChatProvider, so every surface
 // stays in sync (including which thread is open). The parent sizes it.
 export default function TeamChatPanel({ variant, placementItems = [], headerAction, linkComponent, }) {
-    const { config, db, messages, loading, presence, members, send, remove, setViewing, typingUsers, notifyTyping, reactions, toggleReaction, activeThread, setActiveThread, threadUnread, loadEarlier, historyFor, } = useTeamChat();
+    const { config, db, messages, loading, presence, members, send, remove, scheduled, scheduledSupported, scheduleSend, cancelScheduled, sendScheduledNow, setViewing, typingUsers, notifyTyping, reactions, toggleReaction, activeThread, setActiveThread, threadUnread, loadEarlier, historyFor, } = useTeamChat();
     // Identity and capability come from the host through the store, not from an
     // auth module: each of the four apps has its own, with its own shape.
     const userId = config?.userId ?? null;
@@ -333,6 +334,27 @@ export default function TeamChatPanel({ variant, placementItems = [], headerActi
     const [attachments, setAttachments] = useState([]);
     const fileRef = useRef(null);
     const rootRef = useRef(null);
+    // Send later. `editing` is the waiting row whose words are in the composer
+    // (Edit on the strip); `carried` its already-uploaded files, drawn beside
+    // any newly staged ones and written onto whatever replaces the row. The row
+    // itself stays in the waiting room until Save, Send or Schedule replaces
+    // it, so abandoning the edit loses nothing.
+    const [editing, setEditing] = useState(null);
+    const [carried, setCarried] = useState([]);
+    const [laterOpen, setLaterOpen] = useState(false);
+    const [laterValue, setLaterValue] = useState('');
+    const [laterProblem, setLaterProblem] = useState(null);
+    const laterRef = useRef(null);
+    useCloseOnOutside(laterOpen, laterRef, () => setLaterOpen(false));
+    // The strip's rows re-label themselves ("Tomorrow at 09:00" becomes "Today
+    // at 09:00" overnight, then "Sending now"), so the panel keeps a clock.
+    const [clock, setClock] = useState(() => Date.now());
+    useEffect(() => {
+        if (scheduled.length === 0)
+            return;
+        const t = window.setInterval(() => setClock(Date.now()), 30000);
+        return () => window.clearInterval(t);
+    }, [scheduled.length]);
     // The page measures itself to pick its shape; the other variants are
     // always the one-column chips-over-thread layout.
     const [width, setWidth] = useState(0);
@@ -714,15 +736,10 @@ export default function TeamChatPanel({ variant, placementItems = [], headerActi
             /* no clipboard access — nothing to do */
         }
     }
-    async function handleSend() {
-        const text = draft.trim();
-        if ((!text && attachments.length === 0) || sending)
-            return;
-        if (!userId)
-            return;
-        setSending(true);
-        setError(null);
-        // Upload any staged files first; collect their storage keys + metadata.
+    // Upload the staged files and hand back their storage records, or an error.
+    // Shared by sending now and sending later: either way the files go up
+    // first, and a failure part-way removes what did go up.
+    async function uploadStaged() {
         const uploaded = [];
         for (const a of attachments) {
             const ext = extForFile(a.name, a.type);
@@ -734,45 +751,200 @@ export default function TeamChatPanel({ variant, placementItems = [], headerActi
                 if (uploaded.length > 0) {
                     await config.client.storage.from(CHAT_BUCKET).remove(uploaded.map((u) => u.path));
                 }
-                setSending(false);
-                setError(upErr.message || 'Could not upload a file. Please try again.');
-                return;
+                return { error: upErr.message || 'Could not upload a file. Please try again.' };
             }
             uploaded.push({ path, name: a.name, type: a.type, size: a.blob.size });
         }
-        // Push targets are computed from the text against known member names, so
-        // both picking from the list and typing "@Full Name" register a mention.
-        // DMs never carry mentions — the DM push already targets the recipient.
+        return { files: uploaded };
+    }
+    // Push targets are computed from the text against known member names, so
+    // both picking from the list and typing "@Full Name" register a mention.
+    // DMs never carry mentions — the DM push already targets the recipient.
+    function mentionedIdsIn(text) {
+        if (activeThread !== 'team')
+            return [];
         const lower = text.toLowerCase();
-        const mentionedIds = activeThread === 'team'
-            ? [
-                ...new Set(mentionCandidates
-                    .filter((m) => m.name && lower.includes('@' + m.name.toLowerCase()))
-                    .map((m) => m.id)),
-            ]
-            : [];
-        const res = await send(text, mentionedIds, uploaded);
-        setSending(false);
-        if (!res.ok) {
-            if (uploaded.length > 0) {
-                await config.client.storage.from(CHAT_BUCKET).remove(uploaded.map((u) => u.path));
-            }
-            setError(res.error || 'Could not send your message. Please try again.');
-            return;
-        }
+        return [
+            ...new Set(mentionCandidates
+                .filter((m) => m.name && lower.includes('@' + m.name.toLowerCase()))
+                .map((m) => m.id)),
+        ];
+    }
+    // Everything that follows a successful send or schedule: the composer is
+    // emptied and the thread returns to its latest message, even if you had
+    // scrolled up to re-read something before replying.
+    function clearComposer() {
         for (const a of attachments)
             URL.revokeObjectURL(a.url);
         setAttachments([]);
+        setCarried([]);
+        setEditing(null);
         setDraft('');
         setMentionQuery(null);
         setNewMarkerId(null);
-        // Sending always returns you to the latest message, even if you'd
-        // scrolled up to re-read something before replying.
+        setLaterOpen(false);
         stickToBottomRef.current = true;
         scrollPositionsRef.current.set(activeThread, 'bottom');
         const el = scrollRef.current;
         if (el)
             scrollToBottom(el);
+    }
+    // When the composer holds an edit, the row being edited is taken back
+    // first, keeping its files (the replacement carries them). `removed: false`
+    // means the cron sent it meanwhile: say so and stop, rather than send the
+    // same words twice.
+    async function retireEdited() {
+        if (!editing)
+            return true;
+        const res = await cancelScheduled(editing.id, { keepFiles: true });
+        if (!res.ok) {
+            setError(res.error || 'Could not change that message. Please try again.');
+            return false;
+        }
+        if (!res.removed) {
+            setError('That message has already been sent, so there is nothing left to change.');
+            setEditing(null);
+            setCarried([]);
+            return false;
+        }
+        return true;
+    }
+    // Files the edit dropped from a row it has now replaced: nothing names them
+    // any more, so they go. Best effort.
+    function removeDroppedCarried(from) {
+        const kept = new Set(carried.map((c) => c.path));
+        const dropped = (from.attachment_files ?? []).filter((f) => !kept.has(f.path)).map((f) => f.path);
+        if (dropped.length > 0)
+            void config.client.storage.from(CHAT_BUCKET).remove(dropped);
+    }
+    async function handleSend() {
+        const text = draft.trim();
+        if ((!text && attachments.length === 0 && carried.length === 0) || sending)
+            return;
+        if (!userId)
+            return;
+        setSending(true);
+        setError(null);
+        const up = await uploadStaged();
+        if ('error' in up) {
+            setSending(false);
+            setError(up.error);
+            return;
+        }
+        const files = [...carried, ...up.files];
+        const edited = editing;
+        if (!(await retireEdited())) {
+            setSending(false);
+            if (up.files.length > 0)
+                await config.client.storage.from(CHAT_BUCKET).remove(up.files.map((u) => u.path));
+            return;
+        }
+        const res = await send(text, mentionedIdsIn(text), files);
+        setSending(false);
+        if (!res.ok) {
+            if (up.files.length > 0) {
+                await config.client.storage.from(CHAT_BUCKET).remove(up.files.map((u) => u.path));
+            }
+            setError(res.error || 'Could not send your message. Please try again.');
+            return;
+        }
+        if (edited)
+            removeDroppedCarried(edited);
+        clearComposer();
+    }
+    async function handleSchedule(at) {
+        const text = draft.trim();
+        if ((!text && attachments.length === 0 && carried.length === 0) || sending)
+            return;
+        if (!userId)
+            return;
+        const problem = scheduleProblem(at);
+        if (problem) {
+            setLaterProblem(problem);
+            return;
+        }
+        setSending(true);
+        setError(null);
+        setLaterProblem(null);
+        const up = await uploadStaged();
+        if ('error' in up) {
+            setSending(false);
+            setError(up.error);
+            return;
+        }
+        const files = [...carried, ...up.files];
+        const edited = editing;
+        if (!(await retireEdited())) {
+            setSending(false);
+            if (up.files.length > 0)
+                await config.client.storage.from(CHAT_BUCKET).remove(up.files.map((u) => u.path));
+            return;
+        }
+        const res = await scheduleSend(text, mentionedIdsIn(text), files, at);
+        setSending(false);
+        if (!res.ok) {
+            if (up.files.length > 0) {
+                await config.client.storage.from(CHAT_BUCKET).remove(up.files.map((u) => u.path));
+            }
+            setError(res.error || 'Could not schedule your message. Please try again.');
+            return;
+        }
+        if (edited)
+            removeDroppedCarried(edited);
+        clearComposer();
+    }
+    // Open the time picker, seeded with the row's own time when editing, else
+    // the first preset, so the custom field never opens empty.
+    function openLater() {
+        const seed = editing ? new Date(editing.send_at) : schedulePresets()[0].at;
+        setLaterValue(toLocalInputValue(seed.getTime() < earliestSendAt().getTime() ? earliestSendAt() : seed));
+        setLaterProblem(null);
+        setLaterOpen((v) => !v);
+    }
+    // Edit: the row's words into the composer, its files carried, and the
+    // conversation switched to the row's own. The row stays put until the
+    // edit is saved as something.
+    function startEdit(row) {
+        const thread = row.recipient_id ?? 'team';
+        if (thread !== activeThread)
+            openThread(thread);
+        for (const a of attachments)
+            URL.revokeObjectURL(a.url);
+        setAttachments([]);
+        setCarried(row.attachment_files ?? []);
+        setEditing(row);
+        setDraft(row.body);
+        setError(null);
+        setLaterOpen(false);
+        requestAnimationFrame(() => {
+            const el = textareaRef.current;
+            if (!el)
+                return;
+            el.focus();
+            el.setSelectionRange(el.value.length, el.value.length);
+        });
+    }
+    function cancelEdit() {
+        setEditing(null);
+        setCarried([]);
+        setDraft('');
+        setError(null);
+    }
+    async function onSendNow(row) {
+        setError(null);
+        if (editing?.id === row.id)
+            cancelEdit();
+        const res = await sendScheduledNow(row.id);
+        if (!res.ok)
+            setError(res.error || 'Could not send it. It is still waiting.');
+    }
+    async function onCancelScheduled(row) {
+        setError(null);
+        if (editing?.id === row.id)
+            cancelEdit();
+        const res = await cancelScheduled(row.id);
+        if (!res.ok)
+            setError(res.error || 'Could not cancel it. Please try again.');
     }
     function onKeyDown(e) {
         if (mentionQuery !== null && filtered.length > 0) {
@@ -799,7 +971,10 @@ export default function TeamChatPanel({ variant, placementItems = [], headerActi
         }
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            void handleSend();
+            if (editing)
+                void handleSchedule(new Date(editing.send_at));
+            else
+                void handleSend();
         }
     }
     function openThread(thread) {
@@ -885,6 +1060,27 @@ export default function TeamChatPanel({ variant, placementItems = [], headerActi
                         const authorColour = author?.colour ?? m.author_colour;
                         return (_jsxs("li", { children: [showDay && (_jsxs("div", { className: "pd-chat__divider", children: [_jsx("span", { className: "pd-chat__divider-rule" }), _jsx("span", { className: "pdc-t-label pdc-text-ink-mute", children: dayLabel(m.created_at) }), _jsx("span", { className: "pd-chat__divider-rule" })] })), showNew && (_jsxs("div", { className: "pd-chat__divider pd-chat__divider--new", role: "separator", "aria-label": "New messages", children: [_jsx("span", { className: "pd-chat__divider-rule" }), _jsx("span", { className: "pdc-t-label", children: "New" }), _jsx("span", { className: "pd-chat__divider-rule" })] })), _jsx(MessageRow, { message: m, grouped: grouped, mine: mine, canDelete: canDelete, canMention: !mine && activeThread === 'team' && !!m.author_name, authorIsBot: authorIsBot, authorAvatar: author?.avatarUrl ?? null, authorColour: authorColour, reactions: msgReactions, memberNames: memberNames, onReact: (emoji) => toggleReaction(m.id, emoji), onMention: () => mentionAuthor(m), onCopy: () => void copyText(m), onDelete: () => void remove(m.id) })] }, m.id));
                     }) }), botTyping && (_jsxs("div", { className: "pd-chat__thinking", "aria-live": "polite", children: [_jsx(BotAvatar, { size: "md" }), _jsxs("span", { className: "pd-chat__thinking-dots", "aria-hidden": "true", children: [_jsx("span", {}), _jsx("span", {}), _jsx("span", {})] }), firstName(bot?.name), " is looking\u2026"] }))] })) }));
+    const nothingToSend = !draft.trim() && attachments.length === 0 && carried.length === 0;
+    // The banner over an edit names the time the row still holds. Once that
+    // time has come the cron is about to take it, and the banner says so.
+    const editingLine = (() => {
+        if (!editing)
+            return '';
+        const when = sendAtLabel(editing.send_at, new Date(clock));
+        if (when === 'Sending now')
+            return 'Editing a message that is about to be sent';
+        return `Editing a message scheduled for ${when.replace(/^(Today|Tomorrow)/, (w) => w.toLowerCase())}`;
+    })();
+    // The waiting messages for the conversation on screen, as a strip between
+    // the thread and the composer: each with its time, its words, and Send now
+    // / Edit / Cancel. Drawn only once there is something waiting, so a thread
+    // with nothing scheduled looks exactly as it did.
+    const waiting = scheduledSupported ? scheduledForThread(scheduled, activeThread) : [];
+    const scheduledStrip = waiting.length > 0 && (_jsxs("div", { className: ['pd-chat__scheduled', pageWide ? 'pd-chat__scheduled--page' : ''].filter(Boolean).join(' '), "aria-label": "Scheduled messages", children: [_jsx("div", { className: "pd-chat__scheduled-head", children: _jsxs("span", { className: "pdc-t-label pdc-text-ink-mute", children: ["Scheduled \u00B7 ", waiting.length] }) }), _jsx("ul", { className: "pd-chat__scheduled-list", children: waiting.map((row) => {
+                    const files = row.attachment_files ?? [];
+                    const isEditing = editing?.id === row.id;
+                    return (_jsxs("li", { className: ['pd-chat__scheduled-row', isEditing ? 'pd-chat__scheduled-row--editing' : ''].filter(Boolean).join(' '), children: [_jsx(Clock, { size: 14, "aria-hidden": "true", className: "pd-chat__scheduled-glyph" }), _jsxs("span", { className: "pd-chat__scheduled-text", children: [_jsx("span", { className: "pd-chat__scheduled-when", children: sendAtLabel(row.send_at, new Date(clock)) }), _jsxs("span", { className: "pd-chat__scheduled-body", children: [row.body.trim() || (files.length === 1 ? 'Sends an attachment' : `Sends ${files.length} attachments`), row.body.trim() && files.length > 0 ? ` · ${files.length === 1 ? '1 file' : `${files.length} files`}` : ''] })] }), _jsxs("span", { className: "pd-chat__scheduled-actions", children: [_jsx("button", { type: "button", onClick: () => void onSendNow(row), disabled: sending, "aria-label": "Send now", className: "pd-chat__scheduled-act", children: "Send now" }), _jsx("button", { type: "button", onClick: () => startEdit(row), disabled: sending || isEditing, "aria-label": "Edit scheduled message", className: "pd-chat__scheduled-act", children: "Edit" }), _jsx("button", { type: "button", onClick: () => void onCancelScheduled(row), disabled: sending, "aria-label": "Cancel scheduled message", className: "pd-chat__scheduled-act pd-chat__scheduled-act--cancel", children: "Cancel" })] })] }, row.id));
+                }) })] }));
     const composer = (_jsxs("div", { ...zoneProps, className: [
             'pd-chat__composer',
             pageWide ? 'pd-chat__composer--page' : '',
@@ -896,19 +1092,34 @@ export default function TeamChatPanel({ variant, placementItems = [], headerActi
                     onMouseDown: (e) => {
                         e.preventDefault();
                         selectMention(m);
-                    }, onMouseEnter: () => setMentionIndex(i), className: ['pd-chat__mention-row', i === mentionIndex ? 'pd-chat__mention-row--on' : ''].filter(Boolean).join(' '), children: [m.isBot ? (_jsx(BotAvatar, { size: "sm" })) : (_jsx(PersonAvatar, { size: "sm", initials: m.initials, colour: m.colour, avatarUrl: m.avatarUrl })), _jsx("span", { className: "pdc-font-medium", children: m.name ?? 'Someone' }), m.isBot && _jsx(BotTag, {})] }, m.id))) })), attachments.length > 0 && (_jsx("div", { className: "pd-chat__staged", children: attachments.map((a) => {
-                    const Icon = fileKindIcon(a.name, a.type);
-                    const meta = [kindLabel(a.name, a.type), formatBytes(a.blob.size)].filter(Boolean).join(' · ');
-                    return (_jsxs("div", { className: ['pd-chat__staged-item', isImageType(a.type) ? 'pd-chat__staged-item--image' : 'pd-chat__staged-item--file'].join(' '), children: [isImageType(a.type) ? (_jsx("img", { src: a.url, alt: "" })) : (_jsxs(_Fragment, { children: [_jsx(Icon, { size: 18, "aria-hidden": "true", className: "pdc-text-ink-mute" }), _jsxs("span", { className: "pd-chat__file-text", children: [_jsx("span", { className: "pd-chat__file-name", children: a.name }), meta && _jsx("span", { className: "pd-chat__file-meta", children: meta })] })] })), _jsx("button", { type: "button", onClick: () => removeAttachment(a.id), "aria-label": "Remove attachment", className: "pd-chat__staged-remove", children: _jsx(X, { size: 11, "aria-hidden": "true" }) })] }, a.id));
-                }) })), error && (_jsx("p", { role: "alert", className: "pd-chat__error", children: error })), _jsx("div", { className: "pd-chat__typing", "aria-live": "polite", children: peopleTyping.length > 0 ? typingLabel(peopleTyping) : '' }), _jsxs("div", { className: "pd-chat__field", children: [_jsx("textarea", { ref: textareaRef, value: draft, onChange: onDraftChange, onKeyDown: onKeyDown, onPaste: handlePaste, rows: 1, placeholder: activePeer?.isBot
+                    }, onMouseEnter: () => setMentionIndex(i), className: ['pd-chat__mention-row', i === mentionIndex ? 'pd-chat__mention-row--on' : ''].filter(Boolean).join(' '), children: [m.isBot ? (_jsx(BotAvatar, { size: "sm" })) : (_jsx(PersonAvatar, { size: "sm", initials: m.initials, colour: m.colour, avatarUrl: m.avatarUrl })), _jsx("span", { className: "pdc-font-medium", children: m.name ?? 'Someone' }), m.isBot && _jsx(BotTag, {})] }, m.id))) })), editing && (_jsxs("div", { className: "pd-chat__editing", role: "status", children: [_jsx(Clock, { size: 13, "aria-hidden": "true" }), _jsx("span", { className: "pd-chat__editing-text", children: editingLine }), _jsx("button", { type: "button", onClick: cancelEdit, className: "pd-chat__editing-cancel", children: "Keep it as it was" })] })), (attachments.length > 0 || carried.length > 0) && (_jsxs("div", { className: "pd-chat__staged", children: [carried.map((c) => {
+                        const Icon = fileKindIcon(c.name, c.type);
+                        const meta = [kindLabel(c.name, c.type), formatBytes(c.size)].filter(Boolean).join(' · ');
+                        return (_jsxs("div", { className: "pd-chat__staged-item pd-chat__staged-item--file", children: [_jsx(Icon, { size: 18, "aria-hidden": "true", className: "pdc-text-ink-mute" }), _jsxs("span", { className: "pd-chat__file-text", children: [_jsx("span", { className: "pd-chat__file-name", children: c.name }), meta && _jsx("span", { className: "pd-chat__file-meta", children: meta })] }), _jsx("button", { type: "button", onClick: () => setCarried((prev) => prev.filter((x) => x.path !== c.path)), "aria-label": "Remove attachment", className: "pd-chat__staged-remove", children: _jsx(X, { size: 11, "aria-hidden": "true" }) })] }, c.path));
+                    }), attachments.map((a) => {
+                        const Icon = fileKindIcon(a.name, a.type);
+                        const meta = [kindLabel(a.name, a.type), formatBytes(a.blob.size)].filter(Boolean).join(' · ');
+                        return (_jsxs("div", { className: ['pd-chat__staged-item', isImageType(a.type) ? 'pd-chat__staged-item--image' : 'pd-chat__staged-item--file'].join(' '), children: [isImageType(a.type) ? (_jsx("img", { src: a.url, alt: "" })) : (_jsxs(_Fragment, { children: [_jsx(Icon, { size: 18, "aria-hidden": "true", className: "pdc-text-ink-mute" }), _jsxs("span", { className: "pd-chat__file-text", children: [_jsx("span", { className: "pd-chat__file-name", children: a.name }), meta && _jsx("span", { className: "pd-chat__file-meta", children: meta })] })] })), _jsx("button", { type: "button", onClick: () => removeAttachment(a.id), "aria-label": "Remove attachment", className: "pd-chat__staged-remove", children: _jsx(X, { size: 11, "aria-hidden": "true" }) })] }, a.id));
+                    })] })), error && (_jsx("p", { role: "alert", className: "pd-chat__error", children: error })), _jsx("div", { className: "pd-chat__typing", "aria-live": "polite", children: peopleTyping.length > 0 ? typingLabel(peopleTyping) : '' }), _jsxs("div", { className: "pd-chat__field", children: [_jsx("textarea", { ref: textareaRef, value: draft, onChange: onDraftChange, onKeyDown: onKeyDown, onPaste: handlePaste, rows: 1, placeholder: activePeer?.isBot
                             ? `Ask ${firstName(activePeer.name)}`
                             : activePeer
                                 ? `Message ${firstName(activePeer.name)}`
-                                : 'Message the team', "aria-label": activePeer ? `Message ${firstName(activePeer.name)}` : 'Message the team', className: "pd-chat__composer-input" }), _jsx("button", { type: "button", onClick: () => fileRef.current?.click(), disabled: attachments.length >= MAX_ATTACHMENTS, "aria-label": "Attach a file", title: "Attach a file", className: "pd-chat__ib", children: _jsx(Paperclip, { size: 16, "aria-hidden": "true" }) }), _jsx("button", { type: "button", onClick: () => void handleSend(), disabled: (!draft.trim() && attachments.length === 0) || sending, "aria-label": "Send message", title: "Send (Enter)", className: "pd-chat__send", children: _jsx(ArrowUp, { size: 16, "aria-hidden": "true" }) })] }), _jsx("input", { ref: fileRef, type: "file", multiple: true, className: "pdc-sr-only", tabIndex: -1, "aria-hidden": true, onChange: (e) => {
+                                : 'Message the team', "aria-label": activePeer ? `Message ${firstName(activePeer.name)}` : 'Message the team', className: "pd-chat__composer-input" }), _jsx("button", { type: "button", onClick: () => fileRef.current?.click(), disabled: attachments.length >= MAX_ATTACHMENTS, "aria-label": "Attach a file", title: "Attach a file", className: "pd-chat__ib", children: _jsx(Paperclip, { size: 16, "aria-hidden": "true" }) }), scheduledSupported && (_jsxs("div", { ref: laterRef, className: "pd-chat__later-wrap", children: [_jsx("button", { type: "button", onClick: openLater, disabled: nothingToSend || sending, "aria-haspopup": "dialog", "aria-expanded": laterOpen, "aria-label": "Send later", title: "Send later", className: "pd-chat__ib", children: _jsx(Clock, { size: 16, "aria-hidden": "true" }) }), laterOpen && (_jsxs("div", { role: "dialog", "aria-label": "Send later", className: "pd-chat__later", children: [_jsx("div", { className: "pd-chat__later-heading", children: editing ? 'Send it instead' : 'Send this' }), schedulePresets(new Date(clock)).map((preset) => (_jsxs("button", { type: "button", onClick: () => void handleSchedule(preset.at), className: "pd-chat__later-preset", children: [_jsx("span", { children: preset.label }), _jsx("span", { className: "pd-chat__later-time", children: sendAtLabel(preset.at, new Date(clock)) })] }, preset.key))), _jsx("div", { className: "pd-chat__later-divider" }), _jsxs("label", { className: "pd-chat__later-custom", children: [_jsx("span", { className: "pd-chat__later-custom-label", children: "Or pick a time" }), _jsx("input", { type: "datetime-local", value: laterValue, min: toLocalInputValue(earliestSendAt(new Date(clock))), onChange: (e) => {
+                                                    setLaterValue(e.target.value);
+                                                    setLaterProblem(null);
+                                                }, className: "pd-chat__later-input" })] }), laterProblem && _jsx("p", { className: "pd-chat__later-problem", children: laterProblem }), _jsx("button", { type: "button", onClick: () => {
+                                            const at = fromLocalInputValue(laterValue);
+                                            const problem = scheduleProblem(at, new Date(clock));
+                                            if (problem || !at) {
+                                                setLaterProblem(problem ?? 'Pick a time to send it.');
+                                                return;
+                                            }
+                                            void handleSchedule(at);
+                                        }, disabled: sending, className: "pd-chat__later-go", children: editing ? 'Save for then' : 'Schedule' })] }))] })), editing ? (_jsx("button", { type: "button", onClick: () => void handleSchedule(new Date(editing.send_at)), disabled: nothingToSend || sending, "aria-label": "Save changes", title: "Save (Enter)", className: "pd-chat__send", children: _jsx(Check, { size: 16, "aria-hidden": "true" }) })) : (_jsx("button", { type: "button", onClick: () => void handleSend(), disabled: nothingToSend || sending, "aria-label": "Send message", title: "Send (Enter)", className: "pd-chat__send", children: _jsx(ArrowUp, { size: 16, "aria-hidden": "true" }) }))] }), _jsx("input", { ref: fileRef, type: "file", multiple: true, className: "pdc-sr-only", tabIndex: -1, "aria-hidden": true, onChange: (e) => {
                     addFiles(Array.from(e.target.files ?? []));
                     e.target.value = '';
                 } })] }));
-    const thread = (_jsxs("div", { className: "pd-chat__thread", children: [header, !pageWide && !pagePhone && chips, searchRow, list, composer] }));
+    const thread = (_jsxs("div", { className: "pd-chat__thread", children: [header, !pageWide && !pagePhone && chips, searchRow, list, scheduledStrip, composer] }));
     return (
     /* `pd-chat` is the scope every rule in chat.css hangs off, so it has to be
        on the outermost node the panel renders or nothing below it is styled.

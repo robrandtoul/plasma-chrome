@@ -185,6 +185,24 @@ export interface TeamMessage {
     attachment_files?: ChatAttachment[] | null;
     created_at: string;
 }
+/** A message written now and sent later: a row of proofs.team_scheduled_messages
+ *  (migration 20261013170000). It waits there, readable and cancellable only by
+ *  its author, until the every-minute cron moves it into team_messages at
+ *  `send_at`, from which moment it is an ordinary TeamMessage (same triggers,
+ *  same push, same realtime arrival). The attachments are already uploaded. */
+export interface ScheduledMessage {
+    id: string;
+    author_id: string;
+    /** NULL = the shared room; set = a DM to that person. */
+    recipient_id: string | null;
+    body: string;
+    mentioned_user_ids: string[] | null;
+    attachment_paths: string[] | null;
+    attachment_files: ChatAttachment[] | null;
+    /** ISO. The real send lands within the minute after it. */
+    send_at: string;
+    created_at: string;
+}
 /** A colleague as presence sees them right now. Live-only, never stored. */
 export interface PresenceMember {
     userId: string;

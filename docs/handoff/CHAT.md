@@ -290,6 +290,57 @@ live and is not a cause.
 
 ---
 
+## Send later (1.14.0)
+
+Rob, 13 October 2026: "Can we add the ability to send a timed message. Send
+later?" A message written now and delivered at a chosen time, in the room or
+a DM, from any of the four apps.
+
+**On screen.** A clock in the composer's field, beside the clip, opens a
+small card above it: the quick choices (in an hour; this afternoon while it
+is still an hour away; tomorrow morning; Monday morning when that is neither
+tomorrow nor a week off) and a time of your own. The earliest is the next
+whole minute at least a minute away, the latest a year. A waiting message
+sits in a strip between the thread and the composer (only once there is
+one, so a thread with nothing scheduled looks exactly as it did), with its
+time ("Tomorrow at 09:00", then "Sending now" once due), its words, and
+**Send now / Edit / Cancel**. Edit puts the words back in the composer with
+the files carried, ringed on the strip and named in a banner over the field;
+the row stays where it is until Save (Enter, or the tick where send was),
+Send or a new time replaces it, so abandoning an edit loses nothing. The
+labels re-read themselves on a 30-second clock, so "Tomorrow" becomes
+"Today" overnight without a reload.
+
+**Underneath.** The waiting room is `proofs.team_scheduled_messages`
+(migration `20261013170000`, proof-viewer): a row is readable, cancellable
+and nothing else by its author, behind the staff gate, and an every-minute
+pg_cron job (`proofs-send-scheduled-messages`, plain SQL, no HTTP) moves
+every due row into `team_messages`. The reasons it is a table of its own
+rather than a future-dated message, in the migration's header: everything
+that happens when a message lands hangs off the INSERT into `team_messages`
+(the author stamp, the DM and mention pushes, Claude's answer, the realtime
+arrival every open panel listens for), so a row written early with a "not
+yet" flag would fire all of them early. Delivery and cancellation are both
+`DELETE … RETURNING`, so whoever deletes the row first owns it and "Send
+now" cannot race the cron into two copies. A delivered row leaves the strip
+the moment it goes: the author's own message arriving by realtime, while
+something of theirs is due, triggers a re-read, and a timer at the soonest
+`send_at` (then every 15 s while anything is overdue) covers a dead socket.
+
+The store gained `scheduled`, `scheduledSupported`, `scheduleSend`,
+`cancelScheduled` (its `removed: false` means the cron got there first,
+which the panel reads as "sent", never as a failure) and `sendScheduledNow`,
+and its one insert is now `postMessage`, shared by `send` and the send-now
+path, which posts on the row's own recipient rather than the thread on
+screen. `scheduledSupported` goes false when the database answers that the
+table does not exist (42P01 / PGRST205), so a host on a database without the
+migration shows no clock and no strip rather than offering a time it cannot
+keep. The pure rules (presets, the earliest minute, the labels, the
+`datetime-local` conversions) are `src/chat/later.ts`, exported for a host
+to test.
+
+---
+
 ## The contract
 
 Everything host-specific arrives through `ChatConfig`. `src/chat/types.ts` is authoritative.
@@ -341,10 +392,11 @@ To theme it, set the overrides anywhere above the panel:
 
 ## What the database needs
 
-Two migrations, both in the proof-viewer repo:
+Three migrations, all in the proof-viewer repo:
 
 - `20260904130639_staff_gate_team_chat.sql` — **apply this first, and independently of everything else.** The room's SELECT policy had no staff gate, so any of the 8 non-staff accounts on the project could read all 60 room messages and post into the room. That was survivable only while no customer-facing bundle contained chat code, which this change ends.
 - `20260904130708_team_chat_prefs.sql` — adds the preference column described above.
+- `20261013170000_team_chat_send_later.sql` — the waiting room, its delivery function and the every-minute cron (1.14.0). Without it the chat still works; the clock and the strip simply do not appear.
 
 ---
 

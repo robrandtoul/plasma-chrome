@@ -7,6 +7,7 @@ export { reopenKey } from './ChatMenu.js';
 export { mergePeek, peekDwell, peekBody, peekTitle, PEEK_DWELL_PERSONAL_MS, PEEK_DWELL_ROOM_MS, type ChatPeek, } from './peek.js';
 export { CHAT_ALERT_LEVELS, DEFAULT_ALERT_LEVEL, alertsSupported, alertPermission, requestAlertPermission, isAlertLevel, type ChatAlertLevel, } from './desktopAlert.js';
 export { attachmentsOf, authorBadgeColour, buildMessageSegments, dayKey, dayLabel, designerTint, formatBytes, isGroupedWithPrevious, messageTime, splitLinkifiedText, type MessageSegment, } from './message.js';
+export { MIN_LEAD_MS, MAX_LEAD_MS, earliestSendAt, scheduleProblem, schedulePresets, sendAtLabel, scheduledThread, scheduledForThread, earliestDue, toLocalInputValue, fromLocalInputValue, type SchedulePreset, } from './later.js';
 export { DESIGNER_COLOURS, designerColourCss, designerColourLabel, isDesignerColour, type DesignerColour, } from './colours.js';
-export { CHAT_BUCKET, CHAT_CHANNEL, CHAT_DOCK_ID, CHAT_SCHEMA, CHAT_STATUS_META, resolveChatConfig, type ChatAttachment, type ChatConfig, type ChatLinkComponent, type ChatPlacement, type ChatPrefs, type ChatStatus, type ChatThread, type PresenceMember, type ReactionRow, type ResolvedChatConfig, type TeamMember, type TeamMessage, } from './types.js';
+export { CHAT_BUCKET, CHAT_CHANNEL, CHAT_DOCK_ID, CHAT_SCHEMA, CHAT_STATUS_META, resolveChatConfig, type ChatAttachment, type ChatConfig, type ChatLinkComponent, type ChatPlacement, type ChatPrefs, type ChatStatus, type ChatThread, type PresenceMember, type ReactionRow, type ResolvedChatConfig, type ScheduledMessage, type TeamMember, type TeamMessage, } from './types.js';
 //# sourceMappingURL=index.d.ts.map

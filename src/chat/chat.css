@@ -588,6 +588,96 @@
   font-size: 12px; line-height: 17px;
 }
 
+/* ── Send later (1.14.0) ─────────────────────────────────────
+   The clock in the field opens a small card above it: the quick
+   choices, then a time of your own. A waiting message sits in a
+   strip between the thread and the composer, with its time, its
+   words and Send now / Edit / Cancel; a row being edited is ringed
+   in ink and a banner over the field says which. */
+.pd-chat .pd-chat__later-wrap { position: relative; flex: 0 0 auto; }
+.pd-chat .pd-chat__later {
+  position: absolute; right: 0; bottom: calc(100% + 14px); z-index: 20;
+  width: min(300px, calc(100vw - 32px));
+  padding: 6px;
+  border: 1px solid var(--pd-chat-line); border-radius: 14px;
+  background: var(--pd-chat-surface);
+  box-shadow: 0 12px 28px rgba(22,19,17,.12);
+  text-align: left;
+}
+.pd-chat .pd-chat__later-heading { padding: 8px 10px 4px; font-family: var(--pd-chat-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--pd-chat-ink-mute); }
+.pd-chat .pd-chat__later-preset {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%;
+  height: 36px; padding: 0 10px; border-radius: 8px;
+  font-size: 13.5px; color: var(--pd-chat-ink); text-align: left;
+}
+.pd-chat .pd-chat__later-preset:hover { background: var(--pd-chat-line-soft); }
+.pd-chat .pd-chat__later-time { font-family: var(--pd-chat-mono); font-size: 11px; color: var(--pd-chat-ink-mute); white-space: nowrap; }
+.pd-chat .pd-chat__later-divider { margin: 6px 8px; border-top: 1px solid var(--pd-chat-line-soft); }
+.pd-chat .pd-chat__later-custom { display: flex; flex-direction: column; gap: 6px; padding: 2px 10px 8px; }
+.pd-chat .pd-chat__later-custom-label { font-size: 12px; color: var(--pd-chat-ink-mute); }
+.pd-chat .pd-chat__later-input {
+  height: 36px; padding: 0 10px;
+  border: 1px solid var(--pd-chat-line-strong); border-radius: 10px;
+  background: var(--pd-chat-surface); color: var(--pd-chat-ink);
+  font: inherit; font-size: 13.5px;
+}
+.pd-chat .pd-chat__later-input:focus-visible {
+  outline: 0; border-color: var(--pd-chat-ink);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-chat-ink) 8%, transparent);
+}
+.pd-chat .pd-chat__later-problem { margin: 0 10px 8px; font-size: 12px; line-height: 16px; color: var(--pd-chat-out); }
+.pd-chat .pd-chat__later-go {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: calc(100% - 20px); height: 36px; margin: 0 10px 4px;
+  border-radius: 9999px;
+  background: var(--pd-chat-ink); color: var(--pd-chat-on-ink);
+  font-size: 13.5px; font-weight: 500;
+  transition: background-color 150ms, opacity 150ms;
+}
+.pd-chat .pd-chat__later-go:hover { background: var(--pd-chat-ink-soft); }
+.pd-chat .pd-chat__later-go:disabled { opacity: 0.35; }
+
+.pd-chat .pd-chat__editing {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 4px 8px; padding: 6px 12px; border-radius: 8px;
+  background: var(--pd-chat-line-soft); color: var(--pd-chat-ink-soft);
+  font-size: 12px; line-height: 17px;
+}
+.pd-chat .pd-chat__editing > svg { color: var(--pd-chat-ink-mute); flex: 0 0 auto; }
+.pd-chat .pd-chat__editing-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-chat .pd-chat__editing-cancel { flex: 0 0 auto; color: var(--pd-chat-ink); font-weight: 500; text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+
+.pd-chat .pd-chat__scheduled { flex: 0 0 auto; padding: 8px 12px 0; border-top: 1px solid var(--pd-chat-line-soft); }
+.pd-chat .pd-chat__scheduled--page { padding: 8px 24px 0; }
+.pd-chat .pd-chat__scheduled-head { padding: 0 4px 6px; }
+.pd-chat .pd-chat__scheduled-list { display: flex; flex-direction: column; gap: 4px; max-height: 148px; overflow-y: auto; }
+.pd-chat .pd-chat__scheduled-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 6px 6px 10px;
+  border: 1px solid var(--pd-chat-line); border-radius: 10px;
+  background: var(--pd-chat-canvas);
+}
+.pd-chat .pd-chat__scheduled-row--editing { border-color: var(--pd-chat-ink); }
+.pd-chat .pd-chat__scheduled-glyph { color: var(--pd-chat-ink-mute); flex: 0 0 auto; }
+.pd-chat .pd-chat__scheduled-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.pd-chat .pd-chat__scheduled-when { font-family: var(--pd-chat-mono); font-size: 11px; line-height: 15px; color: var(--pd-chat-ink); }
+.pd-chat .pd-chat__scheduled-body { font-size: 12.5px; line-height: 17px; color: var(--pd-chat-ink-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pd-chat .pd-chat__scheduled-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.pd-chat .pd-chat__scheduled-act {
+  height: 26px; padding: 0 8px; border-radius: 9999px;
+  font-size: 12px; font-weight: 500; color: var(--pd-chat-ink-soft);
+  white-space: nowrap;
+  transition: background-color 150ms, color 150ms;
+}
+.pd-chat .pd-chat__scheduled-act:hover { background: var(--pd-chat-line-soft); color: var(--pd-chat-ink); }
+.pd-chat .pd-chat__scheduled-act:disabled { opacity: 0.4; }
+.pd-chat .pd-chat__scheduled-act--cancel:hover { background: var(--pd-chat-out-soft); color: var(--pd-chat-out); }
+/* On a phone the actions drop under the words so three of them fit. */
+@media (max-width: 419.98px) {
+  .pd-chat .pd-chat__scheduled-row { flex-wrap: wrap; }
+  .pd-chat .pd-chat__scheduled-actions { width: 100%; justify-content: flex-end; }
+}
+
 /* The @mention picker, above the field. */
 .pd-chat .pd-chat__mentions {
   position: absolute; left: 12px; right: 12px; bottom: 100%; z-index: 10;

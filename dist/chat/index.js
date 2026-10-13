@@ -56,6 +56,9 @@ export { CHAT_ALERT_LEVELS, DEFAULT_ALERT_LEVEL, alertsSupported, alertPermissio
 /* Pure helpers, exported because a host may want to render a message the same
    way the panel does (a notification, a search result, an activity feed). */
 export { attachmentsOf, authorBadgeColour, buildMessageSegments, dayKey, dayLabel, designerTint, formatBytes, isGroupedWithPrevious, messageTime, splitLinkifiedText, } from './message.js';
+/* Send later: the rules behind the composer's clock and the scheduled strip,
+   exported for the same reason as the peek's (no test runner here). */
+export { MIN_LEAD_MS, MAX_LEAD_MS, earliestSendAt, scheduleProblem, schedulePresets, sendAtLabel, scheduledThread, scheduledForThread, earliestDue, toLocalInputValue, fromLocalInputValue, } from './later.js';
 export { DESIGNER_COLOURS, designerColourCss, designerColourLabel, isDesignerColour, } from './colours.js';
 export { CHAT_BUCKET, CHAT_CHANNEL, CHAT_DOCK_ID, CHAT_SCHEMA, CHAT_STATUS_META, resolveChatConfig, } from './types.js';
 //# sourceMappingURL=index.js.map

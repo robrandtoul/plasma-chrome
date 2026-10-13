@@ -5,7 +5,8 @@ import { setChatBadge, clearChatBadge } from './badge.js';
 import { DEFAULT_ALERT_LEVEL, dismissChatAlerts, isAlertLevel, showChatAlert, } from './desktopAlert.js';
 import { mergePeek, peekDwell } from './peek.js';
 import { POPOUT_HEARTBEAT_MS, isPopoutWindow, popoutIsAlive, popoutPath, preparePopoutDocument, readPopoutSize, syncChannelName, windowFeatures, readStoredPopoutSize, writePopoutSize, } from './popout.js';
-import { CHAT_CHANNEL, resolveChatConfig, } from './types.js';
+import { bySendAt, earliestDue } from './later.js';
+import { CHAT_BUCKET, CHAT_CHANNEL, resolveChatConfig, } from './types.js';
 // Shared "engine" for the team chat: one live connection (message realtime +
 // presence) mounted once near the app root, so the header badge, the dropdown
 // panel and the full /chat page all read the same state and nothing re-connects
@@ -159,6 +160,11 @@ const DEFAULT = {
     myStatus: 'online',
     send: async () => ({ ok: false }),
     remove: async () => { },
+    scheduled: [],
+    scheduledSupported: false,
+    scheduleSend: async () => ({ ok: false }),
+    cancelScheduled: async () => ({ ok: false, removed: false }),
+    sendScheduledNow: async () => ({ ok: false }),
     markSeen: () => { },
     setViewing: () => { },
     setManualStatus: () => { },
@@ -199,6 +205,22 @@ const RESYNC_THROTTLE_MS = 3000; // collapse a burst of focus/visibility events
 // How often a visible tab asks the database for its newest row, as a check
 // that the live socket is still delivering. Cheap (two columns, one row).
 const PROBE_MS = 90000;
+// A scheduled message goes within the minute after its time (the cron runs
+// every minute), so the waiting room is re-read a little after the soonest
+// time and then every so often until the row has gone.
+const SCHEDULED_GRACE_MS = 3000;
+const SCHEDULED_POLL_MS = 15000;
+// The shape PostgREST gives a read of a table the database does not have:
+// 42P01 from Postgres itself, PGRST205 from the schema cache. Either means
+// the host is on a database without the waiting room, not a passing fault.
+function isMissingTable(error) {
+    if (!error)
+        return false;
+    if (error.code === '42P01' || error.code === 'PGRST205')
+        return true;
+    const msg = error.message ?? '';
+    return msg.includes('team_scheduled_messages') && /not (exist|find)/i.test(msg);
+}
 function reducePresence(state) {
     const byUser = new Map();
     for (const key of Object.keys(state)) {
@@ -311,6 +333,12 @@ export function TeamChatProvider({ config, children, }) {
     const dmReadsRef = useRef({});
     const activeThreadRef = useRef(readThread(prefix));
     const messagesRef = useRef([]);
+    // The waiting room (send later): my own rows, soonest first. Kept in a ref
+    // as well so the INSERT handler can ask "is anything due?" without a render.
+    const [scheduled, setScheduled] = useState([]);
+    const scheduledRef = useRef([]);
+    const [scheduledSupported, setScheduledSupported] = useState(true);
+    const scheduledSupportedRef = useRef(true);
     messagesRef.current = messages;
     const threadUnreadRef = useRef({});
     threadUnreadRef.current = threadUnread;
@@ -562,10 +590,41 @@ export function TeamChatProvider({ config, children, }) {
     // memory, so reopening the app neither remounts nor refetches — every
     // message sent while the phone was asleep was missed permanently, and
     // silently. Reconciling here is what makes a phone self-heal.
+    // Re-read my waiting messages (send later). Called from every resync path
+    // through syncMessages, from the timer at the soonest send time, and when my
+    // own message arrives by realtime with something due (that arrival IS the
+    // delivery). Cheap: one indexed read of a handful of rows at most.
+    async function syncScheduled() {
+        const uid = userIdRef.current;
+        if (!uid || !scheduledSupportedRef.current)
+            return;
+        // RLS scopes this to my own rows; no filter is needed here, and adding one
+        // would only have the two disagree if the policy ever changed.
+        const { data, error } = await dbRef.current
+            .from('team_scheduled_messages')
+            .select('*')
+            .order('send_at', { ascending: true });
+        if (error) {
+            if (isMissingTable(error)) {
+                scheduledSupportedRef.current = false;
+                setScheduledSupported(false);
+            }
+            else {
+                console.error('[chat] scheduled sync failed:', error.message);
+            }
+            return;
+        }
+        const rows = (data ?? []).slice().sort(bySendAt);
+        scheduledRef.current = rows;
+        setScheduled(rows);
+    }
     async function syncMessages() {
         const uid = userIdRef.current;
         if (!uid)
             return;
+        // The waiting room rides every resync, and runs regardless of whether the
+        // message fetch below is already in flight.
+        void syncScheduled();
         if (syncingRef.current) {
             syncAgainRef.current = true;
             return;
@@ -905,6 +964,14 @@ export function TeamChatProvider({ config, children, }) {
                     messagesRef.current = [...messagesRef.current, row];
                 }
                 setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+                // My own message arriving by realtime, while something of mine is
+                // due, is a scheduled message being delivered: the cron inserts it
+                // in my name and this is the first this tab hears of it. Re-read
+                // the waiting room so the row leaves the strip the moment it goes.
+                if (row.author_id === userIdRef.current &&
+                    scheduledRef.current.some((s) => new Date(s.send_at).getTime() <= Date.now())) {
+                    void syncScheduled();
+                }
                 if (row.author_id !== userIdRef.current) {
                     // Which thread, and is it personal? A DM or an @mention of me
                     // gets the loud treatment (badge + chime); room chatter stays
@@ -1128,6 +1195,24 @@ export function TeamChatProvider({ config, children, }) {
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [userId]);
+    // The waiting room's own clock. A little after the soonest send time, and
+    // then every so often while anything is overdue, re-read it so a delivered
+    // row leaves the list even when the socket is dead and the realtime arrival
+    // above never comes. Nothing is scheduled while nothing is waiting.
+    useEffect(() => {
+        if (!userId || scheduled.length === 0)
+            return;
+        const soonest = earliestDue(scheduled);
+        if (!soonest)
+            return;
+        const until = new Date(soonest).getTime() - Date.now();
+        const wait = until > 0 ? until + SCHEDULED_GRACE_MS : SCHEDULED_POLL_MS;
+        const t = window.setTimeout(() => {
+            void syncScheduled();
+        }, wait);
+        return () => window.clearTimeout(t);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [userId, scheduled]);
     // The quiet check: while the tab is visible, make sure the live socket is
     // still delivering (see `probeNewest`). A hidden tab is left alone; the
     // resync on return covers it.
@@ -1420,6 +1505,41 @@ export function TeamChatProvider({ config, children, }) {
         const timer = window.setTimeout(() => setPeek(null), peekDwell(peek));
         return () => window.clearTimeout(timer);
     }, [peek, peekHeld]);
+    // One insert for every way a message of mine is posted: `send` (the thread
+    // on screen) and `sendScheduledNow` (the waiting row's own recipient, which
+    // may not be the thread on screen). Marks the thread read only when it is
+    // the one being looked at, exactly as the realtime INSERT path does.
+    async function postMessage(fields) {
+        const uid = userIdRef.current;
+        if (!uid)
+            return { error: 'Not signed in.' };
+        const { data, error } = await dbRef.current
+            .from('team_messages')
+            .insert({
+            author_id: uid,
+            body: fields.body,
+            recipient_id: fields.recipient_id,
+            mentioned_user_ids: fields.mentioned_user_ids,
+            // attachment_paths stays populated (lockstep) for backward compat;
+            // attachment_files carries the original filename/type/size (000323).
+            attachment_paths: fields.attachments.map((a) => a.path),
+            attachment_files: fields.attachments,
+        })
+            .select('*')
+            .single();
+        if (error || !data)
+            return { error: error?.message };
+        const row = data;
+        if (!messagesRef.current.some((m) => m.id === row.id)) {
+            messagesRef.current = [...messagesRef.current, row];
+        }
+        setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+        lastActivityRef.current = Date.now();
+        const thread = threadOf(row, uid);
+        if (isLooking() && activeThreadRef.current === thread)
+            stampSeen(thread);
+        return { row };
+    }
     const value = {
         config: cfg,
         db,
@@ -1557,28 +1677,128 @@ export function TeamChatProvider({ config, children, }) {
             // recipient and never carry mentions (the DM push already targets the
             // recipient; a mention array on a private row is meaningless).
             const thread = activeThreadRef.current;
+            const res = await postMessage({
+                body: text,
+                recipient_id: thread === 'team' ? null : thread,
+                mentioned_user_ids: thread === 'team' ? mentionedUserIds : [],
+                attachments,
+            });
+            return res.row ? { ok: true } : { ok: false, error: res.error };
+        },
+        scheduled,
+        scheduledSupported,
+        scheduleSend: async (body, mentionedUserIds, attachments, sendAt) => {
+            const uid = userIdRef.current;
+            const text = body.trim();
+            if ((!text && attachments.length === 0) || !uid)
+                return { ok: false };
+            if (!(sendAt instanceof Date) || !Number.isFinite(sendAt.getTime())) {
+                return { ok: false, error: 'Pick a time to send it.' };
+            }
+            // Same addressing rules as `send`: the conversation on screen, mentions
+            // only in the room.
+            const thread = activeThreadRef.current;
             const { data, error } = await dbRef.current
-                .from('team_messages')
+                .from('team_scheduled_messages')
                 .insert({
                 author_id: uid,
                 body: text,
                 recipient_id: thread === 'team' ? null : thread,
                 mentioned_user_ids: thread === 'team' ? mentionedUserIds : [],
-                // attachment_paths stays populated (lockstep) for backward compat;
-                // attachment_files carries the original filename/type/size (000323).
                 attachment_paths: attachments.map((a) => a.path),
                 attachment_files: attachments,
+                send_at: sendAt.toISOString(),
             })
                 .select('*')
                 .single();
-            if (error || !data)
+            if (error || !data) {
+                if (isMissingTable(error)) {
+                    scheduledSupportedRef.current = false;
+                    setScheduledSupported(false);
+                    return { ok: false, error: 'Sending later is not set up on this database yet.' };
+                }
                 return { ok: false, error: error?.message };
+            }
             const row = data;
-            setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+            const next = [...scheduledRef.current.filter((r) => r.id !== row.id), row].sort(bySendAt);
+            scheduledRef.current = next;
+            setScheduled(next);
             lastActivityRef.current = Date.now();
-            if (isLooking())
-                stampSeen(thread);
             return { ok: true };
+        },
+        cancelScheduled: async (id, opts = {}) => {
+            // DELETE … RETURNING is the claim: whoever deletes the row first owns
+            // it, so this cannot race the cron into both sending and cancelling.
+            const { data, error } = await dbRef.current
+                .from('team_scheduled_messages')
+                .delete()
+                .eq('id', id)
+                .select('*');
+            if (error)
+                return { ok: false, removed: false, error: error.message };
+            const rows = (data ?? []);
+            const next = scheduledRef.current.filter((r) => r.id !== id);
+            scheduledRef.current = next;
+            setScheduled(next);
+            if (rows.length === 0)
+                return { ok: true, removed: false };
+            if (!opts.keepFiles) {
+                const paths = rows.flatMap((r) => r.attachment_paths ?? []);
+                if (paths.length > 0) {
+                    // Best effort: a file left behind costs storage, not correctness.
+                    void cfgRef.current.client.storage
+                        .from(CHAT_BUCKET)
+                        .remove(paths)
+                        .then(() => undefined, () => undefined);
+                }
+            }
+            return { ok: true, removed: true };
+        },
+        sendScheduledNow: async (id) => {
+            const { data, error } = await dbRef.current
+                .from('team_scheduled_messages')
+                .delete()
+                .eq('id', id)
+                .select('*');
+            if (error)
+                return { ok: false, error: error.message };
+            const rows = (data ?? []);
+            const next = scheduledRef.current.filter((r) => r.id !== id);
+            scheduledRef.current = next;
+            setScheduled(next);
+            const row = rows[0];
+            if (!row)
+                return { ok: false, error: 'That message has already been sent.' };
+            const res = await postMessage({
+                body: row.body,
+                recipient_id: row.recipient_id,
+                mentioned_user_ids: row.mentioned_user_ids ?? [],
+                attachments: row.attachment_files ?? [],
+            });
+            if (res.row)
+                return { ok: true };
+            // The row has been claimed and the message did not go: put it back,
+            // same id and time, so nothing is lost. Best effort, like the send.
+            const { data: back } = await dbRef.current
+                .from('team_scheduled_messages')
+                .insert({
+                id: row.id,
+                author_id: row.author_id,
+                body: row.body,
+                recipient_id: row.recipient_id,
+                mentioned_user_ids: row.mentioned_user_ids ?? [],
+                attachment_paths: row.attachment_paths ?? [],
+                attachment_files: row.attachment_files,
+                send_at: row.send_at,
+            })
+                .select('*')
+                .single();
+            if (back) {
+                const restored = [...scheduledRef.current.filter((r) => r.id !== row.id), back].sort(bySendAt);
+                scheduledRef.current = restored;
+                setScheduled(restored);
+            }
+            return { ok: false, error: res.error ?? 'Could not send it. It is still waiting.' };
         },
         remove: async (id) => {
             let snapshot = [];
