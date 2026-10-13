@@ -204,6 +204,12 @@ export interface TeamMember {
     initials: string | null;
     colour: string | null;
     avatarUrl: string | null;
+    /** Not a person: "Claude", the team chat assistant (proof-viewer migration
+     *  20261013120000). It answers DMs and room @mentions from read-only
+     *  lookups and never holds a presence, so the panel marks it instead of
+     *  showing a status dot. Absent on a roster from a database that predates
+     *  the migration, which reads as a person. */
+    isBot?: boolean;
 }
 /** One emoji reaction: a row per message + user + emoji. */
 export interface ReactionRow {

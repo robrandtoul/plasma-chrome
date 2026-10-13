@@ -577,3 +577,31 @@
   margin: 0.25rem 0;
   border-top: 1px solid var(--pd-chat-line-soft);
 }
+
+/* The team chat assistant ("Claude"): a small tag beside its name and on its
+   thread pill, in place of a presence dot. It is not a person and never has a
+   status, so a grey "offline" dot would say something untrue about it. */
+.pd-chat .pd-chat__bot-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  height: 1rem;
+  padding: 0 0.3rem;
+  border-radius: 9999px;
+  background-color: var(--pd-chat-canvas);
+  border: 1px solid var(--pd-chat-line);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  color: var(--pd-chat-ink-soft);
+  vertical-align: middle;
+}
+.pd-chat .pd-chat__bot-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background-color: var(--pd-chat-ink);
+  color: var(--pd-chat-on-ink);
+}

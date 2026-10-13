@@ -911,12 +911,15 @@ export function TeamChatProvider({
           designer_initials: string | null
           designer_colour: string | null
           avatar_url: string | null
+          is_bot?: boolean | null
         }>).map((m) => ({
           id: m.id,
           name: m.full_name,
           initials: m.designer_initials,
           colour: m.designer_colour,
           avatarUrl: m.avatar_url,
+          // Only a literal true: a roster from before the column reads as people.
+          isBot: m.is_bot === true,
         })),
       )
 

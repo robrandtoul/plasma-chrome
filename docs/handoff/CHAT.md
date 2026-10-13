@@ -190,6 +190,37 @@ merge rule is the part that goes quietly wrong.
 
 ---
 
+## Claude in the chat (1.12.0)
+
+Staff can message **Claude**, or @mention it in the Team room, to ask about
+projects, orders, customers and prices. The answer is posted back into the same
+thread. Everything about how it answers lives in proof-viewer (migration
+`20261013120000_team_chat_assistant.sql`, the `team-chat-assistant` edge
+function); this package only has to recognise it.
+
+Claude is a real row on `proofs.profiles`, because every chat table references
+profiles, flagged `is_bot`. `team_roster()` returns that flag, and lists the bot
+**only while the assistant is switched on** (Admin → AI drafts), so nobody is
+offered a DM pill that would never be answered. The panel reads it as
+`TeamMember.isBot`:
+
+- **No presence dot.** Claude never tracks presence, so the usual grey dot would
+  say "offline" about something that is always available. Its thread pill
+  carries a spark instead.
+- **An "AI" tag** beside its name, and a spark avatar instead of initials, so a
+  reply in the room reads as the assistant's, not a colleague's.
+- **Its own empty state and placeholder** in a DM, saying what it is for and that
+  it cannot change anything.
+
+Its typing indicator needs nothing new: the edge function broadcasts `typing` on
+the shared `team-chat` topic with `userId` = the bot's id and `to` = the asker on
+a DM, exactly the payload a person's composer sends.
+
+⚠ `isBot` is read as a literal `true` only. A roster from a database that
+predates the migration has no such column, and its rows must read as people.
+
+---
+
 ## The contract
 
 Everything host-specific arrives through `ChatConfig`. `src/chat/types.ts` is authoritative.

@@ -90,4 +90,8 @@ export declare const BellOff: {
     ({ size, ...rest }: IconProps): JSX.Element;
     displayName: string;
 };
+export declare const Sparkle: {
+    ({ size, ...rest }: IconProps): JSX.Element;
+    displayName: string;
+};
 //# sourceMappingURL=icons.d.ts.map
