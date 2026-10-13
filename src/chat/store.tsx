@@ -245,7 +245,7 @@ function writeLocal(prefix: string, name: string, value: string | null) {
   }
 }
 
-export const DEFAULT_CHAT_SIZE = { w: 460, h: 460 }
+export const DEFAULT_CHAT_SIZE = { w: 480, h: 640 }
 const MIN_CHAT_W = 320
 const MIN_CHAT_H = 300
 
@@ -387,6 +387,9 @@ const IDLE_MS = 5 * 60 * 1000 // flip to "idle" after 5 minutes of no activity
 const ACTIVITY_THROTTLE_MS = 1000
 const STATUS_TICK_MS = 20_000
 const RESYNC_THROTTLE_MS = 3000 // collapse a burst of focus/visibility events
+// How often a visible tab asks the database for its newest row, as a check
+// that the live socket is still delivering. Cheap (two columns, one row).
+const PROBE_MS = 90_000
 
 function reducePresence(state: Record<string, PresenceMeta[]>): PresenceMember[] {
   const byUser = new Map<string, PresenceMember>()
@@ -516,6 +519,8 @@ export function TeamChatProvider({
   const activeThreadRef = useRef<ChatThread>(readThread(prefix))
   const messagesRef = useRef<TeamMessage[]>([])
   messagesRef.current = messages
+  const threadUnreadRef = useRef<Record<string, number>>({})
+  threadUnreadRef.current = threadUnread
   const historyStatusRef = useRef(historyStatus)
   historyStatusRef.current = historyStatus
   // Whether the latest window came back full — if not, the entire history is
@@ -525,6 +530,11 @@ export function TeamChatProvider({
   const initialFullRef = useRef(false)
   // Guards against overlapping syncs (resume and reconnect often coincide).
   const syncingRef = useRef(false)
+  // A sync asked for while one is running. It used to be dropped, which
+  // left a gap whenever a focus resync and a socket rejoin landed together:
+  // the second ask was the one that knew about the rows the first had
+  // missed. Now it runs once more, after.
+  const syncAgainRef = useRef(false)
   // Set when the realtime socket drops so the next SUBSCRIBED resyncs the gap.
   const staleRef = useRef(false)
   const myStatusRef = useRef<ChatStatus>('online')
@@ -566,6 +576,16 @@ export function TeamChatProvider({
     return !amPopout && popoutIsAlive(remoteBeatRef.current, Date.now())
   }
 
+  // Is somebody actually looking at the open conversation? A chat surface
+  // being mounted (`viewingRef`) is not the same thing: a pinned dropdown or
+  // a docked panel stays mounted in a tab you are not on, and treating that
+  // as reading stamped every arriving message seen, so it was never unread,
+  // never chimed, never raised a desktop alert, and never showed as new when
+  // you came back. Hidden means not looking.
+  function isLooking(): boolean {
+    return viewingRef.current && (typeof document === 'undefined' || !document.hidden)
+  }
+
   // Open a conversation. Extracted from `setActiveThread` so that clicking a
   // desktop notification lands on the thread it was about, by the same route
   // and with the same side effects, rather than a second near-copy of them.
@@ -576,8 +596,8 @@ export function TeamChatProvider({
     // this conversation rather than dumping you back in the room. 93% of
     // messages on live are DMs, so this is the preference that matters most.
     persistPref({ thread }, [['thread', thread === 'team' ? null : thread]])
-    // If a chat surface is open, landing on the thread reads it.
-    if (viewingRef.current) stampSeen(thread)
+    // If a chat surface is open and in view, landing on the thread reads it.
+    if (isLooking()) stampSeen(thread)
     recomputeTyping()
   }
 
@@ -753,7 +773,11 @@ export function TeamChatProvider({
   // silently. Reconciling here is what makes a phone self-heal.
   async function syncMessages(): Promise<void> {
     const uid = userIdRef.current
-    if (!uid || syncingRef.current) return
+    if (!uid) return
+    if (syncingRef.current) {
+      syncAgainRef.current = true
+      return
+    }
     syncingRef.current = true
     try {
       // RLS scopes this to the team room + my own DM threads (000324).
@@ -770,7 +794,11 @@ export function TeamChatProvider({
         console.error('[chat] message sync failed:', error.message)
         return
       }
-      const fetched = ((data ?? []) as TeamMessage[]).slice().reverse()
+      // Oldest first. Sorted here rather than reversed, so the order holds
+      // whatever order the rows arrived in.
+      const fetched = ((data ?? []) as TeamMessage[])
+        .slice()
+        .sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0))
       // An empty answer when we already hold messages is far more likely to be
       // a transient read failure than every message having been deleted, so
       // keep what we have; the DELETE handler covers genuine removals.
@@ -778,11 +806,23 @@ export function TeamChatProvider({
 
       // The window is authoritative for its own time range: anything in memory
       // inside it is replaced (so deletions made while away disappear), while
-      // older pages pulled in via "Show earlier messages" are kept.
+      // older pages pulled in via "Show earlier messages" are kept, and so is
+      // anything NEWER than the window's newest row. Those are messages that
+      // arrived live while this request was in flight; the merge used to throw
+      // them away, and they stayed missing until the next resync happened to
+      // run, which on a desktop could be hours.
+      const held = messagesRef.current
       const windowStart = fetched[0]?.created_at ?? null
-      const merged = windowStart
-        ? [...messagesRef.current.filter((m) => m.created_at < windowStart), ...fetched]
-        : fetched
+      const windowEnd = fetched[fetched.length - 1]?.created_at ?? null
+      const fetchedIds = new Set(fetched.map((m) => m.id))
+      const merged =
+        windowStart && windowEnd
+          ? [
+              ...held.filter((m) => m.created_at < windowStart),
+              ...fetched,
+              ...held.filter((m) => m.created_at >= windowEnd && !fetchedIds.has(m.id)),
+            ]
+          : fetched
       messagesRef.current = merged
       setMessages(merged)
       initialFullRef.current = fetched.length >= INITIAL_LIMIT
@@ -815,7 +855,7 @@ export function TeamChatProvider({
       // as read the moment they're shown, matching the live INSERT path. Gated
       // on there being something to clear so a routine resync doesn't write a
       // stamp every time the window regains focus.
-      if (viewingRef.current && counts[activeThreadRef.current]) {
+      if (isLooking() && counts[activeThreadRef.current]) {
         stampSeen(activeThreadRef.current)
       }
 
@@ -838,7 +878,30 @@ export function TeamChatProvider({
       }
     } finally {
       syncingRef.current = false
+      if (syncAgainRef.current) {
+        syncAgainRef.current = false
+        void syncMessages()
+      }
     }
+  }
+
+  // A visible tab's socket can die without a single status callback (the
+  // laptop lid, a proxy timing out, a Supabase restart that never answers),
+  // and then nothing arrives and nothing says so. This asks for the newest
+  // row and resyncs if it is one we do not hold. Deletions are not covered;
+  // they are rare, and the next real resync catches them.
+  async function probeNewest(): Promise<void> {
+    if (!userIdRef.current || syncingRef.current) return
+    const { data, error } = await dbRef.current
+      .from('team_messages')
+      .select('id, created_at')
+      .order('created_at', { ascending: false })
+      .limit(1)
+    if (error || !data || data.length === 0) return
+    const newest = data[0] as { id: string; created_at: string }
+    if (messagesRef.current.some((m) => m.id === newest.id)) return
+    console.warn('[chat] fell behind without noticing; resyncing')
+    await syncMessages()
   }
 
   // Load messages + presence identity, then open the shared channel.
@@ -1070,6 +1133,12 @@ export function TeamChatProvider({
           { event: 'INSERT', schema: cfgRef.current.schema, table: 'team_messages' },
           (payload) => {
             const row = payload.new as TeamMessage
+            // The ref is read by a resync's merge, which may be mid-flight right
+            // now; it is otherwise only brought up to date on the next render,
+            // and a row that has not rendered yet must not be merged away.
+            if (!messagesRef.current.some((m) => m.id === row.id)) {
+              messagesRef.current = [...messagesRef.current, row]
+            }
             setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]))
             if (row.author_id !== userIdRef.current) {
               // Which thread, and is it personal? A DM or an @mention of me
@@ -1084,7 +1153,7 @@ export function TeamChatProvider({
                 Array.isArray(mentions) &&
                 !!userIdRef.current &&
                 mentions.includes(userIdRef.current)
-              if (viewingRef.current && activeThreadRef.current === thread) {
+              if (isLooking() && activeThreadRef.current === thread) {
                 stampSeen(thread)
               } else {
                 setThreadUnread((prev) => ({ ...prev, [thread]: (prev[thread] ?? 0) + 1 }))
@@ -1277,6 +1346,13 @@ export function TeamChatProvider({
       // unread state itself is untouched: the tab badge and the thread pills
       // still carry it until the conversation is actually read.
       dismissChatAlerts()
+      // Messages that landed in the open conversation while this tab was
+      // hidden counted as unread (see `isLooking`); now that it is in view
+      // again they have been seen. Gated on there being something to clear so
+      // a routine focus does not write a stamp.
+      if (isLooking() && threadUnreadRef.current[activeThreadRef.current]) {
+        stampSeen(activeThreadRef.current)
+      }
       // These three events overlap heavily (a desktop window switch can fire
       // all of them), so collapse a burst into one fetch.
       const now = Date.now()
@@ -1292,6 +1368,19 @@ export function TeamChatProvider({
       window.removeEventListener('focus', resync)
       window.removeEventListener('online', resync)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId])
+
+  // The quiet check: while the tab is visible, make sure the live socket is
+  // still delivering (see `probeNewest`). A hidden tab is left alone; the
+  // resync on return covers it.
+  useEffect(() => {
+    if (!userId) return
+    const tick = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return
+      void probeNewest()
+    }, PROBE_MS)
+    return () => window.clearInterval(tick)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId])
 
@@ -1714,7 +1803,7 @@ export function TeamChatProvider({
       const row = data as TeamMessage
       setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]))
       lastActivityRef.current = Date.now()
-      if (viewingRef.current) stampSeen(thread)
+      if (isLooking()) stampSeen(thread)
       return { ok: true }
     },
     remove: async (id: string) => {
@@ -1731,7 +1820,7 @@ export function TeamChatProvider({
     },
     setViewing: (viewing: boolean) => {
       viewingRef.current = viewing
-      if (viewing) stampSeen(activeThreadRef.current)
+      if (isLooking()) stampSeen(activeThreadRef.current)
     },
     setManualStatus: (status: 'online' | 'away' | 'busy') => {
       manualRef.current = status === 'online' ? null : status

@@ -1,11 +1,11 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useEffect, useRef, useState } from 'react';
-import { MessagesSquare, Maximize2, X, Pin, AtSign, PanelRight, PictureInPicture2, } from './icons.js';
+import { MessagesSquare, X, Pin, ExternalLink, PanelRight, PictureInPicture2 } from './icons.js';
 import { useTeamChat } from './store.js';
 import TeamChatPanel from './TeamChatPanel.js';
 import { CHAT_DOCK_ID } from './types.js';
 import { peekBody, peekTitle } from './peek.js';
-// Wide enough that the five thread pills (Team + four names, with an unread
+// Wide enough that the conversation chips (Team + four names, with an unread
 // badge or two) fit on one line out of the box.
 const MIN_W = 320;
 const MIN_H = 300;
@@ -19,11 +19,12 @@ const MIN_H = 300;
 export function reopenKey(prefix) {
     return `${prefix}-reopen`;
 }
-// The desktop header chat control: the speech-bubble icon + unread badge that
-// opens the shared chat panel as a dropdown. A pin keeps it open across pages
-// (and reloads) so you can keep chatting while working elsewhere; unpinned it's
-// a transient popover that closes on outside-click / navigation. Desktop only —
-// mobile uses the full /chat page via the account sheet.
+// The desktop header chat control: the same shape as a nav item in the
+// chrome, with an unread count, that opens the shared chat panel as a
+// dropdown. "Keep open across pages" (in the panel's ⋯ menu) makes it stay put
+// across pages and reloads; unpinned it is a transient popover that closes on
+// outside-click / navigation. Desktop only — mobile uses the full /chat page
+// via the Chat tab.
 function useIsDesktop() {
     const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' ? window.matchMedia('(min-width: 768px)').matches : true);
     useEffect(() => {
@@ -46,28 +47,11 @@ function useIsLarge() {
     }, []);
     return isLarge;
 }
-/**
- * One link, rendered through whatever the host uses for navigation.
- *
- * `to` for a router component (react-router's Link, and the ChromeLink each
- * app already wrote for the nav), `href` for the plain anchor fallback. The
- * fallback is a real navigation rather than a no-op, so an app with no router
- * still gets a working "open full page".
- */
-function FullPageLink({ as: As, to, ...rest }) {
-    if (As)
-        return _jsx(As, { to: to, ...rest });
-    return _jsx("a", { href: to, ...rest });
-}
 export default function ChatMenu({ active = false, dockAvailable = false, linkComponent, }) {
     const { config, unread, mentionUnread, dmUnread, dropdownPinned, setDropdownPinned, placement, setPlacement, openPopout, closePopout, focusPopout, chatSize, setChatSize, peek, dismissPeek, holdPeek, alertLevel, setActiveThread, } = useTeamChat();
     const prefix = config?.storagePrefix ?? 'plasma:chat';
     const fullPagePath = config?.fullPagePath ?? '/chat';
     const popoutEnabled = config?.popoutEnabled ?? true;
-    // The resize handler runs off a listener bound once, so it reads the prefix
-    // through a ref rather than closing over the render's value.
-    const prefixRef = useRef(prefix);
-    prefixRef.current = prefix;
     // The resize listeners are bound once per drag, so they reach the latest
     // setter through a ref rather than re-subscribing on every render.
     const setChatSizeRef = useRef(setChatSize);
@@ -75,14 +59,14 @@ export default function ChatMenu({ active = false, dockAvailable = false, linkCo
     const isDesktop = useIsDesktop();
     const isLarge = useIsLarge();
     const onDashboard = dockAvailable;
-    // When the docked panel is showing (dashboard rail, lg+), the header icon
-    // shouldn't open a redundant floating copy, and "Dock to sidebar" is only
-    // offered while chat is still floating.
+    // When the docked panel is showing (dashboard rail, lg+), the header control
+    // shouldn't open a redundant floating copy, and "Dock to the dashboard" is
+    // only offered while chat is still floating.
     const dockVisible = placement === 'docked' && onDashboard && isLarge;
     const canDock = placement === 'floating' && onDashboard && isLarge;
     // Chat is living in a window of its own. The dropdown stays shut — a second
     // copy of the same conversation in the header would be baffling — and the
-    // header button becomes the way back to that window.
+    // header control becomes the way back to that window.
     const poppedOut = placement === 'popout';
     // Seed open from the pinned preference so a pinned panel is already open on
     // every page (no closed→open flicker as this remounts on navigation). Never
@@ -152,6 +136,22 @@ export default function ChatMenu({ active = false, dockAvailable = false, linkCo
             document.removeEventListener('keydown', onKey);
         };
     }, [open, dropdownPinned]);
+    // ⌘⇧C / Ctrl+Shift+C opens the chat from any page. Deliberately not a bare
+    // letter: the hosts have their own palettes and the composer is a textarea.
+    useEffect(() => {
+        if (!isDesktop)
+            return;
+        function onKey(e) {
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'c' || e.key === 'C')) {
+                if (poppedOut || dockVisible || active)
+                    return;
+                e.preventDefault();
+                setOpen((v) => !v);
+            }
+        }
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [isDesktop, poppedOut, dockVisible, active]);
     // Any direct close also releases the pin, so a "kept open" panel can't linger
     // closed on this page yet reappear on the next.
     function close() {
@@ -163,9 +163,9 @@ export default function ChatMenu({ active = false, dockAvailable = false, linkCo
     // width grows leftward (right edge pinned) and height grows downward. We
     // capture the pointer to the handle so every move/up — finger or mouse — is
     // delivered here even once it leaves the little grip; paired with
-    // touch-action:none on the button (below) so iPad Safari doesn't claim the
-    // drag as a page scroll. The final size is saved to localStorage on release
-    // (sizeRef holds the latest committed value).
+    // touch-action:none on the button so iPad Safari doesn't claim the drag as a
+    // page scroll. The final size is saved on release (sizeRef holds the latest
+    // committed value).
     function onResizeStart(e) {
         e.preventDefault();
         const handle = e.currentTarget;
@@ -214,9 +214,9 @@ export default function ChatMenu({ active = false, dockAvailable = false, linkCo
     // Popped out counts as "chat is on" even though nothing is showing here.
     const current = open || active || poppedOut;
     const hasUnread = unread > 0;
-    // DMs are personal, so they get the same loud coral treatment as @mentions.
+    // DMs are personal, so they get the same loud treatment as @mentions.
     const hasMention = mentionUnread > 0 || dmUnread > 0;
-    // Pulse the pill when the personal count GOES UP, not merely while it is
+    // Pulse the control when the personal count GOES UP, not merely while it is
     // above zero. Keyed off the rise so a second message pulses again instead
     // of being swallowed by the first one's animation, and so returning to a
     // page with old unread does not replay an alert about nothing new.
@@ -252,6 +252,55 @@ export default function ChatMenu({ active = false, dockAvailable = false, linkCo
     // render"): the whole page fell over on every app that mounts this menu.
     if (!isDesktop)
         return null;
+    // Where chat lives, for the panel's ⋯ menu. Every one of these used to be
+    // its own icon in the dropdown's header; they are one kind of decision.
+    const placementItems = [
+        {
+            key: 'page',
+            label: 'Open the chat page',
+            icon: _jsx(ExternalLink, { size: 15, "aria-hidden": "true" }),
+            to: fullPagePath,
+            onSelect: () => setOpen(false),
+        },
+        ...(canDock
+            ? [
+                {
+                    key: 'dock',
+                    label: 'Dock to the dashboard',
+                    icon: _jsx(PanelRight, { size: 15, "aria-hidden": "true" }),
+                    onSelect: () => {
+                        setPlacement('docked');
+                        setDropdownPinned(false);
+                        setOpen(false);
+                    },
+                },
+            ]
+            : []),
+        // Only offered where the host has a chat route to pop out TO. Without a
+        // route the second-window fallback would open onto a 404, which is worse
+        // than not offering it.
+        ...(popoutEnabled
+            ? [
+                {
+                    key: 'popout',
+                    label: 'Pop out into a window',
+                    icon: _jsx(PictureInPicture2, { size: 15, "aria-hidden": "true" }),
+                    onSelect: () => {
+                        openPopout();
+                        setDropdownPinned(false);
+                        setOpen(false);
+                    },
+                },
+            ]
+            : []),
+        {
+            key: 'pin',
+            label: 'Keep open across pages',
+            icon: _jsx(Pin, { size: 15, "aria-hidden": "true" }),
+            checked: dropdownPinned,
+            onSelect: () => setDropdownPinned(!dropdownPinned),
+        },
+    ];
     return (_jsxs("div", { ref: ref, className: "pd-chat pdc-relative", children: [_jsxs("button", { type: "button", onClick: () => {
                     if (poppedOut) {
                         // Bring the chat window to the front. If it can't be reached —
@@ -267,9 +316,9 @@ export default function ChatMenu({ active = false, dockAvailable = false, linkCo
                         // stays in view while the list scrolls, so there is nothing to
                         // reveal — just drop the cursor into its composer. We deliberately
                         // do NOT scrollIntoView: the dock sits inside a position:sticky
-                        // wrapper (top-14), so aligning its top to the viewport can never
-                        // settle — the sticky re-pins the card every call, leaving the goal
-                        // unmet, so each click nudged the page a little further down.
+                        // wrapper, so aligning its top to the viewport can never settle —
+                        // the sticky re-pins the card every call, leaving the goal unmet,
+                        // so each click nudged the page a little further down.
                         // preventScroll keeps the focus itself from scrolling too.
                         document
                             .querySelector(`#${CHAT_DOCK_ID} textarea`)
@@ -288,36 +337,20 @@ export default function ChatMenu({ active = false, dockAvailable = false, linkCo
                     poppedOut ? '(open in its own window)' : '',
                 ]
                     .filter(Boolean)
-                    .join(' '), "aria-haspopup": "dialog", "aria-expanded": open && !poppedOut, title: poppedOut ? 'Chat is in its own window — click to bring it forward' : 'Team chat', className: [
-                    'pdc-relative pdc-inline-flex pdc-h-9 pdc-items-center pdc-justify-center pdc-rounded-full pdc-border pdc-text-13px pdc-font-semibold pdc-transition-colors',
-                    // Icon-only on tablets; grows a "Chat" label at lg+ where there's room.
-                    'pdc-w-9 pdc-lg-w-auto pdc-lg-justify-start pdc-lg-gap-1-5 pdc-lg-pl-2-5 pdc-lg-pr-3-5',
-                    current
-                        ? 'pdc-border-line pdc-bg-canvas pdc-text-ink'
-                        : hasMention
-                            ? 'pdc-border-brand pdc-bg-brand-50 pdc-text-brand pdc-hover-bg-brand-50'
-                            : hasUnread
-                                ? 'pdc-border-line pdc-bg-canvas pdc-text-ink pdc-hover-bg-canvas'
-                                : 'pdc-border-line pdc-bg-surface pdc-text-ink-soft pdc-hover-bg-canvas pdc-hover-text-ink',
+                    .join(' '), "aria-haspopup": "dialog", "aria-expanded": open && !poppedOut, title: poppedOut ? 'Chat is in its own window — click to bring it forward' : 'Team chat (⌘⇧C)', className: [
+                    'pd-chat__pill',
+                    current ? 'pd-chat__pill--on' : '',
                     pulsing ? 'pd-chat__pill--attention' : '',
                 ]
                     .filter(Boolean)
-                    .join(' '), children: [_jsx(MessagesSquare, { size: 17, "aria-hidden": "true" }), _jsx("span", { className: "pdc-hidden pdc-lg-inline", children: "Chat" }), hasUnread && (_jsxs("span", { className: [
-                            'pdc-absolute pdc-neg-right-1-5 pdc-neg-top-1-5 pdc-inline-flex pdc-h-18px pdc-min-w-18px pdc-items-center pdc-justify-center pdc-gap-0-5 pdc-rounded-full pdc-px-1 pdc-text-10px pdc-font-bold pdc-leading-none pdc-text-white',
-                            hasMention ? 'pdc-bg-brand' : 'pdc-bg-ink',
-                        ].join(' '), style: { boxShadow: '0 0 0 2px var(--c-surface)' }, "aria-hidden": "true", children: [hasMention && _jsx(AtSign, { size: 10, strokeWidth: 2.5, "aria-hidden": "true" }), unread > 9 ? '9+' : unread] }))] }), peek && !open && !poppedOut && (_jsxs("div", { className: [
-                    'pd-chat__peek',
-                    peek.personal ? 'pd-chat__peek--personal' : '',
-                ]
-                    .filter(Boolean)
-                    .join(' '), 
+                    .join(' '), children: [poppedOut ? (_jsx(PictureInPicture2, { size: 16, "aria-hidden": "true" })) : (_jsx(MessagesSquare, { size: 16, "aria-hidden": "true" })), _jsx("span", { className: "pd-chat__pill-label", children: "Chat" }), hasUnread && (_jsx("span", { className: ['pd-chat__pill-count', hasMention ? 'pd-chat__pill-count--personal' : ''].filter(Boolean).join(' '), "aria-hidden": "true", children: unread > 9 ? '9+' : unread }))] }), peek && !open && !poppedOut && (_jsxs("div", { className: ['pd-chat__peek', peek.personal ? 'pd-chat__peek--personal' : ''].filter(Boolean).join(' '), 
                 // Announced politely rather than assertively: this arrives while
                 // someone is working, and a card about a room message has no
                 // business interrupting a screen reader mid-sentence.
                 role: "status", "aria-live": "polite", onMouseEnter: () => holdPeek(true), onMouseLeave: () => holdPeek(false), 
                 // Keyboard focus holds it too, or tabbing to the card would be a
                 // race against its own dwell.
-                onFocus: () => holdPeek(true), onBlur: () => holdPeek(false), children: [_jsxs("button", { type: "button", className: "pd-chat__peek-open", onClick: () => {
+                onFocus: () => holdPeek(true), onBlur: () => holdPeek(false), children: [_jsx("button", { type: "button", className: "pd-chat__peek-open", onClick: () => {
                             setActiveThread(peek.thread);
                             dismissPeek();
                             // The dock case cannot arrive here (a visible dock means the
@@ -332,24 +365,11 @@ export default function ChatMenu({ active = false, dockAvailable = false, linkCo
                                 return;
                             }
                             setOpen(true);
-                        }, children: [_jsx("span", { className: "pd-chat__peek-who", children: peekTitle(peek) }), peekBody(alertLevel, peek.snippet) && (_jsx("span", { className: "pd-chat__peek-what", children: peekBody(alertLevel, peek.snippet) }))] }), _jsx("button", { type: "button", className: "pd-chat__peek-dismiss", "aria-label": "Dismiss", onClick: dismissPeek, children: _jsx(X, { size: 13, "aria-hidden": "true" }) })] })), open && !poppedOut && (_jsxs("div", { role: "dialog", "aria-label": "Team chat", className: "pdc-absolute pdc-right-0 pdc-top-11 pdc-z-40 pdc-flex pdc-flex-col pdc-overflow-hidden pdc-rounded-14px pdc-border pdc-border-line pdc-bg-surface pdc-shadow-xl", style: {
+                        }, children: _jsxs("span", { className: "pd-chat__peek-text", children: [_jsxs("span", { className: "pd-chat__peek-who", children: [peekTitle(peek), _jsx("span", { className: "pd-chat__peek-where", children: peek.thread === 'team' ? 'in Team' : 'to you' })] }), peekBody(alertLevel, peek.snippet) && (_jsx("span", { className: "pd-chat__peek-what", children: peekBody(alertLevel, peek.snippet) }))] }) }), _jsx("button", { type: "button", className: "pd-chat__peek-dismiss", "aria-label": "Dismiss", onClick: dismissPeek, children: _jsx(X, { size: 14, "aria-hidden": "true" }) })] })), open && !poppedOut && (_jsxs("div", { role: "dialog", "aria-label": "Team chat", className: "pd-chat__dropdown", style: {
                     width: size.w,
                     height: size.h,
                     maxWidth: 'calc(100vw - 1rem)',
                     maxHeight: 'calc(100vh - 6rem)',
-                }, children: [_jsxs("div", { className: "pdc-flex pdc-flex-shrink-0 pdc-items-center pdc-justify-between pdc-border-b pdc-border-line-soft pdc-px-3 pdc-py-2", children: [_jsx("span", { className: "pdc-text-13px pdc-font-semibold pdc-text-ink", children: "Team chat" }), _jsxs("div", { className: "pdc-flex pdc-items-center pdc-gap-0-5", children: [popoutEnabled && (_jsx("button", { type: "button", onClick: () => {
-                                            openPopout();
-                                            setDropdownPinned(false);
-                                            setOpen(false);
-                                        }, "aria-label": "Pop chat out into its own window", title: "Pop out into its own window", className: "pdc-flex pdc-h-7 pdc-w-7 pdc-items-center pdc-justify-center pdc-rounded-full pdc-text-ink-mute pdc-transition-colors pdc-hover-bg-canvas pdc-hover-text-ink", children: _jsx(PictureInPicture2, { size: 15, "aria-hidden": "true" }) })), canDock && (_jsx("button", { type: "button", onClick: () => {
-                                            setPlacement('docked');
-                                            setDropdownPinned(false);
-                                            setOpen(false);
-                                        }, "aria-label": "Dock chat to the dashboard sidebar", title: "Dock to sidebar", className: "pdc-flex pdc-h-7 pdc-w-7 pdc-items-center pdc-justify-center pdc-rounded-full pdc-text-ink-mute pdc-transition-colors pdc-hover-bg-canvas pdc-hover-text-ink", children: _jsx(PanelRight, { size: 15, "aria-hidden": "true" }) })), _jsx("button", { type: "button", onClick: () => setDropdownPinned(!dropdownPinned), "aria-pressed": dropdownPinned, "aria-label": dropdownPinned ? 'Unpin chat' : 'Keep chat open across pages', title: dropdownPinned ? 'Unpin — stop keeping open' : 'Keep open across pages', className: [
-                                            'pdc-flex pdc-h-7 pdc-w-7 pdc-items-center pdc-justify-center pdc-rounded-full pdc-transition-colors',
-                                            dropdownPinned
-                                                ? 'pdc-bg-brand-50 pdc-text-brand'
-                                                : 'pdc-text-ink-mute pdc-hover-bg-canvas pdc-hover-text-ink',
-                                        ].join(' '), children: _jsx(Pin, { size: 15, "aria-hidden": "true", fill: dropdownPinned ? 'currentColor' : 'none' }) }), _jsx(FullPageLink, { as: linkComponent, to: fullPagePath, onClick: () => setOpen(false), "aria-label": "Open full chat page", title: "Open full page", className: "pdc-flex pdc-h-7 pdc-w-7 pdc-items-center pdc-justify-center pdc-rounded-full pdc-text-ink-mute pdc-transition-colors pdc-hover-bg-canvas pdc-hover-text-ink", children: _jsx(Maximize2, { size: 15, "aria-hidden": "true" }) }), _jsx("button", { type: "button", onClick: close, "aria-label": "Close chat", className: "pdc-flex pdc-h-7 pdc-w-7 pdc-items-center pdc-justify-center pdc-rounded-full pdc-text-ink-mute pdc-transition-colors pdc-hover-bg-canvas pdc-hover-text-ink", children: _jsx(X, { size: 16, "aria-hidden": "true" }) })] })] }), _jsx("div", { className: "pdc-min-h-0 pdc-flex-1", children: _jsx(TeamChatPanel, { variant: "dropdown" }) }), _jsx("button", { type: "button", onPointerDown: onResizeStart, "aria-label": "Resize chat window", title: "Drag to resize", className: "pd-chat__resize", children: _jsx("svg", { width: "11", height: "11", viewBox: "0 0 11 11", fill: "none", stroke: "currentColor", strokeWidth: "1.25", strokeLinecap: "round", "aria-hidden": "true", children: _jsx("path", { d: "M1 1 L10 10 M1 5 L6 10 M1 9 L2 10" }) }) })] }))] }));
+                }, children: [_jsx("div", { className: "pdc-min-h-0 pdc-flex-1", children: _jsx(TeamChatPanel, { variant: "dropdown", placementItems: placementItems, linkComponent: linkComponent, headerAction: _jsx("button", { type: "button", onClick: close, "aria-label": "Close chat", title: "Close (Esc)", className: "pd-chat__ib", children: _jsx(X, { size: 16, "aria-hidden": "true" }) }) }) }), _jsx("button", { type: "button", onPointerDown: onResizeStart, "aria-label": "Resize chat window", title: "Drag to resize", className: "pd-chat__resize", children: _jsx("svg", { width: "11", height: "11", viewBox: "0 0 11 11", fill: "none", stroke: "currentColor", strokeWidth: "1.25", strokeLinecap: "round", "aria-hidden": "true", children: _jsx("path", { d: "M1 1 L10 10 M1 5 L6 10 M1 9 L2 10" }) }) })] }))] }));
 }
 //# sourceMappingURL=ChatMenu.js.map

@@ -1,21 +1,30 @@
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react'
 import {
-  Send,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type ReactNode,
+} from 'react'
+import {
+  ArrowUp,
+  AtSign,
+  Bell,
+  Check,
+  ChevronLeft,
+  Copy,
+  Download,
+  FileIcon,
+  FileText,
+  MoreHorizontal,
+  Paperclip,
+  SearchIcon,
+  Smile,
   Sparkle,
   Trash2,
-  ChevronDown,
-  Check,
+  Users,
   Volume2,
-  VolumeX,
-  SearchIcon,
   X,
-  Paperclip,
-  FileText,
-  FileIcon,
-  Download,
-  Smile,
-  Bell,
-  BellOff,
 } from './icons'
 import { useImageFileDrop } from './useFileDrop'
 import { playChatSound } from './sound'
@@ -36,21 +45,64 @@ import {
   isGroupedWithPrevious,
   messageTime,
 } from './message'
-import { designerTint } from './colours'
 import {
   CHAT_BUCKET,
   CHAT_STATUS_META,
   type ChatAttachment,
+  type ChatLinkComponent,
   type ChatStatus,
-  type PresenceMember,
+  type ChatThread,
   type ReactionRow,
   type TeamMember,
   type TeamMessage,
 } from './types'
+
 const EMOJI_CHOICES = ['👍', '❤️', '😂', '🎉', '👀', '✅', '🙏']
 const MAX_ATTACHMENTS = 6
 const MAX_MB = 25
 const MAX_BYTES = MAX_MB * 1024 * 1024 // matches the 000323 bucket cap
+
+// Below this width the full page draws its conversations as chips above the
+// thread, as the dropdown does; above it they are a list beside the thread.
+const PAGE_WIDE_PX = 760
+// Below this the page is a phone: the list and the thread take turns.
+const PAGE_PHONE_PX = 640
+
+// What an empty thread with the assistant offers as a start. Examples in
+// code, not a history: the point is to show the kind of question it answers.
+const BOT_SUGGESTIONS = [
+  'Where has the latest order for a customer got to?',
+  'Has this customer ordered before?',
+  'What does 500 gold cards cost?',
+  'How do I park a sale?',
+]
+
+/**
+ * One entry in the panel's ⋯ menu, provided by the host surface: where chat
+ * lives (pop out, dock, the full page) and whether it stays open. The panel
+ * owns the rest of the menu (sounds, alerts, status) itself.
+ */
+export interface ChatPlacementItem {
+  key: string
+  label: string
+  icon?: ReactNode
+  /** An action. Closing the menu is the panel's job. */
+  onSelect?: () => void
+  /** A router link instead of an action, rendered through `linkComponent`. */
+  to?: string
+  /** A toggle: drawn with its state, as "on" / "off". */
+  checked?: boolean
+}
+
+interface TeamChatPanelProps {
+  variant: 'dropdown' | 'page' | 'docked' | 'popout'
+  /** The ⋯ menu's first section. See `ChatPlacementItem`. */
+  placementItems?: ChatPlacementItem[]
+  /** A control at the far right of the header: close, undock, back. */
+  headerAction?: ReactNode
+  /** The host's router link, for `to` items. Defaults to a plain anchor. */
+  linkComponent?: ChatLinkComponent
+}
 
 interface StagedAttachment {
   id: string
@@ -86,7 +138,6 @@ function kindLabel(name: string, type: string): string {
   return (type.split('/').pop() ?? '').toUpperCase()
 }
 
-// Lucide icon for a non-image attachment chip.
 function fileKindIcon(name: string, type: string) {
   const ext = (name.split('.').pop() ?? '').toLowerCase()
   if (type === 'application/pdf' || ext === 'pdf') return FileText
@@ -105,6 +156,154 @@ function groupReactions(rows: ReactionRow[], userId: string | null) {
     map.set(r.emoji, g)
   }
   return [...map.values()]
+}
+
+function firstName(name: string | null | undefined): string {
+  const n = (name ?? '').trim()
+  return n ? n.split(/\s+/)[0] : 'Teammate'
+}
+
+function statusDotClass(status: ChatStatus | null | undefined): string {
+  return `pd-chat__dot pd-chat__dot--${status ?? 'offline'}`
+}
+
+// A conversation row's time: the clock today, the weekday this week, else
+// the date. Short, because it sits at the end of a 64px row.
+function rowTime(iso: string): string {
+  const d = new Date(iso)
+  if (!Number.isFinite(d.getTime())) return ''
+  const now = new Date()
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const diffDays = Math.round((startOf(now) - startOf(d)) / 86_400_000)
+  if (diffDays === 0) return messageTime(iso)
+  if (diffDays === 1) return 'Yest'
+  if (diffDays < 7) return d.toLocaleDateString('en-GB', { weekday: 'short' })
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+}
+
+// Binds outside-click and Escape to the document the element is actually in,
+// not the app's: popped out into a picture-in-picture window the panel lives
+// in a second document, where a listener on the main one never sees either.
+function useCloseOnOutside(open: boolean, ref: React.RefObject<HTMLElement | null>, close: () => void) {
+  useEffect(() => {
+    if (!open) return
+    const doc = ref.current?.ownerDocument ?? document
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) close()
+    }
+    // Escape closes the innermost thing. Heard in the capture phase and
+    // stopped there, so the dropdown's own Escape (which closes the whole
+    // panel) does not fire for the same press.
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      close()
+    }
+    doc.addEventListener('mousedown', onDoc)
+    doc.addEventListener('keydown', onKey, true)
+    return () => {
+      doc.removeEventListener('mousedown', onDoc)
+      doc.removeEventListener('keydown', onKey, true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+}
+
+// ── Small parts ────────────────────────────────────────────────────────────
+
+// The team chat assistant's tag ("AI") and avatar. Claude is not a person:
+// it never holds a presence, so instead of a status dot (which would read as
+// "offline") it carries a tag, and instead of initials a spark.
+// ⚠ Both class names are read by proof-viewer's e2e specs; keep them.
+export function BotTag() {
+  return (
+    <span className="pd-chat__bot-tag" title="The team chat assistant. It looks things up; it cannot change anything.">
+      AI
+    </span>
+  )
+}
+
+function BotAvatar({ size }: { size: 'xs' | 'sm' | 'md' | 'lg' | 'xl' }) {
+  const px = { xs: 18, sm: 22, md: 28, lg: 32, xl: 44 }[size]
+  const glyph = { xs: 10, sm: 12, md: 14, lg: 16, xl: 20 }[size]
+  return (
+    <span className="pd-chat__bot-avatar" style={{ width: px, height: px }} aria-hidden="true">
+      <Sparkle size={glyph} />
+    </span>
+  )
+}
+
+type AvatarSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl'
+
+// A person's avatar: their photo, or their initials on their identity
+// colour, with an optional presence dot.
+function PersonAvatar({
+  size,
+  initials,
+  colour,
+  avatarUrl,
+  status,
+}: {
+  size: AvatarSize
+  initials: string | null | undefined
+  colour: string | null | undefined
+  avatarUrl?: string | null
+  /** A ChatStatus, null = offline, undefined = no dot. */
+  status?: ChatStatus | null
+}) {
+  return (
+    <span
+      className={`pd-chat__av pd-chat__av--${size}`}
+      style={avatarUrl ? undefined : { backgroundColor: authorBadgeColour(colour ?? null) }}
+      aria-hidden="true"
+    >
+      {avatarUrl ? <img src={avatarUrl} alt="" /> : (initials ?? '?').slice(0, 2)}
+      {status !== undefined && <span className={statusDotClass(status)} />}
+    </span>
+  )
+}
+
+function TeamAvatar({ size }: { size: AvatarSize }) {
+  const glyph = { xs: 10, sm: 12, md: 14, lg: 16, xl: 18 }[size]
+  return (
+    <span className={`pd-chat__av pd-chat__av--${size} pd-chat__av--team`} aria-hidden="true">
+      <Users size={glyph} />
+    </span>
+  )
+}
+
+// One avatar for any thread party: the room, a person, or the assistant.
+function ThreadAvatar({
+  thread,
+  member,
+  status,
+  size,
+}: {
+  thread: ChatThread
+  member: TeamMember | null
+  status?: ChatStatus | null
+  size: AvatarSize
+}) {
+  if (thread === 'team') return <TeamAvatar size={size} />
+  if (member?.isBot) return <BotAvatar size={size} />
+  return (
+    <PersonAvatar
+      size={size}
+      initials={member?.initials}
+      colour={member?.colour}
+      avatarUrl={member?.avatarUrl}
+      status={status}
+    />
+  )
+}
+
+function UnreadCount({ count, room }: { count: number; room?: boolean }) {
+  if (count <= 0) return null
+  return (
+    <span className={['pd-chat__count', room ? 'pd-chat__count--room' : ''].filter(Boolean).join(' ')} aria-label={`${count} unread`}>
+      {count > 9 ? '9+' : count}
+    </span>
+  )
 }
 
 // Renders a message's attachments: images preview as thumbnails (private
@@ -140,31 +339,23 @@ function ChatAttachments({ files }: { files: ChatAttachment[] }) {
   if (urls.length === 0) return null
   return (
     <>
-      <div className="pdc-mt-1-5 pdc-flex pdc-flex-wrap pdc-gap-1-5">
+      <div className="pd-chat__files">
         {files.map((f, i) => {
           const url = urls[i]
           if (!url) return null
           if (isImageType(f.type)) {
             return (
-              <button
-                key={i}
-                type="button"
-                onClick={() => setLightbox(url)}
-                className="pdc-overflow-hidden pdc-rounded-lg pdc-border pdc-border-line"
-              >
-                <img
-                  src={url}
-                  alt={f.name || 'Attachment'}
-                  loading="lazy"
-                  className="pdc-h-36 pdc-w-36 pdc-object-cover"
-                />
+              <button key={i} type="button" onClick={() => setLightbox(url)} className="pdc-text-left">
+                <span className="pd-chat__thumb">
+                  <img src={url} alt={f.name || 'Attachment'} loading="lazy" />
+                </span>
+                {f.name && <span className="pd-chat__thumb-caption">{f.name}</span>}
               </button>
             )
           }
           // Force a download with the real filename via the signed URL's
           // ?download param (the stored key is a random uuid).
           const href = `${url}${url.includes('?') ? '&' : '?'}download=${encodeURIComponent(f.name || 'file')}`
-          const Icon = fileKindIcon(f.name, f.type)
           const meta = [kindLabel(f.name, f.type), formatBytes(f.size)].filter(Boolean).join(' · ')
           return (
             <a
@@ -173,37 +364,22 @@ function ChatAttachments({ files }: { files: ChatAttachment[] }) {
               target="_blank"
               rel="noopener noreferrer"
               title={`Download ${f.name}`}
-              className="pdc-flex pdc-max-w-240px pdc-items-center pdc-gap-2-5 pdc-rounded-lg pdc-border pdc-border-line pdc-bg-canvas pdc-px-3 pdc-py-2 pdc-transition-colors pdc-hover-bg-surface"
+              className="pd-chat__file"
             >
-              <Icon size={22} aria-hidden="true" className="pdc-flex-shrink-0 pdc-text-ink-mute" />
-              <span className="pdc-min-w-0 pdc-flex-1">
-                <span className="pdc-block pdc-truncate pdc-text-14px pdc-font-medium pdc-text-ink pdc-sm-text-12px">{f.name || 'File'}</span>
-                {meta && <span className="pdc-block pdc-text-13px pdc-text-ink-mute pdc-sm-text-11px">{meta}</span>}
+              <span className="pd-chat__file-kind">{kindLabel(f.name, f.type).slice(0, 4) || 'FILE'}</span>
+              <span className="pd-chat__file-text">
+                <span className="pd-chat__file-name">{f.name || 'File'}</span>
+                {meta && <span className="pd-chat__file-meta">{meta}</span>}
               </span>
-              <Download size={14} aria-hidden="true" className="pdc-flex-shrink-0 pdc-text-ink-dim" />
+              <Download size={14} aria-hidden="true" className="pdc-text-ink-dim" />
             </a>
           )
         })}
       </div>
       {lightbox && (
-        <div
-          className="pdc-fixed pdc-inset-0 pdc-z-50 pdc-flex pdc-items-center pdc-justify-center pdc-bg-black-80 pdc-p-4"
-          onClick={() => setLightbox(null)}
-          role="dialog"
-          aria-modal="true"
-        >
-          <img
-            src={lightbox}
-            alt="Attachment"
-            className="pdc-max-h-full pdc-max-w-full pdc-rounded-lg"
-            onClick={(e) => e.stopPropagation()}
-          />
-          <button
-            type="button"
-            onClick={() => setLightbox(null)}
-            aria-label="Close image"
-            className="pdc-absolute pdc-right-4 pdc-top-4 pdc-rounded-full pdc-bg-white-10 pdc-p-2 pdc-text-white pdc-hover-bg-white-20"
-          >
+        <div className="pd-chat__lightbox" onClick={() => setLightbox(null)} role="dialog" aria-modal="true">
+          <img src={lightbox} alt="Attachment" onClick={(e) => e.stopPropagation()} />
+          <button type="button" onClick={() => setLightbox(null)} aria-label="Close image" className="pd-chat__lightbox-close">
             <X size={20} aria-hidden="true" />
           </button>
         </div>
@@ -212,38 +388,13 @@ function ChatAttachments({ files }: { files: ChatAttachment[] }) {
   )
 }
 
-// The hover "react" button + its emoji picker. `pickerAnchor` sets which edge
-// the popover hangs from so it always opens over the bubble (where there's
-// room) rather than off the panel edge.
-function ReactButton({
-  messageId,
-  pickerAnchor,
-}: {
-  messageId: string
-  pickerAnchor: 'left' | 'right'
-}) {
+// The hover toolbar's "react" button + its emoji picker.
+function ReactButton({ messageId, onOpenChange }: { messageId: string; onOpenChange: (open: boolean) => void }) {
   const { toggleReaction } = useTeamChat()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!open) return
-    // Bind to the document this menu is actually in, not the app's: popped out
-    // into a picture-in-picture window the panel lives in a second document,
-    // where a listener on the main one never sees the click or the Escape.
-    const doc = ref.current?.ownerDocument ?? document
-    function onDoc(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    doc.addEventListener('mousedown', onDoc)
-    doc.addEventListener('keydown', onKey)
-    return () => {
-      doc.removeEventListener('mousedown', onDoc)
-      doc.removeEventListener('keydown', onKey)
-    }
-  }, [open])
+  useCloseOnOutside(open, ref, () => setOpen(false))
+  useEffect(() => onOpenChange(open), [open, onOpenChange])
 
   return (
     <div ref={ref} className="pdc-relative">
@@ -252,17 +403,12 @@ function ReactButton({
         onClick={() => setOpen((v) => !v)}
         aria-label="Add reaction"
         title="React"
-        className="pdc-flex pdc-h-6 pdc-w-6 pdc-items-center pdc-justify-center pdc-rounded pdc-text-ink-mute pdc-hover-bg-canvas pdc-hover-text-ink"
+        className="pd-chat__tool"
       >
         <Smile size={14} aria-hidden="true" />
       </button>
       {open && (
-        <div
-          className={[
-            'pdc-absolute pdc-top-7 pdc-z-30 pdc-flex pdc-gap-0-5 pdc-rounded-full pdc-border pdc-border-line pdc-bg-surface pdc-p-1 pdc-shadow-md',
-            pickerAnchor === 'left' ? 'pdc-left-0' : 'pdc-right-0',
-          ].join(' ')}
-        >
+        <div className="pd-chat__picker pd-chat__picker--right">
           {EMOJI_CHOICES.map((e) => (
             <button
               key={e}
@@ -272,7 +418,6 @@ function ReactButton({
                 setOpen(false)
               }}
               aria-label={`React ${e}`}
-              className="pdc-rounded-full pdc-px-1 pdc-text-16px pdc-leading-none pdc-hover-bg-canvas"
             >
               {e}
             </button>
@@ -283,348 +428,30 @@ function ReactButton({
   )
 }
 
-function firstName(name: string | null | undefined): string {
-  const n = (name ?? '').trim()
-  return n ? n.split(/\s+/)[0] : 'Teammate'
-}
-
-// The team chat assistant's tag ("AI") and avatar. Claude is not a person:
-// it never holds a presence, so instead of a status dot (which would read as
-// "offline") it carries a tag, and instead of initials a spark.
-function BotTag() {
-  return (
-    <span className="pd-chat__bot-tag" title="The team chat assistant. It looks things up; it cannot change anything.">
-      AI
-    </span>
-  )
-}
-
-function BotAvatar({ size }: { size: 'sm' | 'md' }) {
-  const box = size === 'md' ? 'pdc-h-9 pdc-w-9 pdc-sm-h-7 pdc-sm-w-7' : 'pdc-h-8 pdc-w-8 pdc-sm-h-6 pdc-sm-w-6'
-  return (
-    <span className={`pd-chat__bot-avatar ${box}`} aria-hidden="true">
-      <Sparkle size={size === 'md' ? 16 : 14} />
-    </span>
-  )
-}
-
-// One pill in the thread switcher: the Team room or a teammate's private
-// thread. Carries that thread's unread count and (for people) a presence dot.
-function ThreadPill({
+// One chip in the conversation row: the Team room, a teammate, or Claude.
+// Carries that thread's unread count and (for people) a presence dot.
+function ThreadChip({
+  thread,
   label,
+  member,
   active,
   count,
   status,
-  bot = false,
   onClick,
 }: {
+  thread: ChatThread
   label: string
+  member: TeamMember | null
   active: boolean
   count: number
-  /** Presence dot: a ChatStatus, null = offline, undefined = no dot (Team). */
   status?: ChatStatus | null
-  /** The team chat assistant: a spark in place of the presence dot. */
-  bot?: boolean
   onClick: () => void
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={[
-        'pdc-flex pdc-h-9 pdc-flex-shrink-0 pdc-items-center pdc-gap-1-5 pdc-rounded-full pdc-border pdc-px-3 pdc-text-14px pdc-font-medium pdc-transition-colors pdc-sm-h-7 pdc-sm-px-2-5 pdc-sm-text-12px',
-        active
-          ? 'pdc-border-ink pdc-bg-ink pdc-text-on-ink'
-          : 'pdc-border-line pdc-bg-surface pdc-text-ink-soft pdc-hover-bg-canvas pdc-hover-text-ink',
-      ].join(' ')}
-    >
-      {bot && <Sparkle size={11} aria-hidden="true" />}
-      {!bot && status !== undefined && (
-        <span
-          className="pdc-inline-block pdc-h-2 pdc-w-2 pdc-flex-shrink-0 pdc-rounded-full"
-          style={{ backgroundColor: status ? CHAT_STATUS_META[status].dot : 'var(--c-line)' }}
-          aria-hidden="true"
-        />
-      )}
+    <button type="button" onClick={onClick} aria-pressed={active} className="pd-chat__chip">
+      <ThreadAvatar thread={thread} member={member} status={status} size="xs" />
       {label}
-      {count > 0 && (
-        <span
-          className="pdc-inline-flex pdc-h-18px pdc-min-w-18px pdc-items-center pdc-justify-center pdc-rounded-full pdc-bg-brand pdc-px-1 pdc-text-11px pdc-font-bold pdc-leading-none pdc-text-white pdc-sm-h-16px pdc-sm-min-w-16px pdc-sm-text-10px"
-          aria-label={`${count} unread`}
-        >
-          {count > 9 ? '9+' : count}
-        </span>
-      )}
-    </button>
-  )
-}
-
-// The shared chat body — presence strip + thread switcher + message list +
-// composer — used by the header dropdown (variant="dropdown"), the full /chat
-// page (variant="page") and the dashboard rail dock (variant="docked"). It
-// reads everything from the TeamChatProvider, so every surface stays perfectly
-// in sync (including which thread is open). The parent sizes it.
-
-interface TeamChatPanelProps {
-  variant: 'dropdown' | 'page' | 'docked' | 'popout'
-}
-
-const SETTABLE: { value: 'online' | 'away' | 'busy'; label: string }[] = [
-  { value: 'online', label: 'Online' },
-  { value: 'away', label: 'Away' },
-  { value: 'busy', label: 'Busy' },
-]
-
-function StatusDot({ status }: { status: ChatStatus }) {
-  return (
-    <span
-      className="pdc-inline-block pdc-h-2-5 pdc-w-2-5 pdc-rounded-full"
-      style={{ backgroundColor: CHAT_STATUS_META[status].dot }}
-      aria-hidden="true"
-    />
-  )
-}
-
-function PresenceAvatar({ member }: { member: PresenceMember }) {
-  const meta = CHAT_STATUS_META[member.status]
-  return (
-    <span
-      className="pdc-relative pdc-inline-flex pdc-h-9 pdc-w-9 pdc-items-center pdc-justify-center pdc-overflow-visible pdc-rounded-full pdc-font-mono pdc-text-12px pdc-font-medium pdc-text-white pdc-sm-h-7 pdc-sm-w-7 pdc-sm-text-10px"
-      style={member.avatarUrl ? undefined : { backgroundColor: authorBadgeColour(member.colour) }}
-      title={`${firstName(member.name)} — ${meta.label}`}
-    >
-      {member.avatarUrl ? (
-        <img src={member.avatarUrl} alt="" className="pdc-h-9 pdc-w-9 pdc-rounded-full pdc-object-cover pdc-sm-h-7 pdc-sm-w-7" />
-      ) : (
-        (member.initials ?? '?').slice(0, 2)
-      )}
-      <span
-        className="pdc-absolute pdc-neg-bottom-0-5 pdc-neg-right-0-5 pdc-h-3 pdc-w-3 pdc-rounded-full"
-        style={{ backgroundColor: meta.dot, boxShadow: '0 0 0 2px var(--c-surface)' }}
-        aria-hidden="true"
-      />
-    </span>
-  )
-}
-
-function StatusPicker() {
-  const { myStatus, setManualStatus } = useTeamChat()
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!open) return
-    // Bind to the document this menu is actually in, not the app's: popped out
-    // into a picture-in-picture window the panel lives in a second document,
-    // where a listener on the main one never sees the click or the Escape.
-    const doc = ref.current?.ownerDocument ?? document
-    function onDoc(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    doc.addEventListener('mousedown', onDoc)
-    doc.addEventListener('keydown', onKey)
-    return () => {
-      doc.removeEventListener('mousedown', onDoc)
-      doc.removeEventListener('keydown', onKey)
-    }
-  }, [open])
-
-  return (
-    <div ref={ref} className="pdc-relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        className="pdc-inline-flex pdc-items-center pdc-gap-1-5 pdc-rounded-full pdc-border pdc-border-line pdc-bg-surface pdc-py-1 pdc-pl-2 pdc-pr-1-5 pdc-text-14px pdc-font-medium pdc-text-ink-soft pdc-hover-bg-canvas pdc-sm-text-12px"
-      >
-        <StatusDot status={myStatus} />
-        {CHAT_STATUS_META[myStatus].label}
-        <ChevronDown size={13} aria-hidden="true" className="pdc-text-ink-mute" />
-      </button>
-      {open && (
-        <div
-          role="menu"
-          className="pdc-absolute pdc-left-0 pdc-top-9 pdc-z-30 pdc-min-w-9rem pdc-rounded-10px pdc-border pdc-border-line pdc-bg-surface pdc-py-1 pdc-shadow-md"
-        >
-          {SETTABLE.map((s) => (
-            <button
-              key={s.value}
-              type="button"
-              role="menuitemradio"
-              aria-checked={myStatus === s.value}
-              onClick={() => {
-                setManualStatus(s.value)
-                setOpen(false)
-              }}
-              className="pdc-flex pdc-w-full pdc-items-center pdc-gap-2 pdc-px-3 pdc-py-1-5 pdc-text-left pdc-text-15px pdc-text-ink-soft pdc-hover-bg-canvas pdc-sm-text-13px"
-            >
-              <StatusDot status={s.value} />
-              <span className="pdc-flex-1">{s.label}</span>
-              {myStatus === s.value && <Check size={14} aria-hidden="true" className="pdc-text-ink-mute" />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function AlertsMenu() {
-  const { alertLevel, setAlertLevel, peekEnabled, setPeekEnabled } = useTeamChat()
-  const [open, setOpen] = useState(false)
-  const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>(() =>
-    alertPermission(),
-  )
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    // Bind to the document this menu is actually in, not the app's: popped out
-    // into a picture-in-picture window the panel lives in a second document,
-    // where a listener on the main one never sees the click or the Escape.
-    const doc = ref.current?.ownerDocument ?? document
-    function onDoc(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    doc.addEventListener('mousedown', onDoc)
-    doc.addEventListener('keydown', onKey)
-    return () => {
-      doc.removeEventListener('mousedown', onDoc)
-      doc.removeEventListener('keydown', onKey)
-    }
-  }, [open])
-
-  if (permission === 'unsupported') return null
-
-  const blocked = permission === 'denied'
-  // Nothing will actually appear unless the browser has been asked and said
-  // yes, so the icon reports what is really happening rather than what has
-  // been chosen. A bell that looks on while the browser is blocking is the
-  // sort of quiet lie this whole change exists to remove.
-  // Either signal counts, because the menu now governs both. A bell that read
-  // 'off' while a card was still sliding out under the header would be exactly
-  // the sort of quiet lie the rest of this is here to remove.
-  const live = (alertLevel !== 'off' && permission === 'granted') || peekEnabled
-
-  async function choose(level: ChatAlertLevel) {
-    if (level !== 'off' && permission !== 'granted') {
-      // This is a click, which is the only context Safari will accept a
-      // permission request from, and asking on load burns the single chance.
-      const result = await requestAlertPermission()
-      setPermission(result)
-      if (result !== 'granted') return // leave the old level; nothing would show
-    }
-    setAlertLevel(level)
-    setOpen(false)
-  }
-
-  return (
-    <div ref={ref} className="pdc-relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="Message notifications"
-        title={
-          blocked
-            ? 'Your browser is blocking desktop notifications for this site'
-            : live
-              ? 'Message notifications are on'
-              : 'Message notifications are off'
-        }
-        className="pdc-flex pdc-h-7 pdc-w-7 pdc-flex-shrink-0 pdc-items-center pdc-justify-center pdc-rounded-full pdc-text-ink-mute pdc-transition-colors pdc-hover-bg-canvas pdc-hover-text-ink"
-      >
-        {live ? <Bell size={15} aria-hidden="true" /> : <BellOff size={15} aria-hidden="true" />}
-      </button>
-      {open && (
-        <div
-          role="menu"
-          className="pdc-absolute pdc-right-0 pdc-top-9 pdc-z-30 pdc-min-w-9rem pdc-rounded-10px pdc-border pdc-border-line pdc-bg-surface pdc-py-1 pdc-shadow-md"
-        >
-          <p className="pdc-px-3 pdc-py-1-5 pdc-text-11px pdc-font-semibold pdc-text-ink-mute">
-            When you&rsquo;re in another window
-          </p>
-          {CHAT_ALERT_LEVELS.map((l) => (
-            <button
-              key={l.value}
-              type="button"
-              role="menuitemradio"
-              aria-checked={alertLevel === l.value}
-              disabled={blocked && l.value !== 'off'}
-              onClick={() => void choose(l.value)}
-              className="pdc-flex pdc-w-full pdc-items-center pdc-gap-2 pdc-px-3 pdc-py-1-5 pdc-text-left pdc-text-15px pdc-text-ink-soft pdc-hover-bg-canvas pdc-disabled-opacity-40 pdc-sm-text-13px"
-            >
-              <span className="pdc-flex-1">
-                {l.label}
-                <span className="pdc-block pdc-text-11px pdc-text-ink-mute">{l.hint}</span>
-              </span>
-              {alertLevel === l.value && (
-                <Check size={14} aria-hidden="true" className="pdc-text-ink-mute" />
-              )}
-            </button>
-          ))}
-          {blocked && (
-            <p className="pdc-px-3 pdc-py-1-5 pdc-text-11px pdc-text-ink-mute">
-              Your browser is blocking notifications for this site. Turn them back on in its site
-              settings.
-            </p>
-          )}
-          <div className="pd-chat__menu-divider" />
-          <p className="pdc-px-3 pdc-py-1-5 pdc-text-11px pdc-font-semibold pdc-text-ink-mute">
-            When you&rsquo;re in the app
-          </p>
-          <button
-            type="button"
-            role="menuitemcheckbox"
-            aria-checked={peekEnabled}
-            onClick={() => {
-              setPeekEnabled(!peekEnabled)
-              setOpen(false)
-            }}
-            className="pdc-flex pdc-w-full pdc-items-center pdc-gap-2 pdc-px-3 pdc-py-1-5 pdc-text-left pdc-text-15px pdc-text-ink-soft pdc-hover-bg-canvas pdc-sm-text-13px"
-          >
-            <span className="pdc-flex-1">
-              Show the message here
-              <span className="pdc-block pdc-text-11px pdc-text-ink-mute">
-                Slides out under the chat button
-              </span>
-            </span>
-            {peekEnabled && <Check size={14} aria-hidden="true" className="pdc-text-ink-mute" />}
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function SoundToggle() {
-  const { soundEnabled, setSoundEnabled } = useTeamChat()
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        const next = !soundEnabled
-        setSoundEnabled(next)
-        if (next) playChatSound('general') // confirm + unlock audio on enable
-      }}
-      aria-pressed={soundEnabled}
-      aria-label={soundEnabled ? 'Mute chat sounds' : 'Unmute chat sounds'}
-      title={soundEnabled ? 'Mute chat sounds' : 'Unmute chat sounds'}
-      className="pdc-flex pdc-h-7 pdc-w-7 pdc-flex-shrink-0 pdc-items-center pdc-justify-center pdc-rounded-full pdc-text-ink-mute pdc-transition-colors pdc-hover-bg-canvas pdc-hover-text-ink"
-    >
-      {soundEnabled ? (
-        <Volume2 size={15} aria-hidden="true" />
-      ) : (
-        <VolumeX size={15} aria-hidden="true" />
-      )}
+      <UnreadCount count={count} room={thread === 'team'} />
     </button>
   )
 }
@@ -647,7 +474,234 @@ function detectMention(text: string, caret: number): { at: number; query: string
   return { at, query }
 }
 
-export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
+// ── The ⋯ menu ─────────────────────────────────────────────────────────────
+// Every setting and every "where does chat live" choice, in one place, in
+// every placement. The placement items come from the host; the rest is the
+// panel's own.
+
+const SETTABLE: { value: 'online' | 'away' | 'busy'; label: string }[] = [
+  { value: 'online', label: 'Online' },
+  { value: 'away', label: 'Away' },
+  { value: 'busy', label: 'Busy' },
+]
+
+function PanelMenu({
+  items,
+  linkComponent: As,
+}: {
+  items: ChatPlacementItem[]
+  linkComponent?: ChatLinkComponent
+}) {
+  const {
+    myStatus,
+    setManualStatus,
+    soundEnabled,
+    setSoundEnabled,
+    alertLevel,
+    setAlertLevel,
+    peekEnabled,
+    setPeekEnabled,
+  } = useTeamChat()
+  const [open, setOpen] = useState(false)
+  const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>(() => alertPermission())
+  const ref = useRef<HTMLDivElement>(null)
+  useCloseOnOutside(open, ref, () => setOpen(false))
+
+  const alertsSupported = permission !== 'unsupported'
+  const blocked = permission === 'denied'
+  // Nothing appears unless the browser has been asked and said yes, so the
+  // value reports what is really happening rather than what has been chosen.
+  const alertValue = !alertsSupported
+    ? null
+    : blocked
+      ? 'blocked'
+      : alertLevel === 'off' || permission !== 'granted'
+        ? 'off'
+        : alertLevel
+
+  async function choose(level: ChatAlertLevel) {
+    if (level !== 'off' && permission !== 'granted') {
+      // This is a click, which is the only context Safari will accept a
+      // permission request from, and asking on load burns the single chance.
+      const result = await requestAlertPermission()
+      setPermission(result)
+      if (result !== 'granted') return // leave the old level; nothing would show
+    }
+    setAlertLevel(level)
+    setOpen(false)
+  }
+
+  return (
+    <div ref={ref} className="pdc-relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="More options"
+        title="More"
+        className="pd-chat__ib"
+      >
+        <MoreHorizontal size={16} aria-hidden="true" />
+      </button>
+      {open && (
+        <div role="menu" className="pd-chat__menu">
+          {items.map((it) => {
+            if (it.to) {
+              const props = {
+                role: 'menuitem',
+                className: 'pd-chat__menu-item',
+                onClick: () => {
+                  setOpen(false)
+                  it.onSelect?.()
+                },
+              }
+              return As ? (
+                <As key={it.key} to={it.to} {...props}>
+                  {it.icon}
+                  {it.label}
+                </As>
+              ) : (
+                <a key={it.key} href={it.to} {...props}>
+                  {it.icon}
+                  {it.label}
+                </a>
+              )
+            }
+            if (it.checked !== undefined) {
+              return (
+                <button
+                  key={it.key}
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={it.checked}
+                  onClick={() => {
+                    it.onSelect?.()
+                    setOpen(false)
+                  }}
+                  className="pd-chat__menu-item"
+                >
+                  {it.icon}
+                  {it.label}
+                  <span className={['pd-chat__menu-value', it.checked ? 'pd-chat__menu-value--on' : ''].join(' ')}>
+                    {it.checked ? 'on' : 'off'}
+                  </span>
+                </button>
+              )
+            }
+            return (
+              <button
+                key={it.key}
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false)
+                  it.onSelect?.()
+                }}
+                className="pd-chat__menu-item"
+              >
+                {it.icon}
+                {it.label}
+              </button>
+            )
+          })}
+          {items.length > 0 && <div className="pd-chat__menu-divider" />}
+
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={soundEnabled}
+            onClick={() => {
+              const next = !soundEnabled
+              setSoundEnabled(next)
+              if (next) playChatSound('general') // confirm + unlock audio on enable
+            }}
+            className="pd-chat__menu-item"
+          >
+            <Volume2 size={15} aria-hidden="true" />
+            Sounds
+            <span className={['pd-chat__menu-value', soundEnabled ? 'pd-chat__menu-value--on' : ''].join(' ')}>
+              {soundEnabled ? 'on' : 'off'}
+            </span>
+          </button>
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={peekEnabled}
+            onClick={() => setPeekEnabled(!peekEnabled)}
+            className="pd-chat__menu-item"
+          >
+            <MoreHorizontal size={15} aria-hidden="true" style={{ visibility: 'hidden' }} />
+            Show a new message here
+            <span className={['pd-chat__menu-value', peekEnabled ? 'pd-chat__menu-value--on' : ''].join(' ')}>
+              {peekEnabled ? 'on' : 'off'}
+            </span>
+          </button>
+
+          {alertsSupported && (
+            <>
+              <div className="pd-chat__menu-heading">Desktop alerts</div>
+              {CHAT_ALERT_LEVELS.map((l) => (
+                <button
+                  key={l.value}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={alertLevel === l.value}
+                  disabled={blocked && l.value !== 'off'}
+                  onClick={() => void choose(l.value)}
+                  className="pd-chat__menu-item"
+                >
+                  <Bell size={15} aria-hidden="true" style={{ visibility: alertValue === l.value ? 'visible' : 'hidden' }} />
+                  {l.label}
+                  {alertLevel === l.value && <Check size={14} aria-hidden="true" className="pd-chat__menu-value pd-chat__menu-value--on" />}
+                </button>
+              ))}
+              {blocked && (
+                <p className="pd-chat__menu-note">
+                  Your browser is blocking notifications for this site. Turn them back on in its site settings.
+                </p>
+              )}
+            </>
+          )}
+
+          <div className="pd-chat__menu-divider" />
+          <div className="pd-chat__menu-heading">My status</div>
+          {SETTABLE.map((s) => (
+            <button
+              key={s.value}
+              type="button"
+              role="menuitemradio"
+              aria-checked={myStatus === s.value}
+              onClick={() => {
+                setManualStatus(s.value)
+                setOpen(false)
+              }}
+              className="pd-chat__menu-item"
+            >
+              <span className={`pd-chat__status-dot pd-chat__dot--${s.value}`} aria-hidden="true" />
+              {s.label}
+              {myStatus === s.value && <Check size={14} aria-hidden="true" className="pd-chat__menu-value pd-chat__menu-value--on" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── The panel ──────────────────────────────────────────────────────────────
+// The shared chat body — thread header, conversation chips (or, on the full
+// page, a list beside the thread), message list and composer — used by the
+// header dropdown, the /chat page, the dashboard rail dock and the popout
+// window. It reads everything from the TeamChatProvider, so every surface
+// stays in sync (including which thread is open). The parent sizes it.
+
+export default function TeamChatPanel({
+  variant,
+  placementItems = [],
+  headerAction,
+  linkComponent,
+}: TeamChatPanelProps) {
   const {
     config,
     db,
@@ -681,6 +735,28 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [attachments, setAttachments] = useState<StagedAttachment[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  // The page measures itself to pick its shape; the other variants are
+  // always the one-column chips-over-thread layout.
+  const [width, setWidth] = useState(0)
+  useEffect(() => {
+    const el = rootRef.current
+    if (!el || variant !== 'page' || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0
+      setWidth(w)
+    })
+    ro.observe(el)
+    setWidth(el.getBoundingClientRect().width)
+    return () => ro.disconnect()
+  }, [variant])
+  const pageWide = variant === 'page' && width >= PAGE_WIDE_PX
+  const pagePhone = variant === 'page' && width > 0 && width < PAGE_PHONE_PX
+  // On a phone the list and the thread take turns. Opening the page lands on
+  // the list; a row opens its thread; back returns.
+  const [phoneThreadOpen, setPhoneThreadOpen] = useState(false)
+  const showingList = pagePhone && !phoneThreadOpen
 
   const reactionsByMessage = useMemo(() => {
     const map = new Map<string, ReactionRow[]>()
@@ -751,22 +827,19 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
   const [mentionIndex, setMentionIndex] = useState(0)
 
   const mentionCandidates = useMemo(() => members.filter((m) => m.id !== userId), [members, userId])
-  const memberNames = useMemo(
-    () => members.map((m) => m.name ?? '').filter(Boolean),
-    [members],
-  )
+  const memberNames = useMemo(() => members.map((m) => m.name ?? '').filter(Boolean), [members])
   // The DM peer when a private thread is open; null in the team room.
   const activePeer = useMemo(
     () => (activeThread === 'team' ? null : members.find((m) => m.id === activeThread) ?? null),
     [activeThread, members],
   )
+  const bot = useMemo(() => members.find((m) => m.isBot) ?? null, [members])
   // Author → profile lookup, so message avatars can use uploaded profile
   // pictures (avatar_url isn't denormalised on the message rows).
   const membersById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members])
-  const presenceByUser = useMemo(
-    () => new Map(presence.map((p) => [p.userId, p.status])),
-    [presence],
-  )
+  const presenceByUser = useMemo(() => new Map(presence.map((p) => [p.userId, p.status])), [presence])
+  const others = presence.filter((m) => m.userId !== userId)
+
   // Messages for the active thread: the shared room, or my DM pair with the
   // selected peer (both directions). RLS already scopes what arrives; this
   // just splits it into conversations.
@@ -778,6 +851,18 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
         (m.author_id === userId && m.recipient_id === activeThread),
     )
   }, [messages, activeThread, userId])
+
+  // The newest message in every thread, for the conversation list.
+  const latestByThread = useMemo(() => {
+    const map = new Map<ChatThread, TeamMessage>()
+    for (const m of messages) {
+      const thread: ChatThread = !m.recipient_id ? 'team' : m.author_id === userId ? (m.recipient_id as ChatThread) : (m.author_id as ChatThread)
+      const cur = map.get(thread)
+      if (!cur || cur.created_at < m.created_at) map.set(thread, m)
+    }
+    return map
+  }, [messages, userId])
+
   const searchQuery = search.trim().toLowerCase()
   // Full-history search: the instant local filter is merged with a debounced
   // server search over the thread's ENTIRE history (RLS scopes DM reads), so
@@ -842,11 +927,36 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     return mentionCandidates.filter((m) => (m.name ?? '').toLowerCase().includes(q)).slice(0, 6)
   }, [mentionQuery, mentionCandidates])
 
+  // A mounted panel is a chat surface being looked at, with one exception:
+  // the phone's conversation list, where the open thread is not on screen,
+  // so its messages must not be stamped read.
   useEffect(() => {
-    setViewing(true)
+    setViewing(!showingList)
     return () => setViewing(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [showingList])
+
+  // ── The "New" rule ────────────────────────────────────────────────────
+  // Marks where you left off: placed above the first unread message when a
+  // thread opens, removed when you next send. The count is read from the
+  // PREVIOUS render's snapshot, because by the time the thread has changed
+  // the store has already stamped it read and zeroed the count.
+  const unreadSnapshotRef = useRef(threadUnread)
+  const [newMarkerId, setNewMarkerId] = useState<string | null>(null)
+  useEffect(() => {
+    const n = unreadSnapshotRef.current[activeThread] ?? 0
+    if (n <= 0) {
+      setNewMarkerId(null)
+      return
+    }
+    const fromOthers = threadMessages.filter((m) => m.author_id !== userId)
+    const target = fromOthers[fromOthers.length - n]
+    setNewMarkerId(target?.id ?? null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeThread])
+  useEffect(() => {
+    unreadSnapshotRef.current = threadUnread
+  })
 
   // ── Scroll management ─────────────────────────────────────────────────
   // Three behaviours, matching what a chat should do:
@@ -878,10 +988,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     const el = scrollRef.current
     if (!el) return
     stickToBottomRef.current = nearBottom(el)
-    scrollPositionsRef.current.set(
-      activeThread,
-      stickToBottomRef.current ? 'bottom' : el.scrollTop,
-    )
+    scrollPositionsRef.current.set(activeThread, stickToBottomRef.current ? 'bottom' : el.scrollTop)
   }
 
   // Thread switch (and the initial load): restore where you left this thread,
@@ -897,7 +1004,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
       stickToBottomRef.current = true
       scrollToBottom(el)
     }
-  }, [activeThread, loading])
+  }, [activeThread, loading, showingList])
 
   // New messages: follow the conversation only while pinned; after "Show
   // earlier", re-anchor so what you were reading stays in place.
@@ -926,7 +1033,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     })
     ro.observe(content)
     return () => ro.disconnect()
-  }, [loading, activeThread, shown.length > 0])
+  }, [loading, activeThread, shown.length > 0, showingList])
 
   async function onLoadEarlier() {
     const el = scrollRef.current
@@ -953,6 +1060,15 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
   useEffect(() => {
     setMentionQuery(null)
   }, [activeThread])
+
+  // The composer grows with its text, up to a few lines.
+  function fitTextarea(el: HTMLTextAreaElement) {
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 140)}px`
+  }
+  useEffect(() => {
+    if (textareaRef.current) fitTextarea(textareaRef.current)
+  }, [draft])
 
   function onDraftChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const value = e.target.value
@@ -984,6 +1100,34 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
         el.setSelectionRange(pos, pos)
       }
     })
+  }
+
+  // The hover toolbar's "mention" — start a reply naming the author.
+  function mentionAuthor(m: TeamMessage) {
+    const name = m.author_name ?? ''
+    if (!name) return
+    const prefix = `@${name} `
+    setDraft((d) => (d.startsWith(prefix) ? d : prefix + d))
+    requestAnimationFrame(() => textareaRef.current?.focus())
+  }
+
+  function applySuggestion(text: string) {
+    setDraft(text)
+    requestAnimationFrame(() => {
+      const el = textareaRef.current
+      if (el) {
+        el.focus()
+        el.setSelectionRange(text.length, text.length)
+      }
+    })
+  }
+
+  async function copyText(m: TeamMessage) {
+    try {
+      await navigator.clipboard.writeText(m.body)
+    } catch {
+      /* no clipboard access — nothing to do */
+    }
   }
 
   async function handleSend() {
@@ -1039,6 +1183,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     setAttachments([])
     setDraft('')
     setMentionQuery(null)
+    setNewMarkerId(null)
     // Sending always returns you to the latest message, even if you'd
     // scrolled up to re-read something before replying.
     stickToBottomRef.current = true
@@ -1076,41 +1221,154 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
     }
   }
 
-  const others = presence.filter((m) => m.userId !== userId)
+  function openThread(thread: ChatThread) {
+    setActiveThread(thread)
+    if (pagePhone) setPhoneThreadOpen(true)
+  }
 
-  return (
-    /* `pd-chat` is the scope every rule in chat.css hangs off, so it has to be
-       on the outermost node the panel renders or nothing below it is styled.
-       It also declares the colour tokens, which is why the popout variant adds
-       its own modifier rather than replacing this class. */
-    <div
-      className={[
-        'pd-chat',
-        variant === 'popout' ? 'pd-chat--popout' : '',
-        'pdc-flex pdc-h-full pdc-min-h-0 pdc-flex-col',
-      ]
-        .filter(Boolean)
-        .join(' ')}
-    >
-      {/* Presence strip */}
-      <div className="pdc-flex pdc-items-center pdc-gap-3 pdc-border-b pdc-border-line-soft pdc-px-3 pdc-py-2">
-        <StatusPicker />
-        <div className="pdc-flex pdc-min-w-0 pdc-flex-1 pdc-items-center pdc-gap-1-5 pdc-overflow-hidden">
-          {others.length === 0 ? (
-            <span className="pdc-truncate pdc-text-14px pdc-text-ink-mute pdc-sm-text-12px">No-one else here right now</span>
-          ) : (
-            <>
-              <div className="pdc-flex pdc-flex-shrink-0 pdc-items-center pdc-neg-space-x-1-5">
-                {others.slice(0, 6).map((m) => (
-                  <PresenceAvatar key={m.userId} member={m} />
-                ))}
-              </div>
-              {others.length > 6 && (
-                <span className="pdc-text-12px pdc-text-ink-mute">+{others.length - 6}</span>
-              )}
-            </>
-          )}
+  // ── Header copy ───────────────────────────────────────────────────────
+  const peerStatus: ChatStatus | null | undefined = activePeer
+    ? activePeer.isBot
+      ? undefined
+      : presenceByUser.get(activePeer.id) ?? null
+    : undefined
+  const headName = activeThread === 'team' ? 'Team' : activePeer?.name ?? 'Teammate'
+  const headSub =
+    activeThread === 'team'
+      ? others.length > 0
+        ? `${others.length} around · everyone on the team can see this`
+        : 'Everyone on the team can see this'
+      : activePeer?.isBot
+        ? 'Reads the apps, never changes them · private to you'
+        : `${peerStatus ? CHAT_STATUS_META[peerStatus].label : 'Offline'} · private to the two of you`
+
+  const botTyping = bot !== null && typingUsers.some((u) => u.userId === bot.id)
+  const peopleTyping = typingUsers.filter((u) => !bot || u.userId !== bot.id)
+
+  // ── Pieces ────────────────────────────────────────────────────────────
+
+  const chips = (
+    <div className="pd-chat__chips">
+      <ThreadChip
+        thread="team"
+        label="Team"
+        member={null}
+        active={activeThread === 'team'}
+        count={threadUnread.team ?? 0}
+        onClick={() => openThread('team')}
+      />
+      {mentionCandidates.map((m) => (
+        <ThreadChip
+          key={m.id}
+          thread={m.id}
+          label={firstName(m.name)}
+          member={m}
+          active={activeThread === m.id}
+          count={threadUnread[m.id] ?? 0}
+          status={m.isBot ? undefined : presenceByUser.get(m.id) ?? null}
+          onClick={() => openThread(m.id)}
+        />
+      ))}
+    </div>
+  )
+
+  // The conversation list for the page: Team first, then everyone by their
+  // last message, those with none after, the assistant last among those.
+  const listRows = useMemo(() => {
+    const people = mentionCandidates.slice().sort((a, b) => {
+      const la = latestByThread.get(a.id)?.created_at ?? ''
+      const lb = latestByThread.get(b.id)?.created_at ?? ''
+      if (la !== lb) return la > lb ? -1 : 1
+      if (a.isBot !== b.isBot) return a.isBot ? 1 : -1
+      return (a.name ?? '').localeCompare(b.name ?? '')
+    })
+    return people
+  }, [mentionCandidates, latestByThread])
+
+  function snippetFor(thread: ChatThread, member: TeamMember | null): string {
+    const last = latestByThread.get(thread)
+    if (last) {
+      const who = last.author_id === userId ? 'You' : firstName(last.author_name)
+      const text = last.body.trim() || 'Sent an attachment'
+      return thread === 'team' || last.author_id === userId ? `${who}: ${text}` : text
+    }
+    if (thread === 'team') return 'Say hello to the team'
+    if (member?.isBot) return 'Ask about a project, an order or a customer'
+    return 'No messages yet'
+  }
+
+  const conversationList = (
+    <div className={['pd-chat__convos', pagePhone ? 'pd-chat__convos--phone' : ''].filter(Boolean).join(' ')}>
+      <div className="pd-chat__convos-head">
+        <span className="pdc-t-title">{pagePhone ? 'Chat' : 'Conversations'}</span>
+        <span className="pdc-t-caption pdc-text-ink-mute">
+          {others.length > 0 ? `${others.length} around` : 'Nobody else around'}
+        </span>
+      </div>
+      {pagePhone && others.length > 0 && (
+        <div className="pd-chat__around">
+          {others.slice(0, 8).map((p) => (
+            <button key={p.userId} type="button" className="pd-chat__around-person" onClick={() => openThread(p.userId)}>
+              <PersonAvatar size="xl" initials={p.initials} colour={p.colour} avatarUrl={p.avatarUrl} status={p.status} />
+              <span className="pd-chat__around-name">{firstName(p.name)}</span>
+            </button>
+          ))}
         </div>
+      )}
+      <div className="pd-chat__convos-list">
+        {(['team', ...listRows.map((m) => m.id)] as ChatThread[]).map((thread) => {
+          const member = thread === 'team' ? null : membersById.get(thread) ?? null
+          const count = threadUnread[thread] ?? 0
+          const last = latestByThread.get(thread)
+          const name = thread === 'team' ? 'Team' : member?.name ?? 'Teammate'
+          return (
+            <button
+              key={thread}
+              type="button"
+              onClick={() => openThread(thread)}
+              aria-pressed={!pagePhone && activeThread === thread}
+              className={['pd-chat__row', count > 0 ? 'pd-chat__row--unread' : ''].filter(Boolean).join(' ')}
+            >
+              <ThreadAvatar
+                thread={thread}
+                member={member}
+                status={member && !member.isBot ? presenceByUser.get(member.id) ?? null : undefined}
+                size="xl"
+              />
+              <span className="pd-chat__row-text">
+                <span className="pd-chat__row-name">
+                  {name}
+                  {member?.isBot && <BotTag />}
+                </span>
+                <span className="pd-chat__row-snip">{snippetFor(thread, member)}</span>
+              </span>
+              <span className="pd-chat__row-end">
+                {last && <span className="pd-chat__row-time">{rowTime(last.created_at)}</span>}
+                <UnreadCount count={count} room={thread === 'team'} />
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+
+  const header = (
+    <div className="pd-chat__head">
+      {pagePhone && (
+        <button type="button" className="pd-chat__ib" aria-label="Back to conversations" onClick={() => setPhoneThreadOpen(false)}>
+          <ChevronLeft size={18} aria-hidden="true" />
+        </button>
+      )}
+      <ThreadAvatar thread={activeThread} member={activePeer} status={peerStatus} size="lg" />
+      <div className="pd-chat__head-text">
+        <span className="pd-chat__head-name">
+          {headName}
+          {activePeer?.isBot && <BotTag />}
+        </span>
+        <span className="pd-chat__head-sub">{headSub}</span>
+      </div>
+      <div className="pd-chat__head-actions">
         <button
           type="button"
           onClick={() =>
@@ -1121,469 +1379,460 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             })
           }
           aria-pressed={searchOpen}
-          aria-label={searchOpen ? 'Close search' : 'Search messages'}
-          title="Search messages"
-          className={[
-            'pdc-flex pdc-h-7 pdc-w-7 pdc-flex-shrink-0 pdc-items-center pdc-justify-center pdc-rounded-full pdc-transition-colors',
-            searchOpen ? 'pdc-bg-canvas pdc-text-ink' : 'pdc-text-ink-mute pdc-hover-bg-canvas pdc-hover-text-ink',
-          ].join(' ')}
+          aria-label={searchOpen ? 'Close search' : 'Search this conversation'}
+          title="Search this conversation"
+          className="pd-chat__ib"
         >
-          <SearchIcon size={15} aria-hidden="true" />
+          <SearchIcon size={16} aria-hidden="true" />
         </button>
-        <AlertsMenu />
-        <SoundToggle />
+        <PanelMenu items={placementItems} linkComponent={linkComponent} />
+        {headerAction}
       </div>
+    </div>
+  )
 
-      {/* Thread switcher: the shared room + a private thread per teammate.
-          Lives in the shared engine, so the dropdown / dock / page all show
-          the same conversation. */}
-      <div className="pdc-flex pdc-flex-shrink-0 pdc-flex-wrap pdc-items-center pdc-gap-1-5 pdc-border-b pdc-border-line-soft pdc-px-3 pdc-py-2">
-        <ThreadPill
-          label="Team"
-          active={activeThread === 'team'}
-          count={threadUnread.team ?? 0}
-          onClick={() => setActiveThread('team')}
+  const searchRow = searchOpen && (
+    <div className="pd-chat__search">
+      <label className="pd-chat__search-field">
+        <SearchIcon size={14} aria-hidden="true" />
+        <input
+          type="search"
+          autoFocus
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search this conversation"
+          aria-label="Search this conversation"
         />
-        {mentionCandidates.map((m) => (
-          <ThreadPill
-            key={m.id}
-            label={firstName(m.name)}
-            active={activeThread === m.id}
-            count={threadUnread[m.id] ?? 0}
-            status={m.isBot ? undefined : presenceByUser.get(m.id) ?? null}
-            bot={m.isBot === true}
-            onClick={() => setActiveThread(m.id)}
-          />
-        ))}
-      </div>
+        {search && (
+          <button type="button" onClick={() => setSearch('')} aria-label="Clear search" className="pd-chat__ib pd-chat__ib--sm">
+            <X size={14} aria-hidden="true" />
+          </button>
+        )}
+      </label>
+    </div>
+  )
 
-      {searchOpen && (
-        <div className="pdc-flex pdc-items-center pdc-gap-2 pdc-border-b pdc-border-line-soft pdc-px-3 pdc-py-2">
-          <SearchIcon size={14} className="pdc-text-ink-mute" aria-hidden="true" />
-          <input
-            type="search"
-            autoFocus
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search messages…"
-            className="pdc-flex-1 pdc-bg-transparent pdc-text-17px pdc-text-ink pdc-outline-none pdc-placeholder-text-ink-dim pdc-sm-text-13px"
-          />
-          {search && (
-            <button
-              type="button"
-              onClick={() => setSearch('')}
-              aria-label="Clear search"
-              className="pdc-text-ink-mute pdc-hover-text-ink"
-            >
-              <X size={14} aria-hidden="true" />
+  const emptyState =
+    activePeer?.isBot ? (
+      <div className="pd-chat__empty">
+        <BotAvatar size="xl" />
+        <span className="pd-chat__empty-title">Ask about a project, an order or a customer</span>
+        <span className="pd-chat__empty-text">
+          {firstName(activePeer.name)} reads the proof viewer, Stock Control, Help Scout and the Xero ledger. It only reads. Prices it quotes are checked against the catalogue, and it says when it could not check one.
+        </span>
+        <div className="pd-chat__suggestions">
+          {BOT_SUGGESTIONS.map((s) => (
+            <button key={s} type="button" className="pd-chat__suggestion" onClick={() => applySuggestion(s)}>
+              {s}
             </button>
+          ))}
+        </div>
+        <span className="pdc-t-caption pdc-text-ink-mute">Only you see this conversation. Nothing you ask is posted anywhere.</span>
+      </div>
+    ) : activePeer ? (
+      <div className="pd-chat__empty">
+        <span className="pd-chat__empty-title">No messages yet</span>
+        <span className="pd-chat__empty-text">
+          A private conversation between you and {firstName(activePeer.name)}. No-one else can see it.
+        </span>
+      </div>
+    ) : (
+      <div className="pd-chat__empty">
+        <span className="pd-chat__empty-title">No messages yet</span>
+        <span className="pd-chat__empty-text">Say hello to the team. Everyone signed in can read the room.</span>
+      </div>
+    )
+
+  const list = (
+    <div
+      ref={scrollRef}
+      onScroll={onListScroll}
+      className={['pd-chat__list pdc-overflow-y-auto', pageWide ? 'pd-chat__list--page' : ''].filter(Boolean).join(' ')}
+    >
+      {loading ? (
+        <div className="pdc-flex pdc-h-full pdc-items-center pdc-justify-center">
+          <div className="pd-chat__spinner" />
+        </div>
+      ) : threadMessages.length === 0 && !searchQuery ? (
+        emptyState
+      ) : shown.length === 0 ? (
+        <div className="pd-chat__empty">
+          {searchingRemote ? (
+            <span className="pd-chat__empty-text">Searching the whole conversation…</span>
+          ) : (
+            <>
+              <span className="pd-chat__empty-title">No matches</span>
+              <span className="pd-chat__empty-text">Nothing here says “{search.trim()}”.</span>
+            </>
           )}
         </div>
-      )}
-
-      {/* Messages. flex-col + the list's mt-auto bottom-anchors the thread, so
-          a few messages sit just above the composer (history grows upward) —
-          otherwise a tall panel (e.g. the docked rail) shows a big empty gap
-          between the messages and the composer. */}
-      <div
-        ref={scrollRef}
-        onScroll={onListScroll}
-        className="pdc-flex pdc-min-h-0 pdc-flex-1 pdc-flex-col pdc-overflow-y-auto pdc-overscroll-contain pdc-px-3 pdc-py-3"
-      >
-        {loading ? (
-          <div className="pdc-flex pdc-h-full pdc-items-center pdc-justify-center">
-            <div
-              className="pdc-h-6 pdc-w-6 pdc-animate-spin pdc-rounded-full pdc-border-2 pdc-border-line pdc-motion-reduce-animate-none"
-              style={{ borderTopColor: 'var(--c-ink)' }}
-            />
-          </div>
-        ) : threadMessages.length === 0 ? (
-          <div className="pdc-flex pdc-h-full pdc-flex-col pdc-items-center pdc-justify-center pdc-px-6 pdc-text-center">
-            <p className="pdc-text-17px pdc-text-ink-soft pdc-sm-text-14px">No messages yet.</p>
-            <p className="pdc-text-15px pdc-text-ink-mute pdc-sm-text-13px">
-              {activePeer?.isBot
-                ? `Ask ${firstName(activePeer.name)} about a project, an order, a customer or a price. It looks things up in the app and answers here; it cannot change anything. Only you can see this conversation.`
-                : activePeer
-                  ? `This is a private conversation between you and ${firstName(activePeer.name)} — no-one else can see it.`
-                  : 'Say hello to the team.'}
+      ) : (
+        <div ref={listRef} className="pdc-mt-auto">
+          {/* Older history pager. Hidden while searching (the search already
+              covers the full history server-side). */}
+          {!searchQuery && historyFor(activeThread) !== 'exhausted' && (
+            <div className="pdc-flex pdc-justify-center" style={{ paddingBottom: 8 }}>
+              <button
+                type="button"
+                onClick={() => void onLoadEarlier()}
+                disabled={historyFor(activeThread) === 'loading'}
+                className="pd-chat__earlier"
+              >
+                {historyFor(activeThread) === 'loading' ? 'Loading…' : 'Show earlier messages'}
+              </button>
+            </div>
+          )}
+          {searchQuery && searchingRemote && (
+            <p className="pdc-t-caption pdc-text-ink-mute pdc-text-center" style={{ paddingBottom: 8 }}>
+              Searching the whole conversation…
             </p>
-          </div>
-        ) : shown.length === 0 ? (
-          <div className="pdc-flex pdc-h-full pdc-flex-col pdc-items-center pdc-justify-center pdc-text-center">
-            {searchingRemote ? (
-              <p className="pdc-text-15px pdc-text-ink-mute pdc-sm-text-13px">Searching the full history…</p>
-            ) : (
-              <>
-                <p className="pdc-text-17px pdc-text-ink-soft pdc-sm-text-14px">No matches</p>
-                <p className="pdc-text-15px pdc-text-ink-mute pdc-sm-text-13px">Nothing matches “{search.trim()}”.</p>
-              </>
-            )}
-          </div>
-        ) : (
-          <div ref={listRef} className="pdc-mt-auto">
-            {/* Older history pager. Hidden while searching (the search already
-                covers the full history server-side). */}
-            {!searchQuery && historyFor(activeThread) !== 'exhausted' && (
-              <div className="pdc-flex pdc-justify-center pdc-pb-2">
-                <button
-                  type="button"
-                  onClick={() => void onLoadEarlier()}
-                  disabled={historyFor(activeThread) === 'loading'}
-                  className="pdc-rounded-full pdc-border pdc-border-line pdc-bg-surface pdc-px-3 pdc-py-1 pdc-text-14px pdc-font-medium pdc-text-ink-soft pdc-transition-colors pdc-hover-bg-canvas pdc-hover-text-ink pdc-disabled-opacity-60 pdc-sm-text-12px"
-                >
-                  {historyFor(activeThread) === 'loading' ? 'Loading…' : 'Show earlier messages'}
-                </button>
-              </div>
-            )}
-            {searchQuery && searchingRemote && (
-              <p className="pdc-pb-2 pdc-text-center pdc-text-13px pdc-text-ink-mute pdc-sm-text-11px">
-                Searching the full history…
-              </p>
-            )}
-          <ul className="pdc-space-y-0">
+          )}
+          <ul>
             {shown.map((m, i) => {
               const prev = shown[i - 1]
-              const grouped = isGroupedWithPrevious(prev, m)
               const showDay = !prev || dayKey(prev.created_at) !== dayKey(m.created_at)
+              const showNew = newMarkerId === m.id
+              const grouped = !showDay && !showNew && isGroupedWithPrevious(prev, m)
               const mine = userId !== null && m.author_id === userId
               const canDelete = m.author_id === userId || isAdmin
               const msgReactions = groupReactions(reactionsByMessage.get(m.id) ?? [], userId)
-              const authorAvatar = m.author_id
-                ? membersById.get(m.author_id)?.avatarUrl ?? null
-                : null
-              const authorIsBot = m.author_id ? membersById.get(m.author_id)?.isBot === true : false
+              const author = m.author_id ? membersById.get(m.author_id) : undefined
+              const authorIsBot = author?.isBot === true
               // Prefer the roster's live colour over the copy frozen onto the
               // row when it was sent, so someone changing their colour
               // recolours their whole history at once rather than splitting it
               // into before-and-after. The frozen value is the fallback for an
               // author who has since left the roster.
-              const authorColour =
-                (m.author_id ? membersById.get(m.author_id)?.colour : null) ?? m.author_colour
+              const authorColour = author?.colour ?? m.author_colour
               return (
                 <li key={m.id}>
                   {showDay && (
-                    <div className="pdc-my-3 pdc-flex pdc-items-center pdc-gap-3">
-                      <span className="pdc-h-px pdc-flex-1 pdc-bg-line-soft" />
-                      <span className="pdc-text-13px pdc-font-medium pdc-uppercase pdc-tracking-wide pdc-text-ink-mute pdc-sm-text-11px">
-                        {dayLabel(m.created_at)}
-                      </span>
-                      <span className="pdc-h-px pdc-flex-1 pdc-bg-line-soft" />
+                    <div className="pd-chat__divider">
+                      <span className="pd-chat__divider-rule" />
+                      <span className="pdc-t-label pdc-text-ink-mute">{dayLabel(m.created_at)}</span>
+                      <span className="pd-chat__divider-rule" />
                     </div>
                   )}
-                  {/* Messenger-style split: your own messages sit on the left,
-                      everyone else's on the right with their avatar on the
-                      outer edge. flex-row-reverse flips a row without changing
-                      the DOM order, so grouping/hover logic is identical on
-                      both sides. */}
-                  <div
-                    className={[
-                      'pdc-group pdc-flex pdc-items-start pdc-gap-2-5',
-                      mine ? '' : 'pdc-flex-row-reverse',
-                      grouped ? 'pdc-mt-0-5' : 'pdc-mt-2-5',
-                    ].join(' ')}
-                  >
-                    {!mine && (
-                      <div className="pdc-w-9 pdc-flex-shrink-0 pdc-sm-w-7">
-                        {!grouped &&
-                          (authorIsBot ? (
-                            <BotAvatar size="md" />
-                          ) : authorAvatar ? (
-                            <img
-                              src={authorAvatar}
-                              alt=""
-                              className="pdc-h-9 pdc-w-9 pdc-rounded-full pdc-object-cover pdc-sm-h-7 pdc-sm-w-7"
-                              aria-hidden="true"
-                            />
-                          ) : (
-                            <span
-                              className="pdc-inline-flex pdc-h-9 pdc-w-9 pdc-items-center pdc-justify-center pdc-rounded-full pdc-font-mono pdc-text-12px pdc-font-medium pdc-text-white pdc-sm-h-7 pdc-sm-w-7 pdc-sm-text-10px"
-                              style={{ backgroundColor: authorBadgeColour(authorColour) }}
-                              aria-hidden="true"
-                            >
-                              {(m.author_initials ?? '?').slice(0, 2)}
-                            </span>
-                          ))}
-                      </div>
-                    )}
-                    <div
-                      className={[
-                        'pdc-flex pdc-min-w-0 pdc-max-w-85 pdc-flex-col',
-                        mine ? 'pdc-items-start' : 'pdc-items-end',
-                      ].join(' ')}
-                    >
-                      {!grouped && (
-                        <div className="pdc-flex pdc-items-baseline pdc-gap-2 pdc-px-1">
-                          <span className="pdc-text-13px pdc-text-ink-mute pdc-sm-text-11px">{messageTime(m.created_at)}</span>
-                          {/* Your own bubbles and DM threads don't need a name —
-                              you know who you are, and a private thread has
-                              exactly one other person. */}
-                          {!mine && activeThread === 'team' && (
-                            <span className="pdc-text-15px pdc-font-semibold pdc-text-ink pdc-sm-text-13px">
-                              {firstName(m.author_name)}
-                            </span>
-                          )}
-                          {!mine && authorIsBot && <BotTag />}
-                        </div>
-                      )}
-                      <div className={['pdc-flex pdc-items-start pdc-gap-2', mine ? '' : 'pdc-flex-row-reverse'].join(' ')}>
-                        {/* A wash of the author's own colour, so a glance down
-                            the thread reads as "Chris, Chris, Donna" without
-                            parsing names. 10% rather than the 14% used for
-                            small chips — a bubble is a much larger filled area,
-                            and above ~12% the tint starts competing with the
-                            message text instead of sitting behind it. */}
-                        <div
-                          className={[
-                            'pdc-min-w-0 pdc-rounded-14px pdc-px-3 pdc-py-1-5',
-                            !grouped ? (mine ? 'pdc-rounded-tl-5px' : 'pdc-rounded-tr-5px') : '',
-                          ].join(' ')}
-                          style={{ backgroundColor: designerTint(authorColour, 10) }}
-                        >
-                          {m.body && (
-                            <p className="pdc-whitespace-pre-wrap pdc-break-words pdc-text-19px pdc-leading-snug pdc-text-ink-soft pdc-sm-text-14px">
-                              {buildMessageSegments(m.body, memberNames).map((seg, si) =>
-                                seg.type === 'link' ? (
-                                  <a
-                                    key={si}
-                                    href={seg.value}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="pdc-break-all pdc-text-brand pdc-underline pdc-underline-offset-2 pdc-hover-text-brand-600"
-                                  >
-                                    {seg.value}
-                                  </a>
-                                ) : seg.type === 'mention' ? (
-                                  <span
-                                    key={si}
-                                    className="pdc-rounded pdc-bg-brand-50 pdc-px-1 pdc-font-medium pdc-text-brand"
-                                  >
-                                    {seg.value}
-                                  </span>
-                                ) : (
-                                  <span key={si}>{seg.value}</span>
-                                ),
-                              )}
-                            </p>
-                          )}
-                          {attachmentsOf(m).length > 0 && (
-                            <ChatAttachments files={attachmentsOf(m)} />
-                          )}
-                          {msgReactions.length > 0 && (
-                            <div className="pdc-mt-1 pdc-flex pdc-flex-wrap pdc-gap-1">
-                              {msgReactions.map((g) => (
-                                <button
-                                  key={g.emoji}
-                                  type="button"
-                                  onClick={() => toggleReaction(m.id, g.emoji)}
-                                  title={g.names.map((n) => firstName(n)).join(', ')}
-                                  className={[
-                                    'pdc-inline-flex pdc-items-center pdc-gap-1 pdc-rounded-full pdc-border pdc-px-1-5 pdc-py-0-5 pdc-text-14px pdc-leading-none pdc-transition-colors pdc-sm-text-12px',
-                                    g.mine
-                                      ? 'pdc-border-brand pdc-bg-brand-50 pdc-text-ink'
-                                      : 'pdc-border-line pdc-bg-surface pdc-text-ink-soft pdc-hover-bg-canvas',
-                                  ].join(' ')}
-                                >
-                                  <span>{g.emoji}</span>
-                                  <span className="pdc-font-medium">{g.count}</span>
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                        {/* React / delete. These were hover-reveal only, so on
-                            a phone — where Chat is a first-class bottom tab and
-                            the primary chat surface — you could read and send
-                            but never react or delete your own message. Always
-                            visible below md (no hover exists to reveal them);
-                            hover/focus-reveal kept on desktop. */}
-                        <div className="pdc-mt-0-5 pdc-flex pdc-flex-shrink-0 pdc-items-center pdc-gap-0-5 pdc-transition-opacity pdc-max-md-opacity-100 pdc-md-opacity-0 pdc-focus-within-opacity-100 pdc-md-group-hover-opacity-100">
-                          {/* The picker opens over the bubble side, where
-                              there's guaranteed room inside the panel. */}
-                          <ReactButton messageId={m.id} pickerAnchor={mine ? 'right' : 'left'} />
-                          {canDelete && (
-                            <button
-                              type="button"
-                              onClick={() => void remove(m.id)}
-                              aria-label="Delete message"
-                              title="Delete"
-                              className="pdc-flex pdc-h-6 pdc-w-6 pdc-max-md-h-11 pdc-max-md-w-11 pdc-items-center pdc-justify-center pdc-rounded pdc-text-ink-mute pdc-hover-bg-canvas pdc-hover-text-out pdc-focus-visible-outline-2 pdc-focus-visible-outline-offset-1 pdc-focus-visible-outline-var-c-focus"
-                            >
-                              <Trash2 size={14} aria-hidden="true" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
+                  {showNew && (
+                    <div className="pd-chat__divider pd-chat__divider--new" role="separator" aria-label="New messages">
+                      <span className="pd-chat__divider-rule" />
+                      <span className="pdc-t-label">New</span>
+                      <span className="pd-chat__divider-rule" />
                     </div>
-                  </div>
+                  )}
+                  <MessageRow
+                    message={m}
+                    grouped={grouped}
+                    mine={mine}
+                    canDelete={canDelete}
+                    canMention={!mine && activeThread === 'team' && !!m.author_name}
+                    authorIsBot={authorIsBot}
+                    authorAvatar={author?.avatarUrl ?? null}
+                    authorColour={authorColour}
+                    reactions={msgReactions}
+                    memberNames={memberNames}
+                    onReact={(emoji) => toggleReaction(m.id, emoji)}
+                    onMention={() => mentionAuthor(m)}
+                    onCopy={() => void copyText(m)}
+                    onDelete={() => void remove(m.id)}
+                  />
                 </li>
               )
             })}
           </ul>
-          </div>
+          {botTyping && (
+            <div className="pd-chat__thinking" aria-live="polite">
+              <BotAvatar size="md" />
+              <span className="pd-chat__thinking-dots" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+              {firstName(bot?.name)} is looking…
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+
+  const composer = (
+    <div
+      {...zoneProps}
+      className={[
+        'pd-chat__composer',
+        pageWide ? 'pd-chat__composer--page' : '',
+        isZoneDragOver ? 'pd-chat__composer--drag' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
+      {/* @mention autocomplete — opens upward above the field. */}
+      {mentionQuery !== null && filtered.length > 0 && (
+        <div className="pd-chat__mentions">
+          {filtered.map((m, i) => (
+            <button
+              key={m.id}
+              type="button"
+              // onMouseDown (not onClick) so selecting doesn't blur the textarea first.
+              onMouseDown={(e) => {
+                e.preventDefault()
+                selectMention(m)
+              }}
+              onMouseEnter={() => setMentionIndex(i)}
+              className={['pd-chat__mention-row', i === mentionIndex ? 'pd-chat__mention-row--on' : ''].filter(Boolean).join(' ')}
+            >
+              {m.isBot ? (
+                <BotAvatar size="sm" />
+              ) : (
+                <PersonAvatar size="sm" initials={m.initials} colour={m.colour} avatarUrl={m.avatarUrl} />
+              )}
+              <span className="pdc-font-medium">{m.name ?? 'Someone'}</span>
+              {m.isBot && <BotTag />}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {attachments.length > 0 && (
+        <div className="pd-chat__staged">
+          {attachments.map((a) => {
+            const Icon = fileKindIcon(a.name, a.type)
+            const meta = [kindLabel(a.name, a.type), formatBytes(a.blob.size)].filter(Boolean).join(' · ')
+            return (
+              <div
+                key={a.id}
+                className={['pd-chat__staged-item', isImageType(a.type) ? 'pd-chat__staged-item--image' : 'pd-chat__staged-item--file'].join(' ')}
+              >
+                {isImageType(a.type) ? (
+                  <img src={a.url} alt="" />
+                ) : (
+                  <>
+                    <Icon size={18} aria-hidden="true" className="pdc-text-ink-mute" />
+                    <span className="pd-chat__file-text">
+                      <span className="pd-chat__file-name">{a.name}</span>
+                      {meta && <span className="pd-chat__file-meta">{meta}</span>}
+                    </span>
+                  </>
+                )}
+                <button type="button" onClick={() => removeAttachment(a.id)} aria-label="Remove attachment" className="pd-chat__staged-remove">
+                  <X size={11} aria-hidden="true" />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {error && (
+        <p role="alert" className="pd-chat__error">
+          {error}
+        </p>
+      )}
+      {/* The typing line keeps its height whether or not anyone is typing, so
+          the field never moves under the cursor. */}
+      <div className="pd-chat__typing" aria-live="polite">
+        {peopleTyping.length > 0 ? typingLabel(peopleTyping) : ''}
+      </div>
+      <div className="pd-chat__field">
+        <textarea
+          ref={textareaRef}
+          value={draft}
+          onChange={onDraftChange}
+          onKeyDown={onKeyDown}
+          onPaste={handlePaste}
+          rows={1}
+          placeholder={
+            activePeer?.isBot
+              ? `Ask ${firstName(activePeer.name)}`
+              : activePeer
+                ? `Message ${firstName(activePeer.name)}`
+                : 'Message the team'
+          }
+          aria-label={activePeer ? `Message ${firstName(activePeer.name)}` : 'Message the team'}
+          className="pd-chat__composer-input"
+        />
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={attachments.length >= MAX_ATTACHMENTS}
+          aria-label="Attach a file"
+          title="Attach a file"
+          className="pd-chat__ib"
+        >
+          <Paperclip size={16} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          onClick={() => void handleSend()}
+          disabled={(!draft.trim() && attachments.length === 0) || sending}
+          aria-label="Send message"
+          title="Send (Enter)"
+          className="pd-chat__send"
+        >
+          <ArrowUp size={16} aria-hidden="true" />
+        </button>
+      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        multiple
+        className="pdc-sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={(e) => {
+          addFiles(Array.from(e.target.files ?? []))
+          e.target.value = ''
+        }}
+      />
+    </div>
+  )
+
+  const thread = (
+    <div className="pd-chat__thread">
+      {header}
+      {!pageWide && !pagePhone && chips}
+      {searchRow}
+      {list}
+      {composer}
+    </div>
+  )
+
+  return (
+    /* `pd-chat` is the scope every rule in chat.css hangs off, so it has to be
+       on the outermost node the panel renders or nothing below it is styled.
+       It also declares the colour tokens, which is why the popout variant adds
+       its own modifier rather than replacing this class. `pd-chat__panel` is
+       the flex column the whole height chain depends on: the list inside
+       scrolls only because this fills its host and nothing else grows. */
+    <div
+      ref={rootRef}
+      className={['pd-chat', 'pd-chat__panel', variant === 'popout' ? 'pd-chat--popout' : ''].filter(Boolean).join(' ')}
+    >
+      {pageWide ? (
+        <div className="pd-chat__page">
+          {conversationList}
+          {thread}
+        </div>
+      ) : showingList ? (
+        conversationList
+      ) : (
+        thread
+      )}
+    </div>
+  )
+}
+
+// ── A message row ──────────────────────────────────────────────────────────
+
+function MessageRow({
+  message: m,
+  grouped,
+  mine,
+  canDelete,
+  canMention,
+  authorIsBot,
+  authorAvatar,
+  authorColour,
+  reactions,
+  memberNames,
+  onReact,
+  onMention,
+  onCopy,
+  onDelete,
+}: {
+  message: TeamMessage
+  grouped: boolean
+  mine: boolean
+  canDelete: boolean
+  canMention: boolean
+  authorIsBot: boolean
+  authorAvatar: string | null
+  authorColour: string | null
+  reactions: { emoji: string; count: number; mine: boolean; names: string[] }[]
+  memberNames: string[]
+  onReact: (emoji: string) => void
+  onMention: () => void
+  onCopy: () => void
+  onDelete: () => void
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const files = attachmentsOf(m)
+  return (
+    <div className={['pd-chat__msg', grouped ? 'pd-chat__msg--grouped' : ''].filter(Boolean).join(' ')}>
+      <div className="pd-chat__msg-gutter">
+        {grouped ? (
+          <span className="pd-chat__msg-gutter-time">{messageTime(m.created_at)}</span>
+        ) : authorIsBot ? (
+          <BotAvatar size="md" />
+        ) : (
+          <PersonAvatar size="md" initials={m.author_initials} colour={authorColour} avatarUrl={authorAvatar} />
         )}
       </div>
-
-      {/* Composer */}
-      <div
-        {...zoneProps}
-        className={[
-          'pdc-relative pdc-border-t pdc-border-line-soft pdc-p-2-5 pdc-transition-colors',
-          isZoneDragOver ? 'pdc-bg-brand-50' : '',
-        ].join(' ')}
-      >
-        {typingUsers.length > 0 && (
-          <div className="pdc-mb-1-5 pdc-text-14px pdc-italic pdc-text-ink-mute pdc-sm-text-12px" aria-live="polite">
-            {typingLabel(typingUsers)}
+      <div className="pd-chat__msg-main">
+        {!grouped && (
+          <div className="pd-chat__msg-meta">
+            <span className="pd-chat__msg-name">
+              {mine ? 'You' : firstName(m.author_name)}
+              {authorIsBot && <BotTag />}
+            </span>
+            <span className="pd-chat__msg-time">{messageTime(m.created_at)}</span>
           </div>
         )}
-        {/* @mention autocomplete — opens upward above the composer. */}
-        {mentionQuery !== null && filtered.length > 0 && (
-          <div className="pdc-absolute pdc-inset-x-2-5 pdc-bottom-full pdc-z-10 pdc-mb-1 pdc-max-h-52 pdc-overflow-y-auto pdc-rounded-10px pdc-border pdc-border-line pdc-bg-surface pdc-shadow-lg">
-            {filtered.map((m, i) => (
+        {m.body && (
+          <p className="pd-chat__msg-body">
+            {buildMessageSegments(m.body, memberNames).map((seg, si) =>
+              seg.type === 'link' ? (
+                <a key={si} href={seg.value} target="_blank" rel="noreferrer">
+                  {seg.value}
+                </a>
+              ) : seg.type === 'mention' ? (
+                <span key={si} className="pd-chat__mention">
+                  {seg.value}
+                </span>
+              ) : (
+                <span key={si}>{seg.value}</span>
+              ),
+            )}
+          </p>
+        )}
+        {files.length > 0 && <ChatAttachments files={files} />}
+        {reactions.length > 0 && (
+          <div className="pd-chat__reactions">
+            {reactions.map((g) => (
               <button
-                key={m.id}
+                key={g.emoji}
                 type="button"
-                // onMouseDown (not onClick) so selecting doesn't blur the textarea first.
-                onMouseDown={(e) => {
-                  e.preventDefault()
-                  selectMention(m)
-                }}
-                onMouseEnter={() => setMentionIndex(i)}
-                className={[
-                  'pdc-flex pdc-w-full pdc-items-center pdc-gap-2 pdc-px-3 pdc-py-2 pdc-text-left pdc-text-15px pdc-sm-text-13px',
-                  i === mentionIndex ? 'pdc-bg-canvas' : 'pdc-hover-bg-canvas',
-                ].join(' ')}
+                onClick={() => onReact(g.emoji)}
+                title={g.names.map((n) => firstName(n)).join(', ')}
+                aria-pressed={g.mine}
+                className={['pd-chat__react', g.mine ? 'pd-chat__react--mine' : ''].filter(Boolean).join(' ')}
               >
-                {m.isBot ? (
-                  <BotAvatar size="sm" />
-                ) : m.avatarUrl ? (
-                  <img
-                    src={m.avatarUrl}
-                    alt=""
-                    className="pdc-h-8 pdc-w-8 pdc-rounded-full pdc-object-cover pdc-sm-h-6 pdc-sm-w-6"
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <span
-                    className="pdc-inline-flex pdc-h-8 pdc-w-8 pdc-items-center pdc-justify-center pdc-rounded-full pdc-font-mono pdc-text-11px pdc-font-medium pdc-text-white pdc-sm-h-6 pdc-sm-w-6 pdc-sm-text-9px"
-                    style={{ backgroundColor: authorBadgeColour(m.colour) }}
-                    aria-hidden="true"
-                  >
-                    {(m.initials ?? '?').slice(0, 2)}
-                  </span>
-                )}
-                <span className="pdc-font-medium pdc-text-ink">{m.name ?? 'Someone'}</span>
-                {m.isBot && <BotTag />}
+                <span>{g.emoji}</span>
+                <span className="pd-chat__react-count">{g.count}</span>
               </button>
             ))}
           </div>
         )}
-
-        {attachments.length > 0 && (
-          <div className="pdc-mb-2 pdc-flex pdc-flex-wrap pdc-gap-2">
-            {attachments.map((a) => {
-              const Icon = fileKindIcon(a.name, a.type)
-              const meta = [kindLabel(a.name, a.type), formatBytes(a.blob.size)]
-                .filter(Boolean)
-                .join(' · ')
-              return (
-                <div
-                  key={a.id}
-                  className={[
-                    'pdc-relative pdc-overflow-hidden pdc-rounded-lg pdc-border pdc-border-line',
-                    isImageType(a.type)
-                      ? 'pdc-h-14 pdc-w-14'
-                      : 'pdc-flex pdc-h-14 pdc-max-w-180px pdc-items-center pdc-gap-2 pdc-bg-canvas pdc-pl-2 pdc-pr-6',
-                  ].join(' ')}
-                >
-                  {isImageType(a.type) ? (
-                    <img src={a.url} alt="" className="pdc-h-full pdc-w-full pdc-object-cover" />
-                  ) : (
-                    <>
-                      <Icon size={18} aria-hidden="true" className="pdc-flex-shrink-0 pdc-text-ink-mute" />
-                      <span className="pdc-min-w-0">
-                        <span className="pdc-block pdc-truncate pdc-text-12px pdc-font-medium pdc-text-ink pdc-sm-text-11px">{a.name}</span>
-                        {meta && <span className="pdc-block pdc-text-11px pdc-text-ink-mute pdc-sm-text-10px">{meta}</span>}
-                      </span>
-                    </>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => removeAttachment(a.id)}
-                    aria-label="Remove attachment"
-                    className="pdc-absolute pdc-right-0-5 pdc-top-0-5 pdc-rounded-full pdc-bg-black-55 pdc-p-0-5 pdc-text-white pdc-hover-bg-black-75"
-                  >
-                    <X size={11} aria-hidden="true" />
-                  </button>
-                </div>
-              )
-            })}
-          </div>
-        )}
-        {error && (
-          <p role="alert" className="pdc-mb-2 pdc-rounded-lg pdc-bg-out-soft pdc-px-3 pdc-py-1-5 pdc-text-12px pdc-text-out">
-            {error}
-          </p>
-        )}
-        <div className="pdc-flex pdc-items-end pdc-gap-2">
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            disabled={attachments.length >= MAX_ATTACHMENTS}
-            aria-label="Attach a file"
-            title="Attach a file"
-            className="pdc-inline-flex pdc-h-42px pdc-w-42px pdc-flex-shrink-0 pdc-items-center pdc-justify-center pdc-rounded-8px pdc-border pdc-border-line pdc-bg-surface pdc-text-ink-soft pdc-transition-colors pdc-hover-bg-canvas pdc-disabled-opacity-40"
-          >
-            <Paperclip size={18} aria-hidden="true" />
+      </div>
+      {/* One toolbar, top right, on hover or focus; always on below md,
+          where there is no hover to reveal it. */}
+      <div className={['pd-chat__tools', pickerOpen ? 'pd-chat__tools--open' : ''].filter(Boolean).join(' ')}>
+        <ReactButton messageId={m.id} onOpenChange={setPickerOpen} />
+        {canMention && (
+          <button type="button" onClick={onMention} aria-label={`Reply mentioning ${firstName(m.author_name)}`} title="Reply with a mention" className="pd-chat__tool">
+            <AtSign size={14} aria-hidden="true" />
           </button>
-          {/* A plain textarea rather than a design-system component: the four
-              hosts have four different kits (and one has none). The look is
-              carried by .pd-chat__composer-input, including the 17px bump on
-              phones — anything under 16px makes iOS Safari zoom the whole page
-              when the composer takes focus. */}
-          <textarea
-            ref={textareaRef}
-            value={draft}
-            onChange={onDraftChange}
-            onKeyDown={onKeyDown}
-            onPaste={handlePaste}
-            rows={variant === 'page' || variant === 'popout' ? 2 : 1}
-            placeholder={
-              activePeer?.isBot
-                ? `Ask ${firstName(activePeer.name)} a question…`
-                : activePeer
-                  ? `Message ${firstName(activePeer.name)}…`
-                  : 'Message the team…'
-            }
-            className="pd-chat__composer-input pdc-flex-1"
-          />
-          <button
-            type="button"
-            onClick={() => void handleSend()}
-            disabled={(!draft.trim() && attachments.length === 0) || sending}
-            aria-label="Send message"
-            className="pdc-inline-flex pdc-h-42px pdc-w-42px pdc-flex-shrink-0 pdc-items-center pdc-justify-center pdc-rounded-8px pdc-bg-ink pdc-text-on-ink pdc-transition-colors pdc-hover-bg-ink-soft pdc-disabled-opacity-40"
-          >
-            <Send size={18} aria-hidden="true" />
+        )}
+        {m.body && (
+          <button type="button" onClick={onCopy} aria-label="Copy message text" title="Copy text" className="pd-chat__tool">
+            <Copy size={14} aria-hidden="true" />
           </button>
-        </div>
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          className="pdc-sr-only"
-          tabIndex={-1}
-          aria-hidden
-          onChange={(e) => {
-            addFiles(Array.from(e.target.files ?? []))
-            e.target.value = ''
-          }}
-        />
-        <p className="pdc-mt-1-5 pdc-text-13px pdc-text-ink-dim pdc-sm-text-11px">
-          {activePeer
-            ? `Private to ${firstName(activePeer.name)} · paste or drop any file (up to ${MAX_MB} MB) · Enter to send`
-            : `@ to mention · paste or drop any file (up to ${MAX_MB} MB) · Enter to send · Shift + Enter for a new line`}
-        </p>
+        )}
+        {canDelete && (
+          <button type="button" onClick={onDelete} aria-label="Delete message" title="Delete" className="pd-chat__tool pd-chat__tool--danger">
+            <Trash2 size={14} aria-hidden="true" />
+          </button>
+        )}
       </div>
     </div>
   )

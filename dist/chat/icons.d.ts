@@ -94,4 +94,32 @@ export declare const Sparkle: {
     ({ size, ...rest }: IconProps): JSX.Element;
     displayName: string;
 };
+export declare const Users: {
+    ({ size, ...rest }: IconProps): JSX.Element;
+    displayName: string;
+};
+export declare const MoreHorizontal: {
+    ({ size, ...rest }: IconProps): JSX.Element;
+    displayName: string;
+};
+export declare const Copy: {
+    ({ size, ...rest }: IconProps): JSX.Element;
+    displayName: string;
+};
+export declare const ArrowUp: {
+    ({ size, ...rest }: IconProps): JSX.Element;
+    displayName: string;
+};
+export declare const ChevronLeft: {
+    ({ size, ...rest }: IconProps): JSX.Element;
+    displayName: string;
+};
+export declare const ExternalLink: {
+    ({ size, ...rest }: IconProps): JSX.Element;
+    displayName: string;
+};
+export declare const PanelRightClose: {
+    ({ size, ...rest }: IconProps): JSX.Element;
+    displayName: string;
+};
 //# sourceMappingURL=icons.d.ts.map

@@ -9,47 +9,32 @@
 
    ── WHY THIS FILE LOOKS THE WAY IT DOES ──────────────────────
 
-   The chat came from proof-viewer, where it was styled entirely in
-   Tailwind v4 utilities resolving against that app's own design
-   tokens. The four hosts are Tailwind v4, v4, v3 and none at all,
-   so those utilities could not travel: two apps would have rendered
-   the panel unstyled. That is the same wall the navigation chrome
-   hit, and this is the same answer — depend on no host's CSS.
+   The chat is drawn in proof-viewer's "Ink & Paper" language, the
+   staff design system every page of that app moved to in October
+   2026: cream paper, ink controls, one coral for counts and the
+   "New" rule and nothing else, mono labels, 28/20/16/14/13/12/11
+   type. Proof-viewer is the app most of the team spends the day in,
+   so the chat looks like it everywhere, including the three hosts
+   that do not share its kit.
 
-   The conversion was mechanical ON PURPOSE. Every rule below is the
-   declaration Tailwind would have emitted for the class it replaces,
-   under a `pdc-` prefix, so the port could be a rename rather than a
-   redesign. Rewriting 1,400 lines of dense panel markup into
-   semantic classes by eye is exactly how a port quietly changes what
-   it was supposed to preserve, and nobody would have noticed until
-   the team did.
+   The four hosts are Tailwind v4, v4, v3 and none at all, so this
+   file depends on no host's CSS. Every rule is scoped under
+   `.pd-chat` and every class is prefixed `pdc-` (a layout utility)
+   or `pd-chat__` (a named part). Two spellings of every utility are
+   written out because the root carries the scope class and a
+   utility on the SAME element, which a descendant combinator never
+   matches (that shipped once: the panel's root lost its height and
+   the composer fell out of the docked card).
 
-   So: this is NOT a general utility framework and must not grow into
-   one. It contains the classes this panel uses and nothing else. New
-   work in the panel should prefer the semantic `pd-chat__*` classes
-   at the bottom of this file.
-
-   ── RULES THAT KEEP IT PORTABLE ──────────────────────────────
-
-     * Every class is prefixed `pdc-` (utility) or `pd-chat__`
-       (semantic), and every rule is scoped under `.pd-chat`, so
-       nothing here can reach a host's own markup.
-     * No Tailwind, no build step, no host custom properties are
-       REQUIRED. Colours resolve through a three-step fallback:
-       the package's own `--pd-chat-*` override, then the host's
-       `--c-*` token if it happens to have one, then a literal.
-       That means proof-viewer and stock-control keep tracking their
-       design system for free, while vCard Studio, which has no
-       tokens at all, still renders correctly.
-     * Colour literals are proof-viewer's values, because that is the
-       app the chat was designed in and the one the team knows.
-
-   ── THEMING ──────────────────────────────────────────────────
-
-   A host that wants the panel in its own palette sets the overrides
-   once, anywhere above the panel:
+   Colours resolve through a three-step fallback: the package's own
+   `--pd-chat-*` override, then the host's `--c-*` token if it has
+   one, then proof-viewer's literal. A host that wants the panel in
+   its own palette sets the overrides once, anywhere above the panel:
 
      .pd-chat { --pd-chat-brand: #0055ff; }
+
+   This is NOT a general utility framework. It contains the classes
+   this panel uses and nothing else; new parts go under `pd-chat__`.
    ─────────────────────────────────────────────────────────── */
 
 .pd-chat {
@@ -65,21 +50,48 @@
   --pd-chat-surface:    var(--c-bg-panel,  #ffffff);
   --pd-chat-line:       var(--c-line,      #ece4d3);
   --pd-chat-line-soft:  var(--c-line-soft, #f4ede0);
+  --pd-chat-line-strong: var(--c-line-strong, #d6cdbb);
 
-  /* Accent and states. */
+  /* Accent and states. The brand coral is for counts and the New rule;
+     the deeper red is the "for you" count, the same value proof-viewer's
+     nav uses for a count that is news. */
   --pd-chat-brand:      var(--c-brand-500, #ff5b3a);
   --pd-chat-brand-50:   var(--c-brand-50,  #fff3ee);
   --pd-chat-brand-600:  var(--c-brand-600, #e8421f);
+  --pd-chat-count:      #ec6747;
+  --pd-chat-news:       var(--c-count-news, #c2301a);
   --pd-chat-focus:      var(--c-focus,     #e8421f);
   --pd-chat-out:        var(--c-out,       #d11e3d);
   --pd-chat-out-soft:   var(--c-out-soft,  #fcd0d6);
 
+  /* Presence, mapped to the kit's tones: done / theirs / paused / need. */
+  --pd-chat-online:     var(--c-done,   #0e9b4e);
+  --pd-chat-idle:       var(--c-theirs, #e8a200);
+  --pd-chat-away:       var(--c-paused, #9a9088);
+  --pd-chat-busy:       var(--c-need,   #d11e3d);
+
+  /* The assistant's own colour: a muted cyan, so it reads as neither a
+     person's identity colour nor a state. */
+  --pd-chat-bot:        #0891b2;
+  --pd-chat-bot-soft:   #e6f4f7;
+  --pd-chat-bot-ink:    #0b6f85;
+
+  --pd-chat-radius-card: 14px;
+  --pd-chat-radius-field: 10px;
+  --pd-chat-radius-tag: 6px;
+
   /* The panel sets its own type stack rather than inheriting: the four
      hosts disagree about the body font, and a chat that changes shape
-     between apps is the thing this package exists to stop. */
-  font-family: var(--pd-chat-font, ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
-    Roboto, Helvetica, Arial, sans-serif);
+     between apps is the thing this package exists to stop. IBM Plex Sans
+     is proof-viewer's face; the fallbacks are for a host that has not
+     loaded it. */
+  --pd-chat-font: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    Roboto, Helvetica, Arial, sans-serif;
+  --pd-chat-mono: 'Geist Mono', 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo,
+    Consolas, monospace;
+  font-family: var(--pd-chat-font);
   color: var(--pd-chat-ink);
+  -webkit-font-smoothing: antialiased;
 }
 
 .pd-chat,
@@ -98,510 +110,721 @@
 }
 .pd-chat button { background: none; border: 0; padding: 0; cursor: pointer; }
 .pd-chat button:disabled { cursor: not-allowed; }
+.pd-chat button:focus-visible,
+.pd-chat a:focus-visible,
+.pd-chat textarea:focus-visible,
+.pd-chat input:focus-visible { outline: 2px solid var(--pd-chat-focus); outline-offset: 1px; }
 .pd-chat img { display: block; max-width: 100%; }
+.pd-chat p { margin: 0; }
+.pd-chat ul { margin: 0; padding: 0; list-style: none; }
 
 @keyframes pd-chat-spin { to { transform: rotate(360deg); } }
 
-/* ── Utilities ───────────────────────────────────────────────
-   Generated once from the panel's own class list, then hand
-   maintained. See the note at the top before adding to it. */
+/* ── Layout utilities ────────────────────────────────────────
+   The few generic ones the panel's markup still uses. */
 
-.pd-chat.pdc-neg-bottom-0-5, .pd-chat .pdc-neg-bottom-0-5 { bottom:-0.125rem; }
-.pd-chat.pdc-neg-right-0-5, .pd-chat .pdc-neg-right-0-5 { right:-0.125rem; }
-.pd-chat.pdc-neg-right-1-5, .pd-chat .pdc-neg-right-1-5 { right:-0.375rem; }
-.pd-chat.pdc-neg-space-x-1-5 > * + *, .pd-chat .pdc-neg-space-x-1-5 > * + * { margin-left:-0.375rem; }
-.pd-chat.pdc-neg-top-1-5, .pd-chat .pdc-neg-top-1-5 { top:-0.375rem; }
 .pd-chat.pdc-absolute, .pd-chat .pdc-absolute { position:absolute; }
-.pd-chat.pdc-animate-spin, .pd-chat .pdc-animate-spin { animation:pd-chat-spin 1s linear infinite; }
-.pd-chat.pdc-bg-black-55, .pd-chat .pdc-bg-black-55 { background-color:rgba(0,0,0,.55); }
-.pd-chat.pdc-bg-black-80, .pd-chat .pdc-bg-black-80 { background-color:rgba(0,0,0,.8); }
-.pd-chat.pdc-bg-brand, .pd-chat .pdc-bg-brand { background-color:var(--pd-chat-brand); }
-.pd-chat.pdc-bg-brand-50, .pd-chat .pdc-bg-brand-50 { background-color:var(--pd-chat-brand-50); }
-.pd-chat.pdc-bg-canvas, .pd-chat .pdc-bg-canvas { background-color:var(--pd-chat-canvas); }
-.pd-chat.pdc-bg-ink, .pd-chat .pdc-bg-ink { background-color:var(--pd-chat-ink); }
-.pd-chat.pdc-bg-line-soft, .pd-chat .pdc-bg-line-soft { background-color:var(--pd-chat-line-soft); }
-.pd-chat.pdc-bg-out-soft, .pd-chat .pdc-bg-out-soft { background-color:var(--pd-chat-out-soft); }
-.pd-chat.pdc-bg-surface, .pd-chat .pdc-bg-surface { background-color:var(--pd-chat-surface); }
-.pd-chat.pdc-bg-transparent, .pd-chat .pdc-bg-transparent { background-color:transparent; }
-.pd-chat.pdc-bg-white-10, .pd-chat .pdc-bg-white-10 { background-color:rgba(255,255,255,.1); }
-.pd-chat.pdc-block, .pd-chat .pdc-block { display:block; }
-.pd-chat.pdc-border, .pd-chat .pdc-border { border-width:1px;border-style:solid; }
-.pd-chat.pdc-border-2, .pd-chat .pdc-border-2 { border-width:2px;border-style:solid; }
-.pd-chat.pdc-border-b, .pd-chat .pdc-border-b { border-bottom-width:1px;border-bottom-style:solid; }
-.pd-chat.pdc-border-brand, .pd-chat .pdc-border-brand { border-color:var(--pd-chat-brand); }
-.pd-chat.pdc-border-ink, .pd-chat .pdc-border-ink { border-color:var(--pd-chat-ink); }
-.pd-chat.pdc-border-line, .pd-chat .pdc-border-line { border-color:var(--pd-chat-line); }
-.pd-chat.pdc-border-line-soft, .pd-chat .pdc-border-line-soft { border-color:var(--pd-chat-line-soft); }
-.pd-chat.pdc-border-t, .pd-chat .pdc-border-t { border-top-width:1px;border-top-style:solid; }
-.pd-chat.pdc-bottom-0, .pd-chat .pdc-bottom-0 { bottom:0; }
-.pd-chat.pdc-bottom-full, .pd-chat .pdc-bottom-full { bottom:100%; }
-.pd-chat.pdc-break-all, .pd-chat .pdc-break-all { word-break:break-all; }
-.pd-chat.pdc-break-words, .pd-chat .pdc-break-words { overflow-wrap:break-word; }
+.pd-chat.pdc-relative, .pd-chat .pdc-relative { position:relative; }
 .pd-chat.pdc-fixed, .pd-chat .pdc-fixed { position:fixed; }
+.pd-chat.pdc-inset-0, .pd-chat .pdc-inset-0 { inset:0; }
 .pd-chat.pdc-flex, .pd-chat .pdc-flex { display:flex; }
+.pd-chat.pdc-inline-flex, .pd-chat .pdc-inline-flex { display:inline-flex; }
+.pd-chat.pdc-block, .pd-chat .pdc-block { display:block; }
+.pd-chat.pdc-hidden, .pd-chat .pdc-hidden { display:none; }
 .pd-chat.pdc-flex-1, .pd-chat .pdc-flex-1 { flex:1 1 0%; }
 .pd-chat.pdc-flex-col, .pd-chat .pdc-flex-col { flex-direction:column; }
-.pd-chat.pdc-flex-row-reverse, .pd-chat .pdc-flex-row-reverse { flex-direction:row-reverse; }
 .pd-chat.pdc-flex-shrink-0, .pd-chat .pdc-flex-shrink-0 { flex-shrink:0; }
 .pd-chat.pdc-flex-wrap, .pd-chat .pdc-flex-wrap { flex-wrap:wrap; }
-.pd-chat.pdc-font-bold, .pd-chat .pdc-font-bold { font-weight:700; }
-.pd-chat.pdc-font-medium, .pd-chat .pdc-font-medium { font-weight:500; }
-.pd-chat.pdc-font-mono, .pd-chat .pdc-font-mono { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
-.pd-chat.pdc-font-semibold, .pd-chat .pdc-font-semibold { font-weight:600; }
-.pd-chat.pdc-gap-0-5, .pd-chat .pdc-gap-0-5 { gap:0.125rem; }
+.pd-chat.pdc-items-center, .pd-chat .pdc-items-center { align-items:center; }
+.pd-chat.pdc-items-start, .pd-chat .pdc-items-start { align-items:flex-start; }
+.pd-chat.pdc-items-end, .pd-chat .pdc-items-end { align-items:flex-end; }
+.pd-chat.pdc-justify-center, .pd-chat .pdc-justify-center { justify-content:center; }
+.pd-chat.pdc-justify-between, .pd-chat .pdc-justify-between { justify-content:space-between; }
 .pd-chat.pdc-gap-1, .pd-chat .pdc-gap-1 { gap:0.25rem; }
 .pd-chat.pdc-gap-1-5, .pd-chat .pdc-gap-1-5 { gap:0.375rem; }
 .pd-chat.pdc-gap-2, .pd-chat .pdc-gap-2 { gap:0.5rem; }
 .pd-chat.pdc-gap-2-5, .pd-chat .pdc-gap-2-5 { gap:0.625rem; }
 .pd-chat.pdc-gap-3, .pd-chat .pdc-gap-3 { gap:0.75rem; }
-.pd-chat.pdc-h-14, .pd-chat .pdc-h-14 { height:3.5rem; }
-.pd-chat.pdc-h-2, .pd-chat .pdc-h-2 { height:0.5rem; }
-.pd-chat.pdc-h-2-5, .pd-chat .pdc-h-2-5 { height:0.625rem; }
-.pd-chat.pdc-h-3, .pd-chat .pdc-h-3 { height:0.75rem; }
-.pd-chat.pdc-h-36, .pd-chat .pdc-h-36 { height:9rem; }
-.pd-chat.pdc-h-6, .pd-chat .pdc-h-6 { height:1.5rem; }
-.pd-chat.pdc-h-7, .pd-chat .pdc-h-7 { height:1.75rem; }
-.pd-chat.pdc-h-8, .pd-chat .pdc-h-8 { height:2rem; }
-.pd-chat.pdc-h-9, .pd-chat .pdc-h-9 { height:2.25rem; }
-.pd-chat.pdc-h-18px, .pd-chat .pdc-h-18px { height:18px; }
-.pd-chat.pdc-h-42px, .pd-chat .pdc-h-42px { height:42px; }
 .pd-chat.pdc-h-full, .pd-chat .pdc-h-full { height:100%; }
-.pd-chat.pdc-h-px, .pd-chat .pdc-h-px { height:1px; }
-.pd-chat.pdc-hidden, .pd-chat .pdc-hidden { display:none; }
-.pd-chat.pdc-inline-block, .pd-chat .pdc-inline-block { display:inline-block; }
-.pd-chat.pdc-inline-flex, .pd-chat .pdc-inline-flex { display:inline-flex; }
-.pd-chat.pdc-inset-0, .pd-chat .pdc-inset-0 { inset:0; }
-.pd-chat.pdc-inset-x-2-5, .pd-chat .pdc-inset-x-2-5 { left:0.625rem;right:0.625rem; }
-.pd-chat.pdc-italic, .pd-chat .pdc-italic { font-style:italic; }
-.pd-chat.pdc-items-baseline, .pd-chat .pdc-items-baseline { align-items:baseline; }
-.pd-chat.pdc-items-center, .pd-chat .pdc-items-center { align-items:center; }
-.pd-chat.pdc-items-end, .pd-chat .pdc-items-end { align-items:flex-end; }
-.pd-chat.pdc-items-start, .pd-chat .pdc-items-start { align-items:flex-start; }
-.pd-chat.pdc-justify-between, .pd-chat .pdc-justify-between { justify-content:space-between; }
-.pd-chat.pdc-justify-center, .pd-chat .pdc-justify-center { justify-content:center; }
-.pd-chat.pdc-justify-start, .pd-chat .pdc-justify-start { justify-content:flex-start; }
-.pd-chat.pdc-leading-none, .pd-chat .pdc-leading-none { line-height:1; }
-.pd-chat.pdc-leading-snug, .pd-chat .pdc-leading-snug { line-height:1.375; }
-.pd-chat.pdc-left-0, .pd-chat .pdc-left-0 { left:0; }
-.pd-chat.pdc-max-h-52, .pd-chat .pdc-max-h-52 { max-height:13rem; }
-.pd-chat.pdc-max-h-full, .pd-chat .pdc-max-h-full { max-height:100%; }
-.pd-chat.pdc-max-w-180px, .pd-chat .pdc-max-w-180px { max-width:180px; }
-.pd-chat.pdc-max-w-240px, .pd-chat .pdc-max-w-240px { max-width:240px; }
-.pd-chat.pdc-max-w-85, .pd-chat .pdc-max-w-85 { max-width:85%; }
-.pd-chat.pdc-max-w-full, .pd-chat .pdc-max-w-full { max-width:100%; }
-.pd-chat.pdc-mb-1, .pd-chat .pdc-mb-1 { margin-bottom:0.25rem; }
-.pd-chat.pdc-mb-1-5, .pd-chat .pdc-mb-1-5 { margin-bottom:0.375rem; }
-.pd-chat.pdc-mb-2, .pd-chat .pdc-mb-2 { margin-bottom:0.5rem; }
+.pd-chat.pdc-w-full, .pd-chat .pdc-w-full { width:100%; }
 .pd-chat.pdc-min-h-0, .pd-chat .pdc-min-h-0 { min-height:0; }
 .pd-chat.pdc-min-w-0, .pd-chat .pdc-min-w-0 { min-width:0; }
-.pd-chat.pdc-min-w-18px, .pd-chat .pdc-min-w-18px { min-width:18px; }
-.pd-chat.pdc-min-w-9rem, .pd-chat .pdc-min-w-9rem { min-width:9rem; }
-.pd-chat.pdc-mt-0-5, .pd-chat .pdc-mt-0-5 { margin-top:0.125rem; }
-.pd-chat.pdc-mt-1, .pd-chat .pdc-mt-1 { margin-top:0.25rem; }
-.pd-chat.pdc-mt-1-5, .pd-chat .pdc-mt-1-5 { margin-top:0.375rem; }
-.pd-chat.pdc-mt-2-5, .pd-chat .pdc-mt-2-5 { margin-top:0.625rem; }
 .pd-chat.pdc-mt-auto, .pd-chat .pdc-mt-auto { margin-top:auto; }
-.pd-chat.pdc-my-3, .pd-chat .pdc-my-3 { margin-top:.75rem;margin-bottom:.75rem; }
-.pd-chat.pdc-object-cover, .pd-chat .pdc-object-cover { object-fit:cover; }
-.pd-chat.pdc-outline-none, .pd-chat .pdc-outline-none { outline:2px solid transparent;outline-offset:2px; }
 .pd-chat.pdc-overflow-hidden, .pd-chat .pdc-overflow-hidden { overflow:hidden; }
-.pd-chat.pdc-overflow-visible, .pd-chat .pdc-overflow-visible { overflow:visible; }
 .pd-chat.pdc-overflow-y-auto, .pd-chat .pdc-overflow-y-auto { overflow-y:auto; }
 .pd-chat.pdc-overscroll-contain, .pd-chat .pdc-overscroll-contain { overscroll-behavior:contain; }
-.pd-chat.pdc-p-0-5, .pd-chat .pdc-p-0-5 { padding:0.125rem; }
-.pd-chat.pdc-p-1, .pd-chat .pdc-p-1 { padding:0.25rem; }
-.pd-chat.pdc-p-2, .pd-chat .pdc-p-2 { padding:0.5rem; }
-.pd-chat.pdc-p-2-5, .pd-chat .pdc-p-2-5 { padding:0.625rem; }
-.pd-chat.pdc-p-4, .pd-chat .pdc-p-4 { padding:1rem; }
-.pd-chat.pdc-pb-2, .pd-chat .pdc-pb-2 { padding-bottom:0.5rem; }
-.pd-chat.pdc-pl-2, .pd-chat .pdc-pl-2 { padding-left:0.5rem; }
-.pd-chat.pdc-pr-1-5, .pd-chat .pdc-pr-1-5 { padding-right:0.375rem; }
-.pd-chat.pdc-pr-6, .pd-chat .pdc-pr-6 { padding-right:1.5rem; }
-.pd-chat.pdc-px-1, .pd-chat .pdc-px-1 { padding-left:0.25rem;padding-right:0.25rem; }
-.pd-chat.pdc-px-1-5, .pd-chat .pdc-px-1-5 { padding-left:0.375rem;padding-right:0.375rem; }
-.pd-chat.pdc-px-2-5, .pd-chat .pdc-px-2-5 { padding-left:0.625rem;padding-right:0.625rem; }
-.pd-chat.pdc-px-3, .pd-chat .pdc-px-3 { padding-left:0.75rem;padding-right:0.75rem; }
-.pd-chat.pdc-px-6, .pd-chat .pdc-px-6 { padding-left:1.5rem;padding-right:1.5rem; }
-.pd-chat.pdc-py-0-5, .pd-chat .pdc-py-0-5 { padding-top:0.125rem;padding-bottom:0.125rem; }
-.pd-chat.pdc-py-1, .pd-chat .pdc-py-1 { padding-top:0.25rem;padding-bottom:0.25rem; }
-.pd-chat.pdc-py-1-5, .pd-chat .pdc-py-1-5 { padding-top:0.375rem;padding-bottom:0.375rem; }
-.pd-chat.pdc-py-2, .pd-chat .pdc-py-2 { padding-top:0.5rem;padding-bottom:0.5rem; }
-.pd-chat.pdc-py-3, .pd-chat .pdc-py-3 { padding-top:0.75rem;padding-bottom:0.75rem; }
-.pd-chat.pdc-relative, .pd-chat .pdc-relative { position:relative; }
-.pd-chat.pdc-right-0, .pd-chat .pdc-right-0 { right:0; }
-.pd-chat.pdc-right-0-5, .pd-chat .pdc-right-0-5 { right:0.125rem; }
-.pd-chat.pdc-right-4, .pd-chat .pdc-right-4 { right:1rem; }
-.pd-chat.pdc-rounded, .pd-chat .pdc-rounded { border-radius:.25rem; }
-.pd-chat.pdc-rounded-10px, .pd-chat .pdc-rounded-10px { border-radius:10px; }
-.pd-chat.pdc-rounded-14px, .pd-chat .pdc-rounded-14px { border-radius:14px; }
-.pd-chat.pdc-rounded-8px, .pd-chat .pdc-rounded-8px { border-radius:8px; }
-.pd-chat.pdc-rounded-full, .pd-chat .pdc-rounded-full { border-radius:9999px; }
-.pd-chat.pdc-rounded-lg, .pd-chat .pdc-rounded-lg { border-radius:.5rem; }
-.pd-chat.pdc-rounded-tl-5px, .pd-chat .pdc-rounded-tl-5px { border-top-left-radius:5px; }
-.pd-chat.pdc-rounded-tr-5px, .pd-chat .pdc-rounded-tr-5px { border-top-right-radius:5px; }
-.pd-chat.pdc-shadow-lg, .pd-chat .pdc-shadow-lg { box-shadow:0 10px 15px -3px rgba(0,0,0,.1),0 4px 6px -4px rgba(0,0,0,.1); }
-.pd-chat.pdc-shadow-md, .pd-chat .pdc-shadow-md { box-shadow:0 4px 6px -1px rgba(0,0,0,.1),0 2px 4px -2px rgba(0,0,0,.1); }
-.pd-chat.pdc-shadow-xl, .pd-chat .pdc-shadow-xl { box-shadow:0 20px 25px -5px rgba(0,0,0,.1),0 8px 10px -6px rgba(0,0,0,.1); }
-.pd-chat.pdc-sr-only, .pd-chat .pdc-sr-only { position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border-width:0; }
-.pd-chat.pdc-text-10px, .pd-chat .pdc-text-10px { font-size:10px; }
-.pd-chat.pdc-text-11px, .pd-chat .pdc-text-11px { font-size:11px; }
-.pd-chat.pdc-text-12px, .pd-chat .pdc-text-12px { font-size:12px; }
-.pd-chat.pdc-text-13px, .pd-chat .pdc-text-13px { font-size:13px; }
-.pd-chat.pdc-text-14px, .pd-chat .pdc-text-14px { font-size:14px; }
-.pd-chat.pdc-text-15px, .pd-chat .pdc-text-15px { font-size:15px; }
-.pd-chat.pdc-text-16px, .pd-chat .pdc-text-16px { font-size:16px; }
-.pd-chat.pdc-text-17px, .pd-chat .pdc-text-17px { font-size:17px; }
-.pd-chat.pdc-text-19px, .pd-chat .pdc-text-19px { font-size:19px; }
-.pd-chat.pdc-text-brand, .pd-chat .pdc-text-brand { color:var(--pd-chat-brand); }
-.pd-chat.pdc-text-center, .pd-chat .pdc-text-center { text-align:center; }
-.pd-chat.pdc-text-ink, .pd-chat .pdc-text-ink { color:var(--pd-chat-ink); }
-.pd-chat.pdc-text-ink-dim, .pd-chat .pdc-text-ink-dim { color:var(--pd-chat-ink-dim); }
-.pd-chat.pdc-text-ink-mute, .pd-chat .pdc-text-ink-mute { color:var(--pd-chat-ink-mute); }
-.pd-chat.pdc-text-ink-soft, .pd-chat .pdc-text-ink-soft { color:var(--pd-chat-ink-soft); }
-.pd-chat.pdc-text-left, .pd-chat .pdc-text-left { text-align:left; }
-.pd-chat.pdc-text-on-ink, .pd-chat .pdc-text-on-ink { color:var(--pd-chat-on-ink); }
-.pd-chat.pdc-text-out, .pd-chat .pdc-text-out { color:var(--pd-chat-out); }
-.pd-chat.pdc-text-white, .pd-chat .pdc-text-white { color:#fff; }
-.pd-chat.pdc-top-0-5, .pd-chat .pdc-top-0-5 { top:0.125rem; }
-.pd-chat.pdc-top-11, .pd-chat .pdc-top-11 { top:2.75rem; }
-.pd-chat.pdc-top-4, .pd-chat .pdc-top-4 { top:1rem; }
-.pd-chat.pdc-top-7, .pd-chat .pdc-top-7 { top:1.75rem; }
-.pd-chat.pdc-top-9, .pd-chat .pdc-top-9 { top:2.25rem; }
-.pd-chat.pdc-tracking-wide, .pd-chat .pdc-tracking-wide { letter-spacing:.025em; }
-.pd-chat.pdc-transition-colors, .pd-chat .pdc-transition-colors { transition-property:color,background-color,border-color,fill,stroke;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:150ms; }
-.pd-chat.pdc-transition-opacity, .pd-chat .pdc-transition-opacity { transition-property:opacity;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:150ms; }
 .pd-chat.pdc-truncate, .pd-chat .pdc-truncate { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.pd-chat.pdc-underline, .pd-chat .pdc-underline { text-decoration-line:underline; }
-.pd-chat.pdc-underline-offset-2, .pd-chat .pdc-underline-offset-2 { text-underline-offset:2px; }
-.pd-chat.pdc-uppercase, .pd-chat .pdc-uppercase { text-transform:uppercase; }
-.pd-chat.pdc-w-14, .pd-chat .pdc-w-14 { width:3.5rem; }
-.pd-chat.pdc-w-2, .pd-chat .pdc-w-2 { width:0.5rem; }
-.pd-chat.pdc-w-2-5, .pd-chat .pdc-w-2-5 { width:0.625rem; }
-.pd-chat.pdc-w-3, .pd-chat .pdc-w-3 { width:0.75rem; }
-.pd-chat.pdc-w-36, .pd-chat .pdc-w-36 { width:9rem; }
-.pd-chat.pdc-w-6, .pd-chat .pdc-w-6 { width:1.5rem; }
-.pd-chat.pdc-w-7, .pd-chat .pdc-w-7 { width:1.75rem; }
-.pd-chat.pdc-w-8, .pd-chat .pdc-w-8 { width:2rem; }
-.pd-chat.pdc-w-9, .pd-chat .pdc-w-9 { width:2.25rem; }
-.pd-chat.pdc-w-42px, .pd-chat .pdc-w-42px { width:42px; }
-.pd-chat.pdc-w-full, .pd-chat .pdc-w-full { width:100%; }
-.pd-chat.pdc-whitespace-pre-wrap, .pd-chat .pdc-whitespace-pre-wrap { white-space:pre-wrap; }
+.pd-chat.pdc-text-center, .pd-chat .pdc-text-center { text-align:center; }
+.pd-chat.pdc-text-left, .pd-chat .pdc-text-left { text-align:left; }
+.pd-chat.pdc-sr-only, .pd-chat .pdc-sr-only { position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border-width:0; }
+.pd-chat.pdc-animate-spin, .pd-chat .pdc-animate-spin { animation:pd-chat-spin 1s linear infinite; }
 .pd-chat.pdc-z-10, .pd-chat .pdc-z-10 { z-index:10; }
 .pd-chat.pdc-z-30, .pd-chat .pdc-z-30 { z-index:30; }
 .pd-chat.pdc-z-40, .pd-chat .pdc-z-40 { z-index:40; }
 .pd-chat.pdc-z-50, .pd-chat .pdc-z-50 { z-index:50; }
 
-/* states */
-.pd-chat.pdc-disabled-opacity-40:disabled, .pd-chat .pdc-disabled-opacity-40:disabled { opacity:0.4; }
-.pd-chat.pdc-disabled-opacity-60:disabled, .pd-chat .pdc-disabled-opacity-60:disabled { opacity:0.6; }
-.pd-chat.pdc-focus-visible-outline-2:focus-visible, .pd-chat .pdc-focus-visible-outline-2:focus-visible { outline-width:2px; }
-.pd-chat.pdc-focus-visible-outline-var-c-focus:focus-visible, .pd-chat .pdc-focus-visible-outline-var-c-focus:focus-visible { outline-color:var(--pd-chat-focus); }
-.pd-chat.pdc-focus-visible-outline-offset-1:focus-visible, .pd-chat .pdc-focus-visible-outline-offset-1:focus-visible { outline-offset:1px; }
-.pd-chat.pdc-focus-within-opacity-100:focus-within, .pd-chat .pdc-focus-within-opacity-100:focus-within { opacity:1.0; }
-.pd-chat.pdc-hover-bg-black-75:hover, .pd-chat .pdc-hover-bg-black-75:hover { background-color:rgba(0,0,0,.75); }
-.pd-chat.pdc-hover-bg-canvas:hover, .pd-chat .pdc-hover-bg-canvas:hover { background-color:var(--pd-chat-canvas); }
-.pd-chat.pdc-hover-bg-ink-soft:hover, .pd-chat .pdc-hover-bg-ink-soft:hover { background-color:var(--pd-chat-ink-soft); }
-.pd-chat.pdc-hover-bg-surface:hover, .pd-chat .pdc-hover-bg-surface:hover { background-color:var(--pd-chat-surface); }
-.pd-chat.pdc-hover-bg-white-20:hover, .pd-chat .pdc-hover-bg-white-20:hover { background-color:rgba(255,255,255,.2); }
-.pd-chat.pdc-hover-text-brand-600:hover, .pd-chat .pdc-hover-text-brand-600:hover { color:var(--pd-chat-brand-600); }
-.pd-chat.pdc-hover-text-ink:hover, .pd-chat .pdc-hover-text-ink:hover { color:var(--pd-chat-ink); }
-.pd-chat.pdc-hover-text-out:hover, .pd-chat .pdc-hover-text-out:hover { color:var(--pd-chat-out); }
-.pd-chat.pdc-placeholder-text-ink-dim::placeholder, .pd-chat .pdc-placeholder-text-ink-dim::placeholder { color:var(--pd-chat-ink-dim); }
+/* Type. The kit's scale, named by role rather than by pixel. */
+.pd-chat.pdc-t-body, .pd-chat .pdc-t-body { font-size:14px; line-height:21px; }
+.pd-chat.pdc-t-ui, .pd-chat .pdc-t-ui { font-size:13px; line-height:18px; }
+.pd-chat.pdc-t-caption, .pd-chat .pdc-t-caption { font-size:12px; line-height:17px; }
+.pd-chat.pdc-t-title, .pd-chat .pdc-t-title { font-size:16px; line-height:22px; font-weight:600; letter-spacing:-0.005em; }
+.pd-chat.pdc-t-label, .pd-chat .pdc-t-label { font-family:var(--pd-chat-mono); font-size:11px; line-height:1; letter-spacing:0.12em; text-transform:uppercase; font-weight:500; }
+.pd-chat.pdc-mono, .pd-chat .pdc-mono { font-family:var(--pd-chat-mono); font-feature-settings:'tnum' 1,'lnum' 1; }
+.pd-chat.pdc-font-medium, .pd-chat .pdc-font-medium { font-weight:500; }
+.pd-chat.pdc-font-semibold, .pd-chat .pdc-font-semibold { font-weight:600; }
+.pd-chat.pdc-text-ink, .pd-chat .pdc-text-ink { color:var(--pd-chat-ink); }
+.pd-chat.pdc-text-ink-soft, .pd-chat .pdc-text-ink-soft { color:var(--pd-chat-ink-soft); }
+.pd-chat.pdc-text-ink-mute, .pd-chat .pdc-text-ink-mute { color:var(--pd-chat-ink-mute); }
+.pd-chat.pdc-text-ink-dim, .pd-chat .pdc-text-ink-dim { color:var(--pd-chat-ink-dim); }
+.pd-chat.pdc-text-news, .pd-chat .pdc-text-news { color:var(--pd-chat-news); }
+.pd-chat.pdc-bg-surface, .pd-chat .pdc-bg-surface { background-color:var(--pd-chat-surface); }
+.pd-chat.pdc-bg-canvas, .pd-chat .pdc-bg-canvas { background-color:var(--pd-chat-canvas); }
 
-@media (min-width:1024px) {
-  .pd-chat.pdc-lg-inline, .pd-chat .pdc-lg-inline { display:inline; }
-}
+/* ── Named parts ─────────────────────────────────────────────── */
 
-@media (max-width:767.98px) {
-  .pd-chat.pdc-max-md-h-11, .pd-chat .pdc-max-md-h-11 { height:2.75rem; }
-  .pd-chat.pdc-max-md-opacity-100, .pd-chat .pdc-max-md-opacity-100 { opacity:1.0; }
-  .pd-chat.pdc-max-md-w-11, .pd-chat .pdc-max-md-w-11 { width:2.75rem; }
-}
-
-@media (max-width:639.98px) {
-  .pd-chat.pdc-max-sm-text-17px, .pd-chat .pdc-max-sm-text-17px { font-size:17px !important; }
-}
-
-@media (min-width:768px) {
-  .pd-chat.pdc-group:hover .pdc-md-group-hover-opacity-100, .pd-chat .pdc-group:hover .pdc-md-group-hover-opacity-100 { opacity:1.0; }
-  .pd-chat.pdc-md-opacity-0, .pd-chat .pdc-md-opacity-0 { opacity:0.0; }
-}
-
-@media (prefers-reduced-motion:reduce) {
-  .pd-chat.pdc-motion-reduce-animate-none, .pd-chat .pdc-motion-reduce-animate-none { animation:none; }
-}
-
-@media (min-width:640px) {
-  .pd-chat.pdc-sm-h-6, .pd-chat .pdc-sm-h-6 { height:1.5rem; }
-  .pd-chat.pdc-sm-h-7, .pd-chat .pdc-sm-h-7 { height:1.75rem; }
-  .pd-chat.pdc-sm-h-16px, .pd-chat .pdc-sm-h-16px { height:16px; }
-  .pd-chat.pdc-sm-min-w-16px, .pd-chat .pdc-sm-min-w-16px { min-width:16px; }
-  .pd-chat.pdc-sm-px-2-5, .pd-chat .pdc-sm-px-2-5 { padding-left:0.625rem;padding-right:0.625rem; }
-  .pd-chat.pdc-sm-text-10px, .pd-chat .pdc-sm-text-10px { font-size:10px; }
-  .pd-chat.pdc-sm-text-11px, .pd-chat .pdc-sm-text-11px { font-size:11px; }
-  .pd-chat.pdc-sm-text-12px, .pd-chat .pdc-sm-text-12px { font-size:12px; }
-  .pd-chat.pdc-sm-text-13px, .pd-chat .pdc-sm-text-13px { font-size:13px; }
-  .pd-chat.pdc-sm-text-14px, .pd-chat .pdc-sm-text-14px { font-size:14px; }
-  .pd-chat.pdc-sm-text-9px, .pd-chat .pdc-sm-text-9px { font-size:9px; }
-  .pd-chat.pdc-sm-w-6, .pd-chat .pdc-sm-w-6 { width:1.5rem; }
-  .pd-chat.pdc-sm-w-7, .pd-chat .pdc-sm-w-7 { width:1.75rem; }
-}
-
-/* Stragglers: classes that live inside conditional expressions rather than a
-   plain className string, plus two the generator skipped because Tailwind
-   emits them as no-ops. */
-.pd-chat.pdc-space-y-0 > * + *, .pd-chat .pdc-space-y-0 > * + * { margin-top: 0; }
-.pd-chat.pdc-group, .pd-chat .pdc-group { }
-.pd-chat.pdc-border-brand, .pd-chat .pdc-border-brand { border-color: var(--pd-chat-brand); }
-.pd-chat.pdc-hover-bg-brand-50:hover, .pd-chat .pdc-hover-bg-brand-50:hover { background-color: var(--pd-chat-brand-50); }
-@media (min-width:1024px) {
-  .pd-chat.pdc-lg-w-auto, .pd-chat .pdc-lg-w-auto { width: auto; }
-  .pd-chat.pdc-lg-justify-start, .pd-chat .pdc-lg-justify-start { justify-content: flex-start; }
-  .pd-chat.pdc-lg-gap-1-5, .pd-chat .pdc-lg-gap-1-5 { gap: 0.375rem; }
-  .pd-chat.pdc-lg-pl-2-5, .pd-chat .pdc-lg-pl-2-5 { padding-left: 0.625rem; }
-  .pd-chat.pdc-lg-pr-3-5, .pd-chat .pdc-lg-pr-3-5 { padding-right: 0.875rem; }
-}
-
-/* ── Semantic ────────────────────────────────────────────────
-   The few pieces that have an identity rather than a layout.
-   Prefer adding here over adding another utility. */
-
-/* The composer. Replaces proof-viewer's design-system <Textarea>, which
-   could not travel: it is Tailwind v4 arbitrary-value syntax resolving
-   against that app's tokens. Same border, radius, padding and focus ring,
-   written out. */
-.pd-chat .pd-chat__composer-input {
-  width: 100%;
-  background-color: var(--pd-chat-surface);
-  color: var(--pd-chat-ink);
-  border: 1px solid var(--pd-chat-line);
-  border-radius: 8px;
-  padding: 0.75rem;
-  line-height: 1.5;
-  font-size: 14px;
-  resize: none;
-  transition-property: color, background-color, border-color;
-  transition-timing-function: cubic-bezier(.4, 0, .2, 1);
-  transition-duration: 150ms;
-}
-.pd-chat .pd-chat__composer-input::placeholder { color: var(--pd-chat-ink-dim); }
-.pd-chat .pd-chat__composer-input:focus {
-  border-color: var(--pd-chat-brand);
-  outline: 2px solid var(--pd-chat-focus);
-  outline-offset: 1px;
-}
-.pd-chat .pd-chat__composer-input:disabled {
-  background-color: var(--pd-chat-canvas);
-  color: var(--pd-chat-ink-mute);
-  cursor: not-allowed;
-}
-
-/* iOS zooms a focused control whose text is under 16px. The panel's own
-   type scale is smaller than that, so the composer alone is bumped on
-   touch widths — the same fix proof-viewer carried as `max-sm:text-[17px]!`. */
-@media (max-width: 639.98px) {
-  .pd-chat .pd-chat__composer-input { font-size: 17px; }
-}
-
-/* The popped-out window has no host page around it, so the panel owns the
-   whole viewport there. */
-.pd-chat--popout { height: 100%; display: flex; flex-direction: column; }
-
-/* The dropdown's resize grip.
-
-   It lives in the bottom-left because the panel is anchored top-right, so that
-   is the only corner that can grow without walking the panel off the edge of
-   the screen.
-
-   Two things kept it looking like a stray mark rather than a handle, and both
-   are fixed here rather than in the markup. It sat hard against `bottom-0
-   left-0`, which put the glyph on top of the panel's own 14px corner curve —
-   at 45 degrees that curve cuts about 5.8px in from the corner, so the mark
-   read as hanging off the edge; it is now inset past that. And it was drawn at
-   full strength, competing for attention with the conversation above it, when
-   the resize cursor already announces the corner to anyone who reaches for it.
-   Faint at rest, up to full on hover or keyboard focus.
-
-   The hit area is deliberately larger than the glyph: 24px square is a
-   comfortable target for a corner drag, and the padding is what holds the mark
-   away from the edge while the button itself still reaches it. */
-.pd-chat .pd-chat__resize {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  z-index: 10;
+/* The panel root. A flex column that fills its host's box; the message
+   list inside is the only thing that scrolls. */
+.pd-chat .pd-chat__panel,
+.pd-chat.pd-chat__panel {
   display: flex;
-  align-items: flex-end;
-  justify-content: flex-start;
-  width: 24px;
-  height: 24px;
-  padding: 0 0 4px 4px;
-  color: color-mix(in srgb, var(--pd-chat-ink-mute) 45%, transparent);
-  cursor: nesw-resize;
-  touch-action: none;
-  transition: color 150ms cubic-bezier(.4, 0, .2, 1);
-}
-.pd-chat .pd-chat__resize:hover,
-.pd-chat .pd-chat__resize:focus-visible {
-  color: var(--pd-chat-ink-mute);
-}
-.pd-chat .pd-chat__resize:focus-visible {
-  outline: 2px solid var(--pd-chat-focus);
-  outline-offset: -2px;
-  border-radius: 10px;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--pd-chat-surface);
 }
 
-/* A short pulse on the header pill when something personal lands.
-   
-   Deliberately finite. A control that animates for as long as it has unread
-   stops reading as a signal within about a minute and becomes wallpaper, and
-   it is miserable to sit beside all day: three beats and then still is enough
-   to catch the eye of someone already looking at the screen, without becoming
-   something to be endured. Re-triggered per message by the component, so a
-   second message pulses again rather than being swallowed by the first. */
+/* The popped-out window has no host page around it, so the panel owns
+   the whole viewport there. */
+.pd-chat--popout { height: 100%; display: flex; flex-direction: column; background: var(--pd-chat-surface); }
+
+/* Thread header: who you are talking to, their state, and the few
+   controls that belong to every placement. */
+.pd-chat .pd-chat__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 56px;
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid var(--pd-chat-line-soft);
+  flex: 0 0 auto;
+}
+.pd-chat .pd-chat__head-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.pd-chat .pd-chat__head-name {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 14px; font-weight: 600; line-height: 18px; color: var(--pd-chat-ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pd-chat .pd-chat__head-sub {
+  font-size: 12px; line-height: 16px; color: var(--pd-chat-ink-mute);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pd-chat .pd-chat__head-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+
+/* The quiet round icon button used throughout: 32px, no border, a paper
+   wash on hover, ink when pressed. */
+.pd-chat .pd-chat__ib {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 9999px;
+  color: var(--pd-chat-ink-mute);
+  transition: background-color 150ms, color 150ms;
+  flex: 0 0 auto;
+}
+.pd-chat .pd-chat__ib:hover { background: var(--pd-chat-line-soft); color: var(--pd-chat-ink); }
+.pd-chat .pd-chat__ib[aria-pressed="true"],
+.pd-chat .pd-chat__ib[aria-expanded="true"] { background: var(--pd-chat-line-soft); color: var(--pd-chat-ink); }
+.pd-chat .pd-chat__ib:disabled { opacity: 0.4; }
+.pd-chat .pd-chat__ib--sm { width: 26px; height: 26px; }
+
+/* Avatars: a round of the person's identity colour with their initials in
+   the mono face, or their photo. The presence dot sits on the corner with
+   a surface-coloured ring so it never merges with the avatar. */
+.pd-chat .pd-chat__av {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 9999px; overflow: visible;
+  color: #fff;
+  font-family: var(--pd-chat-mono); font-weight: 600;
+  flex: 0 0 auto;
+}
+.pd-chat .pd-chat__av img { width: 100%; height: 100%; border-radius: 9999px; object-fit: cover; }
+.pd-chat .pd-chat__av--xs { width: 18px; height: 18px; font-size: 8px; }
+.pd-chat .pd-chat__av--sm { width: 22px; height: 22px; font-size: 9px; }
+.pd-chat .pd-chat__av--md { width: 28px; height: 28px; font-size: 10px; }
+.pd-chat .pd-chat__av--lg { width: 32px; height: 32px; font-size: 11px; }
+.pd-chat .pd-chat__av--xl { width: 44px; height: 44px; font-size: 13px; }
+.pd-chat .pd-chat__av--team { background: var(--pd-chat-ink); color: var(--pd-chat-on-ink); }
+.pd-chat .pd-chat__dot {
+  position: absolute; right: -1px; bottom: -1px;
+  width: 10px; height: 10px; border-radius: 9999px;
+  box-shadow: 0 0 0 2px var(--pd-chat-surface);
+}
+.pd-chat .pd-chat__av--xs .pd-chat__dot,
+.pd-chat .pd-chat__av--sm .pd-chat__dot { width: 8px; height: 8px; }
+.pd-chat .pd-chat__av--xl .pd-chat__dot { width: 12px; height: 12px; }
+.pd-chat .pd-chat__dot--online { background: var(--pd-chat-online); }
+.pd-chat .pd-chat__dot--idle { background: var(--pd-chat-idle); }
+.pd-chat .pd-chat__dot--away { background: var(--pd-chat-away); }
+.pd-chat .pd-chat__dot--busy { background: var(--pd-chat-busy); }
+.pd-chat .pd-chat__dot--offline { background: var(--pd-chat-line-strong); }
+/* A dot on its own, beside a status name in the menu. */
+.pd-chat .pd-chat__status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 9999px; flex: 0 0 auto; }
+
+/* The team chat assistant ("Claude"): a spark avatar and an AI tag in a
+   muted cyan. It is not a person and never has a status, so a grey
+   "offline" dot would say something untrue about it. ⚠ Both class names
+   are read by proof-viewer's e2e specs; keep them. */
+.pd-chat .pd-chat__bot-avatar {
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 9999px;
+  background: var(--pd-chat-bot-soft);
+  color: var(--pd-chat-bot);
+  flex: 0 0 auto;
+}
+.pd-chat .pd-chat__bot-tag {
+  display: inline-flex; align-items: center;
+  height: 16px; padding: 0 5px;
+  border-radius: 4px;
+  background: var(--pd-chat-bot-soft);
+  color: var(--pd-chat-bot-ink);
+  font-family: var(--pd-chat-mono);
+  font-size: 9.5px; font-weight: 600; line-height: 1; letter-spacing: 0.06em;
+  vertical-align: 1px;
+  flex: 0 0 auto;
+}
+
+/* Conversation chips: the row under the header in the dropdown, the dock
+   and the popout. Ink when open, paper otherwise. */
+.pd-chat .pd-chat__chips {
+  display: flex; gap: 6px;
+  padding: 10px 16px 8px;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none;
+  flex: 0 0 auto;
+}
+.pd-chat .pd-chat__chips::-webkit-scrollbar { display: none; }
+.pd-chat .pd-chat__chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 32px; padding: 0 12px 0 8px;
+  border-radius: 9999px;
+  border: 1px solid var(--pd-chat-line);
+  background: var(--pd-chat-surface);
+  color: var(--pd-chat-ink-soft);
+  font-size: 13px; font-weight: 500; line-height: 1;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  transition: background-color 150ms, color 150ms, border-color 150ms;
+}
+.pd-chat .pd-chat__chip:hover { background: var(--pd-chat-line-soft); color: var(--pd-chat-ink); }
+.pd-chat .pd-chat__chip[aria-pressed="true"] {
+  background: var(--pd-chat-ink); border-color: var(--pd-chat-ink); color: var(--pd-chat-on-ink);
+}
+.pd-chat .pd-chat__chip[aria-pressed="true"] .pd-chat__dot { box-shadow: 0 0 0 2px var(--pd-chat-ink); }
+
+/* Unread counts. The room's is the nav's coral; a count that is for you
+   (a DM, a mention) is the deeper red the nav uses for news. */
+.pd-chat .pd-chat__count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 9999px;
+  background: var(--pd-chat-news); color: #fff;
+  font-family: var(--pd-chat-mono); font-size: 11px; font-weight: 600; line-height: 1;
+  flex: 0 0 auto;
+}
+.pd-chat .pd-chat__count--room { background: var(--pd-chat-count); }
+.pd-chat .pd-chat__chip[aria-pressed="true"] .pd-chat__count { background: rgba(255,255,255,.28); }
+
+/* The search row, shown on request under the chips. */
+.pd-chat .pd-chat__search {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 16px 8px;
+  flex: 0 0 auto;
+}
+.pd-chat .pd-chat__search-field {
+  display: flex; align-items: center; gap: 8px;
+  height: 36px; padding: 0 12px; flex: 1 1 auto; min-width: 0;
+  border: 1px solid var(--pd-chat-line);
+  border-radius: 9999px;
+  background: var(--pd-chat-surface);
+  color: var(--pd-chat-ink-mute);
+}
+.pd-chat .pd-chat__search-field:focus-within { border-color: var(--pd-chat-ink); }
+.pd-chat .pd-chat__search-field input {
+  flex: 1 1 auto; min-width: 0; background: transparent; border: 0; outline: 0;
+  font-size: 13px; color: var(--pd-chat-ink);
+}
+.pd-chat .pd-chat__search-field input::placeholder { color: var(--pd-chat-ink-dim); }
+
+/* The message list. The only scroll container in the panel; `mt-auto` on
+   the inner list bottom-anchors a short thread so the latest message sits
+   above the composer rather than at the top of an empty box. */
+.pd-chat .pd-chat__list {
+  display: flex; flex-direction: column;
+  flex: 1 1 0%; min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: 4px 16px 8px;
+}
+.pd-chat .pd-chat__list--page { padding: 8px 24px 12px; }
+
+/* Day dividers and the New rule: a mono label between two hairlines. The
+   New rule is the one place in the thread the coral appears. */
+.pd-chat .pd-chat__divider {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0 6px;
+}
+.pd-chat .pd-chat__divider-rule { height: 1px; flex: 1 1 auto; background: var(--pd-chat-line-soft); }
+.pd-chat .pd-chat__divider--new .pd-chat__divider-rule { background: color-mix(in srgb, var(--pd-chat-count) 60%, transparent); }
+.pd-chat .pd-chat__divider--new .pdc-t-label { color: var(--pd-chat-news); }
+
+/* A message row. Everyone on the left, your own included: the avatar and
+   the name carry the identity, so there are no bubbles and no per-person
+   tint. A second message from the same person within five minutes drops
+   the avatar and name and shows its time in the gutter on hover. */
+.pd-chat .pd-chat__msg {
+  position: relative;
+  display: flex; gap: 10px;
+  padding: 5px 8px;
+  margin: 0 -8px;
+  border-radius: 8px;
+}
+.pd-chat .pd-chat__msg--grouped { padding-top: 0; }
+.pd-chat .pd-chat__msg:hover,
+.pd-chat .pd-chat__msg:focus-within { background: var(--pd-chat-canvas); }
+.pd-chat .pd-chat__msg-gutter { width: 28px; flex: 0 0 auto; display: flex; justify-content: flex-end; padding-top: 2px; }
+.pd-chat .pd-chat__msg-gutter-time {
+  font-family: var(--pd-chat-mono); font-size: 10px; line-height: 21px; color: var(--pd-chat-ink-mute);
+  opacity: 0; transition: opacity 150ms;
+}
+.pd-chat .pd-chat__msg:hover .pd-chat__msg-gutter-time,
+.pd-chat .pd-chat__msg:focus-within .pd-chat__msg-gutter-time { opacity: 0.8; }
+.pd-chat .pd-chat__msg-main { min-width: 0; flex: 1 1 auto; }
+.pd-chat .pd-chat__msg-meta { display: flex; align-items: baseline; gap: 8px; }
+.pd-chat .pd-chat__msg-name { font-size: 13px; font-weight: 600; line-height: 18px; color: var(--pd-chat-ink); display: inline-flex; align-items: center; gap: 6px; }
+.pd-chat .pd-chat__msg-time { font-family: var(--pd-chat-mono); font-size: 11px; color: var(--pd-chat-ink-mute); }
+.pd-chat .pd-chat__msg-body {
+  font-size: 14px; line-height: 21px; color: var(--pd-chat-ink-soft);
+  white-space: pre-wrap; overflow-wrap: break-word; margin-top: 1px;
+}
+.pd-chat .pd-chat__msg-body a {
+  color: var(--pd-chat-ink-soft); text-decoration: underline; text-underline-offset: 3px; word-break: break-all;
+}
+.pd-chat .pd-chat__msg-body a:hover { color: var(--pd-chat-ink); }
+.pd-chat .pd-chat__mention {
+  background: var(--pd-chat-line-soft); border-radius: 4px; padding: 0 3px;
+  font-weight: 500; color: var(--pd-chat-ink);
+}
+
+/* Hover toolbar, top right of the row. Always on below md, where there
+   is no hover to reveal it. */
+.pd-chat .pd-chat__tools {
+  position: absolute; right: 8px; top: -10px; z-index: 5;
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--pd-chat-line);
+  border-radius: 9999px;
+  background: var(--pd-chat-surface);
+  box-shadow: 0 4px 12px rgba(22,19,17,.08);
+  opacity: 0; transition: opacity 120ms;
+}
+.pd-chat .pd-chat__msg:hover .pd-chat__tools,
+.pd-chat .pd-chat__msg:focus-within .pd-chat__tools,
+.pd-chat .pd-chat__tools:focus-within,
+.pd-chat .pd-chat__tools--open { opacity: 1; }
+@media (max-width: 767.98px) {
+  .pd-chat .pd-chat__tools { opacity: 1; position: static; box-shadow: none; border: 0; padding: 0; margin-top: 4px; }
+}
+.pd-chat .pd-chat__tool {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 9999px;
+  color: var(--pd-chat-ink-mute); font-size: 14px; line-height: 1;
+}
+.pd-chat .pd-chat__tool:hover { background: var(--pd-chat-line-soft); color: var(--pd-chat-ink); }
+.pd-chat .pd-chat__tool--danger:hover { color: var(--pd-chat-out); }
+@media (max-width: 767.98px) {
+  .pd-chat .pd-chat__tool { width: 36px; height: 36px; }
+}
+
+/* Reactions: pills under the body; yours is outlined in ink. */
+.pd-chat .pd-chat__reactions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.pd-chat .pd-chat__react {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 22px; padding: 0 8px;
+  border-radius: 9999px;
+  border: 1px solid var(--pd-chat-line);
+  background: var(--pd-chat-surface);
+  font-size: 12px; line-height: 1; color: var(--pd-chat-ink-soft);
+}
+.pd-chat .pd-chat__react:hover { background: var(--pd-chat-line-soft); }
+.pd-chat .pd-chat__react--mine { border-color: var(--pd-chat-ink); background: var(--pd-chat-line-soft); color: var(--pd-chat-ink); }
+.pd-chat .pd-chat__react-count { font-family: var(--pd-chat-mono); font-weight: 600; }
+
+/* The emoji picker. */
+.pd-chat .pd-chat__picker {
+  position: absolute; top: 30px; z-index: 30;
+  display: flex; gap: 2px; padding: 4px;
+  border: 1px solid var(--pd-chat-line);
+  border-radius: 9999px;
+  background: var(--pd-chat-surface);
+  box-shadow: 0 8px 20px rgba(22,19,17,.1);
+}
+.pd-chat .pd-chat__picker--left { left: 0; }
+.pd-chat .pd-chat__picker--right { right: 0; }
+.pd-chat .pd-chat__picker button { border-radius: 9999px; padding: 0 5px; font-size: 16px; line-height: 26px; }
+.pd-chat .pd-chat__picker button:hover { background: var(--pd-chat-line-soft); }
+
+/* Attachments on a message and in the composer. Files are a chip with
+   their kind and size; images a bordered thumbnail. */
+.pd-chat .pd-chat__files { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.pd-chat .pd-chat__thumb {
+  display: block; overflow: hidden;
+  border: 1px solid var(--pd-chat-line); border-radius: 8px;
+  background: var(--pd-chat-canvas);
+}
+.pd-chat .pd-chat__thumb img { width: 144px; height: 144px; object-fit: cover; }
+.pd-chat .pd-chat__thumb-caption { display: block; margin-top: 4px; font-size: 11.5px; color: var(--pd-chat-ink-mute); max-width: 144px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-chat .pd-chat__file {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 40px; padding: 0 12px 0 8px; max-width: 240px;
+  border: 1px solid var(--pd-chat-line); border-radius: 10px;
+  background: var(--pd-chat-surface);
+  color: var(--pd-chat-ink); text-decoration: none;
+  transition: background-color 150ms;
+}
+.pd-chat .pd-chat__file:hover { background: var(--pd-chat-line-soft); }
+.pd-chat .pd-chat__file-kind {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 6px;
+  background: var(--pd-chat-line-soft);
+  font-family: var(--pd-chat-mono); font-size: 9px; font-weight: 600; color: var(--pd-chat-ink-soft);
+  flex: 0 0 auto;
+}
+.pd-chat .pd-chat__file-text { display: flex; flex-direction: column; min-width: 0; line-height: 15px; }
+.pd-chat .pd-chat__file-name { font-size: 12.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-chat .pd-chat__file-meta { font-family: var(--pd-chat-mono); font-size: 10.5px; color: var(--pd-chat-ink-mute); }
+.pd-chat .pd-chat__lightbox {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(22,19,17,.82);
+}
+.pd-chat .pd-chat__lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; }
+.pd-chat .pd-chat__lightbox-close {
+  position: absolute; right: 16px; top: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: 9999px;
+  background: rgba(255,255,255,.12); color: #fff;
+}
+.pd-chat .pd-chat__lightbox-close:hover { background: rgba(255,255,255,.22); }
+
+/* Staged attachments in the composer. */
+.pd-chat .pd-chat__staged { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 4px 8px; }
+.pd-chat .pd-chat__staged-item {
+  position: relative; overflow: hidden;
+  border: 1px solid var(--pd-chat-line); border-radius: 8px;
+  height: 56px;
+}
+.pd-chat .pd-chat__staged-item--image { width: 56px; }
+.pd-chat .pd-chat__staged-item--image img { width: 100%; height: 100%; object-fit: cover; }
+.pd-chat .pd-chat__staged-item--file { display: flex; align-items: center; gap: 8px; max-width: 180px; padding: 0 28px 0 8px; background: var(--pd-chat-canvas); }
+.pd-chat .pd-chat__staged-remove {
+  position: absolute; right: 2px; top: 2px;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 9999px;
+  background: rgba(22,19,17,.6); color: #fff;
+}
+.pd-chat .pd-chat__staged-remove:hover { background: rgba(22,19,17,.8); }
+
+/* The composer: one pill field with the clip and the send inside it. It
+   holds a line for "Donna is typing" ABOVE the field at a fixed height, so
+   nothing moves when someone starts or stops. */
+.pd-chat .pd-chat__composer { position: relative; padding: 0 12px 12px; flex: 0 0 auto; }
+.pd-chat .pd-chat__composer--page { padding: 0 24px 16px; }
+.pd-chat .pd-chat__composer--drag .pd-chat__field { border-color: var(--pd-chat-ink); background: var(--pd-chat-canvas); }
+.pd-chat .pd-chat__typing {
+  height: 18px; padding: 0 4px;
+  font-size: 12px; line-height: 18px; color: var(--pd-chat-ink-mute);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pd-chat .pd-chat__field {
+  display: flex; align-items: flex-end; gap: 4px;
+  min-height: 44px; padding: 5px 5px 5px 14px;
+  border: 1px solid var(--pd-chat-line-strong);
+  border-radius: 22px;
+  background: var(--pd-chat-surface);
+  transition: border-color 150ms, box-shadow 150ms;
+}
+.pd-chat .pd-chat__field:focus-within {
+  border-color: var(--pd-chat-ink);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-chat-ink) 8%, transparent);
+}
+.pd-chat .pd-chat__field textarea {
+  flex: 1 1 auto; min-width: 0;
+  background: transparent; border: 0; outline: 0; resize: none;
+  padding: 6px 0;
+  font-size: 14px; line-height: 20px;
+  color: var(--pd-chat-ink);
+  max-height: 140px;
+}
+.pd-chat .pd-chat__field textarea::placeholder { color: var(--pd-chat-ink-dim); }
+.pd-chat .pd-chat__field textarea:focus-visible { outline: 0; }
+.pd-chat .pd-chat__send {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 9999px;
+  background: var(--pd-chat-ink); color: var(--pd-chat-on-ink);
+  flex: 0 0 auto;
+  transition: background-color 150ms, opacity 150ms;
+}
+.pd-chat .pd-chat__send:hover { background: var(--pd-chat-ink-soft); }
+.pd-chat .pd-chat__send:disabled { opacity: 0.35; }
+/* iOS zooms a focused control whose text is under 16px, so the field is
+   bumped on touch widths and only there. */
+@media (max-width: 639.98px) {
+  .pd-chat .pd-chat__field { min-height: 48px; border-radius: 24px; }
+  .pd-chat .pd-chat__field textarea { font-size: 16px; line-height: 22px; padding: 7px 0; }
+  .pd-chat .pd-chat__send { width: 36px; height: 36px; }
+}
+.pd-chat .pd-chat__error {
+  margin: 0 4px 8px; padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--pd-chat-out-soft); color: var(--pd-chat-out);
+  font-size: 12px; line-height: 17px;
+}
+
+/* The @mention picker, above the field. */
+.pd-chat .pd-chat__mentions {
+  position: absolute; left: 12px; right: 12px; bottom: 100%; z-index: 10;
+  margin-bottom: 4px; max-height: 208px; overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--pd-chat-line); border-radius: 10px;
+  background: var(--pd-chat-surface);
+  box-shadow: 0 12px 28px rgba(22,19,17,.1);
+}
+.pd-chat .pd-chat__mention-row {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  height: 34px; padding: 0 10px; border-radius: 8px;
+  font-size: 13.5px; color: var(--pd-chat-ink); text-align: left;
+}
+.pd-chat .pd-chat__mention-row--on, .pd-chat .pd-chat__mention-row:hover { background: var(--pd-chat-line-soft); }
+
+/* Empty states. */
+.pd-chat .pd-chat__empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; height: 100%; padding: 0 32px; text-align: center;
+}
+.pd-chat .pd-chat__empty-title { font-size: 16px; font-weight: 600; line-height: 22px; color: var(--pd-chat-ink); }
+.pd-chat .pd-chat__empty-text { font-size: 13.5px; line-height: 20px; color: var(--pd-chat-ink-mute); max-width: 360px; }
+.pd-chat .pd-chat__suggestions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 4px; }
+.pd-chat .pd-chat__suggestion {
+  display: inline-flex; align-items: center;
+  height: 34px; padding: 0 14px;
+  border: 1px solid var(--pd-chat-line); border-radius: 9999px;
+  background: var(--pd-chat-surface); color: var(--pd-chat-ink-soft);
+  font-size: 13px; white-space: nowrap;
+  transition: background-color 150ms, color 150ms;
+}
+.pd-chat .pd-chat__suggestion:hover { background: var(--pd-chat-line-soft); color: var(--pd-chat-ink); }
+
+/* "Show earlier messages" and "Claude is looking…". */
+.pd-chat .pd-chat__earlier {
+  display: inline-flex; align-items: center; height: 30px; padding: 0 12px;
+  border: 1px solid var(--pd-chat-line); border-radius: 9999px;
+  background: var(--pd-chat-surface); color: var(--pd-chat-ink-soft);
+  font-size: 12.5px; font-weight: 500;
+}
+.pd-chat .pd-chat__earlier:hover { background: var(--pd-chat-line-soft); color: var(--pd-chat-ink); }
+.pd-chat .pd-chat__earlier:disabled { opacity: 0.6; }
+.pd-chat .pd-chat__thinking { display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 12.5px; color: var(--pd-chat-ink-mute); }
+.pd-chat .pd-chat__thinking-dots { display: inline-flex; gap: 3px; }
+.pd-chat .pd-chat__thinking-dots span { width: 5px; height: 5px; border-radius: 9999px; background: var(--pd-chat-bot); animation: pd-chat-dots 1.2s ease-in-out infinite; }
+.pd-chat .pd-chat__thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.pd-chat .pd-chat__thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes pd-chat-dots { 0%, 80%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
+
+/* The ⋯ menu: every setting and every "where does chat live" choice, in
+   one place, in every placement. */
+.pd-chat .pd-chat__menu {
+  position: absolute; right: 0; top: 36px; z-index: 40;
+  min-width: 236px; padding: 6px;
+  border: 1px solid var(--pd-chat-line); border-radius: 14px;
+  background: var(--pd-chat-surface);
+  box-shadow: 0 12px 28px rgba(22,19,17,.12);
+  text-align: left;
+}
+.pd-chat .pd-chat__menu-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  height: 34px; padding: 0 10px; border-radius: 8px;
+  font-size: 13.5px; color: var(--pd-chat-ink); text-align: left; text-decoration: none;
+  white-space: nowrap;
+}
+.pd-chat .pd-chat__menu-item:hover { background: var(--pd-chat-line-soft); }
+.pd-chat .pd-chat__menu-item:disabled { opacity: 0.4; }
+.pd-chat .pd-chat__menu-item > svg { color: var(--pd-chat-ink-mute); flex: 0 0 auto; }
+.pd-chat .pd-chat__menu-item[aria-checked="true"] { font-weight: 500; }
+.pd-chat .pd-chat__menu-value { margin-left: auto; padding-left: 12px; font-family: var(--pd-chat-mono); font-size: 10.5px; color: var(--pd-chat-ink-mute); }
+.pd-chat .pd-chat__menu-value--on { color: var(--pd-chat-ink); }
+.pd-chat .pd-chat__menu-heading { padding: 8px 10px 4px; font-family: var(--pd-chat-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--pd-chat-ink-mute); }
+.pd-chat .pd-chat__menu-note { padding: 4px 10px 6px; font-size: 11.5px; line-height: 15px; color: var(--pd-chat-ink-mute); white-space: normal; max-width: 260px; }
+.pd-chat .pd-chat__menu-divider { margin: 4px 8px; border-top: 1px solid var(--pd-chat-line-soft); }
+
+/* ── The page layout ─────────────────────────────────────────
+   On the full chat page the conversations are a list beside the
+   thread rather than chips above it. The panel measures itself and
+   takes the two-column shape once it is wide enough. */
+.pd-chat .pd-chat__page { display: flex; height: 100%; min-height: 0; }
+.pd-chat .pd-chat__convos {
+  display: flex; flex-direction: column;
+  width: 312px; flex: 0 0 auto; min-height: 0;
+  border-right: 1px solid var(--pd-chat-line-soft);
+}
+.pd-chat .pd-chat__convos-head {
+  display: flex; align-items: center; justify-content: space-between;
+  height: 56px; padding: 0 16px 0 20px;
+  border-bottom: 1px solid var(--pd-chat-line-soft);
+  flex: 0 0 auto;
+}
+.pd-chat .pd-chat__convos-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px 8px; }
+.pd-chat .pd-chat__row {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  height: 64px; padding: 0 12px; border-radius: 10px;
+  text-align: left;
+  transition: background-color 120ms;
+}
+.pd-chat .pd-chat__row:hover { background: var(--pd-chat-canvas); }
+.pd-chat .pd-chat__row[aria-pressed="true"] { background: var(--pd-chat-line-soft); }
+.pd-chat .pd-chat__row-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.pd-chat .pd-chat__row-name { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; line-height: 18px; color: var(--pd-chat-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pd-chat .pd-chat__row-snip { font-size: 13px; line-height: 17px; color: var(--pd-chat-ink-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.pd-chat .pd-chat__row--unread .pd-chat__row-snip { color: var(--pd-chat-ink); font-weight: 500; }
+.pd-chat .pd-chat__row-end { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: 0 0 auto; }
+.pd-chat .pd-chat__row-time { font-family: var(--pd-chat-mono); font-size: 11px; color: var(--pd-chat-ink-mute); }
+.pd-chat .pd-chat__row--unread .pd-chat__row-time { color: var(--pd-chat-news); }
+.pd-chat .pd-chat__thread { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
+
+/* Phone: the list and the thread take turns. */
+.pd-chat .pd-chat__convos--phone { width: 100%; border-right: 0; }
+.pd-chat .pd-chat__convos--phone .pd-chat__row { height: 68px; padding: 0 12px; }
+.pd-chat .pd-chat__around {
+  display: flex; gap: 14px; padding: 4px 20px 12px; overflow-x: auto; scrollbar-width: none; flex: 0 0 auto;
+}
+.pd-chat .pd-chat__around::-webkit-scrollbar { display: none; }
+.pd-chat .pd-chat__around-person { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 0 0 auto; }
+.pd-chat .pd-chat__around-name { font-size: 11px; color: var(--pd-chat-ink-soft); }
+
+/* ── The header control ──────────────────────────────────────
+   The same shape as a nav item in the chrome: 32px, 8px corners,
+   13.5px medium, a paper wash on hover, pressed while chat is open. */
+.pd-chat .pd-chat__pill {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 32px; width: 32px; padding: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--pd-chat-ink-soft);
+  font-size: 13.5px; font-weight: 500; line-height: 1; letter-spacing: -0.005em;
+  white-space: nowrap;
+  transition: background-color 150ms, color 150ms;
+}
+.pd-chat .pd-chat__pill:hover { background: var(--pd-chat-line-soft); color: var(--pd-chat-ink); }
+.pd-chat .pd-chat__pill--on { background: var(--pd-chat-line-soft); color: var(--pd-chat-ink); }
+.pd-chat .pd-chat__pill-label { display: none; }
+@media (min-width: 1024px) {
+  .pd-chat .pd-chat__pill { width: auto; padding: 0 11px 0 9px; justify-content: flex-start; }
+  .pd-chat .pd-chat__pill-label { display: inline; }
+}
+.pd-chat .pd-chat__pill-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 17px; height: 17px; padding: 0 4px;
+  border-radius: 9999px;
+  background: var(--pd-chat-count); color: #fff;
+  font-family: var(--pd-chat-mono); font-feature-settings: 'tnum' 1, 'lnum' 1;
+  font-size: 10px; font-weight: 600; line-height: 1;
+  flex: 0 0 auto;
+}
+.pd-chat .pd-chat__pill-count--personal { background: var(--pd-chat-news); }
+@media (max-width: 1023.98px) {
+  .pd-chat .pd-chat__pill-count { position: absolute; right: -6px; top: -6px; box-shadow: 0 0 0 2px var(--pd-chat-surface); }
+}
+
+/* A short pulse on the control when something personal lands. Finite on
+   purpose: three beats and then still. Re-triggered per message. */
 @keyframes pd-chat-attention {
-  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pd-chat-brand) 55%, transparent); }
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pd-chat-news) 55%, transparent); }
   70%  { box-shadow: 0 0 0 8px transparent; }
   100% { box-shadow: 0 0 0 0 transparent; }
 }
 .pd-chat .pd-chat__pill--attention { animation: pd-chat-attention 1s ease-out 3; }
-
-/* Someone who has asked for less motion still gets the colour, the count and
-   the sound; they simply do not get the movement. */
 @media (prefers-reduced-motion: reduce) {
   .pd-chat .pd-chat__pill--attention { animation: none; }
 }
 
-/* The message peek: a card that grows out from under the header pill when a
-   message lands while you are in the app with chat shut.
+/* The dropdown. */
+.pd-chat .pd-chat__dropdown {
+  position: absolute; right: 0; top: 40px; z-index: 40;
+  display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--pd-chat-line);
+  border-radius: 14px;
+  background: var(--pd-chat-surface);
+  box-shadow: 0 18px 40px rgba(22,19,17,.12);
+}
 
-   `transform-origin: top right` is what sells it. The pill sits immediately
-   above this card's right edge, so scaling up from that corner reads as the
-   button opening out rather than a panel arriving from somewhere off-screen —
-   the difference between a notification and an interruption. */
+/* The dropdown's resize grip, bottom-left: the only corner that can grow
+   without walking the panel off the edge of the screen. Faint at rest. */
+.pd-chat .pd-chat__resize {
+  position: absolute; bottom: 0; left: 0; z-index: 10;
+  display: flex; align-items: flex-end; justify-content: flex-start;
+  width: 24px; height: 24px; padding: 0 0 4px 4px;
+  color: color-mix(in srgb, var(--pd-chat-ink-mute) 45%, transparent);
+  cursor: nesw-resize; touch-action: none;
+  transition: color 150ms;
+}
+.pd-chat .pd-chat__resize:hover,
+.pd-chat .pd-chat__resize:focus-visible { color: var(--pd-chat-ink-mute); }
+.pd-chat .pd-chat__resize:focus-visible { outline: 2px solid var(--pd-chat-focus); outline-offset: -2px; border-radius: 10px; }
+
+/* The message peek: a card under the header control when a message lands
+   while you are in the app with chat shut. Grows out from the control. */
 @keyframes pd-chat-peek-in {
   from { opacity: 0; transform: translateY(-6px) scale(0.96); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
-
 .pd-chat .pd-chat__peek {
-  position: absolute;
-  right: 0;
-  top: 2.75rem;
-  z-index: 40;
-  width: 17.5rem;
-  max-width: calc(100vw - 1rem);
-  display: flex;
-  align-items: flex-start;
-  gap: 0.25rem;
-  padding: 0.625rem 0.5rem 0.625rem 0.75rem;
+  position: absolute; right: 0; top: 40px; z-index: 40;
+  width: 300px; max-width: calc(100vw - 1rem);
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px 10px 12px 14px;
   border: 1px solid var(--pd-chat-line);
   border-radius: 14px;
-  background-color: var(--pd-chat-surface);
-  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  background: var(--pd-chat-surface);
+  box-shadow: 0 12px 28px rgba(22,19,17,.1);
   text-align: left;
   animation: pd-chat-peek-in 180ms cubic-bezier(.2, .8, .2, 1);
   transform-origin: top right;
 }
-
-/* A message for you is worth more of the eye than room chatter, and it also
-   HOLDS for longer. The colour is what makes that difference read as a rule
-   rather than as a glitch: identical cards that linger for different times
-   look broken, where a coral card that lingers looks deliberate. */
-.pd-chat .pd-chat__peek--personal {
-  border-color: var(--pd-chat-brand);
-  box-shadow:
-    inset 3px 0 0 0 var(--pd-chat-brand),
-    0 10px 15px -3px rgb(0 0 0 / 0.1),
-    0 4px 6px -4px rgb(0 0 0 / 0.1);
-}
-
-.pd-chat .pd-chat__peek-open {
-  flex: 1 1 auto;
-  min-width: 0;
-  background: none;
-  border: 0;
-  padding: 0;
-  text-align: left;
-  cursor: pointer;
-}
-
-.pd-chat .pd-chat__peek-who {
-  display: block;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.3;
-  color: var(--pd-chat-ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
+/* A message for you carries the red edge and holds for longer. */
+.pd-chat .pd-chat__peek--personal { border-left: 3px solid var(--pd-chat-news); padding-left: 12px; }
+.pd-chat .pd-chat__peek-open { flex: 1 1 auto; min-width: 0; display: flex; gap: 10px; text-align: left; }
+.pd-chat .pd-chat__peek-text { min-width: 0; flex: 1 1 auto; }
+.pd-chat .pd-chat__peek-who { display: flex; align-items: baseline; gap: 8px; font-size: 13px; font-weight: 600; line-height: 18px; color: var(--pd-chat-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-chat .pd-chat__peek-where { font-family: var(--pd-chat-mono); font-size: 11px; font-weight: 500; color: var(--pd-chat-ink-mute); }
+.pd-chat .pd-chat__peek--personal .pd-chat__peek-where { color: var(--pd-chat-news); }
 .pd-chat .pd-chat__peek-what {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-  margin-top: 0.125rem;
-  font-size: 13px;
-  line-height: 1.35;
-  color: var(--pd-chat-ink-soft);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+  margin-top: 1px; font-size: 13px; line-height: 19px; color: var(--pd-chat-ink-soft);
 }
-
 .pd-chat .pd-chat__peek-dismiss {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 1.25rem;
-  width: 1.25rem;
-  border-radius: 9999px;
-  color: var(--pd-chat-ink-mute);
-  transition: background-color 150ms, color 150ms;
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; margin: -4px -4px 0 0; border-radius: 9999px;
+  color: var(--pd-chat-ink-mute); transition: background-color 150ms, color 150ms;
 }
-.pd-chat .pd-chat__peek-dismiss:hover {
-  background-color: var(--pd-chat-canvas);
-  color: var(--pd-chat-ink);
-}
-
-/* Someone who has asked for less motion still gets the card, the colour and
-   the dwell; it simply arrives rather than grows. */
+.pd-chat .pd-chat__peek-dismiss:hover { background: var(--pd-chat-line-soft); color: var(--pd-chat-ink); }
 @media (prefers-reduced-motion: reduce) {
   .pd-chat .pd-chat__peek { animation: none; }
 }
 
-/* A hairline between the two halves of the notifications menu: what happens
-   when you are elsewhere, and what happens when you are here. */
-.pd-chat .pd-chat__menu-divider {
-  margin: 0.25rem 0;
-  border-top: 1px solid var(--pd-chat-line-soft);
+/* The loading spinner. */
+.pd-chat .pd-chat__spinner {
+  width: 22px; height: 22px; border-radius: 9999px;
+  border: 2px solid var(--pd-chat-line); border-top-color: var(--pd-chat-ink);
+  animation: pd-chat-spin 1s linear infinite;
 }
-
-/* The team chat assistant ("Claude"): a small tag beside its name and on its
-   thread pill, in place of a presence dot. It is not a person and never has a
-   status, so a grey "offline" dot would say something untrue about it. */
-.pd-chat .pd-chat__bot-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.2rem;
-  height: 1rem;
-  padding: 0 0.3rem;
-  border-radius: 9999px;
-  background-color: var(--pd-chat-canvas);
-  border: 1px solid var(--pd-chat-line);
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: 0.04em;
-  color: var(--pd-chat-ink-soft);
-  vertical-align: middle;
-}
-.pd-chat .pd-chat__bot-avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9999px;
-  background-color: var(--pd-chat-ink);
-  color: var(--pd-chat-on-ink);
+@media (prefers-reduced-motion: reduce) {
+  .pd-chat .pd-chat__spinner { animation: none; }
 }

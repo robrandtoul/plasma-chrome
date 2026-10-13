@@ -221,6 +221,75 @@ predates the migration has no such column, and its rows must read as people.
 
 ---
 
+## Ink & Paper, and the sync fixes (1.13.0)
+
+Proof-viewer moved every staff page to one design language in October 2026
+("Ink & Paper": cream paper, ink controls, one coral for counts and nothing
+else, mono labels) and the chat was the one surface left behind. With Claude
+in it the chat was about to get far more use, so it was redrawn to that
+language in every app at once, and the sync faults that had been reported as
+"sometimes chats don't update" were found and fixed in the same change. The
+design canvas is linked from proof-viewer's PR.
+
+**What changed on screen.**
+
+- **One header per conversation** (who, their state, search, the ⋯ menu, and
+  one placement-specific control the host passes in: close, undock, back)
+  replaces the presence strip and the row of five placement icons. Every
+  "where does chat live" choice (the full page, dock, pop out, keep open)
+  and every setting (sounds, desktop alerts, the peek, your status) sits in
+  the ⋯ menu, which is the same in the dropdown, the dock, the popout and
+  the page. The host supplies the placement items as `placementItems`
+  (`ChatPlacementItem[]`) and the trailing control as `headerAction`.
+- **Conversations as chips** under the header (ink when open), or, on the
+  full page at 760px and up, a **list beside the thread** with the last
+  message, its time and an unread count per row. Below 640px the page is a
+  phone: the list and the thread take turns, with a back button.
+- **Every message on the left**, your own included, with the avatar and the
+  name carrying the identity: no bubbles, no per-person tint. A second
+  message from the same person within five minutes drops the name and shows
+  its time in the gutter on hover. One hover toolbar top right (react,
+  mention, copy, delete). Day dividers in the mono label style, and a single
+  coral **New** rule above the first message you have not read, placed when
+  the thread opens and removed when you next send.
+- **Claude is drawn as Claude**: a spark avatar and a cyan AI tag, a header
+  line saying it only reads, an empty state with four example questions, and
+  a "Claude is looking…" row driven by the typing broadcast the function
+  already sends. `.pd-chat__bot-tag` and `.pd-chat__bot-avatar` keep their
+  names (proof-viewer's e2e reads them).
+- **The header control is a nav item**: 32px, 8px corners, the same hover
+  and pressed paper as the chrome's own items, with the room count in the
+  nav's coral and a count that is for you in the deeper red. ⌘⇧C opens it.
+- **The composer is one pill field** (44px, growing to a few lines) with the
+  clip and an ink send inside it. The helper line is gone; the typing line
+  holds its height whether or not anyone is typing, so nothing moves.
+
+**What changed underneath.** Four faults in `store.tsx`, each hiding until
+two things happened together, which is why they read as random:
+
+1. A resync's merge kept only rows **older** than the fetched window's
+   start, so a message that arrived live while the fetch was in flight was
+   thrown away and stayed missing until the next resync. The merge now keeps
+   rows newer than the window's newest too, de-duplicated by id, and the
+   INSERT handler updates `messagesRef` synchronously so a row not yet
+   rendered cannot be merged away.
+2. A resync asked for during a resync (a focus resync and a socket rejoin at
+   the same moment) was dropped. `syncAgainRef` runs it once more, after.
+3. A mounted panel counted as "looking": a pinned dropdown or a docked card
+   in a background tab stamped every arriving message seen, so it was never
+   unread, never chimed, never raised a desktop alert, and never showed as
+   new on return. `isLooking()` is `viewingRef && !document.hidden`; the
+   resync on return stamps the open thread if it picked up unread meanwhile.
+4. Nothing noticed a socket that died without a status callback while the
+   tab stayed visible. `probeNewest()` asks for the newest row every 90s
+   while visible and resyncs if it is not one we hold.
+
+Version drift was checked and ruled out: all four apps pinned v1.12.0. The
+database (publication, replica identity, the select policy) was verified on
+live and is not a cause.
+
+---
+
 ## The contract
 
 Everything host-specific arrives through `ChatConfig`. `src/chat/types.ts` is authoritative.
@@ -256,13 +325,11 @@ Three things about that config are load-bearing:
 
 ## Styling
 
-The panel was styled in Tailwind v4 utilities resolving against proof-viewer's design tokens. The four hosts are Tailwind v4, v4, v3 and none at all, so that could not travel: two apps would have rendered it unstyled.
+The panel is drawn in proof-viewer's Ink & Paper language, and `chat.css` is how that travels: the four hosts are Tailwind v4, v4, v3 and none at all, so the panel depends on no host's CSS. Every class is prefixed and scoped under `.pd-chat`, written in both forms (`.pd-chat.pdc-x, .pd-chat .pdc-x`) because the root carries the scope class and a utility on the same element, which a descendant combinator never matches. Colours resolve through a three-step fallback: the package's own `--pd-chat-*` override, then the host's `--c-*` token if it has one, then proof-viewer's literal. Proof-viewer and stock-control keep tracking their design system for free; vCard Studio, which has no tokens, renders correctly anyway.
 
-`chat.css` is the answer, and it follows the same rule `chrome.css` states: depend on no host's CSS. Every class is prefixed and scoped under `.pd-chat`, and colours resolve through a three-step fallback — the package's own `--pd-chat-*` override, then the host's `--c-*` token if it has one, then a literal. Proof-viewer and stock-control keep tracking their design system for free; vCard Studio, which has no tokens, renders correctly anyway.
+Since 1.13.0 the stylesheet is **named parts** (`pd-chat__head`, `pd-chat__chip`, `pd-chat__msg`, `pd-chat__field`, and so on) plus a short list of layout utilities. The old mechanically ported utility layer is gone with the design it carried. The rule stays: this is not a framework and must not grow into one. New work adds a named part, not a utility.
 
-The conversion was deliberately **mechanical**. Each rule is the declaration Tailwind would have emitted for the class it replaces, so the port was a rename rather than a redesign. Rewriting 1,400 lines of dense panel markup into semantic classes by eye is how a port quietly changes the thing it was supposed to preserve, and nobody would have noticed until the team did.
-
-That means the utility layer is **not a framework** and must not grow into one. It contains the classes this panel uses and nothing else. New work should prefer the semantic `pd-chat__*` classes at the bottom of the file.
+Presence colours map to the kit's tones (online = done, idle = theirs, away = paused, busy = need); the assistant's cyan is its own, so it reads as neither a person's colour nor a state. The font is IBM Plex Sans with Geist Mono for numbers and labels; a host that has not loaded them gets the system stacks.
 
 To theme it, set the overrides anywhere above the panel:
 

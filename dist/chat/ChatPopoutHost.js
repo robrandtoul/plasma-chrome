@@ -1,4 +1,4 @@
-import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { jsx as _jsx } from "react/jsx-runtime";
 import { createPortal } from 'react-dom';
 import { CornerUpLeft } from './icons.js';
 import { useTeamChat } from './store.js';
@@ -16,6 +16,6 @@ export default function ChatPopoutHost() {
     const { popoutWindow, closePopout } = useTeamChat();
     if (!popoutWindow)
         return null;
-    return createPortal(_jsxs("div", { className: "pd-chat pd-chat--popout pdc-bg-surface pdc-text-ink", children: [_jsxs("div", { className: "pdc-flex pdc-flex-shrink-0 pdc-items-center pdc-justify-between pdc-gap-2 pdc-border-b pdc-border-line-soft pdc-px-3 pdc-py-2", children: [_jsx("span", { className: "pdc-text-13px pdc-font-semibold pdc-text-ink", children: "Team chat" }), _jsxs("button", { type: "button", onClick: closePopout, title: "Close this window and put chat back in the app", className: "pdc-inline-flex pdc-h-7 pdc-items-center pdc-gap-1-5 pdc-rounded-full pdc-px-2-5 pdc-text-12px pdc-font-semibold pdc-text-ink-mute pdc-transition-colors pdc-hover-bg-canvas pdc-hover-text-ink", children: [_jsx(CornerUpLeft, { size: 14, "aria-hidden": "true" }), "Back in app"] })] }), _jsx("div", { className: "pdc-min-h-0 pdc-flex-1", children: _jsx(TeamChatPanel, { variant: "popout" }) })] }), popoutWindow.document.body);
+    return createPortal(_jsx("div", { className: "pd-chat pd-chat--popout", children: _jsx(TeamChatPanel, { variant: "popout", headerAction: _jsx("button", { type: "button", onClick: closePopout, "aria-label": "Close this window and put chat back in the app", title: "Back in the app", className: "pd-chat__ib", children: _jsx(CornerUpLeft, { size: 16, "aria-hidden": "true" }) }) }) }), popoutWindow.document.body);
 }
 //# sourceMappingURL=ChatPopoutHost.js.map
