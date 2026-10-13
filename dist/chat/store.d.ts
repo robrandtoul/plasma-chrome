@@ -1,7 +1,7 @@
 import { type ReactNode } from 'react';
 import { type ChatAlertLevel } from './desktopAlert.js';
 import { type ChatPeek } from './peek.js';
-import { type ChatAttachment, type ChatConfig, type ChatPlacement, type ChatSchemaClient, type ChatStatus, type ChatThread, type PresenceMember, type ReactionRow, type ResolvedChatConfig, type TeamMember, type TeamMessage } from './types.js';
+import { type ChatAttachment, type ChatConfig, type ChatPlacement, type ChatSchemaClient, type ChatStatus, type ChatThread, type PresenceMember, type ReactionRow, type ResolvedChatConfig, type ScheduledMessage, type TeamMember, type TeamMessage } from './types.js';
 interface TeamChatValue {
     /** The host's settings after defaults. The panel reads `client` for
      *  storage, `isAdmin` for the delete affordance, and `fullPagePath` +
@@ -53,6 +53,38 @@ interface TeamChatValue {
         error?: string;
     }>;
     remove: (id: string) => Promise<void>;
+    /** Your own messages waiting to be sent, across every conversation,
+     *  soonest first. A delivered row leaves the list within moments of
+     *  going (the realtime arrival of your own message triggers a re-read,
+     *  and a timer at the soonest `send_at` covers a dead socket). */
+    scheduled: ScheduledMessage[];
+    /** False once the database has said the waiting room does not exist (a
+     *  host running against a database without migration 20261013170000), so
+     *  the panel hides the control rather than offer a time it cannot keep.
+     *  True until then, a transient read failure included. */
+    scheduledSupported: boolean;
+    /** Write a message to be sent at `sendAt`, to whichever conversation is on
+     *  screen. Attachments must already be uploaded, exactly as for `send`. */
+    scheduleSend: (body: string, mentionedUserIds: string[], attachments: ChatAttachment[], sendAt: Date) => Promise<{
+        ok: boolean;
+        error?: string;
+    }>;
+    /** Take a waiting message back. `removed: false` with `ok: true` means it
+     *  had already gone (the cron got there first), which a caller must read
+     *  as "sent", never as a failure. Its uploaded files are removed unless
+     *  `keepFiles`, which an edit sets because the new row carries them. */
+    cancelScheduled: (id: string, opts?: {
+        keepFiles?: boolean;
+    }) => Promise<{
+        ok: boolean;
+        removed: boolean;
+        error?: string;
+    }>;
+    /** Send a waiting message now instead of at its time. */
+    sendScheduledNow: (id: string) => Promise<{
+        ok: boolean;
+        error?: string;
+    }>;
     /** Clear the unread badge and stamp "seen up to now". */
     markSeen: () => void;
     /** Tell the engine a chat surface is open (true) or closed (false). While

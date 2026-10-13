@@ -12,6 +12,7 @@ import {
   Bell,
   Check,
   ChevronLeft,
+  Clock,
   Copy,
   Download,
   FileIcon,
@@ -36,6 +37,15 @@ import {
 } from './desktopAlert'
 import { useTeamChat } from './store'
 import {
+  earliestSendAt,
+  fromLocalInputValue,
+  scheduleProblem,
+  schedulePresets,
+  scheduledForThread,
+  sendAtLabel,
+  toLocalInputValue,
+} from './later'
+import {
   attachmentsOf,
   authorBadgeColour,
   buildMessageSegments,
@@ -53,6 +63,7 @@ import {
   type ChatStatus,
   type ChatThread,
   type ReactionRow,
+  type ScheduledMessage,
   type TeamMember,
   type TeamMessage,
 } from './types'
@@ -711,6 +722,11 @@ export default function TeamChatPanel({
     members,
     send,
     remove,
+    scheduled,
+    scheduledSupported,
+    scheduleSend,
+    cancelScheduled,
+    sendScheduledNow,
     setViewing,
     typingUsers,
     notifyTyping,
@@ -736,6 +752,27 @@ export default function TeamChatPanel({
   const [attachments, setAttachments] = useState<StagedAttachment[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
+
+  // Send later. `editing` is the waiting row whose words are in the composer
+  // (Edit on the strip); `carried` its already-uploaded files, drawn beside
+  // any newly staged ones and written onto whatever replaces the row. The row
+  // itself stays in the waiting room until Save, Send or Schedule replaces
+  // it, so abandoning the edit loses nothing.
+  const [editing, setEditing] = useState<ScheduledMessage | null>(null)
+  const [carried, setCarried] = useState<ChatAttachment[]>([])
+  const [laterOpen, setLaterOpen] = useState(false)
+  const [laterValue, setLaterValue] = useState('')
+  const [laterProblem, setLaterProblem] = useState<string | null>(null)
+  const laterRef = useRef<HTMLDivElement>(null)
+  useCloseOnOutside(laterOpen, laterRef, () => setLaterOpen(false))
+  // The strip's rows re-label themselves ("Tomorrow at 09:00" becomes "Today
+  // at 09:00" overnight, then "Sending now"), so the panel keeps a clock.
+  const [clock, setClock] = useState(() => Date.now())
+  useEffect(() => {
+    if (scheduled.length === 0) return
+    const t = window.setInterval(() => setClock(Date.now()), 30_000)
+    return () => window.clearInterval(t)
+  }, [scheduled.length])
 
   // The page measures itself to pick its shape; the other variants are
   // always the one-column chips-over-thread layout.
@@ -1130,14 +1167,10 @@ export default function TeamChatPanel({
     }
   }
 
-  async function handleSend() {
-    const text = draft.trim()
-    if ((!text && attachments.length === 0) || sending) return
-    if (!userId) return
-    setSending(true)
-    setError(null)
-
-    // Upload any staged files first; collect their storage keys + metadata.
+  // Upload the staged files and hand back their storage records, or an error.
+  // Shared by sending now and sending later: either way the files go up
+  // first, and a failure part-way removes what did go up.
+  async function uploadStaged(): Promise<{ files: ChatAttachment[] } | { error: string }> {
     const uploaded: ChatAttachment[] = []
     for (const a of attachments) {
       const ext = extForFile(a.name, a.type)
@@ -1149,47 +1182,195 @@ export default function TeamChatPanel({
         if (uploaded.length > 0) {
           await config!.client.storage.from(CHAT_BUCKET).remove(uploaded.map((u) => u.path))
         }
-        setSending(false)
-        setError(upErr.message || 'Could not upload a file. Please try again.')
-        return
+        return { error: upErr.message || 'Could not upload a file. Please try again.' }
       }
       uploaded.push({ path, name: a.name, type: a.type, size: a.blob.size })
     }
+    return { files: uploaded }
+  }
 
-    // Push targets are computed from the text against known member names, so
-    // both picking from the list and typing "@Full Name" register a mention.
-    // DMs never carry mentions — the DM push already targets the recipient.
+  // Push targets are computed from the text against known member names, so
+  // both picking from the list and typing "@Full Name" register a mention.
+  // DMs never carry mentions — the DM push already targets the recipient.
+  function mentionedIdsIn(text: string): string[] {
+    if (activeThread !== 'team') return []
     const lower = text.toLowerCase()
-    const mentionedIds =
-      activeThread === 'team'
-        ? [
-            ...new Set(
-              mentionCandidates
-                .filter((m) => m.name && lower.includes('@' + m.name.toLowerCase()))
-                .map((m) => m.id),
-            ),
-          ]
-        : []
-    const res = await send(text, mentionedIds, uploaded)
-    setSending(false)
-    if (!res.ok) {
-      if (uploaded.length > 0) {
-        await config!.client.storage.from(CHAT_BUCKET).remove(uploaded.map((u) => u.path))
-      }
-      setError(res.error || 'Could not send your message. Please try again.')
-      return
-    }
+    return [
+      ...new Set(
+        mentionCandidates
+          .filter((m) => m.name && lower.includes('@' + m.name.toLowerCase()))
+          .map((m) => m.id),
+      ),
+    ]
+  }
+
+  // Everything that follows a successful send or schedule: the composer is
+  // emptied and the thread returns to its latest message, even if you had
+  // scrolled up to re-read something before replying.
+  function clearComposer() {
     for (const a of attachments) URL.revokeObjectURL(a.url)
     setAttachments([])
+    setCarried([])
+    setEditing(null)
     setDraft('')
     setMentionQuery(null)
     setNewMarkerId(null)
-    // Sending always returns you to the latest message, even if you'd
-    // scrolled up to re-read something before replying.
+    setLaterOpen(false)
     stickToBottomRef.current = true
     scrollPositionsRef.current.set(activeThread, 'bottom')
     const el = scrollRef.current
     if (el) scrollToBottom(el)
+  }
+
+  // When the composer holds an edit, the row being edited is taken back
+  // first, keeping its files (the replacement carries them). `removed: false`
+  // means the cron sent it meanwhile: say so and stop, rather than send the
+  // same words twice.
+  async function retireEdited(): Promise<boolean> {
+    if (!editing) return true
+    const res = await cancelScheduled(editing.id, { keepFiles: true })
+    if (!res.ok) {
+      setError(res.error || 'Could not change that message. Please try again.')
+      return false
+    }
+    if (!res.removed) {
+      setError('That message has already been sent, so there is nothing left to change.')
+      setEditing(null)
+      setCarried([])
+      return false
+    }
+    return true
+  }
+
+  // Files the edit dropped from a row it has now replaced: nothing names them
+  // any more, so they go. Best effort.
+  function removeDroppedCarried(from: ScheduledMessage) {
+    const kept = new Set(carried.map((c) => c.path))
+    const dropped = (from.attachment_files ?? []).filter((f) => !kept.has(f.path)).map((f) => f.path)
+    if (dropped.length > 0) void config!.client.storage.from(CHAT_BUCKET).remove(dropped)
+  }
+
+  async function handleSend() {
+    const text = draft.trim()
+    if ((!text && attachments.length === 0 && carried.length === 0) || sending) return
+    if (!userId) return
+    setSending(true)
+    setError(null)
+
+    const up = await uploadStaged()
+    if ('error' in up) {
+      setSending(false)
+      setError(up.error)
+      return
+    }
+    const files = [...carried, ...up.files]
+    const edited = editing
+    if (!(await retireEdited())) {
+      setSending(false)
+      if (up.files.length > 0) await config!.client.storage.from(CHAT_BUCKET).remove(up.files.map((u) => u.path))
+      return
+    }
+    const res = await send(text, mentionedIdsIn(text), files)
+    setSending(false)
+    if (!res.ok) {
+      if (up.files.length > 0) {
+        await config!.client.storage.from(CHAT_BUCKET).remove(up.files.map((u) => u.path))
+      }
+      setError(res.error || 'Could not send your message. Please try again.')
+      return
+    }
+    if (edited) removeDroppedCarried(edited)
+    clearComposer()
+  }
+
+  async function handleSchedule(at: Date) {
+    const text = draft.trim()
+    if ((!text && attachments.length === 0 && carried.length === 0) || sending) return
+    if (!userId) return
+    const problem = scheduleProblem(at)
+    if (problem) {
+      setLaterProblem(problem)
+      return
+    }
+    setSending(true)
+    setError(null)
+    setLaterProblem(null)
+
+    const up = await uploadStaged()
+    if ('error' in up) {
+      setSending(false)
+      setError(up.error)
+      return
+    }
+    const files = [...carried, ...up.files]
+    const edited = editing
+    if (!(await retireEdited())) {
+      setSending(false)
+      if (up.files.length > 0) await config!.client.storage.from(CHAT_BUCKET).remove(up.files.map((u) => u.path))
+      return
+    }
+    const res = await scheduleSend(text, mentionedIdsIn(text), files, at)
+    setSending(false)
+    if (!res.ok) {
+      if (up.files.length > 0) {
+        await config!.client.storage.from(CHAT_BUCKET).remove(up.files.map((u) => u.path))
+      }
+      setError(res.error || 'Could not schedule your message. Please try again.')
+      return
+    }
+    if (edited) removeDroppedCarried(edited)
+    clearComposer()
+  }
+
+  // Open the time picker, seeded with the row's own time when editing, else
+  // the first preset, so the custom field never opens empty.
+  function openLater() {
+    const seed = editing ? new Date(editing.send_at) : schedulePresets()[0].at
+    setLaterValue(toLocalInputValue(seed.getTime() < earliestSendAt().getTime() ? earliestSendAt() : seed))
+    setLaterProblem(null)
+    setLaterOpen((v) => !v)
+  }
+
+  // Edit: the row's words into the composer, its files carried, and the
+  // conversation switched to the row's own. The row stays put until the
+  // edit is saved as something.
+  function startEdit(row: ScheduledMessage) {
+    const thread: ChatThread = row.recipient_id ?? 'team'
+    if (thread !== activeThread) openThread(thread)
+    for (const a of attachments) URL.revokeObjectURL(a.url)
+    setAttachments([])
+    setCarried(row.attachment_files ?? [])
+    setEditing(row)
+    setDraft(row.body)
+    setError(null)
+    setLaterOpen(false)
+    requestAnimationFrame(() => {
+      const el = textareaRef.current
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(el.value.length, el.value.length)
+    })
+  }
+
+  function cancelEdit() {
+    setEditing(null)
+    setCarried([])
+    setDraft('')
+    setError(null)
+  }
+
+  async function onSendNow(row: ScheduledMessage) {
+    setError(null)
+    if (editing?.id === row.id) cancelEdit()
+    const res = await sendScheduledNow(row.id)
+    if (!res.ok) setError(res.error || 'Could not send it. It is still waiting.')
+  }
+
+  async function onCancelScheduled(row: ScheduledMessage) {
+    setError(null)
+    if (editing?.id === row.id) cancelEdit()
+    const res = await cancelScheduled(row.id)
+    if (!res.ok) setError(res.error || 'Could not cancel it. Please try again.')
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -1217,7 +1398,8 @@ export default function TeamChatPanel({
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      void handleSend()
+      if (editing) void handleSchedule(new Date(editing.send_at))
+      else void handleSend()
     }
   }
 
@@ -1556,6 +1738,61 @@ export default function TeamChatPanel({
     </div>
   )
 
+  const nothingToSend = !draft.trim() && attachments.length === 0 && carried.length === 0
+  // The banner over an edit names the time the row still holds. Once that
+  // time has come the cron is about to take it, and the banner says so.
+  const editingLine = (() => {
+    if (!editing) return ''
+    const when = sendAtLabel(editing.send_at, new Date(clock))
+    if (when === 'Sending now') return 'Editing a message that is about to be sent'
+    return `Editing a message scheduled for ${when.replace(/^(Today|Tomorrow)/, (w) => w.toLowerCase())}`
+  })()
+
+  // The waiting messages for the conversation on screen, as a strip between
+  // the thread and the composer: each with its time, its words, and Send now
+  // / Edit / Cancel. Drawn only once there is something waiting, so a thread
+  // with nothing scheduled looks exactly as it did.
+  const waiting = scheduledSupported ? scheduledForThread(scheduled, activeThread) : []
+  const scheduledStrip = waiting.length > 0 && (
+    <div className={['pd-chat__scheduled', pageWide ? 'pd-chat__scheduled--page' : ''].filter(Boolean).join(' ')} aria-label="Scheduled messages">
+      <div className="pd-chat__scheduled-head">
+        <span className="pdc-t-label pdc-text-ink-mute">Scheduled · {waiting.length}</span>
+      </div>
+      <ul className="pd-chat__scheduled-list">
+        {waiting.map((row) => {
+          const files = row.attachment_files ?? []
+          const isEditing = editing?.id === row.id
+          return (
+            <li
+              key={row.id}
+              className={['pd-chat__scheduled-row', isEditing ? 'pd-chat__scheduled-row--editing' : ''].filter(Boolean).join(' ')}
+            >
+              <Clock size={14} aria-hidden="true" className="pd-chat__scheduled-glyph" />
+              <span className="pd-chat__scheduled-text">
+                <span className="pd-chat__scheduled-when">{sendAtLabel(row.send_at, new Date(clock))}</span>
+                <span className="pd-chat__scheduled-body">
+                  {row.body.trim() || (files.length === 1 ? 'Sends an attachment' : `Sends ${files.length} attachments`)}
+                  {row.body.trim() && files.length > 0 ? ` · ${files.length === 1 ? '1 file' : `${files.length} files`}` : ''}
+                </span>
+              </span>
+              <span className="pd-chat__scheduled-actions">
+                <button type="button" onClick={() => void onSendNow(row)} disabled={sending} aria-label="Send now" className="pd-chat__scheduled-act">
+                  Send now
+                </button>
+                <button type="button" onClick={() => startEdit(row)} disabled={sending || isEditing} aria-label="Edit scheduled message" className="pd-chat__scheduled-act">
+                  Edit
+                </button>
+                <button type="button" onClick={() => void onCancelScheduled(row)} disabled={sending} aria-label="Cancel scheduled message" className="pd-chat__scheduled-act pd-chat__scheduled-act--cancel">
+                  Cancel
+                </button>
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+
   const composer = (
     <div
       {...zoneProps}
@@ -1594,8 +1831,38 @@ export default function TeamChatPanel({
         </div>
       )}
 
-      {attachments.length > 0 && (
+      {editing && (
+        <div className="pd-chat__editing" role="status">
+          <Clock size={13} aria-hidden="true" />
+          <span className="pd-chat__editing-text">{editingLine}</span>
+          <button type="button" onClick={cancelEdit} className="pd-chat__editing-cancel">
+            Keep it as it was
+          </button>
+        </div>
+      )}
+      {(attachments.length > 0 || carried.length > 0) && (
         <div className="pd-chat__staged">
+          {carried.map((c) => {
+            const Icon = fileKindIcon(c.name, c.type)
+            const meta = [kindLabel(c.name, c.type), formatBytes(c.size)].filter(Boolean).join(' · ')
+            return (
+              <div key={c.path} className="pd-chat__staged-item pd-chat__staged-item--file">
+                <Icon size={18} aria-hidden="true" className="pdc-text-ink-mute" />
+                <span className="pd-chat__file-text">
+                  <span className="pd-chat__file-name">{c.name}</span>
+                  {meta && <span className="pd-chat__file-meta">{meta}</span>}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCarried((prev) => prev.filter((x) => x.path !== c.path))}
+                  aria-label="Remove attachment"
+                  className="pd-chat__staged-remove"
+                >
+                  <X size={11} aria-hidden="true" />
+                </button>
+              </div>
+            )
+          })}
           {attachments.map((a) => {
             const Icon = fileKindIcon(a.name, a.type)
             const meta = [kindLabel(a.name, a.type), formatBytes(a.blob.size)].filter(Boolean).join(' · ')
@@ -1661,16 +1928,92 @@ export default function TeamChatPanel({
         >
           <Paperclip size={16} aria-hidden="true" />
         </button>
-        <button
-          type="button"
-          onClick={() => void handleSend()}
-          disabled={(!draft.trim() && attachments.length === 0) || sending}
-          aria-label="Send message"
-          title="Send (Enter)"
-          className="pd-chat__send"
-        >
-          <ArrowUp size={16} aria-hidden="true" />
-        </button>
+        {scheduledSupported && (
+          <div ref={laterRef} className="pd-chat__later-wrap">
+            <button
+              type="button"
+              onClick={openLater}
+              disabled={nothingToSend || sending}
+              aria-haspopup="dialog"
+              aria-expanded={laterOpen}
+              aria-label="Send later"
+              title="Send later"
+              className="pd-chat__ib"
+            >
+              <Clock size={16} aria-hidden="true" />
+            </button>
+            {laterOpen && (
+              <div role="dialog" aria-label="Send later" className="pd-chat__later">
+                <div className="pd-chat__later-heading">{editing ? 'Send it instead' : 'Send this'}</div>
+                {schedulePresets(new Date(clock)).map((preset) => (
+                  <button
+                    key={preset.key}
+                    type="button"
+                    onClick={() => void handleSchedule(preset.at)}
+                    className="pd-chat__later-preset"
+                  >
+                    <span>{preset.label}</span>
+                    <span className="pd-chat__later-time">{sendAtLabel(preset.at, new Date(clock))}</span>
+                  </button>
+                ))}
+                <div className="pd-chat__later-divider" />
+                <label className="pd-chat__later-custom">
+                  <span className="pd-chat__later-custom-label">Or pick a time</span>
+                  <input
+                    type="datetime-local"
+                    value={laterValue}
+                    min={toLocalInputValue(earliestSendAt(new Date(clock)))}
+                    onChange={(e) => {
+                      setLaterValue(e.target.value)
+                      setLaterProblem(null)
+                    }}
+                    className="pd-chat__later-input"
+                  />
+                </label>
+                {laterProblem && <p className="pd-chat__later-problem">{laterProblem}</p>}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const at = fromLocalInputValue(laterValue)
+                    const problem = scheduleProblem(at, new Date(clock))
+                    if (problem || !at) {
+                      setLaterProblem(problem ?? 'Pick a time to send it.')
+                      return
+                    }
+                    void handleSchedule(at)
+                  }}
+                  disabled={sending}
+                  className="pd-chat__later-go"
+                >
+                  {editing ? 'Save for then' : 'Schedule'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {editing ? (
+          <button
+            type="button"
+            onClick={() => void handleSchedule(new Date(editing.send_at))}
+            disabled={nothingToSend || sending}
+            aria-label="Save changes"
+            title="Save (Enter)"
+            className="pd-chat__send"
+          >
+            <Check size={16} aria-hidden="true" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void handleSend()}
+            disabled={nothingToSend || sending}
+            aria-label="Send message"
+            title="Send (Enter)"
+            className="pd-chat__send"
+          >
+            <ArrowUp size={16} aria-hidden="true" />
+          </button>
+        )}
       </div>
       <input
         ref={fileRef}
@@ -1693,6 +2036,7 @@ export default function TeamChatPanel({
       {!pageWide && !pagePhone && chips}
       {searchRow}
       {list}
+      {scheduledStrip}
       {composer}
     </div>
   )

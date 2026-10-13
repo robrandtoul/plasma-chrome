@@ -102,6 +102,23 @@ export {
   type MessageSegment,
 } from './message';
 
+/* Send later: the rules behind the composer's clock and the scheduled strip,
+   exported for the same reason as the peek's (no test runner here). */
+export {
+  MIN_LEAD_MS,
+  MAX_LEAD_MS,
+  earliestSendAt,
+  scheduleProblem,
+  schedulePresets,
+  sendAtLabel,
+  scheduledThread,
+  scheduledForThread,
+  earliestDue,
+  toLocalInputValue,
+  fromLocalInputValue,
+  type SchedulePreset,
+} from './later';
+
 export {
   DESIGNER_COLOURS,
   designerColourCss,
@@ -127,6 +144,7 @@ export {
   type PresenceMember,
   type ReactionRow,
   type ResolvedChatConfig,
+  type ScheduledMessage,
   type TeamMember,
   type TeamMessage,
 } from './types';

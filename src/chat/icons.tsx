@@ -280,6 +280,16 @@ export const ExternalLink = icon(
   </>,
 );
 
+// Send later (1.14.0): the clock on the composer's "Send later" button and
+// on each scheduled message's row.
+export const Clock = icon(
+  'Clock',
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <polyline points="12 6 12 12 16 14" />
+  </>,
+);
+
 export const PanelRightClose = icon(
   'PanelRightClose',
   <>

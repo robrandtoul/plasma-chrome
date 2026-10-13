@@ -118,6 +118,10 @@ export declare const ExternalLink: {
     ({ size, ...rest }: IconProps): JSX.Element;
     displayName: string;
 };
+export declare const Clock: {
+    ({ size, ...rest }: IconProps): JSX.Element;
+    displayName: string;
+};
 export declare const PanelRightClose: {
     ({ size, ...rest }: IconProps): JSX.Element;
     displayName: string;
