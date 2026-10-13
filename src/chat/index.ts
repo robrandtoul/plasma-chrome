@@ -30,7 +30,7 @@
    ─────────────────────────────────────────────────────────── */
 
 export { TeamChatProvider, useTeamChat } from './store';
-export { default as TeamChatPanel } from './TeamChatPanel';
+export { default as TeamChatPanel, BotTag, type ChatPlacementItem } from './TeamChatPanel';
 export { default as ChatMenu, type ChatMenuProps } from './ChatMenu';
 export { default as ChatPopoutHost } from './ChatPopoutHost';
 

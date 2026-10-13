@@ -29,7 +29,7 @@
    nothing rather than throwing.
    ─────────────────────────────────────────────────────────── */
 export { TeamChatProvider, useTeamChat } from './store.js';
-export { default as TeamChatPanel } from './TeamChatPanel.js';
+export { default as TeamChatPanel, BotTag } from './TeamChatPanel.js';
 export { default as ChatMenu } from './ChatMenu.js';
 export { default as ChatPopoutHost } from './ChatPopoutHost.js';
 /* The popout's own helpers. A host needs `isPopoutWindow` to decide whether

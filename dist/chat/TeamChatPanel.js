@@ -1,17 +1,29 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Send, Sparkle, Trash2, ChevronDown, Check, Volume2, VolumeX, SearchIcon, X, Paperclip, FileText, FileIcon, Download, Smile, Bell, BellOff, } from './icons.js';
+import { useEffect, useMemo, useRef, useState, } from 'react';
+import { ArrowUp, AtSign, Bell, Check, ChevronLeft, Copy, Download, FileIcon, FileText, MoreHorizontal, Paperclip, SearchIcon, Smile, Sparkle, Trash2, Users, Volume2, X, } from './icons.js';
 import { useImageFileDrop } from './useFileDrop.js';
 import { playChatSound } from './sound.js';
 import { CHAT_ALERT_LEVELS, alertPermission, requestAlertPermission, } from './desktopAlert.js';
 import { useTeamChat } from './store.js';
 import { attachmentsOf, authorBadgeColour, buildMessageSegments, dayKey, dayLabel, formatBytes, isGroupedWithPrevious, messageTime, } from './message.js';
-import { designerTint } from './colours.js';
 import { CHAT_BUCKET, CHAT_STATUS_META, } from './types.js';
 const EMOJI_CHOICES = ['👍', '❤️', '😂', '🎉', '👀', '✅', '🙏'];
 const MAX_ATTACHMENTS = 6;
 const MAX_MB = 25;
 const MAX_BYTES = MAX_MB * 1024 * 1024; // matches the 000323 bucket cap
+// Below this width the full page draws its conversations as chips above the
+// thread, as the dropdown does; above it they are a list beside the thread.
+const PAGE_WIDE_PX = 760;
+// Below this the page is a phone: the list and the thread take turns.
+const PAGE_PHONE_PX = 640;
+// What an empty thread with the assistant offers as a start. Examples in
+// code, not a history: the point is to show the kind of question it answers.
+const BOT_SUGGESTIONS = [
+    'Where has the latest order for a customer got to?',
+    'Has this customer ordered before?',
+    'What does 500 gold cards cost?',
+    'How do I park a sale?',
+];
 function isImageType(type) {
     return (type ?? '').startsWith('image/');
 }
@@ -39,7 +51,6 @@ function kindLabel(name, type) {
         return ext.toUpperCase();
     return (type.split('/').pop() ?? '').toUpperCase();
 }
-// Lucide icon for a non-image attachment chip.
 function fileKindIcon(name, type) {
     const ext = (name.split('.').pop() ?? '').toLowerCase();
     if (type === 'application/pdf' || ext === 'pdf')
@@ -60,6 +71,95 @@ function groupReactions(rows, userId) {
         map.set(r.emoji, g);
     }
     return [...map.values()];
+}
+function firstName(name) {
+    const n = (name ?? '').trim();
+    return n ? n.split(/\s+/)[0] : 'Teammate';
+}
+function statusDotClass(status) {
+    return `pd-chat__dot pd-chat__dot--${status ?? 'offline'}`;
+}
+// A conversation row's time: the clock today, the weekday this week, else
+// the date. Short, because it sits at the end of a 64px row.
+function rowTime(iso) {
+    const d = new Date(iso);
+    if (!Number.isFinite(d.getTime()))
+        return '';
+    const now = new Date();
+    const startOf = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diffDays = Math.round((startOf(now) - startOf(d)) / 86400000);
+    if (diffDays === 0)
+        return messageTime(iso);
+    if (diffDays === 1)
+        return 'Yest';
+    if (diffDays < 7)
+        return d.toLocaleDateString('en-GB', { weekday: 'short' });
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+// Binds outside-click and Escape to the document the element is actually in,
+// not the app's: popped out into a picture-in-picture window the panel lives
+// in a second document, where a listener on the main one never sees either.
+function useCloseOnOutside(open, ref, close) {
+    useEffect(() => {
+        if (!open)
+            return;
+        const doc = ref.current?.ownerDocument ?? document;
+        function onDoc(e) {
+            if (ref.current && !ref.current.contains(e.target))
+                close();
+        }
+        // Escape closes the innermost thing. Heard in the capture phase and
+        // stopped there, so the dropdown's own Escape (which closes the whole
+        // panel) does not fire for the same press.
+        function onKey(e) {
+            if (e.key !== 'Escape')
+                return;
+            e.stopPropagation();
+            close();
+        }
+        doc.addEventListener('mousedown', onDoc);
+        doc.addEventListener('keydown', onKey, true);
+        return () => {
+            doc.removeEventListener('mousedown', onDoc);
+            doc.removeEventListener('keydown', onKey, true);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open]);
+}
+// ── Small parts ────────────────────────────────────────────────────────────
+// The team chat assistant's tag ("AI") and avatar. Claude is not a person:
+// it never holds a presence, so instead of a status dot (which would read as
+// "offline") it carries a tag, and instead of initials a spark.
+// ⚠ Both class names are read by proof-viewer's e2e specs; keep them.
+export function BotTag() {
+    return (_jsx("span", { className: "pd-chat__bot-tag", title: "The team chat assistant. It looks things up; it cannot change anything.", children: "AI" }));
+}
+function BotAvatar({ size }) {
+    const px = { xs: 18, sm: 22, md: 28, lg: 32, xl: 44 }[size];
+    const glyph = { xs: 10, sm: 12, md: 14, lg: 16, xl: 20 }[size];
+    return (_jsx("span", { className: "pd-chat__bot-avatar", style: { width: px, height: px }, "aria-hidden": "true", children: _jsx(Sparkle, { size: glyph }) }));
+}
+// A person's avatar: their photo, or their initials on their identity
+// colour, with an optional presence dot.
+function PersonAvatar({ size, initials, colour, avatarUrl, status, }) {
+    return (_jsxs("span", { className: `pd-chat__av pd-chat__av--${size}`, style: avatarUrl ? undefined : { backgroundColor: authorBadgeColour(colour ?? null) }, "aria-hidden": "true", children: [avatarUrl ? _jsx("img", { src: avatarUrl, alt: "" }) : (initials ?? '?').slice(0, 2), status !== undefined && _jsx("span", { className: statusDotClass(status) })] }));
+}
+function TeamAvatar({ size }) {
+    const glyph = { xs: 10, sm: 12, md: 14, lg: 16, xl: 18 }[size];
+    return (_jsx("span", { className: `pd-chat__av pd-chat__av--${size} pd-chat__av--team`, "aria-hidden": "true", children: _jsx(Users, { size: glyph }) }));
+}
+// One avatar for any thread party: the room, a person, or the assistant.
+function ThreadAvatar({ thread, member, status, size, }) {
+    if (thread === 'team')
+        return _jsx(TeamAvatar, { size: size });
+    if (member?.isBot)
+        return _jsx(BotAvatar, { size: size });
+    return (_jsx(PersonAvatar, { size: size, initials: member?.initials, colour: member?.colour, avatarUrl: member?.avatarUrl, status: status }));
+}
+function UnreadCount({ count, room }) {
+    if (count <= 0)
+        return null;
+    return (_jsx("span", { className: ['pd-chat__count', room ? 'pd-chat__count--room' : ''].filter(Boolean).join(' '), "aria-label": `${count} unread`, children: count > 9 ? '9+' : count }));
 }
 // Renders a message's attachments: images preview as thumbnails (private
 // bucket → signed URLs, full-screen on click); any other file shows a
@@ -91,192 +191,36 @@ function ChatAttachments({ files }) {
     }, [key, config]);
     if (urls.length === 0)
         return null;
-    return (_jsxs(_Fragment, { children: [_jsx("div", { className: "pdc-mt-1-5 pdc-flex pdc-flex-wrap pdc-gap-1-5", children: files.map((f, i) => {
+    return (_jsxs(_Fragment, { children: [_jsx("div", { className: "pd-chat__files", children: files.map((f, i) => {
                     const url = urls[i];
                     if (!url)
                         return null;
                     if (isImageType(f.type)) {
-                        return (_jsx("button", { type: "button", onClick: () => setLightbox(url), className: "pdc-overflow-hidden pdc-rounded-lg pdc-border pdc-border-line", children: _jsx("img", { src: url, alt: f.name || 'Attachment', loading: "lazy", className: "pdc-h-36 pdc-w-36 pdc-object-cover" }) }, i));
+                        return (_jsxs("button", { type: "button", onClick: () => setLightbox(url), className: "pdc-text-left", children: [_jsx("span", { className: "pd-chat__thumb", children: _jsx("img", { src: url, alt: f.name || 'Attachment', loading: "lazy" }) }), f.name && _jsx("span", { className: "pd-chat__thumb-caption", children: f.name })] }, i));
                     }
                     // Force a download with the real filename via the signed URL's
                     // ?download param (the stored key is a random uuid).
                     const href = `${url}${url.includes('?') ? '&' : '?'}download=${encodeURIComponent(f.name || 'file')}`;
-                    const Icon = fileKindIcon(f.name, f.type);
                     const meta = [kindLabel(f.name, f.type), formatBytes(f.size)].filter(Boolean).join(' · ');
-                    return (_jsxs("a", { href: href, target: "_blank", rel: "noopener noreferrer", title: `Download ${f.name}`, className: "pdc-flex pdc-max-w-240px pdc-items-center pdc-gap-2-5 pdc-rounded-lg pdc-border pdc-border-line pdc-bg-canvas pdc-px-3 pdc-py-2 pdc-transition-colors pdc-hover-bg-surface", children: [_jsx(Icon, { size: 22, "aria-hidden": "true", className: "pdc-flex-shrink-0 pdc-text-ink-mute" }), _jsxs("span", { className: "pdc-min-w-0 pdc-flex-1", children: [_jsx("span", { className: "pdc-block pdc-truncate pdc-text-14px pdc-font-medium pdc-text-ink pdc-sm-text-12px", children: f.name || 'File' }), meta && _jsx("span", { className: "pdc-block pdc-text-13px pdc-text-ink-mute pdc-sm-text-11px", children: meta })] }), _jsx(Download, { size: 14, "aria-hidden": "true", className: "pdc-flex-shrink-0 pdc-text-ink-dim" })] }, i));
-                }) }), lightbox && (_jsxs("div", { className: "pdc-fixed pdc-inset-0 pdc-z-50 pdc-flex pdc-items-center pdc-justify-center pdc-bg-black-80 pdc-p-4", onClick: () => setLightbox(null), role: "dialog", "aria-modal": "true", children: [_jsx("img", { src: lightbox, alt: "Attachment", className: "pdc-max-h-full pdc-max-w-full pdc-rounded-lg", onClick: (e) => e.stopPropagation() }), _jsx("button", { type: "button", onClick: () => setLightbox(null), "aria-label": "Close image", className: "pdc-absolute pdc-right-4 pdc-top-4 pdc-rounded-full pdc-bg-white-10 pdc-p-2 pdc-text-white pdc-hover-bg-white-20", children: _jsx(X, { size: 20, "aria-hidden": "true" }) })] }))] }));
+                    return (_jsxs("a", { href: href, target: "_blank", rel: "noopener noreferrer", title: `Download ${f.name}`, className: "pd-chat__file", children: [_jsx("span", { className: "pd-chat__file-kind", children: kindLabel(f.name, f.type).slice(0, 4) || 'FILE' }), _jsxs("span", { className: "pd-chat__file-text", children: [_jsx("span", { className: "pd-chat__file-name", children: f.name || 'File' }), meta && _jsx("span", { className: "pd-chat__file-meta", children: meta })] }), _jsx(Download, { size: 14, "aria-hidden": "true", className: "pdc-text-ink-dim" })] }, i));
+                }) }), lightbox && (_jsxs("div", { className: "pd-chat__lightbox", onClick: () => setLightbox(null), role: "dialog", "aria-modal": "true", children: [_jsx("img", { src: lightbox, alt: "Attachment", onClick: (e) => e.stopPropagation() }), _jsx("button", { type: "button", onClick: () => setLightbox(null), "aria-label": "Close image", className: "pd-chat__lightbox-close", children: _jsx(X, { size: 20, "aria-hidden": "true" }) })] }))] }));
 }
-// The hover "react" button + its emoji picker. `pickerAnchor` sets which edge
-// the popover hangs from so it always opens over the bubble (where there's
-// room) rather than off the panel edge.
-function ReactButton({ messageId, pickerAnchor, }) {
+// The hover toolbar's "react" button + its emoji picker.
+function ReactButton({ messageId, onOpenChange }) {
     const { toggleReaction } = useTeamChat();
     const [open, setOpen] = useState(false);
     const ref = useRef(null);
-    useEffect(() => {
-        if (!open)
-            return;
-        // Bind to the document this menu is actually in, not the app's: popped out
-        // into a picture-in-picture window the panel lives in a second document,
-        // where a listener on the main one never sees the click or the Escape.
-        const doc = ref.current?.ownerDocument ?? document;
-        function onDoc(e) {
-            if (ref.current && !ref.current.contains(e.target))
-                setOpen(false);
-        }
-        function onKey(e) {
-            if (e.key === 'Escape')
-                setOpen(false);
-        }
-        doc.addEventListener('mousedown', onDoc);
-        doc.addEventListener('keydown', onKey);
-        return () => {
-            doc.removeEventListener('mousedown', onDoc);
-            doc.removeEventListener('keydown', onKey);
-        };
-    }, [open]);
-    return (_jsxs("div", { ref: ref, className: "pdc-relative", children: [_jsx("button", { type: "button", onClick: () => setOpen((v) => !v), "aria-label": "Add reaction", title: "React", className: "pdc-flex pdc-h-6 pdc-w-6 pdc-items-center pdc-justify-center pdc-rounded pdc-text-ink-mute pdc-hover-bg-canvas pdc-hover-text-ink", children: _jsx(Smile, { size: 14, "aria-hidden": "true" }) }), open && (_jsx("div", { className: [
-                    'pdc-absolute pdc-top-7 pdc-z-30 pdc-flex pdc-gap-0-5 pdc-rounded-full pdc-border pdc-border-line pdc-bg-surface pdc-p-1 pdc-shadow-md',
-                    pickerAnchor === 'left' ? 'pdc-left-0' : 'pdc-right-0',
-                ].join(' '), children: EMOJI_CHOICES.map((e) => (_jsx("button", { type: "button", onClick: () => {
+    useCloseOnOutside(open, ref, () => setOpen(false));
+    useEffect(() => onOpenChange(open), [open, onOpenChange]);
+    return (_jsxs("div", { ref: ref, className: "pdc-relative", children: [_jsx("button", { type: "button", onClick: () => setOpen((v) => !v), "aria-label": "Add reaction", title: "React", className: "pd-chat__tool", children: _jsx(Smile, { size: 14, "aria-hidden": "true" }) }), open && (_jsx("div", { className: "pd-chat__picker pd-chat__picker--right", children: EMOJI_CHOICES.map((e) => (_jsx("button", { type: "button", onClick: () => {
                         toggleReaction(messageId, e);
                         setOpen(false);
-                    }, "aria-label": `React ${e}`, className: "pdc-rounded-full pdc-px-1 pdc-text-16px pdc-leading-none pdc-hover-bg-canvas", children: e }, e))) }))] }));
+                    }, "aria-label": `React ${e}`, children: e }, e))) }))] }));
 }
-function firstName(name) {
-    const n = (name ?? '').trim();
-    return n ? n.split(/\s+/)[0] : 'Teammate';
-}
-// The team chat assistant's tag ("AI") and avatar. Claude is not a person:
-// it never holds a presence, so instead of a status dot (which would read as
-// "offline") it carries a tag, and instead of initials a spark.
-function BotTag() {
-    return (_jsx("span", { className: "pd-chat__bot-tag", title: "The team chat assistant. It looks things up; it cannot change anything.", children: "AI" }));
-}
-function BotAvatar({ size }) {
-    const box = size === 'md' ? 'pdc-h-9 pdc-w-9 pdc-sm-h-7 pdc-sm-w-7' : 'pdc-h-8 pdc-w-8 pdc-sm-h-6 pdc-sm-w-6';
-    return (_jsx("span", { className: `pd-chat__bot-avatar ${box}`, "aria-hidden": "true", children: _jsx(Sparkle, { size: size === 'md' ? 16 : 14 }) }));
-}
-// One pill in the thread switcher: the Team room or a teammate's private
-// thread. Carries that thread's unread count and (for people) a presence dot.
-function ThreadPill({ label, active, count, status, bot = false, onClick, }) {
-    return (_jsxs("button", { type: "button", onClick: onClick, "aria-pressed": active, className: [
-            'pdc-flex pdc-h-9 pdc-flex-shrink-0 pdc-items-center pdc-gap-1-5 pdc-rounded-full pdc-border pdc-px-3 pdc-text-14px pdc-font-medium pdc-transition-colors pdc-sm-h-7 pdc-sm-px-2-5 pdc-sm-text-12px',
-            active
-                ? 'pdc-border-ink pdc-bg-ink pdc-text-on-ink'
-                : 'pdc-border-line pdc-bg-surface pdc-text-ink-soft pdc-hover-bg-canvas pdc-hover-text-ink',
-        ].join(' '), children: [bot && _jsx(Sparkle, { size: 11, "aria-hidden": "true" }), !bot && status !== undefined && (_jsx("span", { className: "pdc-inline-block pdc-h-2 pdc-w-2 pdc-flex-shrink-0 pdc-rounded-full", style: { backgroundColor: status ? CHAT_STATUS_META[status].dot : 'var(--c-line)' }, "aria-hidden": "true" })), label, count > 0 && (_jsx("span", { className: "pdc-inline-flex pdc-h-18px pdc-min-w-18px pdc-items-center pdc-justify-center pdc-rounded-full pdc-bg-brand pdc-px-1 pdc-text-11px pdc-font-bold pdc-leading-none pdc-text-white pdc-sm-h-16px pdc-sm-min-w-16px pdc-sm-text-10px", "aria-label": `${count} unread`, children: count > 9 ? '9+' : count }))] }));
-}
-const SETTABLE = [
-    { value: 'online', label: 'Online' },
-    { value: 'away', label: 'Away' },
-    { value: 'busy', label: 'Busy' },
-];
-function StatusDot({ status }) {
-    return (_jsx("span", { className: "pdc-inline-block pdc-h-2-5 pdc-w-2-5 pdc-rounded-full", style: { backgroundColor: CHAT_STATUS_META[status].dot }, "aria-hidden": "true" }));
-}
-function PresenceAvatar({ member }) {
-    const meta = CHAT_STATUS_META[member.status];
-    return (_jsxs("span", { className: "pdc-relative pdc-inline-flex pdc-h-9 pdc-w-9 pdc-items-center pdc-justify-center pdc-overflow-visible pdc-rounded-full pdc-font-mono pdc-text-12px pdc-font-medium pdc-text-white pdc-sm-h-7 pdc-sm-w-7 pdc-sm-text-10px", style: member.avatarUrl ? undefined : { backgroundColor: authorBadgeColour(member.colour) }, title: `${firstName(member.name)} — ${meta.label}`, children: [member.avatarUrl ? (_jsx("img", { src: member.avatarUrl, alt: "", className: "pdc-h-9 pdc-w-9 pdc-rounded-full pdc-object-cover pdc-sm-h-7 pdc-sm-w-7" })) : ((member.initials ?? '?').slice(0, 2)), _jsx("span", { className: "pdc-absolute pdc-neg-bottom-0-5 pdc-neg-right-0-5 pdc-h-3 pdc-w-3 pdc-rounded-full", style: { backgroundColor: meta.dot, boxShadow: '0 0 0 2px var(--c-surface)' }, "aria-hidden": "true" })] }));
-}
-function StatusPicker() {
-    const { myStatus, setManualStatus } = useTeamChat();
-    const [open, setOpen] = useState(false);
-    const ref = useRef(null);
-    useEffect(() => {
-        if (!open)
-            return;
-        // Bind to the document this menu is actually in, not the app's: popped out
-        // into a picture-in-picture window the panel lives in a second document,
-        // where a listener on the main one never sees the click or the Escape.
-        const doc = ref.current?.ownerDocument ?? document;
-        function onDoc(e) {
-            if (ref.current && !ref.current.contains(e.target))
-                setOpen(false);
-        }
-        function onKey(e) {
-            if (e.key === 'Escape')
-                setOpen(false);
-        }
-        doc.addEventListener('mousedown', onDoc);
-        doc.addEventListener('keydown', onKey);
-        return () => {
-            doc.removeEventListener('mousedown', onDoc);
-            doc.removeEventListener('keydown', onKey);
-        };
-    }, [open]);
-    return (_jsxs("div", { ref: ref, className: "pdc-relative", children: [_jsxs("button", { type: "button", onClick: () => setOpen((v) => !v), "aria-haspopup": "menu", "aria-expanded": open, className: "pdc-inline-flex pdc-items-center pdc-gap-1-5 pdc-rounded-full pdc-border pdc-border-line pdc-bg-surface pdc-py-1 pdc-pl-2 pdc-pr-1-5 pdc-text-14px pdc-font-medium pdc-text-ink-soft pdc-hover-bg-canvas pdc-sm-text-12px", children: [_jsx(StatusDot, { status: myStatus }), CHAT_STATUS_META[myStatus].label, _jsx(ChevronDown, { size: 13, "aria-hidden": "true", className: "pdc-text-ink-mute" })] }), open && (_jsx("div", { role: "menu", className: "pdc-absolute pdc-left-0 pdc-top-9 pdc-z-30 pdc-min-w-9rem pdc-rounded-10px pdc-border pdc-border-line pdc-bg-surface pdc-py-1 pdc-shadow-md", children: SETTABLE.map((s) => (_jsxs("button", { type: "button", role: "menuitemradio", "aria-checked": myStatus === s.value, onClick: () => {
-                        setManualStatus(s.value);
-                        setOpen(false);
-                    }, className: "pdc-flex pdc-w-full pdc-items-center pdc-gap-2 pdc-px-3 pdc-py-1-5 pdc-text-left pdc-text-15px pdc-text-ink-soft pdc-hover-bg-canvas pdc-sm-text-13px", children: [_jsx(StatusDot, { status: s.value }), _jsx("span", { className: "pdc-flex-1", children: s.label }), myStatus === s.value && _jsx(Check, { size: 14, "aria-hidden": "true", className: "pdc-text-ink-mute" })] }, s.value))) }))] }));
-}
-function AlertsMenu() {
-    const { alertLevel, setAlertLevel, peekEnabled, setPeekEnabled } = useTeamChat();
-    const [open, setOpen] = useState(false);
-    const [permission, setPermission] = useState(() => alertPermission());
-    const ref = useRef(null);
-    useEffect(() => {
-        if (!open)
-            return;
-        // Bind to the document this menu is actually in, not the app's: popped out
-        // into a picture-in-picture window the panel lives in a second document,
-        // where a listener on the main one never sees the click or the Escape.
-        const doc = ref.current?.ownerDocument ?? document;
-        function onDoc(e) {
-            if (ref.current && !ref.current.contains(e.target))
-                setOpen(false);
-        }
-        function onKey(e) {
-            if (e.key === 'Escape')
-                setOpen(false);
-        }
-        doc.addEventListener('mousedown', onDoc);
-        doc.addEventListener('keydown', onKey);
-        return () => {
-            doc.removeEventListener('mousedown', onDoc);
-            doc.removeEventListener('keydown', onKey);
-        };
-    }, [open]);
-    if (permission === 'unsupported')
-        return null;
-    const blocked = permission === 'denied';
-    // Nothing will actually appear unless the browser has been asked and said
-    // yes, so the icon reports what is really happening rather than what has
-    // been chosen. A bell that looks on while the browser is blocking is the
-    // sort of quiet lie this whole change exists to remove.
-    // Either signal counts, because the menu now governs both. A bell that read
-    // 'off' while a card was still sliding out under the header would be exactly
-    // the sort of quiet lie the rest of this is here to remove.
-    const live = (alertLevel !== 'off' && permission === 'granted') || peekEnabled;
-    async function choose(level) {
-        if (level !== 'off' && permission !== 'granted') {
-            // This is a click, which is the only context Safari will accept a
-            // permission request from, and asking on load burns the single chance.
-            const result = await requestAlertPermission();
-            setPermission(result);
-            if (result !== 'granted')
-                return; // leave the old level; nothing would show
-        }
-        setAlertLevel(level);
-        setOpen(false);
-    }
-    return (_jsxs("div", { ref: ref, className: "pdc-relative", children: [_jsx("button", { type: "button", onClick: () => setOpen((v) => !v), "aria-haspopup": "menu", "aria-expanded": open, "aria-label": "Message notifications", title: blocked
-                    ? 'Your browser is blocking desktop notifications for this site'
-                    : live
-                        ? 'Message notifications are on'
-                        : 'Message notifications are off', className: "pdc-flex pdc-h-7 pdc-w-7 pdc-flex-shrink-0 pdc-items-center pdc-justify-center pdc-rounded-full pdc-text-ink-mute pdc-transition-colors pdc-hover-bg-canvas pdc-hover-text-ink", children: live ? _jsx(Bell, { size: 15, "aria-hidden": "true" }) : _jsx(BellOff, { size: 15, "aria-hidden": "true" }) }), open && (_jsxs("div", { role: "menu", className: "pdc-absolute pdc-right-0 pdc-top-9 pdc-z-30 pdc-min-w-9rem pdc-rounded-10px pdc-border pdc-border-line pdc-bg-surface pdc-py-1 pdc-shadow-md", children: [_jsx("p", { className: "pdc-px-3 pdc-py-1-5 pdc-text-11px pdc-font-semibold pdc-text-ink-mute", children: "When you\u2019re in another window" }), CHAT_ALERT_LEVELS.map((l) => (_jsxs("button", { type: "button", role: "menuitemradio", "aria-checked": alertLevel === l.value, disabled: blocked && l.value !== 'off', onClick: () => void choose(l.value), className: "pdc-flex pdc-w-full pdc-items-center pdc-gap-2 pdc-px-3 pdc-py-1-5 pdc-text-left pdc-text-15px pdc-text-ink-soft pdc-hover-bg-canvas pdc-disabled-opacity-40 pdc-sm-text-13px", children: [_jsxs("span", { className: "pdc-flex-1", children: [l.label, _jsx("span", { className: "pdc-block pdc-text-11px pdc-text-ink-mute", children: l.hint })] }), alertLevel === l.value && (_jsx(Check, { size: 14, "aria-hidden": "true", className: "pdc-text-ink-mute" }))] }, l.value))), blocked && (_jsx("p", { className: "pdc-px-3 pdc-py-1-5 pdc-text-11px pdc-text-ink-mute", children: "Your browser is blocking notifications for this site. Turn them back on in its site settings." })), _jsx("div", { className: "pd-chat__menu-divider" }), _jsx("p", { className: "pdc-px-3 pdc-py-1-5 pdc-text-11px pdc-font-semibold pdc-text-ink-mute", children: "When you\u2019re in the app" }), _jsxs("button", { type: "button", role: "menuitemcheckbox", "aria-checked": peekEnabled, onClick: () => {
-                            setPeekEnabled(!peekEnabled);
-                            setOpen(false);
-                        }, className: "pdc-flex pdc-w-full pdc-items-center pdc-gap-2 pdc-px-3 pdc-py-1-5 pdc-text-left pdc-text-15px pdc-text-ink-soft pdc-hover-bg-canvas pdc-sm-text-13px", children: [_jsxs("span", { className: "pdc-flex-1", children: ["Show the message here", _jsx("span", { className: "pdc-block pdc-text-11px pdc-text-ink-mute", children: "Slides out under the chat button" })] }), peekEnabled && _jsx(Check, { size: 14, "aria-hidden": "true", className: "pdc-text-ink-mute" })] })] }))] }));
-}
-function SoundToggle() {
-    const { soundEnabled, setSoundEnabled } = useTeamChat();
-    return (_jsx("button", { type: "button", onClick: () => {
-            const next = !soundEnabled;
-            setSoundEnabled(next);
-            if (next)
-                playChatSound('general'); // confirm + unlock audio on enable
-        }, "aria-pressed": soundEnabled, "aria-label": soundEnabled ? 'Mute chat sounds' : 'Unmute chat sounds', title: soundEnabled ? 'Mute chat sounds' : 'Unmute chat sounds', className: "pdc-flex pdc-h-7 pdc-w-7 pdc-flex-shrink-0 pdc-items-center pdc-justify-center pdc-rounded-full pdc-text-ink-mute pdc-transition-colors pdc-hover-bg-canvas pdc-hover-text-ink", children: soundEnabled ? (_jsx(Volume2, { size: 15, "aria-hidden": "true" })) : (_jsx(VolumeX, { size: 15, "aria-hidden": "true" })) }));
+// One chip in the conversation row: the Team room, a teammate, or Claude.
+// Carries that thread's unread count and (for people) a presence dot.
+function ThreadChip({ thread, label, member, active, count, status, onClick, }) {
+    return (_jsxs("button", { type: "button", onClick: onClick, "aria-pressed": active, className: "pd-chat__chip", children: [_jsx(ThreadAvatar, { thread: thread, member: member, status: status, size: "xs" }), label, _jsx(UnreadCount, { count: count, room: thread === 'team' })] }));
 }
 function typingLabel(users) {
     const names = users.map((u) => firstName(u.name));
@@ -299,7 +243,83 @@ function detectMention(text, caret) {
         return null;
     return { at, query };
 }
-export default function TeamChatPanel({ variant }) {
+// ── The ⋯ menu ─────────────────────────────────────────────────────────────
+// Every setting and every "where does chat live" choice, in one place, in
+// every placement. The placement items come from the host; the rest is the
+// panel's own.
+const SETTABLE = [
+    { value: 'online', label: 'Online' },
+    { value: 'away', label: 'Away' },
+    { value: 'busy', label: 'Busy' },
+];
+function PanelMenu({ items, linkComponent: As, }) {
+    const { myStatus, setManualStatus, soundEnabled, setSoundEnabled, alertLevel, setAlertLevel, peekEnabled, setPeekEnabled, } = useTeamChat();
+    const [open, setOpen] = useState(false);
+    const [permission, setPermission] = useState(() => alertPermission());
+    const ref = useRef(null);
+    useCloseOnOutside(open, ref, () => setOpen(false));
+    const alertsSupported = permission !== 'unsupported';
+    const blocked = permission === 'denied';
+    // Nothing appears unless the browser has been asked and said yes, so the
+    // value reports what is really happening rather than what has been chosen.
+    const alertValue = !alertsSupported
+        ? null
+        : blocked
+            ? 'blocked'
+            : alertLevel === 'off' || permission !== 'granted'
+                ? 'off'
+                : alertLevel;
+    async function choose(level) {
+        if (level !== 'off' && permission !== 'granted') {
+            // This is a click, which is the only context Safari will accept a
+            // permission request from, and asking on load burns the single chance.
+            const result = await requestAlertPermission();
+            setPermission(result);
+            if (result !== 'granted')
+                return; // leave the old level; nothing would show
+        }
+        setAlertLevel(level);
+        setOpen(false);
+    }
+    return (_jsxs("div", { ref: ref, className: "pdc-relative", children: [_jsx("button", { type: "button", onClick: () => setOpen((v) => !v), "aria-haspopup": "menu", "aria-expanded": open, "aria-label": "More options", title: "More", className: "pd-chat__ib", children: _jsx(MoreHorizontal, { size: 16, "aria-hidden": "true" }) }), open && (_jsxs("div", { role: "menu", className: "pd-chat__menu", children: [items.map((it) => {
+                        if (it.to) {
+                            const props = {
+                                role: 'menuitem',
+                                className: 'pd-chat__menu-item',
+                                onClick: () => {
+                                    setOpen(false);
+                                    it.onSelect?.();
+                                },
+                            };
+                            return As ? (_jsxs(As, { to: it.to, ...props, children: [it.icon, it.label] }, it.key)) : (_jsxs("a", { href: it.to, ...props, children: [it.icon, it.label] }, it.key));
+                        }
+                        if (it.checked !== undefined) {
+                            return (_jsxs("button", { type: "button", role: "menuitemcheckbox", "aria-checked": it.checked, onClick: () => {
+                                    it.onSelect?.();
+                                    setOpen(false);
+                                }, className: "pd-chat__menu-item", children: [it.icon, it.label, _jsx("span", { className: ['pd-chat__menu-value', it.checked ? 'pd-chat__menu-value--on' : ''].join(' '), children: it.checked ? 'on' : 'off' })] }, it.key));
+                        }
+                        return (_jsxs("button", { type: "button", role: "menuitem", onClick: () => {
+                                setOpen(false);
+                                it.onSelect?.();
+                            }, className: "pd-chat__menu-item", children: [it.icon, it.label] }, it.key));
+                    }), items.length > 0 && _jsx("div", { className: "pd-chat__menu-divider" }), _jsxs("button", { type: "button", role: "menuitemcheckbox", "aria-checked": soundEnabled, onClick: () => {
+                            const next = !soundEnabled;
+                            setSoundEnabled(next);
+                            if (next)
+                                playChatSound('general'); // confirm + unlock audio on enable
+                        }, className: "pd-chat__menu-item", children: [_jsx(Volume2, { size: 15, "aria-hidden": "true" }), "Sounds", _jsx("span", { className: ['pd-chat__menu-value', soundEnabled ? 'pd-chat__menu-value--on' : ''].join(' '), children: soundEnabled ? 'on' : 'off' })] }), _jsxs("button", { type: "button", role: "menuitemcheckbox", "aria-checked": peekEnabled, onClick: () => setPeekEnabled(!peekEnabled), className: "pd-chat__menu-item", children: [_jsx(MoreHorizontal, { size: 15, "aria-hidden": "true", style: { visibility: 'hidden' } }), "Show a new message here", _jsx("span", { className: ['pd-chat__menu-value', peekEnabled ? 'pd-chat__menu-value--on' : ''].join(' '), children: peekEnabled ? 'on' : 'off' })] }), alertsSupported && (_jsxs(_Fragment, { children: [_jsx("div", { className: "pd-chat__menu-heading", children: "Desktop alerts" }), CHAT_ALERT_LEVELS.map((l) => (_jsxs("button", { type: "button", role: "menuitemradio", "aria-checked": alertLevel === l.value, disabled: blocked && l.value !== 'off', onClick: () => void choose(l.value), className: "pd-chat__menu-item", children: [_jsx(Bell, { size: 15, "aria-hidden": "true", style: { visibility: alertValue === l.value ? 'visible' : 'hidden' } }), l.label, alertLevel === l.value && _jsx(Check, { size: 14, "aria-hidden": "true", className: "pd-chat__menu-value pd-chat__menu-value--on" })] }, l.value))), blocked && (_jsx("p", { className: "pd-chat__menu-note", children: "Your browser is blocking notifications for this site. Turn them back on in its site settings." }))] })), _jsx("div", { className: "pd-chat__menu-divider" }), _jsx("div", { className: "pd-chat__menu-heading", children: "My status" }), SETTABLE.map((s) => (_jsxs("button", { type: "button", role: "menuitemradio", "aria-checked": myStatus === s.value, onClick: () => {
+                            setManualStatus(s.value);
+                            setOpen(false);
+                        }, className: "pd-chat__menu-item", children: [_jsx("span", { className: `pd-chat__status-dot pd-chat__dot--${s.value}`, "aria-hidden": "true" }), s.label, myStatus === s.value && _jsx(Check, { size: 14, "aria-hidden": "true", className: "pd-chat__menu-value pd-chat__menu-value--on" })] }, s.value)))] }))] }));
+}
+// ── The panel ──────────────────────────────────────────────────────────────
+// The shared chat body — thread header, conversation chips (or, on the full
+// page, a list beside the thread), message list and composer — used by the
+// header dropdown, the /chat page, the dashboard rail dock and the popout
+// window. It reads everything from the TeamChatProvider, so every surface
+// stays in sync (including which thread is open). The parent sizes it.
+export default function TeamChatPanel({ variant, placementItems = [], headerAction, linkComponent, }) {
     const { config, db, messages, loading, presence, members, send, remove, setViewing, typingUsers, notifyTyping, reactions, toggleReaction, activeThread, setActiveThread, threadUnread, loadEarlier, historyFor, } = useTeamChat();
     // Identity and capability come from the host through the store, not from an
     // auth module: each of the four apps has its own, with its own shape.
@@ -312,6 +332,28 @@ export default function TeamChatPanel({ variant }) {
     const [searchOpen, setSearchOpen] = useState(false);
     const [attachments, setAttachments] = useState([]);
     const fileRef = useRef(null);
+    const rootRef = useRef(null);
+    // The page measures itself to pick its shape; the other variants are
+    // always the one-column chips-over-thread layout.
+    const [width, setWidth] = useState(0);
+    useEffect(() => {
+        const el = rootRef.current;
+        if (!el || variant !== 'page' || typeof ResizeObserver === 'undefined')
+            return;
+        const ro = new ResizeObserver((entries) => {
+            const w = entries[0]?.contentRect.width ?? 0;
+            setWidth(w);
+        });
+        ro.observe(el);
+        setWidth(el.getBoundingClientRect().width);
+        return () => ro.disconnect();
+    }, [variant]);
+    const pageWide = variant === 'page' && width >= PAGE_WIDE_PX;
+    const pagePhone = variant === 'page' && width > 0 && width < PAGE_PHONE_PX;
+    // On a phone the list and the thread take turns. Opening the page lands on
+    // the list; a row opens its thread; back returns.
+    const [phoneThreadOpen, setPhoneThreadOpen] = useState(false);
+    const showingList = pagePhone && !phoneThreadOpen;
     const reactionsByMessage = useMemo(() => {
         const map = new Map();
         for (const r of reactions) {
@@ -381,10 +423,12 @@ export default function TeamChatPanel({ variant }) {
     const memberNames = useMemo(() => members.map((m) => m.name ?? '').filter(Boolean), [members]);
     // The DM peer when a private thread is open; null in the team room.
     const activePeer = useMemo(() => (activeThread === 'team' ? null : members.find((m) => m.id === activeThread) ?? null), [activeThread, members]);
+    const bot = useMemo(() => members.find((m) => m.isBot) ?? null, [members]);
     // Author → profile lookup, so message avatars can use uploaded profile
     // pictures (avatar_url isn't denormalised on the message rows).
     const membersById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
     const presenceByUser = useMemo(() => new Map(presence.map((p) => [p.userId, p.status])), [presence]);
+    const others = presence.filter((m) => m.userId !== userId);
     // Messages for the active thread: the shared room, or my DM pair with the
     // selected peer (both directions). RLS already scopes what arrives; this
     // just splits it into conversations.
@@ -394,6 +438,17 @@ export default function TeamChatPanel({ variant }) {
         return messages.filter((m) => (m.author_id === activeThread && m.recipient_id === userId) ||
             (m.author_id === userId && m.recipient_id === activeThread));
     }, [messages, activeThread, userId]);
+    // The newest message in every thread, for the conversation list.
+    const latestByThread = useMemo(() => {
+        const map = new Map();
+        for (const m of messages) {
+            const thread = !m.recipient_id ? 'team' : m.author_id === userId ? m.recipient_id : m.author_id;
+            const cur = map.get(thread);
+            if (!cur || cur.created_at < m.created_at)
+                map.set(thread, m);
+        }
+        return map;
+    }, [messages, userId]);
     const searchQuery = search.trim().toLowerCase();
     // Full-history search: the instant local filter is merged with a debounced
     // server search over the thread's ENTIRE history (RLS scopes DM reads), so
@@ -456,11 +511,35 @@ export default function TeamChatPanel({ variant }) {
         const q = mentionQuery.toLowerCase();
         return mentionCandidates.filter((m) => (m.name ?? '').toLowerCase().includes(q)).slice(0, 6);
     }, [mentionQuery, mentionCandidates]);
+    // A mounted panel is a chat surface being looked at, with one exception:
+    // the phone's conversation list, where the open thread is not on screen,
+    // so its messages must not be stamped read.
     useEffect(() => {
-        setViewing(true);
+        setViewing(!showingList);
         return () => setViewing(false);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [showingList]);
+    // ── The "New" rule ────────────────────────────────────────────────────
+    // Marks where you left off: placed above the first unread message when a
+    // thread opens, removed when you next send. The count is read from the
+    // PREVIOUS render's snapshot, because by the time the thread has changed
+    // the store has already stamped it read and zeroed the count.
+    const unreadSnapshotRef = useRef(threadUnread);
+    const [newMarkerId, setNewMarkerId] = useState(null);
+    useEffect(() => {
+        const n = unreadSnapshotRef.current[activeThread] ?? 0;
+        if (n <= 0) {
+            setNewMarkerId(null);
+            return;
+        }
+        const fromOthers = threadMessages.filter((m) => m.author_id !== userId);
+        const target = fromOthers[fromOthers.length - n];
+        setNewMarkerId(target?.id ?? null);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeThread]);
+    useEffect(() => {
+        unreadSnapshotRef.current = threadUnread;
+    });
     // ── Scroll management ─────────────────────────────────────────────────
     // Three behaviours, matching what a chat should do:
     //   1. Each thread REMEMBERS where you left it — switch away and back and
@@ -508,7 +587,7 @@ export default function TeamChatPanel({ variant }) {
             stickToBottomRef.current = true;
             scrollToBottom(el);
         }
-    }, [activeThread, loading]);
+    }, [activeThread, loading, showingList]);
     // New messages: follow the conversation only while pinned; after "Show
     // earlier", re-anchor so what you were reading stays in place.
     useEffect(() => {
@@ -538,7 +617,7 @@ export default function TeamChatPanel({ variant }) {
         });
         ro.observe(content);
         return () => ro.disconnect();
-    }, [loading, activeThread, shown.length > 0]);
+    }, [loading, activeThread, shown.length > 0, showingList]);
     async function onLoadEarlier() {
         const el = scrollRef.current;
         if (el)
@@ -567,6 +646,15 @@ export default function TeamChatPanel({ variant }) {
     useEffect(() => {
         setMentionQuery(null);
     }, [activeThread]);
+    // The composer grows with its text, up to a few lines.
+    function fitTextarea(el) {
+        el.style.height = 'auto';
+        el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+    }
+    useEffect(() => {
+        if (textareaRef.current)
+            fitTextarea(textareaRef.current);
+    }, [draft]);
     function onDraftChange(e) {
         const value = e.target.value;
         setDraft(value);
@@ -598,6 +686,33 @@ export default function TeamChatPanel({ variant }) {
                 el.setSelectionRange(pos, pos);
             }
         });
+    }
+    // The hover toolbar's "mention" — start a reply naming the author.
+    function mentionAuthor(m) {
+        const name = m.author_name ?? '';
+        if (!name)
+            return;
+        const prefix = `@${name} `;
+        setDraft((d) => (d.startsWith(prefix) ? d : prefix + d));
+        requestAnimationFrame(() => textareaRef.current?.focus());
+    }
+    function applySuggestion(text) {
+        setDraft(text);
+        requestAnimationFrame(() => {
+            const el = textareaRef.current;
+            if (el) {
+                el.focus();
+                el.setSelectionRange(text.length, text.length);
+            }
+        });
+    }
+    async function copyText(m) {
+        try {
+            await navigator.clipboard.writeText(m.body);
+        }
+        catch {
+            /* no clipboard access — nothing to do */
+        }
     }
     async function handleSend() {
         const text = draft.trim();
@@ -650,6 +765,7 @@ export default function TeamChatPanel({ variant }) {
         setAttachments([]);
         setDraft('');
         setMentionQuery(null);
+        setNewMarkerId(null);
         // Sending always returns you to the latest message, even if you'd
         // scrolled up to re-read something before replying.
         stickToBottomRef.current = true;
@@ -686,95 +802,126 @@ export default function TeamChatPanel({ variant }) {
             void handleSend();
         }
     }
-    const others = presence.filter((m) => m.userId !== userId);
-    return (
-    /* `pd-chat` is the scope every rule in chat.css hangs off, so it has to be
-       on the outermost node the panel renders or nothing below it is styled.
-       It also declares the colour tokens, which is why the popout variant adds
-       its own modifier rather than replacing this class. */
-    _jsxs("div", { className: [
-            'pd-chat',
-            variant === 'popout' ? 'pd-chat--popout' : '',
-            'pdc-flex pdc-h-full pdc-min-h-0 pdc-flex-col',
-        ]
-            .filter(Boolean)
-            .join(' '), children: [_jsxs("div", { className: "pdc-flex pdc-items-center pdc-gap-3 pdc-border-b pdc-border-line-soft pdc-px-3 pdc-py-2", children: [_jsx(StatusPicker, {}), _jsx("div", { className: "pdc-flex pdc-min-w-0 pdc-flex-1 pdc-items-center pdc-gap-1-5 pdc-overflow-hidden", children: others.length === 0 ? (_jsx("span", { className: "pdc-truncate pdc-text-14px pdc-text-ink-mute pdc-sm-text-12px", children: "No-one else here right now" })) : (_jsxs(_Fragment, { children: [_jsx("div", { className: "pdc-flex pdc-flex-shrink-0 pdc-items-center pdc-neg-space-x-1-5", children: others.slice(0, 6).map((m) => (_jsx(PresenceAvatar, { member: m }, m.userId))) }), others.length > 6 && (_jsxs("span", { className: "pdc-text-12px pdc-text-ink-mute", children: ["+", others.length - 6] }))] })) }), _jsx("button", { type: "button", onClick: () => setSearchOpen((v) => {
+    function openThread(thread) {
+        setActiveThread(thread);
+        if (pagePhone)
+            setPhoneThreadOpen(true);
+    }
+    // ── Header copy ───────────────────────────────────────────────────────
+    const peerStatus = activePeer
+        ? activePeer.isBot
+            ? undefined
+            : presenceByUser.get(activePeer.id) ?? null
+        : undefined;
+    const headName = activeThread === 'team' ? 'Team' : activePeer?.name ?? 'Teammate';
+    const headSub = activeThread === 'team'
+        ? others.length > 0
+            ? `${others.length} around · everyone on the team can see this`
+            : 'Everyone on the team can see this'
+        : activePeer?.isBot
+            ? 'Reads the apps, never changes them · private to you'
+            : `${peerStatus ? CHAT_STATUS_META[peerStatus].label : 'Offline'} · private to the two of you`;
+    const botTyping = bot !== null && typingUsers.some((u) => u.userId === bot.id);
+    const peopleTyping = typingUsers.filter((u) => !bot || u.userId !== bot.id);
+    // ── Pieces ────────────────────────────────────────────────────────────
+    const chips = (_jsxs("div", { className: "pd-chat__chips", children: [_jsx(ThreadChip, { thread: "team", label: "Team", member: null, active: activeThread === 'team', count: threadUnread.team ?? 0, onClick: () => openThread('team') }), mentionCandidates.map((m) => (_jsx(ThreadChip, { thread: m.id, label: firstName(m.name), member: m, active: activeThread === m.id, count: threadUnread[m.id] ?? 0, status: m.isBot ? undefined : presenceByUser.get(m.id) ?? null, onClick: () => openThread(m.id) }, m.id)))] }));
+    // The conversation list for the page: Team first, then everyone by their
+    // last message, those with none after, the assistant last among those.
+    const listRows = useMemo(() => {
+        const people = mentionCandidates.slice().sort((a, b) => {
+            const la = latestByThread.get(a.id)?.created_at ?? '';
+            const lb = latestByThread.get(b.id)?.created_at ?? '';
+            if (la !== lb)
+                return la > lb ? -1 : 1;
+            if (a.isBot !== b.isBot)
+                return a.isBot ? 1 : -1;
+            return (a.name ?? '').localeCompare(b.name ?? '');
+        });
+        return people;
+    }, [mentionCandidates, latestByThread]);
+    function snippetFor(thread, member) {
+        const last = latestByThread.get(thread);
+        if (last) {
+            const who = last.author_id === userId ? 'You' : firstName(last.author_name);
+            const text = last.body.trim() || 'Sent an attachment';
+            return thread === 'team' || last.author_id === userId ? `${who}: ${text}` : text;
+        }
+        if (thread === 'team')
+            return 'Say hello to the team';
+        if (member?.isBot)
+            return 'Ask about a project, an order or a customer';
+        return 'No messages yet';
+    }
+    const conversationList = (_jsxs("div", { className: ['pd-chat__convos', pagePhone ? 'pd-chat__convos--phone' : ''].filter(Boolean).join(' '), children: [_jsxs("div", { className: "pd-chat__convos-head", children: [_jsx("span", { className: "pdc-t-title", children: pagePhone ? 'Chat' : 'Conversations' }), _jsx("span", { className: "pdc-t-caption pdc-text-ink-mute", children: others.length > 0 ? `${others.length} around` : 'Nobody else around' })] }), pagePhone && others.length > 0 && (_jsx("div", { className: "pd-chat__around", children: others.slice(0, 8).map((p) => (_jsxs("button", { type: "button", className: "pd-chat__around-person", onClick: () => openThread(p.userId), children: [_jsx(PersonAvatar, { size: "xl", initials: p.initials, colour: p.colour, avatarUrl: p.avatarUrl, status: p.status }), _jsx("span", { className: "pd-chat__around-name", children: firstName(p.name) })] }, p.userId))) })), _jsx("div", { className: "pd-chat__convos-list", children: ['team', ...listRows.map((m) => m.id)].map((thread) => {
+                    const member = thread === 'team' ? null : membersById.get(thread) ?? null;
+                    const count = threadUnread[thread] ?? 0;
+                    const last = latestByThread.get(thread);
+                    const name = thread === 'team' ? 'Team' : member?.name ?? 'Teammate';
+                    return (_jsxs("button", { type: "button", onClick: () => openThread(thread), "aria-pressed": !pagePhone && activeThread === thread, className: ['pd-chat__row', count > 0 ? 'pd-chat__row--unread' : ''].filter(Boolean).join(' '), children: [_jsx(ThreadAvatar, { thread: thread, member: member, status: member && !member.isBot ? presenceByUser.get(member.id) ?? null : undefined, size: "xl" }), _jsxs("span", { className: "pd-chat__row-text", children: [_jsxs("span", { className: "pd-chat__row-name", children: [name, member?.isBot && _jsx(BotTag, {})] }), _jsx("span", { className: "pd-chat__row-snip", children: snippetFor(thread, member) })] }), _jsxs("span", { className: "pd-chat__row-end", children: [last && _jsx("span", { className: "pd-chat__row-time", children: rowTime(last.created_at) }), _jsx(UnreadCount, { count: count, room: thread === 'team' })] })] }, thread));
+                }) })] }));
+    const header = (_jsxs("div", { className: "pd-chat__head", children: [pagePhone && (_jsx("button", { type: "button", className: "pd-chat__ib", "aria-label": "Back to conversations", onClick: () => setPhoneThreadOpen(false), children: _jsx(ChevronLeft, { size: 18, "aria-hidden": "true" }) })), _jsx(ThreadAvatar, { thread: activeThread, member: activePeer, status: peerStatus, size: "lg" }), _jsxs("div", { className: "pd-chat__head-text", children: [_jsxs("span", { className: "pd-chat__head-name", children: [headName, activePeer?.isBot && _jsx(BotTag, {})] }), _jsx("span", { className: "pd-chat__head-sub", children: headSub })] }), _jsxs("div", { className: "pd-chat__head-actions", children: [_jsx("button", { type: "button", onClick: () => setSearchOpen((v) => {
                             const next = !v;
                             if (!next)
                                 setSearch('');
                             return next;
-                        }), "aria-pressed": searchOpen, "aria-label": searchOpen ? 'Close search' : 'Search messages', title: "Search messages", className: [
-                            'pdc-flex pdc-h-7 pdc-w-7 pdc-flex-shrink-0 pdc-items-center pdc-justify-center pdc-rounded-full pdc-transition-colors',
-                            searchOpen ? 'pdc-bg-canvas pdc-text-ink' : 'pdc-text-ink-mute pdc-hover-bg-canvas pdc-hover-text-ink',
-                        ].join(' '), children: _jsx(SearchIcon, { size: 15, "aria-hidden": "true" }) }), _jsx(AlertsMenu, {}), _jsx(SoundToggle, {})] }), _jsxs("div", { className: "pdc-flex pdc-flex-shrink-0 pdc-flex-wrap pdc-items-center pdc-gap-1-5 pdc-border-b pdc-border-line-soft pdc-px-3 pdc-py-2", children: [_jsx(ThreadPill, { label: "Team", active: activeThread === 'team', count: threadUnread.team ?? 0, onClick: () => setActiveThread('team') }), mentionCandidates.map((m) => (_jsx(ThreadPill, { label: firstName(m.name), active: activeThread === m.id, count: threadUnread[m.id] ?? 0, status: m.isBot ? undefined : presenceByUser.get(m.id) ?? null, bot: m.isBot === true, onClick: () => setActiveThread(m.id) }, m.id)))] }), searchOpen && (_jsxs("div", { className: "pdc-flex pdc-items-center pdc-gap-2 pdc-border-b pdc-border-line-soft pdc-px-3 pdc-py-2", children: [_jsx(SearchIcon, { size: 14, className: "pdc-text-ink-mute", "aria-hidden": "true" }), _jsx("input", { type: "search", autoFocus: true, value: search, onChange: (e) => setSearch(e.target.value), placeholder: "Search messages\u2026", className: "pdc-flex-1 pdc-bg-transparent pdc-text-17px pdc-text-ink pdc-outline-none pdc-placeholder-text-ink-dim pdc-sm-text-13px" }), search && (_jsx("button", { type: "button", onClick: () => setSearch(''), "aria-label": "Clear search", className: "pdc-text-ink-mute pdc-hover-text-ink", children: _jsx(X, { size: 14, "aria-hidden": "true" }) }))] })), _jsx("div", { ref: scrollRef, onScroll: onListScroll, className: "pdc-flex pdc-min-h-0 pdc-flex-1 pdc-flex-col pdc-overflow-y-auto pdc-overscroll-contain pdc-px-3 pdc-py-3", children: loading ? (_jsx("div", { className: "pdc-flex pdc-h-full pdc-items-center pdc-justify-center", children: _jsx("div", { className: "pdc-h-6 pdc-w-6 pdc-animate-spin pdc-rounded-full pdc-border-2 pdc-border-line pdc-motion-reduce-animate-none", style: { borderTopColor: 'var(--c-ink)' } }) })) : threadMessages.length === 0 ? (_jsxs("div", { className: "pdc-flex pdc-h-full pdc-flex-col pdc-items-center pdc-justify-center pdc-px-6 pdc-text-center", children: [_jsx("p", { className: "pdc-text-17px pdc-text-ink-soft pdc-sm-text-14px", children: "No messages yet." }), _jsx("p", { className: "pdc-text-15px pdc-text-ink-mute pdc-sm-text-13px", children: activePeer?.isBot
-                                ? `Ask ${firstName(activePeer.name)} about a project, an order, a customer or a price. It looks things up in the app and answers here; it cannot change anything. Only you can see this conversation.`
-                                : activePeer
-                                    ? `This is a private conversation between you and ${firstName(activePeer.name)} — no-one else can see it.`
-                                    : 'Say hello to the team.' })] })) : shown.length === 0 ? (_jsx("div", { className: "pdc-flex pdc-h-full pdc-flex-col pdc-items-center pdc-justify-center pdc-text-center", children: searchingRemote ? (_jsx("p", { className: "pdc-text-15px pdc-text-ink-mute pdc-sm-text-13px", children: "Searching the full history\u2026" })) : (_jsxs(_Fragment, { children: [_jsx("p", { className: "pdc-text-17px pdc-text-ink-soft pdc-sm-text-14px", children: "No matches" }), _jsxs("p", { className: "pdc-text-15px pdc-text-ink-mute pdc-sm-text-13px", children: ["Nothing matches \u201C", search.trim(), "\u201D."] })] })) })) : (_jsxs("div", { ref: listRef, className: "pdc-mt-auto", children: [!searchQuery && historyFor(activeThread) !== 'exhausted' && (_jsx("div", { className: "pdc-flex pdc-justify-center pdc-pb-2", children: _jsx("button", { type: "button", onClick: () => void onLoadEarlier(), disabled: historyFor(activeThread) === 'loading', className: "pdc-rounded-full pdc-border pdc-border-line pdc-bg-surface pdc-px-3 pdc-py-1 pdc-text-14px pdc-font-medium pdc-text-ink-soft pdc-transition-colors pdc-hover-bg-canvas pdc-hover-text-ink pdc-disabled-opacity-60 pdc-sm-text-12px", children: historyFor(activeThread) === 'loading' ? 'Loading…' : 'Show earlier messages' }) })), searchQuery && searchingRemote && (_jsx("p", { className: "pdc-pb-2 pdc-text-center pdc-text-13px pdc-text-ink-mute pdc-sm-text-11px", children: "Searching the full history\u2026" })), _jsx("ul", { className: "pdc-space-y-0", children: shown.map((m, i) => {
-                                const prev = shown[i - 1];
-                                const grouped = isGroupedWithPrevious(prev, m);
-                                const showDay = !prev || dayKey(prev.created_at) !== dayKey(m.created_at);
-                                const mine = userId !== null && m.author_id === userId;
-                                const canDelete = m.author_id === userId || isAdmin;
-                                const msgReactions = groupReactions(reactionsByMessage.get(m.id) ?? [], userId);
-                                const authorAvatar = m.author_id
-                                    ? membersById.get(m.author_id)?.avatarUrl ?? null
-                                    : null;
-                                const authorIsBot = m.author_id ? membersById.get(m.author_id)?.isBot === true : false;
-                                // Prefer the roster's live colour over the copy frozen onto the
-                                // row when it was sent, so someone changing their colour
-                                // recolours their whole history at once rather than splitting it
-                                // into before-and-after. The frozen value is the fallback for an
-                                // author who has since left the roster.
-                                const authorColour = (m.author_id ? membersById.get(m.author_id)?.colour : null) ?? m.author_colour;
-                                return (_jsxs("li", { children: [showDay && (_jsxs("div", { className: "pdc-my-3 pdc-flex pdc-items-center pdc-gap-3", children: [_jsx("span", { className: "pdc-h-px pdc-flex-1 pdc-bg-line-soft" }), _jsx("span", { className: "pdc-text-13px pdc-font-medium pdc-uppercase pdc-tracking-wide pdc-text-ink-mute pdc-sm-text-11px", children: dayLabel(m.created_at) }), _jsx("span", { className: "pdc-h-px pdc-flex-1 pdc-bg-line-soft" })] })), _jsxs("div", { className: [
-                                                'pdc-group pdc-flex pdc-items-start pdc-gap-2-5',
-                                                mine ? '' : 'pdc-flex-row-reverse',
-                                                grouped ? 'pdc-mt-0-5' : 'pdc-mt-2-5',
-                                            ].join(' '), children: [!mine && (_jsx("div", { className: "pdc-w-9 pdc-flex-shrink-0 pdc-sm-w-7", children: !grouped &&
-                                                        (authorIsBot ? (_jsx(BotAvatar, { size: "md" })) : authorAvatar ? (_jsx("img", { src: authorAvatar, alt: "", className: "pdc-h-9 pdc-w-9 pdc-rounded-full pdc-object-cover pdc-sm-h-7 pdc-sm-w-7", "aria-hidden": "true" })) : (_jsx("span", { className: "pdc-inline-flex pdc-h-9 pdc-w-9 pdc-items-center pdc-justify-center pdc-rounded-full pdc-font-mono pdc-text-12px pdc-font-medium pdc-text-white pdc-sm-h-7 pdc-sm-w-7 pdc-sm-text-10px", style: { backgroundColor: authorBadgeColour(authorColour) }, "aria-hidden": "true", children: (m.author_initials ?? '?').slice(0, 2) }))) })), _jsxs("div", { className: [
-                                                        'pdc-flex pdc-min-w-0 pdc-max-w-85 pdc-flex-col',
-                                                        mine ? 'pdc-items-start' : 'pdc-items-end',
-                                                    ].join(' '), children: [!grouped && (_jsxs("div", { className: "pdc-flex pdc-items-baseline pdc-gap-2 pdc-px-1", children: [_jsx("span", { className: "pdc-text-13px pdc-text-ink-mute pdc-sm-text-11px", children: messageTime(m.created_at) }), !mine && activeThread === 'team' && (_jsx("span", { className: "pdc-text-15px pdc-font-semibold pdc-text-ink pdc-sm-text-13px", children: firstName(m.author_name) })), !mine && authorIsBot && _jsx(BotTag, {})] })), _jsxs("div", { className: ['pdc-flex pdc-items-start pdc-gap-2', mine ? '' : 'pdc-flex-row-reverse'].join(' '), children: [_jsxs("div", { className: [
-                                                                        'pdc-min-w-0 pdc-rounded-14px pdc-px-3 pdc-py-1-5',
-                                                                        !grouped ? (mine ? 'pdc-rounded-tl-5px' : 'pdc-rounded-tr-5px') : '',
-                                                                    ].join(' '), style: { backgroundColor: designerTint(authorColour, 10) }, children: [m.body && (_jsx("p", { className: "pdc-whitespace-pre-wrap pdc-break-words pdc-text-19px pdc-leading-snug pdc-text-ink-soft pdc-sm-text-14px", children: buildMessageSegments(m.body, memberNames).map((seg, si) => seg.type === 'link' ? (_jsx("a", { href: seg.value, target: "_blank", rel: "noreferrer", className: "pdc-break-all pdc-text-brand pdc-underline pdc-underline-offset-2 pdc-hover-text-brand-600", children: seg.value }, si)) : seg.type === 'mention' ? (_jsx("span", { className: "pdc-rounded pdc-bg-brand-50 pdc-px-1 pdc-font-medium pdc-text-brand", children: seg.value }, si)) : (_jsx("span", { children: seg.value }, si))) })), attachmentsOf(m).length > 0 && (_jsx(ChatAttachments, { files: attachmentsOf(m) })), msgReactions.length > 0 && (_jsx("div", { className: "pdc-mt-1 pdc-flex pdc-flex-wrap pdc-gap-1", children: msgReactions.map((g) => (_jsxs("button", { type: "button", onClick: () => toggleReaction(m.id, g.emoji), title: g.names.map((n) => firstName(n)).join(', '), className: [
-                                                                                    'pdc-inline-flex pdc-items-center pdc-gap-1 pdc-rounded-full pdc-border pdc-px-1-5 pdc-py-0-5 pdc-text-14px pdc-leading-none pdc-transition-colors pdc-sm-text-12px',
-                                                                                    g.mine
-                                                                                        ? 'pdc-border-brand pdc-bg-brand-50 pdc-text-ink'
-                                                                                        : 'pdc-border-line pdc-bg-surface pdc-text-ink-soft pdc-hover-bg-canvas',
-                                                                                ].join(' '), children: [_jsx("span", { children: g.emoji }), _jsx("span", { className: "pdc-font-medium", children: g.count })] }, g.emoji))) }))] }), _jsxs("div", { className: "pdc-mt-0-5 pdc-flex pdc-flex-shrink-0 pdc-items-center pdc-gap-0-5 pdc-transition-opacity pdc-max-md-opacity-100 pdc-md-opacity-0 pdc-focus-within-opacity-100 pdc-md-group-hover-opacity-100", children: [_jsx(ReactButton, { messageId: m.id, pickerAnchor: mine ? 'right' : 'left' }), canDelete && (_jsx("button", { type: "button", onClick: () => void remove(m.id), "aria-label": "Delete message", title: "Delete", className: "pdc-flex pdc-h-6 pdc-w-6 pdc-max-md-h-11 pdc-max-md-w-11 pdc-items-center pdc-justify-center pdc-rounded pdc-text-ink-mute pdc-hover-bg-canvas pdc-hover-text-out pdc-focus-visible-outline-2 pdc-focus-visible-outline-offset-1 pdc-focus-visible-outline-var-c-focus", children: _jsx(Trash2, { size: 14, "aria-hidden": "true" }) }))] })] })] })] })] }, m.id));
-                            }) })] })) }), _jsxs("div", { ...zoneProps, className: [
-                    'pdc-relative pdc-border-t pdc-border-line-soft pdc-p-2-5 pdc-transition-colors',
-                    isZoneDragOver ? 'pdc-bg-brand-50' : '',
-                ].join(' '), children: [typingUsers.length > 0 && (_jsx("div", { className: "pdc-mb-1-5 pdc-text-14px pdc-italic pdc-text-ink-mute pdc-sm-text-12px", "aria-live": "polite", children: typingLabel(typingUsers) })), mentionQuery !== null && filtered.length > 0 && (_jsx("div", { className: "pdc-absolute pdc-inset-x-2-5 pdc-bottom-full pdc-z-10 pdc-mb-1 pdc-max-h-52 pdc-overflow-y-auto pdc-rounded-10px pdc-border pdc-border-line pdc-bg-surface pdc-shadow-lg", children: filtered.map((m, i) => (_jsxs("button", { type: "button", 
-                            // onMouseDown (not onClick) so selecting doesn't blur the textarea first.
-                            onMouseDown: (e) => {
-                                e.preventDefault();
-                                selectMention(m);
-                            }, onMouseEnter: () => setMentionIndex(i), className: [
-                                'pdc-flex pdc-w-full pdc-items-center pdc-gap-2 pdc-px-3 pdc-py-2 pdc-text-left pdc-text-15px pdc-sm-text-13px',
-                                i === mentionIndex ? 'pdc-bg-canvas' : 'pdc-hover-bg-canvas',
-                            ].join(' '), children: [m.isBot ? (_jsx(BotAvatar, { size: "sm" })) : m.avatarUrl ? (_jsx("img", { src: m.avatarUrl, alt: "", className: "pdc-h-8 pdc-w-8 pdc-rounded-full pdc-object-cover pdc-sm-h-6 pdc-sm-w-6", "aria-hidden": "true" })) : (_jsx("span", { className: "pdc-inline-flex pdc-h-8 pdc-w-8 pdc-items-center pdc-justify-center pdc-rounded-full pdc-font-mono pdc-text-11px pdc-font-medium pdc-text-white pdc-sm-h-6 pdc-sm-w-6 pdc-sm-text-9px", style: { backgroundColor: authorBadgeColour(m.colour) }, "aria-hidden": "true", children: (m.initials ?? '?').slice(0, 2) })), _jsx("span", { className: "pdc-font-medium pdc-text-ink", children: m.name ?? 'Someone' }), m.isBot && _jsx(BotTag, {})] }, m.id))) })), attachments.length > 0 && (_jsx("div", { className: "pdc-mb-2 pdc-flex pdc-flex-wrap pdc-gap-2", children: attachments.map((a) => {
-                            const Icon = fileKindIcon(a.name, a.type);
-                            const meta = [kindLabel(a.name, a.type), formatBytes(a.blob.size)]
-                                .filter(Boolean)
-                                .join(' · ');
-                            return (_jsxs("div", { className: [
-                                    'pdc-relative pdc-overflow-hidden pdc-rounded-lg pdc-border pdc-border-line',
-                                    isImageType(a.type)
-                                        ? 'pdc-h-14 pdc-w-14'
-                                        : 'pdc-flex pdc-h-14 pdc-max-w-180px pdc-items-center pdc-gap-2 pdc-bg-canvas pdc-pl-2 pdc-pr-6',
-                                ].join(' '), children: [isImageType(a.type) ? (_jsx("img", { src: a.url, alt: "", className: "pdc-h-full pdc-w-full pdc-object-cover" })) : (_jsxs(_Fragment, { children: [_jsx(Icon, { size: 18, "aria-hidden": "true", className: "pdc-flex-shrink-0 pdc-text-ink-mute" }), _jsxs("span", { className: "pdc-min-w-0", children: [_jsx("span", { className: "pdc-block pdc-truncate pdc-text-12px pdc-font-medium pdc-text-ink pdc-sm-text-11px", children: a.name }), meta && _jsx("span", { className: "pdc-block pdc-text-11px pdc-text-ink-mute pdc-sm-text-10px", children: meta })] })] })), _jsx("button", { type: "button", onClick: () => removeAttachment(a.id), "aria-label": "Remove attachment", className: "pdc-absolute pdc-right-0-5 pdc-top-0-5 pdc-rounded-full pdc-bg-black-55 pdc-p-0-5 pdc-text-white pdc-hover-bg-black-75", children: _jsx(X, { size: 11, "aria-hidden": "true" }) })] }, a.id));
-                        }) })), error && (_jsx("p", { role: "alert", className: "pdc-mb-2 pdc-rounded-lg pdc-bg-out-soft pdc-px-3 pdc-py-1-5 pdc-text-12px pdc-text-out", children: error })), _jsxs("div", { className: "pdc-flex pdc-items-end pdc-gap-2", children: [_jsx("button", { type: "button", onClick: () => fileRef.current?.click(), disabled: attachments.length >= MAX_ATTACHMENTS, "aria-label": "Attach a file", title: "Attach a file", className: "pdc-inline-flex pdc-h-42px pdc-w-42px pdc-flex-shrink-0 pdc-items-center pdc-justify-center pdc-rounded-8px pdc-border pdc-border-line pdc-bg-surface pdc-text-ink-soft pdc-transition-colors pdc-hover-bg-canvas pdc-disabled-opacity-40", children: _jsx(Paperclip, { size: 18, "aria-hidden": "true" }) }), _jsx("textarea", { ref: textareaRef, value: draft, onChange: onDraftChange, onKeyDown: onKeyDown, onPaste: handlePaste, rows: variant === 'page' || variant === 'popout' ? 2 : 1, placeholder: activePeer?.isBot
-                                    ? `Ask ${firstName(activePeer.name)} a question…`
-                                    : activePeer
-                                        ? `Message ${firstName(activePeer.name)}…`
-                                        : 'Message the team…', className: "pd-chat__composer-input pdc-flex-1" }), _jsx("button", { type: "button", onClick: () => void handleSend(), disabled: (!draft.trim() && attachments.length === 0) || sending, "aria-label": "Send message", className: "pdc-inline-flex pdc-h-42px pdc-w-42px pdc-flex-shrink-0 pdc-items-center pdc-justify-center pdc-rounded-8px pdc-bg-ink pdc-text-on-ink pdc-transition-colors pdc-hover-bg-ink-soft pdc-disabled-opacity-40", children: _jsx(Send, { size: 18, "aria-hidden": "true" }) })] }), _jsx("input", { ref: fileRef, type: "file", multiple: true, className: "pdc-sr-only", tabIndex: -1, "aria-hidden": true, onChange: (e) => {
-                            addFiles(Array.from(e.target.files ?? []));
-                            e.target.value = '';
-                        } }), _jsx("p", { className: "pdc-mt-1-5 pdc-text-13px pdc-text-ink-dim pdc-sm-text-11px", children: activePeer
-                            ? `Private to ${firstName(activePeer.name)} · paste or drop any file (up to ${MAX_MB} MB) · Enter to send`
-                            : `@ to mention · paste or drop any file (up to ${MAX_MB} MB) · Enter to send · Shift + Enter for a new line` })] })] }));
+                        }), "aria-pressed": searchOpen, "aria-label": searchOpen ? 'Close search' : 'Search this conversation', title: "Search this conversation", className: "pd-chat__ib", children: _jsx(SearchIcon, { size: 16, "aria-hidden": "true" }) }), _jsx(PanelMenu, { items: placementItems, linkComponent: linkComponent }), headerAction] })] }));
+    const searchRow = searchOpen && (_jsx("div", { className: "pd-chat__search", children: _jsxs("label", { className: "pd-chat__search-field", children: [_jsx(SearchIcon, { size: 14, "aria-hidden": "true" }), _jsx("input", { type: "search", autoFocus: true, value: search, onChange: (e) => setSearch(e.target.value), placeholder: "Search this conversation", "aria-label": "Search this conversation" }), search && (_jsx("button", { type: "button", onClick: () => setSearch(''), "aria-label": "Clear search", className: "pd-chat__ib pd-chat__ib--sm", children: _jsx(X, { size: 14, "aria-hidden": "true" }) }))] }) }));
+    const emptyState = activePeer?.isBot ? (_jsxs("div", { className: "pd-chat__empty", children: [_jsx(BotAvatar, { size: "xl" }), _jsx("span", { className: "pd-chat__empty-title", children: "Ask about a project, an order or a customer" }), _jsxs("span", { className: "pd-chat__empty-text", children: [firstName(activePeer.name), " reads the proof viewer, Stock Control, Help Scout and the Xero ledger. It only reads. Prices it quotes are checked against the catalogue, and it says when it could not check one."] }), _jsx("div", { className: "pd-chat__suggestions", children: BOT_SUGGESTIONS.map((s) => (_jsx("button", { type: "button", className: "pd-chat__suggestion", onClick: () => applySuggestion(s), children: s }, s))) }), _jsx("span", { className: "pdc-t-caption pdc-text-ink-mute", children: "Only you see this conversation. Nothing you ask is posted anywhere." })] })) : activePeer ? (_jsxs("div", { className: "pd-chat__empty", children: [_jsx("span", { className: "pd-chat__empty-title", children: "No messages yet" }), _jsxs("span", { className: "pd-chat__empty-text", children: ["A private conversation between you and ", firstName(activePeer.name), ". No-one else can see it."] })] })) : (_jsxs("div", { className: "pd-chat__empty", children: [_jsx("span", { className: "pd-chat__empty-title", children: "No messages yet" }), _jsx("span", { className: "pd-chat__empty-text", children: "Say hello to the team. Everyone signed in can read the room." })] }));
+    const list = (_jsx("div", { ref: scrollRef, onScroll: onListScroll, className: ['pd-chat__list pdc-overflow-y-auto', pageWide ? 'pd-chat__list--page' : ''].filter(Boolean).join(' '), children: loading ? (_jsx("div", { className: "pdc-flex pdc-h-full pdc-items-center pdc-justify-center", children: _jsx("div", { className: "pd-chat__spinner" }) })) : threadMessages.length === 0 && !searchQuery ? (emptyState) : shown.length === 0 ? (_jsx("div", { className: "pd-chat__empty", children: searchingRemote ? (_jsx("span", { className: "pd-chat__empty-text", children: "Searching the whole conversation\u2026" })) : (_jsxs(_Fragment, { children: [_jsx("span", { className: "pd-chat__empty-title", children: "No matches" }), _jsxs("span", { className: "pd-chat__empty-text", children: ["Nothing here says \u201C", search.trim(), "\u201D."] })] })) })) : (_jsxs("div", { ref: listRef, className: "pdc-mt-auto", children: [!searchQuery && historyFor(activeThread) !== 'exhausted' && (_jsx("div", { className: "pdc-flex pdc-justify-center", style: { paddingBottom: 8 }, children: _jsx("button", { type: "button", onClick: () => void onLoadEarlier(), disabled: historyFor(activeThread) === 'loading', className: "pd-chat__earlier", children: historyFor(activeThread) === 'loading' ? 'Loading…' : 'Show earlier messages' }) })), searchQuery && searchingRemote && (_jsx("p", { className: "pdc-t-caption pdc-text-ink-mute pdc-text-center", style: { paddingBottom: 8 }, children: "Searching the whole conversation\u2026" })), _jsx("ul", { children: shown.map((m, i) => {
+                        const prev = shown[i - 1];
+                        const showDay = !prev || dayKey(prev.created_at) !== dayKey(m.created_at);
+                        const showNew = newMarkerId === m.id;
+                        const grouped = !showDay && !showNew && isGroupedWithPrevious(prev, m);
+                        const mine = userId !== null && m.author_id === userId;
+                        const canDelete = m.author_id === userId || isAdmin;
+                        const msgReactions = groupReactions(reactionsByMessage.get(m.id) ?? [], userId);
+                        const author = m.author_id ? membersById.get(m.author_id) : undefined;
+                        const authorIsBot = author?.isBot === true;
+                        // Prefer the roster's live colour over the copy frozen onto the
+                        // row when it was sent, so someone changing their colour
+                        // recolours their whole history at once rather than splitting it
+                        // into before-and-after. The frozen value is the fallback for an
+                        // author who has since left the roster.
+                        const authorColour = author?.colour ?? m.author_colour;
+                        return (_jsxs("li", { children: [showDay && (_jsxs("div", { className: "pd-chat__divider", children: [_jsx("span", { className: "pd-chat__divider-rule" }), _jsx("span", { className: "pdc-t-label pdc-text-ink-mute", children: dayLabel(m.created_at) }), _jsx("span", { className: "pd-chat__divider-rule" })] })), showNew && (_jsxs("div", { className: "pd-chat__divider pd-chat__divider--new", role: "separator", "aria-label": "New messages", children: [_jsx("span", { className: "pd-chat__divider-rule" }), _jsx("span", { className: "pdc-t-label", children: "New" }), _jsx("span", { className: "pd-chat__divider-rule" })] })), _jsx(MessageRow, { message: m, grouped: grouped, mine: mine, canDelete: canDelete, canMention: !mine && activeThread === 'team' && !!m.author_name, authorIsBot: authorIsBot, authorAvatar: author?.avatarUrl ?? null, authorColour: authorColour, reactions: msgReactions, memberNames: memberNames, onReact: (emoji) => toggleReaction(m.id, emoji), onMention: () => mentionAuthor(m), onCopy: () => void copyText(m), onDelete: () => void remove(m.id) })] }, m.id));
+                    }) }), botTyping && (_jsxs("div", { className: "pd-chat__thinking", "aria-live": "polite", children: [_jsx(BotAvatar, { size: "md" }), _jsxs("span", { className: "pd-chat__thinking-dots", "aria-hidden": "true", children: [_jsx("span", {}), _jsx("span", {}), _jsx("span", {})] }), firstName(bot?.name), " is looking\u2026"] }))] })) }));
+    const composer = (_jsxs("div", { ...zoneProps, className: [
+            'pd-chat__composer',
+            pageWide ? 'pd-chat__composer--page' : '',
+            isZoneDragOver ? 'pd-chat__composer--drag' : '',
+        ]
+            .filter(Boolean)
+            .join(' '), children: [mentionQuery !== null && filtered.length > 0 && (_jsx("div", { className: "pd-chat__mentions", children: filtered.map((m, i) => (_jsxs("button", { type: "button", 
+                    // onMouseDown (not onClick) so selecting doesn't blur the textarea first.
+                    onMouseDown: (e) => {
+                        e.preventDefault();
+                        selectMention(m);
+                    }, onMouseEnter: () => setMentionIndex(i), className: ['pd-chat__mention-row', i === mentionIndex ? 'pd-chat__mention-row--on' : ''].filter(Boolean).join(' '), children: [m.isBot ? (_jsx(BotAvatar, { size: "sm" })) : (_jsx(PersonAvatar, { size: "sm", initials: m.initials, colour: m.colour, avatarUrl: m.avatarUrl })), _jsx("span", { className: "pdc-font-medium", children: m.name ?? 'Someone' }), m.isBot && _jsx(BotTag, {})] }, m.id))) })), attachments.length > 0 && (_jsx("div", { className: "pd-chat__staged", children: attachments.map((a) => {
+                    const Icon = fileKindIcon(a.name, a.type);
+                    const meta = [kindLabel(a.name, a.type), formatBytes(a.blob.size)].filter(Boolean).join(' · ');
+                    return (_jsxs("div", { className: ['pd-chat__staged-item', isImageType(a.type) ? 'pd-chat__staged-item--image' : 'pd-chat__staged-item--file'].join(' '), children: [isImageType(a.type) ? (_jsx("img", { src: a.url, alt: "" })) : (_jsxs(_Fragment, { children: [_jsx(Icon, { size: 18, "aria-hidden": "true", className: "pdc-text-ink-mute" }), _jsxs("span", { className: "pd-chat__file-text", children: [_jsx("span", { className: "pd-chat__file-name", children: a.name }), meta && _jsx("span", { className: "pd-chat__file-meta", children: meta })] })] })), _jsx("button", { type: "button", onClick: () => removeAttachment(a.id), "aria-label": "Remove attachment", className: "pd-chat__staged-remove", children: _jsx(X, { size: 11, "aria-hidden": "true" }) })] }, a.id));
+                }) })), error && (_jsx("p", { role: "alert", className: "pd-chat__error", children: error })), _jsx("div", { className: "pd-chat__typing", "aria-live": "polite", children: peopleTyping.length > 0 ? typingLabel(peopleTyping) : '' }), _jsxs("div", { className: "pd-chat__field", children: [_jsx("textarea", { ref: textareaRef, value: draft, onChange: onDraftChange, onKeyDown: onKeyDown, onPaste: handlePaste, rows: 1, placeholder: activePeer?.isBot
+                            ? `Ask ${firstName(activePeer.name)}`
+                            : activePeer
+                                ? `Message ${firstName(activePeer.name)}`
+                                : 'Message the team', "aria-label": activePeer ? `Message ${firstName(activePeer.name)}` : 'Message the team', className: "pd-chat__composer-input" }), _jsx("button", { type: "button", onClick: () => fileRef.current?.click(), disabled: attachments.length >= MAX_ATTACHMENTS, "aria-label": "Attach a file", title: "Attach a file", className: "pd-chat__ib", children: _jsx(Paperclip, { size: 16, "aria-hidden": "true" }) }), _jsx("button", { type: "button", onClick: () => void handleSend(), disabled: (!draft.trim() && attachments.length === 0) || sending, "aria-label": "Send message", title: "Send (Enter)", className: "pd-chat__send", children: _jsx(ArrowUp, { size: 16, "aria-hidden": "true" }) })] }), _jsx("input", { ref: fileRef, type: "file", multiple: true, className: "pdc-sr-only", tabIndex: -1, "aria-hidden": true, onChange: (e) => {
+                    addFiles(Array.from(e.target.files ?? []));
+                    e.target.value = '';
+                } })] }));
+    const thread = (_jsxs("div", { className: "pd-chat__thread", children: [header, !pageWide && !pagePhone && chips, searchRow, list, composer] }));
+    return (
+    /* `pd-chat` is the scope every rule in chat.css hangs off, so it has to be
+       on the outermost node the panel renders or nothing below it is styled.
+       It also declares the colour tokens, which is why the popout variant adds
+       its own modifier rather than replacing this class. `pd-chat__panel` is
+       the flex column the whole height chain depends on: the list inside
+       scrolls only because this fills its host and nothing else grows. */
+    _jsx("div", { ref: rootRef, className: ['pd-chat', 'pd-chat__panel', variant === 'popout' ? 'pd-chat--popout' : ''].filter(Boolean).join(' '), children: pageWide ? (_jsxs("div", { className: "pd-chat__page", children: [conversationList, thread] })) : showingList ? (conversationList) : (thread) }));
+}
+// ── A message row ──────────────────────────────────────────────────────────
+function MessageRow({ message: m, grouped, mine, canDelete, canMention, authorIsBot, authorAvatar, authorColour, reactions, memberNames, onReact, onMention, onCopy, onDelete, }) {
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const files = attachmentsOf(m);
+    return (_jsxs("div", { className: ['pd-chat__msg', grouped ? 'pd-chat__msg--grouped' : ''].filter(Boolean).join(' '), children: [_jsx("div", { className: "pd-chat__msg-gutter", children: grouped ? (_jsx("span", { className: "pd-chat__msg-gutter-time", children: messageTime(m.created_at) })) : authorIsBot ? (_jsx(BotAvatar, { size: "md" })) : (_jsx(PersonAvatar, { size: "md", initials: m.author_initials, colour: authorColour, avatarUrl: authorAvatar })) }), _jsxs("div", { className: "pd-chat__msg-main", children: [!grouped && (_jsxs("div", { className: "pd-chat__msg-meta", children: [_jsxs("span", { className: "pd-chat__msg-name", children: [mine ? 'You' : firstName(m.author_name), authorIsBot && _jsx(BotTag, {})] }), _jsx("span", { className: "pd-chat__msg-time", children: messageTime(m.created_at) })] })), m.body && (_jsx("p", { className: "pd-chat__msg-body", children: buildMessageSegments(m.body, memberNames).map((seg, si) => seg.type === 'link' ? (_jsx("a", { href: seg.value, target: "_blank", rel: "noreferrer", children: seg.value }, si)) : seg.type === 'mention' ? (_jsx("span", { className: "pd-chat__mention", children: seg.value }, si)) : (_jsx("span", { children: seg.value }, si))) })), files.length > 0 && _jsx(ChatAttachments, { files: files }), reactions.length > 0 && (_jsx("div", { className: "pd-chat__reactions", children: reactions.map((g) => (_jsxs("button", { type: "button", onClick: () => onReact(g.emoji), title: g.names.map((n) => firstName(n)).join(', '), "aria-pressed": g.mine, className: ['pd-chat__react', g.mine ? 'pd-chat__react--mine' : ''].filter(Boolean).join(' '), children: [_jsx("span", { children: g.emoji }), _jsx("span", { className: "pd-chat__react-count", children: g.count })] }, g.emoji))) }))] }), _jsxs("div", { className: ['pd-chat__tools', pickerOpen ? 'pd-chat__tools--open' : ''].filter(Boolean).join(' '), children: [_jsx(ReactButton, { messageId: m.id, onOpenChange: setPickerOpen }), canMention && (_jsx("button", { type: "button", onClick: onMention, "aria-label": `Reply mentioning ${firstName(m.author_name)}`, title: "Reply with a mention", className: "pd-chat__tool", children: _jsx(AtSign, { size: 14, "aria-hidden": "true" }) })), m.body && (_jsx("button", { type: "button", onClick: onCopy, "aria-label": "Copy message text", title: "Copy text", className: "pd-chat__tool", children: _jsx(Copy, { size: 14, "aria-hidden": "true" }) })), canDelete && (_jsx("button", { type: "button", onClick: onDelete, "aria-label": "Delete message", title: "Delete", className: "pd-chat__tool pd-chat__tool--danger", children: _jsx(Trash2, { size: 14, "aria-hidden": "true" }) }))] })] }));
 }
 //# sourceMappingURL=TeamChatPanel.js.map

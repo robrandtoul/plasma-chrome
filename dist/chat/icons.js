@@ -31,4 +31,14 @@ export const BellOff = icon('BellOff', _jsxs(_Fragment, { children: [_jsx("path"
 // The team chat assistant's mark: a four-pointed spark, in place of a person's
 // initials and presence dot.
 export const Sparkle = icon('Sparkle', _jsx("path", { d: "M12 3c.4 3.8 1.9 6.6 6 7.5v1c-4.1.9-5.6 3.7-6 7.5h-1c-.4-3.8-1.9-6.6-6-7.5v-1c4.1-.9 5.6-3.7 6-7.5h1Z" }));
+// Added with the Ink & Paper redesign: the group glyph for the Team room,
+// the ⋯ menu, the hover toolbar's copy, the composer's send, the phone's
+// back arrow, and the two placement icons the menu names.
+export const Users = icon('Users', _jsxs(_Fragment, { children: [_jsx("path", { d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" }), _jsx("circle", { cx: "9", cy: "7", r: "4" }), _jsx("path", { d: "M22 21v-2a4 4 0 0 0-3-3.87" }), _jsx("path", { d: "M16 3.13a4 4 0 0 1 0 7.75" })] }));
+export const MoreHorizontal = icon('MoreHorizontal', _jsxs(_Fragment, { children: [_jsx("circle", { cx: "12", cy: "12", r: "1" }), _jsx("circle", { cx: "19", cy: "12", r: "1" }), _jsx("circle", { cx: "5", cy: "12", r: "1" })] }));
+export const Copy = icon('Copy', _jsxs(_Fragment, { children: [_jsx("rect", { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2" }), _jsx("path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" })] }));
+export const ArrowUp = icon('ArrowUp', _jsxs(_Fragment, { children: [_jsx("path", { d: "m5 12 7-7 7 7" }), _jsx("path", { d: "M12 19V5" })] }));
+export const ChevronLeft = icon('ChevronLeft', _jsx("path", { d: "m15 18-6-6 6-6" }));
+export const ExternalLink = icon('ExternalLink', _jsxs(_Fragment, { children: [_jsx("path", { d: "M15 3h6v6" }), _jsx("path", { d: "M10 14 21 3" }), _jsx("path", { d: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" })] }));
+export const PanelRightClose = icon('PanelRightClose', _jsxs(_Fragment, { children: [_jsx("rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }), _jsx("path", { d: "M15 3v18" }), _jsx("path", { d: "m8 9 3 3-3 3" })] }));
 //# sourceMappingURL=icons.js.map

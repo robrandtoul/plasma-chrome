@@ -1,5 +1,5 @@
 export { TeamChatProvider, useTeamChat } from './store.js';
-export { default as TeamChatPanel } from './TeamChatPanel.js';
+export { default as TeamChatPanel, BotTag, type ChatPlacementItem } from './TeamChatPanel.js';
 export { default as ChatMenu, type ChatMenuProps } from './ChatMenu.js';
 export { default as ChatPopoutHost } from './ChatPopoutHost.js';
 export { isPopoutWindow, isPopoutSearch, popoutPath, popoutWindowName, clampPopoutSize, popoutIsAlive, windowFeatures, DEFAULT_POPOUT_SIZE, MIN_POPOUT_W, MIN_POPOUT_H, POPOUT_ALIVE_MS, POPOUT_HEARTBEAT_MS, } from './popout.js';
