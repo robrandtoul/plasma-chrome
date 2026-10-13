@@ -28,4 +28,7 @@ export const PictureInPicture2 = icon('PictureInPicture2', _jsxs(_Fragment, { ch
 export const CornerUpLeft = icon('CornerUpLeft', _jsxs(_Fragment, { children: [_jsx("polyline", { points: "9 14 4 9 9 4" }), _jsx("path", { d: "M20 20v-7a4 4 0 0 0-4-4H4" })] }));
 export const Bell = icon('Bell', _jsxs(_Fragment, { children: [_jsx("path", { d: "M10.268 21a2 2 0 0 0 3.464 0" }), _jsx("path", { d: "M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" })] }));
 export const BellOff = icon('BellOff', _jsxs(_Fragment, { children: [_jsx("path", { d: "M10.268 21a2 2 0 0 0 3.464 0" }), _jsx("path", { d: "M17 17H4a1 1 0 0 1-.74-1.673C4.59 13.956 6 12.499 6 8a6 6 0 0 1 .258-1.742" }), _jsx("path", { d: "m2 2 20 20" }), _jsx("path", { d: "M8.668 3.01A6 6 0 0 1 18 8c0 2.687.77 4.653 1.616 6.05" })] }));
+// The team chat assistant's mark: a four-pointed spark, in place of a person's
+// initials and presence dot.
+export const Sparkle = icon('Sparkle', _jsx("path", { d: "M12 3c.4 3.8 1.9 6.6 6 7.5v1c-4.1.9-5.6 3.7-6 7.5h-1c-.4-3.8-1.9-6.6-6-7.5v-1c4.1-.9 5.6-3.7 6-7.5h1Z" }));
 //# sourceMappingURL=icons.js.map

@@ -696,6 +696,8 @@ export function TeamChatProvider({ config, children, }) {
                 initials: m.designer_initials,
                 colour: m.designer_colour,
                 avatarUrl: m.avatar_url,
+                // Only a literal true: a roster from before the column reads as people.
+                isBot: m.is_bot === true,
             })));
             // Preferences that followed the person from whichever app they were
             // last in. The database wins over the local copy here, because it is

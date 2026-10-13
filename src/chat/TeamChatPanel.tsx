@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react'
 import {
   Send,
+  Sparkle,
   Trash2,
   ChevronDown,
   Check,
@@ -287,6 +288,26 @@ function firstName(name: string | null | undefined): string {
   return n ? n.split(/\s+/)[0] : 'Teammate'
 }
 
+// The team chat assistant's tag ("AI") and avatar. Claude is not a person:
+// it never holds a presence, so instead of a status dot (which would read as
+// "offline") it carries a tag, and instead of initials a spark.
+function BotTag() {
+  return (
+    <span className="pd-chat__bot-tag" title="The team chat assistant. It looks things up; it cannot change anything.">
+      AI
+    </span>
+  )
+}
+
+function BotAvatar({ size }: { size: 'sm' | 'md' }) {
+  const box = size === 'md' ? 'pdc-h-9 pdc-w-9 pdc-sm-h-7 pdc-sm-w-7' : 'pdc-h-8 pdc-w-8 pdc-sm-h-6 pdc-sm-w-6'
+  return (
+    <span className={`pd-chat__bot-avatar ${box}`} aria-hidden="true">
+      <Sparkle size={size === 'md' ? 16 : 14} />
+    </span>
+  )
+}
+
 // One pill in the thread switcher: the Team room or a teammate's private
 // thread. Carries that thread's unread count and (for people) a presence dot.
 function ThreadPill({
@@ -294,6 +315,7 @@ function ThreadPill({
   active,
   count,
   status,
+  bot = false,
   onClick,
 }: {
   label: string
@@ -301,6 +323,8 @@ function ThreadPill({
   count: number
   /** Presence dot: a ChatStatus, null = offline, undefined = no dot (Team). */
   status?: ChatStatus | null
+  /** The team chat assistant: a spark in place of the presence dot. */
+  bot?: boolean
   onClick: () => void
 }) {
   return (
@@ -315,7 +339,8 @@ function ThreadPill({
           : 'pdc-border-line pdc-bg-surface pdc-text-ink-soft pdc-hover-bg-canvas pdc-hover-text-ink',
       ].join(' ')}
     >
-      {status !== undefined && (
+      {bot && <Sparkle size={11} aria-hidden="true" />}
+      {!bot && status !== undefined && (
         <span
           className="pdc-inline-block pdc-h-2 pdc-w-2 pdc-flex-shrink-0 pdc-rounded-full"
           style={{ backgroundColor: status ? CHAT_STATUS_META[status].dot : 'var(--c-line)' }}
@@ -1125,7 +1150,8 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             label={firstName(m.name)}
             active={activeThread === m.id}
             count={threadUnread[m.id] ?? 0}
-            status={presenceByUser.get(m.id) ?? null}
+            status={m.isBot ? undefined : presenceByUser.get(m.id) ?? null}
+            bot={m.isBot === true}
             onClick={() => setActiveThread(m.id)}
           />
         ))}
@@ -1175,9 +1201,11 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
           <div className="pdc-flex pdc-h-full pdc-flex-col pdc-items-center pdc-justify-center pdc-px-6 pdc-text-center">
             <p className="pdc-text-17px pdc-text-ink-soft pdc-sm-text-14px">No messages yet.</p>
             <p className="pdc-text-15px pdc-text-ink-mute pdc-sm-text-13px">
-              {activePeer
-                ? `This is a private conversation between you and ${firstName(activePeer.name)} — no-one else can see it.`
-                : 'Say hello to the team.'}
+              {activePeer?.isBot
+                ? `Ask ${firstName(activePeer.name)} about a project, an order, a customer or a price. It looks things up in the app and answers here; it cannot change anything. Only you can see this conversation.`
+                : activePeer
+                  ? `This is a private conversation between you and ${firstName(activePeer.name)} — no-one else can see it.`
+                  : 'Say hello to the team.'}
             </p>
           </div>
         ) : shown.length === 0 ? (
@@ -1223,6 +1251,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
               const authorAvatar = m.author_id
                 ? membersById.get(m.author_id)?.avatarUrl ?? null
                 : null
+              const authorIsBot = m.author_id ? membersById.get(m.author_id)?.isBot === true : false
               // Prefer the roster's live colour over the copy frozen onto the
               // row when it was sent, so someone changing their colour
               // recolours their whole history at once rather than splitting it
@@ -1256,7 +1285,9 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                     {!mine && (
                       <div className="pdc-w-9 pdc-flex-shrink-0 pdc-sm-w-7">
                         {!grouped &&
-                          (authorAvatar ? (
+                          (authorIsBot ? (
+                            <BotAvatar size="md" />
+                          ) : authorAvatar ? (
                             <img
                               src={authorAvatar}
                               alt=""
@@ -1291,6 +1322,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                               {firstName(m.author_name)}
                             </span>
                           )}
+                          {!mine && authorIsBot && <BotTag />}
                         </div>
                       )}
                       <div className={['pdc-flex pdc-items-start pdc-gap-2', mine ? '' : 'pdc-flex-row-reverse'].join(' ')}>
@@ -1422,7 +1454,9 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                   i === mentionIndex ? 'pdc-bg-canvas' : 'pdc-hover-bg-canvas',
                 ].join(' ')}
               >
-                {m.avatarUrl ? (
+                {m.isBot ? (
+                  <BotAvatar size="sm" />
+                ) : m.avatarUrl ? (
                   <img
                     src={m.avatarUrl}
                     alt=""
@@ -1439,6 +1473,7 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
                   </span>
                 )}
                 <span className="pdc-font-medium pdc-text-ink">{m.name ?? 'Someone'}</span>
+                {m.isBot && <BotTag />}
               </button>
             ))}
           </div>
@@ -1513,7 +1548,13 @@ export default function TeamChatPanel({ variant }: TeamChatPanelProps) {
             onKeyDown={onKeyDown}
             onPaste={handlePaste}
             rows={variant === 'page' || variant === 'popout' ? 2 : 1}
-            placeholder={activePeer ? `Message ${firstName(activePeer.name)}…` : 'Message the team…'}
+            placeholder={
+              activePeer?.isBot
+                ? `Ask ${firstName(activePeer.name)} a question…`
+                : activePeer
+                  ? `Message ${firstName(activePeer.name)}…`
+                  : 'Message the team…'
+            }
             className="pd-chat__composer-input pdc-flex-1"
           />
           <button

@@ -223,3 +223,10 @@ export const BellOff = icon(
     <path d="M8.668 3.01A6 6 0 0 1 18 8c0 2.687.77 4.653 1.616 6.05" />
   </>,
 );
+
+// The team chat assistant's mark: a four-pointed spark, in place of a person's
+// initials and presence dot.
+export const Sparkle = icon(
+  'Sparkle',
+  <path d="M12 3c.4 3.8 1.9 6.6 6 7.5v1c-4.1.9-5.6 3.7-6 7.5h-1c-.4-3.8-1.9-6.6-6-7.5v-1c4.1-.9 5.6-3.7 6-7.5h1Z" />,
+);
