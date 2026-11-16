@@ -290,6 +290,21 @@ live and is not a cause.
 
 ---
 
+## Bold and named links in a message (1.15.0)
+
+A message is still plain text, with two pieces of light markup the panel now draws. They exist for long automatic messages (Claude's morning message in the proof viewer), which were a wall of web addresses without them.
+
+- `**bold**` for a heading or a name. It must start and end on a non-space character and stay on one line.
+- `[label](https://...)` for a link shown as its label. The address must be http(s); the label shows the address as a tooltip.
+
+Nothing else is markup, and ordinary typing (`2 ** 3`, `[sic]`) is left alone. The rules are `splitLinkifiedText` / `buildMessageSegments` in `src/chat/message.ts`; a run may now be `type: 'bold'`, and a link run may carry a `label`.
+
+Wherever a message is shown as a one-line preview it goes through the new `plainMessageText(body)` first: the thread list, the desktop alert and the peek card do this inside the package. Copy text copies `label (address)`. A host that shows message text itself (a push notification, a search result) should call `plainMessageText` too, or its preview shows the asterisks and brackets.
+
+An app still on an older version shows the markup as typed. Nothing breaks, it just reads worse, so move every app that shows the chat.
+
+No migration.
+
 ## Send later (1.14.0)
 
 Rob, 13 October 2026: "Can we add the ability to send a timed message. Send

@@ -49,6 +49,7 @@ import {
   attachmentsOf,
   authorBadgeColour,
   buildMessageSegments,
+  plainMessageText,
   dayKey,
   dayLabel,
   formatBytes,
@@ -1161,7 +1162,7 @@ export default function TeamChatPanel({
 
   async function copyText(m: TeamMessage) {
     try {
-      await navigator.clipboard.writeText(m.body)
+      await navigator.clipboard.writeText(plainMessageText(m.body, { keepLinks: true }))
     } catch {
       /* no clipboard access — nothing to do */
     }
@@ -1471,7 +1472,7 @@ export default function TeamChatPanel({
     const last = latestByThread.get(thread)
     if (last) {
       const who = last.author_id === userId ? 'You' : firstName(last.author_name)
-      const text = last.body.trim() || 'Sent an attachment'
+      const text = plainMessageText(last.body).trim() || 'Sent an attachment'
       return thread === 'team' || last.author_id === userId ? `${who}: ${text}` : text
     }
     if (thread === 'team') return 'Say hello to the team'
@@ -2126,9 +2127,18 @@ function MessageRow({
           <p className="pd-chat__msg-body">
             {buildMessageSegments(m.body, memberNames).map((seg, si) =>
               seg.type === 'link' ? (
-                <a key={si} href={seg.value} target="_blank" rel="noreferrer">
-                  {seg.value}
+                <a
+                  key={si}
+                  href={seg.value}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={seg.label ? 'pd-chat__named-link' : undefined}
+                  title={seg.label ? seg.value : undefined}
+                >
+                  {seg.label ?? seg.value}
                 </a>
+              ) : seg.type === 'bold' ? (
+                <strong key={si}>{seg.value}</strong>
               ) : seg.type === 'mention' ? (
                 <span key={si} className="pd-chat__mention">
                   {seg.value}
