@@ -34,38 +34,105 @@ export function formatBytes(n: number): string {
 // chat avatar matches their header avatar and dashboard chip.
 export { designerColourCss as authorBadgeColour, designerTint } from './colours'
 
-// Message text split into plain runs and URL runs, so the composer can stay
-// text-only while a pasted link (e.g. a /proofs/:id URL — "can someone look at
-// this?") renders clickable. The trailing-punctuation exclusion keeps a URL at
-// the end of a sentence from swallowing the full stop.
-export type MessageSegment = { type: 'text' | 'link' | 'mention'; value: string }
+// Message text split into runs the panel knows how to draw.
+//
+// The composer stays text-only: a pasted link (a /proofs/:id URL, "can someone
+// look at this?") renders clickable. The trailing-punctuation exclusion keeps a
+// URL at the end of a sentence from swallowing the full stop.
+//
+// Since 1.15.0 a message may also carry two pieces of light markup, which is
+// what lets a long automatic message (Claude's morning message) be read at a
+// glance instead of as a wall of web addresses:
+//
+//   **bold**               a heading or a name that should stand out
+//   [label](https://...)   a link shown as its label, not its address
+//
+// Nothing else is markup: no italics, lists, headings or code. Bold must start
+// and end on a non-space character and stay on one line, and a named link must
+// point at http(s), so ordinary typing ("2 ** 3", "[sic]") is left alone.
+// Anything that shows a message as a one-line preview (thread list, desktop
+// alert, peek card, push) should pass it through plainMessageText first.
+export type MessageSegment = {
+  type: 'text' | 'link' | 'mention' | 'bold'
+  /** The text of the run; for a link, its address. */
+  value: string
+  /** A named link's visible text. Absent on a bare address, which shows itself. */
+  label?: string
+}
 
 const URL_RE = /(https?:\/\/[^\s<]+[^\s<.,:;!?)\]}'"])/gi
+const NAMED_LINK_RE = /\[([^\[\]\n]+)\]\((https?:\/\/[^\s<>()]+)\)/gi
+const BOLD_RE = /\*\*(\S(?:[^\n]*?\S)?)\*\*/g
 
-export function splitLinkifiedText(body: string): MessageSegment[] {
+function splitBareLinks(text: string): MessageSegment[] {
   const segments: MessageSegment[] = []
   let lastIndex = 0
-  for (const match of body.matchAll(URL_RE)) {
+  for (const match of text.matchAll(URL_RE)) {
     const start = match.index ?? 0
-    if (start > lastIndex) segments.push({ type: 'text', value: body.slice(lastIndex, start) })
+    if (start > lastIndex) segments.push({ type: 'text', value: text.slice(lastIndex, start) })
     segments.push({ type: 'link', value: match[0] })
     lastIndex = start + match[0].length
   }
-  if (lastIndex < body.length) segments.push({ type: 'text', value: body.slice(lastIndex) })
+  if (lastIndex < text.length) segments.push({ type: 'text', value: text.slice(lastIndex) })
   return segments
+}
+
+// Links first: named ones, then bare addresses in what is left between them.
+export function splitLinkifiedText(body: string): MessageSegment[] {
+  const segments: MessageSegment[] = []
+  let lastIndex = 0
+  for (const match of body.matchAll(NAMED_LINK_RE)) {
+    const start = match.index ?? 0
+    const label = match[1].trim()
+    if (!label) continue
+    if (start > lastIndex) segments.push(...splitBareLinks(body.slice(lastIndex, start)))
+    segments.push({ type: 'link', value: match[2], label })
+    lastIndex = start + match[0].length
+  }
+  if (lastIndex < body.length) segments.push(...splitBareLinks(body.slice(lastIndex)))
+  return segments
+}
+
+function splitBold(text: string): MessageSegment[] {
+  const out: MessageSegment[] = []
+  let last = 0
+  for (const m of text.matchAll(BOLD_RE)) {
+    const start = m.index ?? 0
+    if (start > last) out.push({ type: 'text', value: text.slice(last, start) })
+    out.push({ type: 'bold', value: m[1] })
+    last = start + m[0].length
+  }
+  if (last < text.length) out.push({ type: 'text', value: text.slice(last) })
+  return out
+}
+
+// A message as plain words, for anywhere it is shown as a preview or handed to
+// something that cannot draw markup: bold loses its asterisks and a named link
+// becomes its label. With `keepLinks`, the address follows the label in
+// brackets, which is what Copy text wants.
+export function plainMessageText(body: string, options?: { keepLinks?: boolean }): string {
+  return body
+    .replace(NAMED_LINK_RE, (_all, label: string, url: string) => {
+      const text = label.trim()
+      if (!text) return url
+      return options?.keepLinks ? `${text} (${url})` : text
+    })
+    .replace(BOLD_RE, '$1')
 }
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-// Split a message into text / link / mention runs. Links come first (via
-// splitLinkifiedText); then within plain text, any "@<known member name>" is
+// Split a message into text / link / bold / mention runs. Links come first (via
+// splitLinkifiedText), then bold; then within what is still plain text, any "@<known member name>" is
 // pulled out as a mention run so it can be highlighted. Names are matched
 // longest-first so "@Rob Randtoul" wins over "@Rob". Purely cosmetic — the push
 // targets the ids the sender picked, not this text match.
 export function buildMessageSegments(body: string, memberNames: string[]): MessageSegment[] {
-  const linkSegs = splitLinkifiedText(body)
+  const linkSegs = splitLinkifiedText(body).flatMap((seg) =>
+    seg.type === 'text' ? splitBold(seg.value) : [seg],
+  )
   const names = memberNames.filter((n): n is string => !!n && n.trim().length > 0)
   if (names.length === 0) return linkSegs
   const pattern = [...names].sort((a, b) => b.length - a.length).map(escapeRegExp).join('|')

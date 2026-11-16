@@ -98,6 +98,7 @@ export {
   formatBytes,
   isGroupedWithPrevious,
   messageTime,
+  plainMessageText,
   splitLinkifiedText,
   type MessageSegment,
 } from './message';

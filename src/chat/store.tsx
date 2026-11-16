@@ -50,6 +50,7 @@ import {
   type TeamMember,
   type TeamMessage,
 } from './types'
+import { plainMessageText } from './message'
 
 // Shared "engine" for the team chat: one live connection (message realtime +
 // presence) mounted once near the app root, so the header badge, the dropdown
@@ -1273,7 +1274,7 @@ export function TeamChatProvider({
                   typeof document !== 'undefined' &&
                   !document.hasFocus()
                 ) {
-                  const text = (row.body ?? '').trim()
+                  const text = plainMessageText(row.body ?? '').trim()
                   showChatAlert({
                     id: row.id,
                     sender: row.author_name ?? 'Someone',
@@ -1303,7 +1304,7 @@ export function TeamChatProvider({
                   typeof document !== 'undefined' &&
                   document.hasFocus()
                 ) {
-                  const text = (row.body ?? '').trim()
+                  const text = plainMessageText(row.body ?? '').trim()
                   setPeek((prev) =>
                     mergePeek(prev, {
                       id: row.id,

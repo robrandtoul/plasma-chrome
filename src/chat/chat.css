@@ -408,6 +408,9 @@
   color: var(--pd-chat-ink-soft); text-decoration: underline; text-underline-offset: 3px; word-break: break-all;
 }
 .pd-chat .pd-chat__msg-body a:hover { color: var(--pd-chat-ink); }
+/* A named link ([label](url)) is words, not an address, so it wraps like words. */
+.pd-chat .pd-chat__msg-body a.pd-chat__named-link { word-break: normal; font-weight: 500; color: var(--pd-chat-ink); }
+.pd-chat .pd-chat__msg-body strong { font-weight: 600; color: var(--pd-chat-ink); }
 .pd-chat .pd-chat__mention {
   background: var(--pd-chat-line-soft); border-radius: 4px; padding: 0 3px;
   font-weight: 500; color: var(--pd-chat-ink);

@@ -7,6 +7,7 @@ import { mergePeek, peekDwell } from './peek.js';
 import { POPOUT_HEARTBEAT_MS, isPopoutWindow, popoutIsAlive, popoutPath, preparePopoutDocument, readPopoutSize, syncChannelName, windowFeatures, readStoredPopoutSize, writePopoutSize, } from './popout.js';
 import { bySendAt, earliestDue } from './later.js';
 import { CHAT_BUCKET, CHAT_CHANNEL, resolveChatConfig, } from './types.js';
+import { plainMessageText } from './message.js';
 // Shared "engine" for the team chat: one live connection (message realtime +
 // presence) mounted once near the app root, so the header badge, the dropdown
 // panel and the full /chat page all read the same state and nothing re-connects
@@ -1007,7 +1008,7 @@ export function TeamChatProvider({ config, children, }) {
                             !anotherWindowOwnsSound() &&
                             typeof document !== 'undefined' &&
                             !document.hasFocus()) {
-                            const text = (row.body ?? '').trim();
+                            const text = plainMessageText(row.body ?? '').trim();
                             showChatAlert({
                                 id: row.id,
                                 sender: row.author_name ?? 'Someone',
@@ -1035,7 +1036,7 @@ export function TeamChatProvider({ config, children, }) {
                             !anotherWindowOwnsSound() &&
                             typeof document !== 'undefined' &&
                             document.hasFocus()) {
-                            const text = (row.body ?? '').trim();
+                            const text = plainMessageText(row.body ?? '').trim();
                             setPeek((prev) => mergePeek(prev, {
                                 id: row.id,
                                 thread,

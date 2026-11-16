@@ -31,30 +31,78 @@ export function formatBytes(n) {
 // chat avatar matches their header avatar and dashboard chip.
 export { designerColourCss as authorBadgeColour, designerTint } from './colours.js';
 const URL_RE = /(https?:\/\/[^\s<]+[^\s<.,:;!?)\]}'"])/gi;
-export function splitLinkifiedText(body) {
+const NAMED_LINK_RE = /\[([^\[\]\n]+)\]\((https?:\/\/[^\s<>()]+)\)/gi;
+const BOLD_RE = /\*\*(\S(?:[^\n]*?\S)?)\*\*/g;
+function splitBareLinks(text) {
     const segments = [];
     let lastIndex = 0;
-    for (const match of body.matchAll(URL_RE)) {
+    for (const match of text.matchAll(URL_RE)) {
         const start = match.index ?? 0;
         if (start > lastIndex)
-            segments.push({ type: 'text', value: body.slice(lastIndex, start) });
+            segments.push({ type: 'text', value: text.slice(lastIndex, start) });
         segments.push({ type: 'link', value: match[0] });
         lastIndex = start + match[0].length;
     }
-    if (lastIndex < body.length)
-        segments.push({ type: 'text', value: body.slice(lastIndex) });
+    if (lastIndex < text.length)
+        segments.push({ type: 'text', value: text.slice(lastIndex) });
     return segments;
+}
+// Links first: named ones, then bare addresses in what is left between them.
+export function splitLinkifiedText(body) {
+    const segments = [];
+    let lastIndex = 0;
+    for (const match of body.matchAll(NAMED_LINK_RE)) {
+        const start = match.index ?? 0;
+        const label = match[1].trim();
+        if (!label)
+            continue;
+        if (start > lastIndex)
+            segments.push(...splitBareLinks(body.slice(lastIndex, start)));
+        segments.push({ type: 'link', value: match[2], label });
+        lastIndex = start + match[0].length;
+    }
+    if (lastIndex < body.length)
+        segments.push(...splitBareLinks(body.slice(lastIndex)));
+    return segments;
+}
+function splitBold(text) {
+    const out = [];
+    let last = 0;
+    for (const m of text.matchAll(BOLD_RE)) {
+        const start = m.index ?? 0;
+        if (start > last)
+            out.push({ type: 'text', value: text.slice(last, start) });
+        out.push({ type: 'bold', value: m[1] });
+        last = start + m[0].length;
+    }
+    if (last < text.length)
+        out.push({ type: 'text', value: text.slice(last) });
+    return out;
+}
+// A message as plain words, for anywhere it is shown as a preview or handed to
+// something that cannot draw markup: bold loses its asterisks and a named link
+// becomes its label. With `keepLinks`, the address follows the label in
+// brackets, which is what Copy text wants.
+export function plainMessageText(body, options) {
+    return body
+        .replace(NAMED_LINK_RE, (_all, label, url) => {
+        const text = label.trim();
+        if (!text)
+            return url;
+        return options?.keepLinks ? `${text} (${url})` : text;
+    })
+        .replace(BOLD_RE, '$1');
 }
 function escapeRegExp(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
-// Split a message into text / link / mention runs. Links come first (via
-// splitLinkifiedText); then within plain text, any "@<known member name>" is
+// Split a message into text / link / bold / mention runs. Links come first (via
+// splitLinkifiedText), then bold; then within what is still plain text, any "@<known member name>" is
 // pulled out as a mention run so it can be highlighted. Names are matched
 // longest-first so "@Rob Randtoul" wins over "@Rob". Purely cosmetic — the push
 // targets the ids the sender picked, not this text match.
 export function buildMessageSegments(body, memberNames) {
-    const linkSegs = splitLinkifiedText(body);
+    const linkSegs = splitLinkifiedText(body).flatMap((seg) => seg.type === 'text' ? splitBold(seg.value) : [seg]);
     const names = memberNames.filter((n) => !!n && n.trim().length > 0);
     if (names.length === 0)
         return linkSegs;
